@@ -92,3 +92,12 @@ the honesty signals.
   instruments") in mind.
 - **Why:** you can't fly a live app blind. It also gives spec checks for
   real-time latency and persistence something to protect.
+
+## Leaving a team, and handing over leadership
+
+Members of a lobby-formed team can leave it, and a leader can hand leadership
+to another member directly instead of waiting for votes to shift.
+
+- **Source:** suggested by the worker that built lobbies, 2026-10-05.
+- **Why:** teams formed by strangers will sometimes not gel. A graceful way
+  out stops dead teams piling up with a leader who has wandered off.
