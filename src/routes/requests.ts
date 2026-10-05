@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { html } from "hono/html";
 import { csrfToken, currentUser, requireUser } from "../auth.ts";
+import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
 import { db, tx } from "../db/index.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
@@ -160,7 +161,11 @@ async function decide(c: Context, accept: boolean) {
     html: String(html`<p class="flash ${accept ? "ok" : "error"}">Your request to join <a href="/projects/${p.id}">${title}</a> was ${accept ? "accepted" : "declined"}.</p>`),
     data: { project_id: p.id, status: accept ? "accepted" : "declined" },
   });
-  if (accept) publish(`project:${p.id}`, { type: "team", html: String(await teamInner(p.id)) });
+  if (accept) {
+    publish(`project:${p.id}`, { type: "team", html: String(await teamInner(p.id)) });
+    const h = (db.prepare("SELECT handle FROM users WHERE id = ?").get(r.user_id) as { handle: string }).handle;
+    announce("team-grew", { projectId: p.id, handle: h, actorId: me.id });
+  }
   publish(`project:${p.id}`, { type: "request-count", data: { pending: pendingCount(p.id) } });
   flash(c, accept ? "Request accepted." : "Request declined.");
   return c.redirect(`/projects/${p.id}/requests`);

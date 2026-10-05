@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
+import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
 import { categoryChip, categoryOf, categorySelect, CATEGORY_BY_SLUG } from "../categories.ts";
 import { db, skillIds, tx } from "../db/index.ts";
@@ -88,6 +89,7 @@ projects.post("/projects/new", requireUser, async (c) => {
     return pid;
   });
   publish("feed", { type: "project", data: { id } });
+  announce("project-posted", { projectId: id, actorId: u.id });
   flash(c, "Project created.");
   return c.redirect(`/projects/${id}`);
 });
@@ -123,6 +125,7 @@ ${p.body ? html`<div class="body-text">${p.body}</div>` : ""}
 ${skills.length ? html`<ul class="skill-list">${skills.map((s) => html`<li class="${s.filled ? "filled" : "open"}"><strong>${s.name}</strong> ${s.filled ? html`filled by <a href="/u/${s.filled}">@${s.filled}</a>` : html`<span class="muted">open</span>`}</li>`)}</ul>` : html`<p class="muted">No skills listed.</p>`}
 <h2>Team</h2>
 ${teamList(p.id)}
+<p class="muted">Your team's workspace lives elsewhere: <a href="/resources">see resources</a>.</p>
 <!-- SLICE-HOOK 2a: ask-to-join -->
 ${joinSection(c, p)}
 <!-- SLICE-HOOK 2b: progress updates -->
@@ -179,6 +182,8 @@ projects.post("/projects/:id/edit", requireUser, async (c) => {
     for (const sid of want) if (!haveIds.has(sid)) db.prepare("INSERT INTO project_skills (project_id, skill_id) VALUES (?,?)").run(p.id, sid);
   });
   publish("feed", { type: "project", data: { id: p.id } });
+  if (status !== p.status && status === "done") announce("project-finished", { projectId: p.id, actorId: p.owner_id });
+  else if (status !== p.status && status === "in_progress") announce("project-started", { projectId: p.id, actorId: p.owner_id });
   flash(c, kept.length ? `Saved. Kept filled skills that you removed: ${kept.join(", ")}.` : "Project saved.", "ok");
   return c.redirect(`/projects/${p.id}`);
 });

@@ -5,6 +5,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
+import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
 import { db, tx } from "../db/index.ts";
 import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
@@ -179,6 +180,7 @@ updates.post("/projects/:id/updates", requireUser, async (c) => {
   const photos = photosOf(uid);
   publish(`project:${pid}`, { type: "update", html: String(updateCard(row, photos)) });
   publish("feed", { type: "update-feed", html: String(feedCard(row, photos)) });
+  announce("update-posted", { projectId: pid, updateId: uid, photos: photos.length, actorId: me.id });
   flash(c, "Update posted.");
   return c.redirect(`/projects/${pid}#updates`);
 });

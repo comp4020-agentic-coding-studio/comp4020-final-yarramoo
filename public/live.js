@@ -3,7 +3,7 @@
 //   data-live-topic   topic(s) to subscribe to (space-separated); one EventSource is shared per page.
 //   data-live-target  CSS selector to modify when an event for that topic carries `html`
 //                     (the element itself if omitted).
-//   data-live-mode    replace (default) | prepend | append | outer
+//   data-live-mode    replace (default) | prepend | append | outer | none (subscribe only, rely on the "live" event)
 // An event whose data.target is a selector replaces that element's outerHTML instead.
 // Server events: unnamed SSE messages with JSON data {topic, type, html?, data?}. Also dispatches a
 // bubbling "live" CustomEvent on document (detail = the payload) for custom handling.
@@ -28,6 +28,7 @@
       return;
     }
     for (const el of els) {
+      if (el.dataset.liveMode === "none") continue; // element only subscribes; a "live" listener handles the event
       if (!el.dataset.liveTopic.split(/\s+/).includes(p.topic)) continue;
       const target = el.dataset.liveTarget ? document.querySelector(el.dataset.liveTarget) : el;
       if (!target) continue;

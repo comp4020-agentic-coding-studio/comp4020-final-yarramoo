@@ -13,6 +13,7 @@ import { categories } from "./routes/categories.ts";
 import { projects } from "./routes/projects.ts";
 import { regions } from "./routes/regions.ts";
 import { requests } from "./routes/requests.ts";
+import { resources } from "./routes/resources.ts";
 import { readme } from "./routes/readme.ts";
 import { updates, updatesBodyLimit } from "./routes/updates.ts";
 import { style } from "./routes/style.ts"; // TEMPORARY theme switcher
@@ -37,6 +38,7 @@ app.route("/", browse);
 app.route("/", regions);
 app.route("/", categories);
 app.route("/", requests);
+app.route("/", resources);
 app.route("/", updates);
 app.route("/", board);
 app.route("/", admin);

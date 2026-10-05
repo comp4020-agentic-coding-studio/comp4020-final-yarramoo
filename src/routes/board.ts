@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
+import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, provenanceLabel, readProvenance, renderBody, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
@@ -132,6 +133,7 @@ board.post("/questions/new", requireUser, async (c) => {
     return qid;
   });
   publish("feed", { type: "question", html: String(questionItem(loadQ(id)!)) });
+  announce("question-asked", { questionId: id, actorId: me.id });
   return c.redirect(`/questions/${id}`);
 });
 
@@ -272,6 +274,7 @@ board.post("/questions/:id/accept/:aid", requireUser, (c) => {
   db.prepare("UPDATE questions SET accepted_answer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(next, q.id);
   if (q.accepted_answer_id && q.accepted_answer_id !== a.id) announceChange(q.accepted_answer_id);
   announceChange(a.id);
+  if (next !== null && !isHidden("answer", a.id)) announce("answer-accepted", { questionId: q.id, actorId: q.author_id });
   return c.redirect(`/questions/${q.id}#answer-${a.id}`);
 });
 

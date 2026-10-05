@@ -105,3 +105,65 @@ ul.plain li { padding:.2rem 0; }
 .chip { display:inline-block; padding:.05rem .6rem; border-radius:99px; font-size:.85rem; border:1px solid var(--line); background:var(--card); text-decoration:none; }
 .chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.5rem 0 1rem; }
 .chip.current { border-color:var(--accent); color:var(--accent); font-weight:600; }
+
+/* --- activity --- */
+:root { --act-bg:var(--card); --act-fg:var(--fg); --act-line:var(--line); --act-accent:var(--accent); --act-radius:8px; --act-shadow:0 4px 14px rgba(0,0,0,.18); }
+.activity-region { position:fixed; right:1rem; bottom:1rem; z-index:50; display:flex; flex-direction:column; align-items:flex-end; gap:.4rem; max-width:min(22rem, calc(100vw - 2rem)); pointer-events:none; }
+.activity-region > * { pointer-events:auto; }
+.activity-pause { font-size:.75rem; color:var(--muted); background:var(--act-bg); border:1px solid var(--act-line); border-radius:99px; padding:.1rem .6rem; text-decoration:none; opacity:.75; }
+.activity-pause:hover, .activity-pause:focus-visible { opacity:1; }
+.activity-list { display:flex; flex-direction:column; gap:.5rem; align-items:flex-end; }
+.activity-toast { position:relative; display:flex; align-items:center; gap:.6rem; background:var(--act-bg); color:var(--act-fg); border:1px solid var(--act-line); border-left:4px solid var(--act-accent); border-radius:var(--act-radius); box-shadow:var(--act-shadow); padding:.55rem .5rem .55rem .7rem; font-size:.9rem; animation:act-in .5s cubic-bezier(.2,.9,.3,1.2) both; transform-origin:100% 100%; }
+.activity-toast .activity-link { color:var(--act-fg); text-decoration:none; overflow-wrap:anywhere; }
+.activity-toast .activity-link::after { content:""; position:absolute; inset:0; }
+.activity-toast .activity-link:hover, .activity-toast .activity-link:focus-visible { text-decoration:underline; }
+.activity-close { position:relative; z-index:1; background:none; color:var(--muted); padding:0 .35rem; font-size:1.2rem; line-height:1; }
+.activity-art { position:relative; flex:none; width:1.6rem; height:1.6rem; }
+.activity-art::before { content:""; position:absolute; inset:.2rem; background:var(--act-accent); border-radius:3px; }
+@keyframes act-in { from { opacity:0; transform:translateX(2rem); } to { opacity:1; transform:none; } }
+/* posted / started: label maker printing out, with a slight wobble */
+.kind-project-posted, .kind-project-started { animation-name:act-print; animation-duration:.9s; }
+@keyframes act-print { 0% { opacity:0; transform:translateY(1.2rem) scaleY(.2); } 55% { opacity:1; transform:translateY(0) scaleY(1) rotate(-1.5deg); } 75% { transform:rotate(1deg); } 100% { transform:none; } }
+.kind-project-posted .activity-art::before, .kind-project-started .activity-art::before { inset:.45rem 0; border-radius:1px; }
+/* finished: confetti burst from pseudo-less particles */
+.kind-project-finished { animation-name:act-pop; animation-duration:.6s; }
+@keyframes act-pop { 0% { opacity:0; transform:scale(.6); } 60% { opacity:1; transform:scale(1.06); } 100% { transform:none; } }
+.burst > i { position:absolute; left:50%; top:50%; width:.35rem; height:.35rem; border-radius:50%; background:var(--act-accent); opacity:0; animation:act-burst 1s ease-out .15s both; }
+.burst > i:nth-child(odd) { background:#e0a526; border-radius:1px; }
+.burst > i:nth-child(3n) { background:#c4472f; }
+.burst > i:nth-child(1) { --x:-1.6rem; --y:-1.4rem; } .burst > i:nth-child(2) { --x:0; --y:-2rem; } .burst > i:nth-child(3) { --x:1.6rem; --y:-1.4rem; } .burst > i:nth-child(4) { --x:2rem; --y:0; }
+.burst > i:nth-child(5) { --x:1.5rem; --y:1.4rem; } .burst > i:nth-child(6) { --x:0; --y:1.8rem; } .burst > i:nth-child(7) { --x:-1.5rem; --y:1.4rem; } .burst > i:nth-child(8) { --x:-2rem; --y:0; }
+@keyframes act-burst { 0% { opacity:1; transform:translate(-50%,-50%) scale(1); } 100% { opacity:0; transform:translate(calc(-50% + var(--x)), calc(-50% + var(--y))) scale(.4) rotate(200deg); } }
+/* team grew: two puzzle pieces sliding together */
+.kind-team-grew .activity-art::before { display:none; }
+.piece { position:absolute; top:.3rem; width:.8rem; height:1rem; background:var(--act-accent); border-radius:3px; }
+.piece.a { left:0; animation:act-join-a .8s ease-out both; } .piece.b { right:0; opacity:.7; animation:act-join-b .8s ease-out both; }
+@keyframes act-join-a { from { transform:translateX(-1.2rem); opacity:0; } to { transform:none; opacity:1; } }
+@keyframes act-join-b { from { transform:translateX(1.2rem); opacity:0; } to { transform:none; opacity:.7; } }
+/* update: polaroid dropping in */
+.kind-update-posted { animation-name:act-drop; animation-duration:.8s; }
+@keyframes act-drop { 0% { opacity:0; transform:translateY(-2rem) rotate(-6deg); } 60% { opacity:1; transform:translateY(.25rem) rotate(2deg); } 100% { transform:none; } }
+.kind-update-posted .activity-art::before { background:#fff; border:1px solid var(--act-line); border-bottom-width:.4rem; inset:.1rem .2rem; }
+/* question / answer: sticky note slap */
+.kind-question-asked, .kind-answer-accepted { animation-name:act-slap; animation-duration:.5s; }
+.kind-question-asked, .kind-answer-accepted { border-left-width:1px; border-top:.45rem solid #e8c547; }
+@keyframes act-slap { 0% { opacity:0; transform:scale(1.5) rotate(5deg); } 70% { opacity:1; transform:scale(.97) rotate(-1deg); } 100% { transform:none; } }
+.kind-question-asked .activity-art::before, .kind-answer-accepted .activity-art::before { background:#e8c547; inset:.15rem; }
+@media (prefers-reduced-motion: reduce) {
+  .activity-toast { animation:act-fade .3s ease both !important; }
+  .activity-toast *, .burst > i { animation:none !important; }
+  .burst > i { display:none; }
+  @keyframes act-fade { from { opacity:0; } to { opacity:1; } }
+}
+.activity-toast.calm { animation:act-fade .3s ease both; }
+@media (max-width:30rem) { .activity-region { right:.5rem; bottom:.5rem; } }
+/* theme tweaks */
+html[data-theme=enamel] .activity-toast { --act-accent:#a3201a; border:2px solid #b08d3c; border-radius:0; font-family:var(--f-body); }
+html[data-theme=enamel] .activity-pause { border-radius:0; border-color:#b08d3c; }
+html[data-theme=notebook] .activity-toast { border-style:dashed; transform-origin:50% 100%; }
+html[data-theme=pegboard] .activity-toast { border-radius:2px; box-shadow:0 3px 0 rgba(0,0,0,.35); }
+html[data-theme=hobbyist] .activity-toast { border-radius:0; box-shadow:3px 3px 0 var(--fg); }
+html[data-theme=raw] .activity-toast { border-radius:0; box-shadow:none; border-width:2px; }
+html[data-theme=blend] .activity-toast { border-radius:12px; }
+.resource-list { padding-left:1.2rem; }
+.resource-list li { margin:.4rem 0; }
