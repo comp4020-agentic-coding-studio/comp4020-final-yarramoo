@@ -32,7 +32,7 @@ export type Provenance = {
 };
 
 export type Label = "typed" | "mixed" | "pasted" | "unknown";
-const TYPES = ["question", "answer", "project", "update"] as const;
+const TYPES = ["question", "answer", "project", "update", "profile"] as const;
 export type TargetType = (typeof TYPES)[number];
 
 const FENCE = /```[\s\S]*?(?:```|$)/g;

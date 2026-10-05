@@ -87,3 +87,14 @@ button.on { background:var(--accent); color:#fff; border:1px solid var(--accent)
 .review-note { font-style:italic; }
 table.signals { border-collapse:collapse; width:100%; font-size:.9rem; }
 table.signals th, table.signals td { border-bottom:1px solid var(--line); padding:.3rem .5rem; text-align:left; vertical-align:top; }
+
+/* --- awards --- */
+.awards { list-style:none; padding:0; margin:.5rem 0; display:flex; flex-wrap:wrap; gap:.5rem; }
+.award { display:flex; flex-direction:column; gap:.1rem; min-width:9rem; max-width:16rem; padding:.5rem .75rem; background:var(--card); border:1px solid var(--line); border-left-width:4px; border-radius:6px; }
+.award-name { font-size:1rem; }
+.award-tier { font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
+.award-detail { font-size:.85rem; color:var(--muted, inherit); }
+.award.tier-bronze { border-left-color:#b87333; }
+.award.tier-silver { border-left-color:#9aa0a6; }
+.award.tier-gold { border-left-color:#d4a017; }
+.award.tier-none { border-left-color:var(--accent); }

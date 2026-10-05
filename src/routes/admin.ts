@@ -10,7 +10,7 @@ import { csrfField, page } from "../views/layout.ts";
 // existence is not revealed. Signals are hints for a human to look at, never verdicts.
 export const admin = new Hono();
 
-const TYPES = ["question", "answer", "project", "update"];
+const TYPES = ["question", "answer", "project", "update", "profile"];
 const SHOWS = ["unreviewed", "hidden", "all"] as const;
 
 type Row = {
@@ -32,6 +32,10 @@ function describe(r: Row): Info | undefined {
   if (r.target_type === "project") {
     const p = db.prepare("SELECT p.title, u.handle FROM projects p JOIN users u ON u.id = p.owner_id WHERE p.id = ?").get(id) as { title: string; handle: string } | undefined;
     return p && { url: `/projects/${id}`, label: p.title, handle: p.handle };
+  }
+  if (r.target_type === "profile") {
+    const u = db.prepare("SELECT handle FROM users WHERE id = ?").get(id) as { handle: string } | undefined;
+    return u && { url: `/u/${u.handle}`, label: "profile background", handle: u.handle };
   }
   const up = db.prepare("SELECT up.project_id, u.handle FROM updates up JOIN users u ON u.id = up.author_id WHERE up.id = ?").get(id) as { project_id: number; handle: string } | undefined;
   return up && { url: `/projects/${up.project_id}#update-${id}`, label: "update", handle: up.handle };
