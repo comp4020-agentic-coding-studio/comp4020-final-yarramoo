@@ -18,6 +18,9 @@ import { requests } from "./routes/requests.ts";
 import { resources } from "./routes/resources.ts";
 import { safety } from "./routes/safety.ts";
 import { readme } from "./routes/readme.ts";
+import { finished } from "./routes/finished.ts";
+import { themes } from "./routes/themes.ts";
+import { upvotes } from "./upvotes.ts";
 import { updates, updatesBodyLimit } from "./routes/updates.ts";
 import { style } from "./routes/style.ts"; // TEMPORARY theme switcher
 import { page } from "./views/layout.ts";
@@ -46,6 +49,9 @@ app.route("/", inbox);
 app.route("/", lobbies);
 app.route("/", resources);
 app.route("/", updates);
+app.route("/", themes);
+app.route("/", finished);
+app.route("/", upvotes);
 app.route("/", board);
 app.route("/", admin);
 app.route("/", style); // TEMPORARY theme switcher

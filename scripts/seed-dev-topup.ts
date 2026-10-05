@@ -53,8 +53,9 @@ class Client {
     return m[1];
   }
   /** POST a form and require a 302 (to a path matching `loc`); throw with the body otherwise. */
-  async post(path: string, fields: Record<string, string>, formPage: string, loc: RegExp, what: string) {
-    const body = new URLSearchParams(fields);
+  async post(path: string, fields: Record<string, string | string[]>, formPage: string, loc: RegExp, what: string) {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) for (const x of Array.isArray(v) ? v : [v]) body.append(k, x);
     body.set("_csrf", await this.csrf(formPage));
     const res = await this.req(path, {
       method: "POST",
@@ -85,7 +86,9 @@ const project = (id: number) =>
 const pending = (pid: number) =>
   q<{ id: number; user_id: number }>(`SELECT id, user_id FROM join_requests WHERE project_id = ? AND status = 'pending' ORDER BY id`, pid);
 
-async function edit(id: number, status: string, recruiting: boolean, category = project(id).category ?? "other") {
+const themesNow = (id: number) => q<{ theme: string }>(`SELECT theme FROM project_themes WHERE project_id = ? ORDER BY theme`, id).map((r) => r.theme);
+
+async function edit(id: number, status: string, recruiting: boolean, category = project(id).category ?? "other", themes = themesNow(id)) {
   const p = project(id);
   const skills = q<{ name: string }>(
     `SELECT s.name FROM project_skills ps JOIN skills s ON s.id = ps.skill_id WHERE ps.project_id = ? ORDER BY s.name`, id,
@@ -93,7 +96,7 @@ async function edit(id: number, status: string, recruiting: boolean, category = 
   const text = p.summary.length + p.body.length;
   const c = await as(p.handle);
   await c.post(`/projects/${id}/edit`, {
-    title: p.title, summary: p.summary, body: p.body, skills, postcode: p.postcode, category,
+    title: p.title, summary: p.summary, body: p.body, skills, postcode: p.postcode, category, themes,
     status, recruiting: recruiting ? "1" : "", pledge: "1",
     prov_typed: String(Math.floor(text * 0.7)), prov_pasted_prose: "0", prov_active_ms: String(text * 250),
     prov_paste_events: "0", prov_deletions: String(Math.floor(text * 0.05)),
@@ -128,6 +131,69 @@ async function createRocket(r: (typeof ROCKET_PROJECTS)[number]) {
   }, "/projects/new", /^\/projects\/\d+$/, `create ${r.title}`);
   const id = q<{ id: number }>(`SELECT p.id FROM projects p JOIN users u ON u.id = p.owner_id WHERE p.title = ? AND u.handle = ?`, r.title, r.handle)[0]!.id;
   console.log(`created rocketry project ${id}: ${r.title}`);
+}
+
+const provFor = (text: number) => ({
+  prov_typed: String(Math.floor(text * 0.7)), prov_pasted_prose: "0", prov_active_ms: String(text * 250),
+  prov_paste_events: "0", prov_deletions: String(Math.floor(text * 0.05)),
+});
+
+// Themes: sensible themes for seeded projects that have none, matched on title.
+const THEME_RULES: [RegExp, string[]][] = [
+  [/greenhouse/i, ["citizen-science"]], [/drill press/i, ["repair-and-reuse"]], [/lora weather/i, ["citizen-science", "open-hardware"]],
+  [/tube amp|vintage radio/i, ["repair-and-reuse"]], [/cnc router/i, ["open-hardware", "repair-and-reuse"]],
+  [/laser cutter|pcb etching|3d printer upgrade/i, ["open-hardware"]], [/solar rig/i, ["off-grid-energy"]],
+  [/electric bike conversion/i, ["repair-and-reuse"]],
+];
+const RETRO = [
+  { handle: "etch_maya", title: "Recap and restore a Commodore 64", postcode: "2601", category: "electronics", skills: "soldering, electronics",
+    summary: "Replace the aging capacitors in a Commodore 64 and bring it back to a stable boot screen.", themes: ["retro-computing", "repair-and-reuse"], finish: true },
+  { handle: "crank_lee", title: "Reimplement a lost 1990s BBS door game", postcode: "2602", category: "other", skills: "programming",
+    summary: "Rebuild a door game from the dial-up BBS era from player memories and screenshots.", themes: ["retro-computing"], finish: false },
+];
+
+async function seedThemes() {
+  const seeded = q<{ id: number; title: string }>(`SELECT p.id, p.title FROM projects p JOIN users u ON u.id = p.owner_id WHERE u.handle IN (${marks}) ORDER BY p.id`, ...HANDLES);
+  for (const p of seeded) {
+    const rule = THEME_RULES.find(([re]) => re.test(p.title));
+    if (!rule || themesNow(p.id).length) continue;
+    const cur = project(p.id);
+    await edit(p.id, cur.status, !!cur.recruiting, cur.category ?? "other", rule[1]);
+    console.log(`project ${p.id} themes -> ${rule[1].join(", ")}`);
+  }
+  if (q(`SELECT 1 FROM project_themes WHERE theme = 'retro-computing'`).length) return;
+  for (const r of RETRO) {
+    const c = await as(r.handle);
+    await c.post("/projects/new", {
+      title: r.title, summary: r.summary, body: "", skills: r.skills, postcode: r.postcode, category: r.category, themes: r.themes, pledge: "1", ...provFor(r.summary.length),
+    }, "/projects/new", /^\/projects\/\d+$/, `create ${r.title}`);
+    const id = q<{ id: number }>(`SELECT p.id FROM projects p JOIN users u ON u.id = p.owner_id WHERE p.title = ? AND u.handle = ?`, r.title, r.handle)[0]!.id;
+    console.log(`created retro-computing project ${id}: ${r.title}`);
+    if (!r.finish) continue;
+    await edit(id, "in_progress", true);
+    const note = "It boots to the blue screen again and the new capacitors have held steady through a full evening of soak testing. Next stop: a case clean.";
+    await c.post(`/projects/${id}/updates`, { body: note, pledge: "1", ...provFor(note.length) }, `/projects/${id}`, new RegExp(`^/projects/${id}#updates$`), `final update on ${id}`);
+    await edit(id, "done", false);
+  }
+}
+
+// Upvotes: a deterministic spread from seeded users, never on their own or a teammate's project.
+const UPVOTE_TARGETS = [0, 3, 1, 5, 2, 4, 1, 0, 2, 6];
+async function seedUpvotes() {
+  const seeded = q<{ id: number }>(`SELECT p.id FROM projects p JOIN users u ON u.id = p.owner_id WHERE u.handle IN (${marks}) ORDER BY p.id`, ...HANDLES);
+  for (const [i, p] of seeded.entries()) {
+    const target = UPVOTE_TARGETS[i % UPVOTE_TARGETS.length]!;
+    const have = new Set(q<{ handle: string }>(`SELECT u.handle FROM upvotes uv JOIN users u ON u.id = uv.user_id WHERE uv.project_id = ?`, p.id).map((r) => r.handle));
+    const team = new Set(q<{ handle: string }>(`SELECT u.handle FROM members m JOIN users u ON u.id = m.user_id WHERE m.project_id = ?`, p.id).map((r) => r.handle));
+    const pool = HANDLES.map((_, k) => HANDLES[(i + k) % HANDLES.length]!).filter((h) => !team.has(h) && !have.has(h));
+    let n = have.size;
+    for (const h of pool) {
+      if (n >= target) break;
+      await (await as(h)).post(`/projects/${p.id}/upvote`, {}, `/projects/${p.id}`, new RegExp(`^/projects/${p.id}$`), `${h} upvotes ${p.id}`);
+      n++;
+    }
+    if (n !== have.size) console.log(`project ${p.id} upvotes -> ${n}`);
+  }
 }
 
 async function decide(pid: number, rid: number, verb: "accept" | "decline") {
@@ -258,6 +324,8 @@ async function main() {
     } else await decide(r.project_id, r.id, "accept");
   }
   await seedLobbies();
+  await seedThemes();
+  await seedUpvotes();
   console.log("top-up complete");
 }
 

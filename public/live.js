@@ -35,7 +35,15 @@
       const target = el.dataset.liveTarget ? document.querySelector(el.dataset.liveTarget) : el;
       if (!target) continue;
       const mode = el.dataset.liveMode || "replace";
-      if (mode === "prepend") target.insertAdjacentHTML("afterbegin", p.html);
+      if (mode === "prepend") {
+        // A re-delivered card (same root id, e.g. a project finished twice) replaces its older copy.
+        const m = /^\s*<[a-z]+[^>]*\sid="([^"]+)"/.exec(p.html);
+        const old = m && document.getElementById(m[1]);
+        if (old && target.contains(old)) old.remove();
+        target.insertAdjacentHTML("afterbegin", p.html);
+        const empty = el.parentElement && el.parentElement.querySelector(".finished-empty");
+        if (empty) empty.hidden = true;
+      }
       else if (mode === "append") target.insertAdjacentHTML("beforeend", p.html);
       else if (mode === "outer") target.outerHTML = p.html;
       else target.innerHTML = p.html;

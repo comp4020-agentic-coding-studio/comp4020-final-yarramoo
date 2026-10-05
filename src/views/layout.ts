@@ -61,6 +61,8 @@ ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.
     <a href="/">Browse</a>
     <a href="/regions">Regions</a>
     <a href="/c">Categories</a>
+    <a href="/t">Themes</a>
+    <a href="/finished">Finished</a>
     <a href="/lobbies">Lobbies</a>
     <a href="/updates">Updates</a>
     <a href="/questions">Questions</a>

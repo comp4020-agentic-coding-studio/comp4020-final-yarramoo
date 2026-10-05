@@ -216,7 +216,7 @@ updates.get("/updates", (c) => {
     title: "Inspiration",
     body: html`<h1>Inspiration</h1>
 <p class="muted">Recent progress from projects around the site.</p>
-<div id="feed-list" class="feed-grid" data-live-topic="feed" data-live-target="#feed-list" data-live-mode="prepend">
+<div id="feed-list" class="feed-grid" data-live-topic="feed" data-live-target="#feed-list" data-live-types="update-feed" data-live-mode="prepend">
 ${rows.map((r) => feedCard(r, photosOf(r.id)))}
 </div>
 ${rows.length ? "" : html`<p class="empty muted">No photo updates yet.</p>`}`,

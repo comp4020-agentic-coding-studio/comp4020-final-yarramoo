@@ -8,6 +8,7 @@ import { page } from "../views/layout.ts";
 import { projectCard, CARD_SELECT, type CardRow } from "../views/cards.ts";
 import { CATEGORY_BY_SLUG, categorySelect } from "../categories.ts";
 import { REGION_BY_SLUG, regionSelect } from "../regions.ts";
+import { finishedStrip } from "./finished.ts";
 
 export const browse = new Hono();
 
@@ -59,6 +60,7 @@ browse.get("/", (c) => {
   return page(c, {
     title: "Browse",
     body: html`<h1>Browse projects</h1>
+${finishedStrip()}
 <form method="get" action="/" class="filters">
   <input type="hidden" name="go" value="1">
   <label>Skill<input name="skill" list="skill-names" value="${skill}" placeholder="any"></label>
@@ -73,7 +75,7 @@ browse.get("/", (c) => {
 </form>
 ${region && nearRaw ? html`<p class="muted">Showing ${REGION_BY_SLUG.get(region)!.name}; the postcode and distance filters are not applied.</p>` : ""}
 ${nearRaw && !region && !origin ? html`<p class="error">Unknown postcode "${nearRaw}"; showing projects from anywhere.</p>` : ""}
-<div class="results" data-live-topic="feed">
+<div class="results" data-live-topic="feed" data-live-types="project">
 ${cards.length ? cards.map(({ r, d }) => projectCard(r, d)) : html`<p class="empty">No projects match these filters. <a href="/projects/new">Start one</a>.</p>`}
 </div>`,
   });
