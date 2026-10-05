@@ -101,3 +101,22 @@ to another member directly instead of waiting for votes to shift.
 - **Source:** suggested by the worker that built lobbies, 2026-10-05.
 - **Why:** teams formed by strangers will sometimes not gel. A graceful way
   out stops dead teams piling up with a leader who has wandered off.
+
+## Block-aware lobbies
+
+When a lobby forms a team, skip pairing two people where one has blocked the
+other, and hold the later joiner for the next team.
+
+- **Source:** a known limitation flagged by the worker that built report and
+  block, 2026-10-05.
+- **Why:** today a blocked pair can still end up on the same team, which
+  undercuts what blocking is for.
+
+## Report status for reporters
+
+People who filed a report can see whether it was resolved. They see the
+outcome only, not admin notes.
+
+- **Source:** suggested by the worker that built report and block, 2026-10-05.
+- **Why:** a report that disappears into silence teaches people not to bother
+  reporting.
