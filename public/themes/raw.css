@@ -1,0 +1,55 @@
+/* TEMPORARY theme: raw (browser defaults did all the work). Layer over style.css.
+   Contrast (WCAG AA needs 4.5): black #000 on white 21 | link #0000EE on white 8.6 | visited #551A8B on white 9.4
+   muted #555 on white 7.5 | error #b00000 on white 8.0 | black on button #EFEFEF 18.1
+   flash black on #ffffcc 20 | error flash #b00000 on #ffffcc 7.4 | in-progress #7a3b00 on white 9.0 */
+html[data-theme=raw] { --fg:#000; --muted:#555; --bg:#fff; --card:#fff; --line:#000; --accent:#0000EE; --err:#b00000; color-scheme:light; }
+html[data-theme=raw] body { font:17px/1.4 "Times New Roman", Times, serif; color:#000; background:#fff; }
+html[data-theme=raw] main { max-width:46rem; margin:0; padding:1rem 1rem 3rem; }
+html[data-theme=raw] a { color:#0000EE; text-decoration:underline; }
+html[data-theme=raw] a:visited { color:#551A8B; }
+html[data-theme=raw] h1, html[data-theme=raw] h2, html[data-theme=raw] h3 { font-family:"Times New Roman", Times, serif; font-weight:bold; line-height:1.2; color:#000; }
+html[data-theme=raw] h1 { font-size:2em; margin:.67em 0; }
+html[data-theme=raw] h2 { font-size:1.5em; margin:.83em 0; }
+html[data-theme=raw] h3 { font-size:1.17em; }
+html[data-theme=raw] header.site { display:block; padding:.5rem 1rem; background:#fff; border-bottom:1px solid #000; }
+html[data-theme=raw] header.site .brand { font-weight:bold; color:#0000EE; text-decoration:underline; margin-right:.5rem; }
+html[data-theme=raw] header.site nav { display:inline-flex; flex-wrap:wrap; gap:0 .5rem; }
+html[data-theme=raw] header.site nav > * + *::before { content:"| "; color:#000; }
+html[data-theme=raw] header.site a, html[data-theme=raw] header.site button.link { color:#0000EE; }
+html[data-theme=raw] header.site a:visited { color:#551A8B; }
+html[data-theme=raw] .muted, html[data-theme=raw] .card .muted, html[data-theme=raw] .q-item .muted { color:#555; }
+html[data-theme=raw] .flash { background:#ffffcc; color:#000; text-align:left; border-bottom:1px solid #000; }
+html[data-theme=raw] .flash.error, html[data-theme=raw] .error { color:#b00000; }
+html[data-theme=raw] .flash.error { background:#ffffcc; }
+html[data-theme=raw] label { font-weight:bold; font-size:1em; }
+html[data-theme=raw] label.check { font-weight:normal; }
+html[data-theme=raw] input, html[data-theme=raw] textarea, html[data-theme=raw] select { font:15px Arial, Helvetica, sans-serif; color:#000; background:#fff; border:2px inset #767676; border-radius:0; padding:.2rem .3rem; }
+html[data-theme=raw] button { font:15px Arial, Helvetica, sans-serif; color:#000; background:#EFEFEF; border:2px outset #cfcfcf; border-radius:0; padding:.25rem .8rem; }
+html[data-theme=raw] button:active { border-style:inset; }
+html[data-theme=raw] button.secondary, html[data-theme=raw] button.ghost, html[data-theme=raw] button.on { background:#EFEFEF; color:#000; border:2px outset #cfcfcf; padding:.25rem .8rem; }
+html[data-theme=raw] button.on { font-weight:bold; border-style:inset; }
+html[data-theme=raw] button.link { background:none; border:0; color:#0000EE; text-decoration:underline; font:inherit; padding:0; }
+html[data-theme=raw] :is(a,button,input,textarea,select):focus-visible { outline:2px solid #000; outline-offset:1px; }
+html[data-theme=raw] :is(.card,.update-card,.feed-card,.q-item,article.answer,article.question) { background:transparent; border:0; border-top:1px solid #000; border-radius:0; box-shadow:none; padding:.75rem 0; margin:0; overflow:visible; }
+html[data-theme=raw] article.answer.accepted { box-shadow:none; border-color:#000; }
+html[data-theme=raw] .project-card h2, html[data-theme=raw] .q-item h2, html[data-theme=raw] .feed-text h2 { font-size:1.3em; margin:.2em 0; }
+html[data-theme=raw] .badge { background:none; border:0; border-radius:0; padding:0; font:inherit; font-weight:normal; text-transform:lowercase; color:#000; }
+html[data-theme=raw] .badge::before { content:"["; }
+html[data-theme=raw] .badge::after { content:"]"; }
+html[data-theme=raw] .badge.status-open, html[data-theme=raw] .badge.recruiting, html[data-theme=raw] .badge.status-done, html[data-theme=raw] .badge.muted-badge { color:#000; }
+html[data-theme=raw] .badge.status-in_progress { color:#7a3b00; }
+html[data-theme=raw] .badges { gap:.3rem; }
+html[data-theme=raw] .tags { display:block; padding:0; margin:.5rem 0; }
+html[data-theme=raw] .tags li { display:inline; background:none; border:0; border-radius:0; padding:0; font-size:1em; }
+html[data-theme=raw] .tags li:not(:last-child)::after { content:", "; }
+html[data-theme=raw] .tags li a, html[data-theme=raw] .tags li a:visited { text-decoration:underline; }
+html[data-theme=raw] .tags li a { color:#0000EE; }
+html[data-theme=raw] .tags li a:visited { color:#551A8B; }
+html[data-theme=raw] .photo-grid img, html[data-theme=raw] .preview-strip img { border-radius:0; border:1px solid #000; }
+html[data-theme=raw] .feed-photo { background:#eee; }
+html[data-theme=raw] .photo-count { background:#fff; color:#000; border:1px solid #000; border-radius:0; }
+html[data-theme=raw] .rich pre, html[data-theme=raw] .prose pre { background:#fff; border:1px solid #000; border-radius:0; }
+html[data-theme=raw] .rich code { font:15px "Courier New", Courier, monospace; }
+html[data-theme=raw] .filters { border:1px solid #000; padding:.5rem; }
+html[data-theme=raw] table.signals th, html[data-theme=raw] table.signals td { border-bottom:1px solid #000; }
+@media (min-width:1200px) { html[data-theme=raw] main { max-width:46rem; font-size:1em; } html[data-theme=raw] body:has(.feed-grid) main { max-width:46rem; } html[data-theme=raw] .feed-grid { grid-template-columns:1fr; } }

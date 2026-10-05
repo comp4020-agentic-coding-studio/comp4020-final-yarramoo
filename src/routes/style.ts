@@ -20,6 +20,8 @@ export const THEMES = {
   enamel: { name: "Enamel", desc: "1950s machine-shop catalogue: hammertone green-grey, cream panels, enamel red, brass.", fonts: `${FONT}&${ENA}`, sw: ["#6b7d76", "#f4ecd8", "#b3261e", "#b08d3c"] },
   notebook: { name: "Notebook", desc: "Builder's graph-paper notebook: blueprint ink, red pencil, taped-in pages.", fonts: `${FONT}&${NOTE}`, sw: ["#fbf6e6", "#ffffff", "#1d3f8f", "#c62828"] },
   blend: { name: "Blend", desc: "Pegboard for the workshop pages, graph-paper notebook for Questions.", fonts: `${FONT}&${PEG}&${NOTE}`, sw: ["#c9a679", "#e8590c", "#fbf6e6", "#1d3f8f"] },
+  raw: { name: "Raw HTML", desc: "Browser defaults did all the work: serif, blue links, plain rules, [bracketed] badges.", fonts: "", sw: ["#ffffff", "#000000", "#0000ee", "#551a8b"] },
+  hobbyist: { name: "Hobbyist homepage", desc: "Late-90s workshop site: grey tiled page, bevelled panel, navy title bars, parts-list skills.", fonts: "", sw: ["#c0c0c0", "#fffff0", "#000080", "#0000ee"] },
 } as const;
 export type Theme = keyof typeof THEMES;
 

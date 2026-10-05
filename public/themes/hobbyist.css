@@ -1,0 +1,63 @@
+/* TEMPORARY theme: hobbyist (late-90s personal workshop homepage). Layer over style.css. System fonts only.
+   Contrast (WCAG AA needs 4.5): black #000 on panel #fffff0 20 | black on page #C0C0C0 11.6
+   link #0000EE on #fffff0 8.2 | visited #551A8B on #fffff0 9.0 | muted #444 on #fffff0 9.3
+   white on navy #000080 16.0 | navy #000080 on button #D4D0C8 9.5 | error #a00000 on #fffff0 9.6
+   badge text: green #004d00 / amber #6b3300 / grey #222 on #D4D0C8 all >= 6.5
+   flash black on #ffffcc 20 | #a00000 on #ffe0e0 7.2 */
+html[data-theme=hobbyist] { --fg:#000; --muted:#444; --bg:#C0C0C0; --card:#fffff0; --line:#808080; --accent:#0000EE; --err:#a00000; color-scheme:light; }
+html[data-theme=hobbyist] body { font:17px/1.5 Georgia, "Times New Roman", Times, serif; color:#000; background-color:#C0C0C0;
+  background-image:linear-gradient(45deg, rgba(0,0,0,.05) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.05) 75%), linear-gradient(45deg, rgba(0,0,0,.05) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.05) 75%);
+  background-size:6px 6px; background-position:0 0, 3px 3px; }
+html[data-theme=hobbyist] header.site { background:#000080; color:#fff; border-bottom:2px groove #C0C0C0; padding:.5rem 1rem; }
+html[data-theme=hobbyist] header.site a, html[data-theme=hobbyist] header.site a:visited, html[data-theme=hobbyist] header.site button.link { color:#fff; font-family:Verdana, Arial, sans-serif; font-weight:bold; font-size:.9rem; }
+html[data-theme=hobbyist] header.site .brand { font-size:1.1rem; text-decoration:none; }
+html[data-theme=hobbyist] header.site nav { gap:.25rem .9rem; }
+html[data-theme=hobbyist] main { max-width:46rem; margin:1rem auto 2rem; padding:1rem 1.25rem 1.5rem; background:#fffff0; border:2px outset #f0f0f0; box-shadow:2px 2px 0 #808080; }
+html[data-theme=hobbyist] main::after { content:"~ made by hand, best viewed in any browser ~"; display:block; margin-top:2rem; padding-top:.5rem; border-top:2px groove #C0C0C0; text-align:center; font:14px "Courier New", Courier, monospace; color:#444; }
+html[data-theme=hobbyist] a { color:#0000EE; text-decoration:underline; }
+html[data-theme=hobbyist] a:visited { color:#551A8B; }
+html[data-theme=hobbyist] h1, html[data-theme=hobbyist] h2, html[data-theme=hobbyist] h3 { font-family:Georgia, "Times New Roman", serif; line-height:1.25; }
+html[data-theme=hobbyist] h1 { background:#000080; color:#fff; font-size:1.5rem; padding:.3rem .6rem; margin:0 0 1rem; border:2px outset #4040c0; }
+html[data-theme=hobbyist] h2 { color:#000080; border-bottom:2px groove #C0C0C0; padding-bottom:.15rem; font-size:1.3rem; }
+html[data-theme=hobbyist] h3 { color:#000080; }
+html[data-theme=hobbyist] .muted, html[data-theme=hobbyist] .card .muted, html[data-theme=hobbyist] .q-item .muted { color:#444; font-family:"Courier New", Courier, monospace; font-size:.9rem; }
+html[data-theme=hobbyist] .flash { background:#ffffcc; color:#000; border:2px inset #C0C0C0; text-align:left; margin:0 0 1rem; }
+html[data-theme=hobbyist] .flash.error { background:#ffe0e0; color:#a00000; }
+html[data-theme=hobbyist] .error { color:#a00000; }
+html[data-theme=hobbyist] label { font-family:Verdana, Arial, sans-serif; font-size:.9rem; font-weight:bold; }
+html[data-theme=hobbyist] label.check { font-family:Georgia, serif; font-size:1rem; font-weight:normal; }
+html[data-theme=hobbyist] input, html[data-theme=hobbyist] textarea, html[data-theme=hobbyist] select { background:#fff; color:#000; border:2px inset #a0a0a0; border-radius:0; font-family:"Courier New", Courier, monospace; font-size:16px; }
+html[data-theme=hobbyist] button { background:#D4D0C8; color:#000080; border:2px outset #f0f0f0; border-radius:0; font-family:Verdana, Arial, sans-serif; font-size:.9rem; font-weight:bold; }
+html[data-theme=hobbyist] button:active { border-style:inset; padding:calc(.5rem + 1px) calc(1rem - 1px) calc(.5rem - 1px) calc(1rem + 1px); }
+html[data-theme=hobbyist] button.secondary, html[data-theme=hobbyist] button.ghost, html[data-theme=hobbyist] button.on { background:#D4D0C8; color:#000080; border:2px outset #f0f0f0; padding:.35rem .75rem; }
+html[data-theme=hobbyist] button.on { border-style:inset; background:#c0bcb4; }
+html[data-theme=hobbyist] button.link { background:none; border:0; color:#0000EE; text-decoration:underline; font:inherit; padding:0; }
+html[data-theme=hobbyist] header.site button.link { color:#fff; }
+html[data-theme=hobbyist] :is(a,button,input,textarea,select):focus-visible { outline:2px dotted #000; outline-offset:2px; }
+html[data-theme=hobbyist] header.site :is(a,button):focus-visible { outline-color:#fff; }
+html[data-theme=hobbyist] :is(.card,.update-card,.feed-card,.q-item,article.answer,article.question) { background:#fff; color:#000; border:2px groove #C0C0C0; border-radius:0; box-shadow:none; overflow:visible; }
+html[data-theme=hobbyist] article.answer.accepted { box-shadow:none; border:2px solid #004d00; }
+html[data-theme=hobbyist] .project-card h2, html[data-theme=hobbyist] .q-item h2, html[data-theme=hobbyist] .feed-text h2 { background:#000080; margin:-1rem -1rem .6rem; padding:.25rem .75rem; font-size:1.1rem; border:0; }
+html[data-theme=hobbyist] .q-item h2 { margin:-.75rem -1rem .5rem; }
+html[data-theme=hobbyist] .project-card h2 a, html[data-theme=hobbyist] .project-card h2 a:visited, html[data-theme=hobbyist] .q-item h2 a, html[data-theme=hobbyist] .q-item h2 a:visited, html[data-theme=hobbyist] .feed-text h2 a, html[data-theme=hobbyist] .feed-text h2 a:visited { color:#fff; }
+html[data-theme=hobbyist] .feed-text h2 { margin:0 0 .25rem; background:none; padding:0; }
+html[data-theme=hobbyist] .feed-text h2 a, html[data-theme=hobbyist] .feed-text h2 a:visited { color:#0000EE; }
+html[data-theme=hobbyist] .badge { display:inline-block; min-width:5.5rem; text-align:center; padding:.1rem .5rem; border-radius:0; font:bold 11px/1.4 Verdana, Arial, sans-serif; text-transform:uppercase; letter-spacing:.04em; background:#D4D0C8; color:#000080; border:2px outset #f0f0f0; border-bottom-color:#606060; border-right-color:#606060; }
+html[data-theme=hobbyist] .badge.status-open, html[data-theme=hobbyist] .badge.recruiting { color:#004d00; border-color:#f0f0f0 #606060 #606060 #f0f0f0; background:#D4D0C8; }
+html[data-theme=hobbyist] .badge.status-in_progress { color:#6b3300; background:#D4D0C8; border-color:#f0f0f0 #606060 #606060 #f0f0f0; }
+html[data-theme=hobbyist] .badge.status-done, html[data-theme=hobbyist] .badge.muted-badge { color:#222; background:#D4D0C8; border-color:#f0f0f0 #606060 #606060 #f0f0f0; }
+html[data-theme=hobbyist] .tags { display:block; margin:.5rem 0; padding:0; font-family:"Courier New", Courier, monospace; }
+html[data-theme=hobbyist] .tags li { display:block; background:none; border:0; border-radius:0; padding:0; font-size:.95rem; }
+html[data-theme=hobbyist] .tags li::before { content:"- "; color:#000; }
+html[data-theme=hobbyist] .tags li a, html[data-theme=hobbyist] .tags li a:visited { text-decoration:underline; }
+html[data-theme=hobbyist] .tags li a { color:#0000EE; }
+html[data-theme=hobbyist] .tags li a:visited { color:#551A8B; }
+html[data-theme=hobbyist] .skill-list { font-family:"Courier New", Courier, monospace; list-style:"- "; }
+html[data-theme=hobbyist] .photo-grid img, html[data-theme=hobbyist] .preview-strip img { border-radius:0; border:2px inset #a0a0a0; }
+html[data-theme=hobbyist] .photo-count { background:#000080; border-radius:0; font-family:Verdana, Arial, sans-serif; }
+html[data-theme=hobbyist] .rich pre, html[data-theme=hobbyist] .prose pre { background:#f4f4e4; border:2px inset #a0a0a0; border-radius:0; }
+html[data-theme=hobbyist] .rich code { font-family:"Courier New", Courier, monospace; }
+html[data-theme=hobbyist] .filters { border:2px groove #C0C0C0; padding:.75rem; }
+html[data-theme=hobbyist] table.signals { font-family:"Courier New", Courier, monospace; }
+html[data-theme=hobbyist] table.signals th, html[data-theme=hobbyist] table.signals td { border-bottom:1px solid #808080; }
+@media (max-width:600px) { html[data-theme=hobbyist] main { margin:.5rem; padding:.75rem; } html[data-theme=hobbyist] h1 { font-size:1.3rem; } }

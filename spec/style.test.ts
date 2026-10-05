@@ -3,7 +3,7 @@ import { expect, inject, it } from "vitest";
 
 const baseUrl = inject("baseUrl");
 const url = (p: string) => new URL(p, baseUrl);
-const THEMES = ["plain", "pegboard", "enamel", "notebook", "blend"];
+const THEMES = ["plain", "pegboard", "enamel", "notebook", "blend", "raw", "hobbyist"];
 
 async function csrfAndCookies(): Promise<{ csrf: string; cookie: string }> {
   const res = await fetch(url("/style"));
@@ -28,7 +28,7 @@ async function choose(theme: string): Promise<string> {
   return [cookie, set!.split(";")[0]].filter(Boolean).join("; ");
 }
 
-it("GET /style lists all five options", async () => {
+it("GET /style lists all seven options", async () => {
   const res = await fetch(url("/style"));
   expect(res.status).toBe(200);
   const body = await res.text();
