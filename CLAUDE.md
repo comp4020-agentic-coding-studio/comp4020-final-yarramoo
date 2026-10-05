@@ -41,6 +41,27 @@ tests in parallel." Resist that by default; the pieces are coupled enough
 (shared schema, shared event shape) that parallel agents will disagree with
 each other about the contract between them.
 
+## Triage every development task, and delegate down
+
+Before starting any development task, decide which is the cheapest model that
+can do it well, and hand it to that model as a subagent rather than doing it in
+the session's own (usually more expensive) model. In practice:
+
+- **Haiku**: mechanical work with no design judgement --- bulk renames,
+  scraping or extracting from structured pages, reformatting data, running a
+  known command and summarising its output.
+- **Sonnet**: ordinary implementation --- a route, a page, a migration, a test
+  file, a restyle --- given a brief that names the files, the contract it must
+  reuse, and how to verify it.
+- **The session model keeps** only what genuinely needs it: planning and
+  slicing, writing the briefs, reviewing and merging what comes back, and
+  decisions the user has to weigh in on. A change of a few lines is done
+  directly; briefing it would cost more than doing it.
+
+A delegated task still follows the dispatch cap above, and its brief says
+which files it may touch. Review what comes back before it's pushed: the
+cheaper model writes the code, but the session model answers for it.
+
 ## Open it and look
 
 A green check is not the same as a correct page. Multi-user and real-time
