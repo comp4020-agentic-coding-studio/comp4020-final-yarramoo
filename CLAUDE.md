@@ -62,6 +62,17 @@ A delegated task still follows the dispatch cap above, and its brief says
 which files it may touch. Review what comes back before it's pushed: the
 cheaper model writes the code, but the session model answers for it.
 
+## Log good ideas in `FUTURE.md`
+
+When a good idea for a feature turns up and isn't part of the current task,
+write it into `FUTURE.md` rather than building it or letting it go. It might
+come while developing, while reviewing a worker's output, or while looking at
+another site for prior art. Each entry says what the idea is, where it came
+from, and why it might be worth doing. Nothing obliges an entry, and an entry
+obliges no work: the file exists so a good idea outlives the session that had
+it. Delegated workers can suggest ideas in their reports; the session model
+decides what goes in.
+
 ## Open it and look
 
 A green check is not the same as a correct page. Multi-user and real-time
