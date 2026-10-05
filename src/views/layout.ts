@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import type { HtmlEscapedString } from "hono/utils/html";
 import { csrfToken, currentUser } from "../auth.ts";
+import { isAdmin } from "../provenance.ts";
 
 export type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
@@ -51,6 +52,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
     <a href="/updates">Updates</a>
     <a href="/questions">Questions</a>
     <a href="/readme/">About</a>
+    ${isAdmin(user) ? html`<a href="/admin/signals">Admin</a>` : ""}
     ${nav}
   </nav>
 </header>

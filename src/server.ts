@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { html } from "hono/html";
 import "./db/index.ts";
 import { csrfGuard } from "./auth.ts";
+import { admin } from "./routes/admin.ts";
 import { busRoutes } from "./bus.ts";
 import { accounts } from "./routes/accounts.ts";
 import { board } from "./routes/board.ts";
@@ -33,6 +34,7 @@ app.route("/", browse);
 app.route("/", requests);
 app.route("/", updates);
 app.route("/", board);
+app.route("/", admin);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));
 app.onError((e, c) => {
