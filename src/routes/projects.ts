@@ -5,6 +5,7 @@ import { publish } from "../bus.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
 import { joinSection, teamList } from "./requests.ts";
+import { updatesSection } from "./updates.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
 
 export const projects = new Hono();
@@ -109,7 +110,7 @@ ${teamList(p.id)}
 <!-- SLICE-HOOK 2a: ask-to-join -->
 ${joinSection(c, p)}
 <!-- SLICE-HOOK 2b: progress updates -->
-<section id="updates"></section>
+${updatesSection(c, p)}
 </article>`,
   });
 });

@@ -10,11 +10,15 @@ import { browse } from "./routes/browse.ts";
 import { projects } from "./routes/projects.ts";
 import { requests } from "./routes/requests.ts";
 import { readme } from "./routes/readme.ts";
+import { updates, updatesBodyLimit } from "./routes/updates.ts";
 import { page } from "./views/layout.ts";
 
 const app = new Hono();
 
 app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("Cache-Control", "public, max-age=300"); } }));
+
+// Cap upload size before the CSRF guard buffers the body.
+app.use("/projects/:id/updates", updatesBodyLimit);
 
 // Every POST, in every route module, must carry a valid `_csrf` field.
 app.use("*", csrfGuard);
@@ -26,6 +30,7 @@ app.route("/", readme);
 app.route("/", projects);
 app.route("/", browse);
 app.route("/", requests);
+app.route("/", updates);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));
 app.onError((e, c) => {
