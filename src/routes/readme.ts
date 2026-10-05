@@ -7,10 +7,12 @@ import { page } from "../views/layout.ts";
 export const readme = new Hono();
 
 const file = new URL("../../README.md", import.meta.url);
+const philosophy = new URL("../../PHILOSOPHY.md", import.meta.url);
 
-readme.get("/readme/", (c) => {
-  // Rendered per request: README.md is tiny and this keeps it in sync with the file.
-  // marked passes raw HTML through; README.md is author-controlled, not user input.
-  const body = marked.parse(readFileSync(file, "utf8"), { async: false });
-  return page(c, { title: "About", body: html`<article class="prose">${raw(body)}</article>` });
-});
+// Rendered per request: these files are tiny and this keeps the pages in sync with them.
+// marked passes raw HTML through; both files are author-controlled, not user input.
+const render = (f: URL) => marked.parse(readFileSync(f, "utf8"), { async: false });
+
+readme.get("/readme/", (c) => page(c, { title: "About", body: html`<article class="prose">${raw(render(file))}</article>` }));
+
+readme.get("/philosophy", (c) => page(c, { title: "Why this place exists", body: html`<article class="prose">${raw(render(philosophy))}</article>` }));

@@ -59,6 +59,7 @@ ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.
     <a href="/c">Categories</a>
     <a href="/updates">Updates</a>
     <a href="/questions">Questions</a>
+    <a href="/philosophy">Why</a>
     <a href="/readme/">About</a>
     <a href="/style">Styles</a><!-- TEMPORARY: theme switcher -->
     ${isAdmin(user) ? html`<a href="/admin/signals">Admin</a>` : ""}
