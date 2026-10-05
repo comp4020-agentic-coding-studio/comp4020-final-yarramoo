@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import type { HtmlEscapedString } from "hono/utils/html";
 import { csrfToken, currentUser } from "../auth.ts";
+import { blockedIds } from "../blocks.ts";
 import { unreadCount } from "../notify.ts";
 import { isAdmin } from "../provenance.ts";
 import { themeFonts, themeOf } from "../routes/style.ts"; // TEMPORARY theme switcher
@@ -53,7 +54,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
 ${fonts ? raw(`<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="${fonts}">`) : raw("")}
 ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.css">`) : raw("")}
 </head>
-<body data-page="${seg}"${user ? raw(` data-user-id="${user.id}"`) : raw("")}>
+<body data-page="${seg}"${user ? raw(` data-user-id="${user.id}" data-blocked-ids="${[...blockedIds(user.id)].join(",")}"`) : raw("")}>
 <header class="site">
   <a class="brand" href="/">Makers Wanted</a>
   <nav>
@@ -73,6 +74,7 @@ ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.
 </header>
 ${f ? html`<div class="flash ${f.kind}" role="status">${f.msg}</div>` : raw("")}
 <main>${opts.body}</main>
+<footer class="site"><a href="/safety">Safety</a> <a href="/philosophy">Why</a> <a href="/resources">Resources</a></footer>
 <div id="activity" class="activity-region" data-live-topic="activity" data-live-mode="none">
   <button type="button" class="activity-pause link" aria-pressed="false" hidden>Pause activity</button>
   <div class="activity-list" aria-live="polite" role="log"></div>

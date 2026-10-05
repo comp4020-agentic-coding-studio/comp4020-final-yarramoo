@@ -57,6 +57,7 @@ function lobbyControls(c: Context, me: Me | null, category: string, region: stri
 ${full ? html`<label>What you'd like to do (optional)<input name="note" maxlength="280"></label>
 <label>Skills you'd bring (comma-separated, optional)<input name="skills" maxlength="300" placeholder="soldering, cad"></label>
 <label class="check"><input type="checkbox" name="pledge" value="1"> I wrote this note in my own words.</label>` : ""}
+<p class="muted help">Teams meet in person: see our <a href="/safety">safety page</a>.</p>
 <button type="submit">I'm interested</button></form>`;
 }
 

@@ -33,7 +33,7 @@ const titles = { canberra: `Region ACT ${run}`, queanbeyan: `Region Queanbeyan $
 const base = { summary: "s", body: "", skills: "", pledge: "1", category: "other" };
 
 it("assigns projects to regions by postcode", async () => {
-  expect((await owner.post("/signup", { handle: `regions_${run}`, password: "correct horse battery" })).status).toBe(302);
+  expect((await owner.post("/signup", { handle: `regions_${run}`, password: "correct horse battery", dob: "1990-01-01", safety_ok: "1" })).status).toBe(302);
   const make = async (title: string, postcode: string) => {
     const res = await owner.post("/projects/new", { ...base, title, postcode }, "/projects/new");
     expect(res.status).toBe(302);

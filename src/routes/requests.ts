@@ -4,6 +4,7 @@ import { html } from "hono/html";
 import { csrfToken, currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { isBlockedEither } from "../blocks.ts";
 import { canLead } from "../lobbies.ts";
 import { notify, short } from "../notify.ts";
 import { isHidden } from "../provenance.ts";
@@ -72,12 +73,14 @@ export function joinSection(c: Context, p: P): Html {
       inner = html`<p>Your request is pending${pend.skill ? html` (for ${pend.skill})` : ""}:</p><blockquote>${pend.message ?? ""}</blockquote>
 <form method="post" action="/projects/${p.id}/requests/${pend.id}/withdraw">${csrfField(c)}<button type="submit">Withdraw</button></form>
 <p><a href="/me/requests">My requests</a></p>`;
-    } else if (!p.recruiting) inner = html`<p class="muted">Not recruiting right now</p>`;
+    } else if (isBlockedEither(me.id, p.owner_id)) inner = html`<p class="muted">You can't request to join this project.</p>`;
+    else if (!p.recruiting) inner = html`<p class="muted">Not recruiting right now</p>`;
     else {
       const open = db.prepare("SELECT s.id, s.name FROM project_skills ps JOIN skills s ON s.id = ps.skill_id WHERE ps.project_id = ? AND ps.filled_by IS NULL ORDER BY s.name").all(p.id) as { id: number; name: string }[];
       inner = html`<form method="post" action="/projects/${p.id}/requests" class="stack">${csrfField(c)}
 <label>Skill you'd bring<select name="skill_id"><option value="">General help</option>${open.map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select></label>
 <label>Message<textarea name="message" rows="3" maxlength="500" required></textarea></label>
+<p class="muted help">Meeting someone new to build with? Have a read of our <a href="/safety">safety page</a> first.</p>
 <button type="submit">Ask to join</button></form>
 <p><a href="/me/requests">My requests</a></p>`;
     }
@@ -94,6 +97,7 @@ requests.post("/projects/:id/requests", requireUser, async (c) => {
   const message = str(b.message).replace(/\r\n/g, "\n").trim();
   if (!message || message.length > 500) return deny(c, "Message is required (500 characters max).");
   if (p.owner_id === me.id) return deny(c, "You own this project", 403);
+  if (isBlockedEither(me.id, p.owner_id)) return deny(c, "You can't request to join this project", 403);
   if (db.prepare("SELECT 1 FROM members WHERE project_id = ? AND user_id = ?").get(p.id, me.id)) return deny(c, "You're already on this team", 409);
   if (!p.recruiting) return deny(c, "Not recruiting right now", 409);
   let skillId: number | null = null;

@@ -278,6 +278,8 @@ async function signUp(handle: string, postcode: string): Promise<ReturnType<type
   const res = await c.post("/signup", {
     handle,
     password: passwords,
+    dob: "1990-01-01",
+    safety_ok: "1",
     postcode,
   });
   if (res.status === 409) {

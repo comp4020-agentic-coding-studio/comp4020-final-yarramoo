@@ -66,7 +66,7 @@ async function listen() {
 async function signedUp() {
   const c = client();
   const handle = `act_${run}_${Math.random().toString(36).slice(2, 6)}`;
-  const r = await c.post("/signup", { handle, password: "correct horse battery", display_name: handle, postcode: "2600" });
+  const r = await c.post("/signup", { handle, password: "correct horse battery", dob: "1990-01-01", safety_ok: "1", display_name: handle, postcode: "2600" });
   expect(r.status).toBeLessThan(400);
   return c;
 }

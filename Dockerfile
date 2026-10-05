@@ -10,7 +10,7 @@ RUN pnpm install --prod --frozen-lockfile
 COPY src ./src
 COPY public ./public
 COPY data ./data
-COPY README.md PHILOSOPHY.md ./
+COPY README.md PHILOSOPHY.md SAFETY.md ./
 ENV DATA_DIR=/data
 ENV NODE_ENV=production
 CMD ["node", "src/server.ts"]

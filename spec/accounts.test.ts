@@ -38,7 +38,7 @@ const pw = "correct horse battery";
 it("signs up, shows handle on /me, logs out, rejects wrong password, logs in", async () => {
   const handle = `alice_${run}`;
   const c = client();
-  const res = await c.post("/signup", { handle, password: pw, postcode: "2600" });
+  const res = await c.post("/signup", { handle, password: pw, dob: "1990-01-01", safety_ok: "1", postcode: "2600" });
   expect(res.status).toBe(302);
   expect(c.jar.has("sid")).toBe(true);
   expect(await (await c.req("/me")).text()).toContain(handle);
@@ -59,7 +59,7 @@ it("signs up, shows handle on /me, logs out, rejects wrong password, logs in", a
 
 it("rejects POSTs without a CSRF token", async () => {
   const c = client();
-  const res = await c.post("/signup", { handle: `nocsrf_${run}`, password: pw }, "/signup", false);
+  const res = await c.post("/signup", { handle: `nocsrf_${run}`, password: pw, dob: "1990-01-01", safety_ok: "1" }, "/signup", false);
   expect(res.status).toBe(403);
   const prof = await c.req(`/u/nocsrf_${run}`);
   expect(prof.status).toBe(404);
@@ -67,13 +67,13 @@ it("rejects POSTs without a CSRF token", async () => {
 
 it("rejects a duplicate handle", async () => {
   const handle = `dupe_${run}`;
-  expect((await client().post("/signup", { handle, password: pw })).status).toBe(302);
-  expect((await client().post("/signup", { handle: handle.toUpperCase(), password: pw })).status).toBe(409);
+  expect((await client().post("/signup", { handle, password: pw, dob: "1990-01-01", safety_ok: "1" })).status).toBe(302);
+  expect((await client().post("/signup", { handle: handle.toUpperCase(), password: pw, dob: "1990-01-01", safety_ok: "1" })).status).toBe(409);
 });
 
 it("does not redirect to off-site next", async () => {
   const handle = `next_${run}`;
-  await client().post("/signup", { handle, password: pw });
+  await client().post("/signup", { handle, password: pw, dob: "1990-01-01", safety_ok: "1" });
   const c = client();
   const res = await c.post("/login", { handle, password: pw, next: "//evil.example" }, "/login");
   expect(res.headers.get("location")).toBe("/");

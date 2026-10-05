@@ -7,7 +7,9 @@ import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { blockedIds, collapsed } from "../blocks.ts";
 import { notify, short } from "../notify.ts";
+import { reportLink } from "../reports.ts";
 import { db, tx } from "../db/index.ts";
 import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
@@ -81,9 +83,9 @@ const imgs = (row: UpdateRow, photos: PhotoRow[]) =>
   photos.map((p) => html`<img src="/uploads/${p.path}" ${p.width && p.height ? html`width="${p.width}" height="${p.height}"` : ""} loading="lazy" alt="Progress photo for ${row.project_title}">`);
 
 /** One timeline entry (project page). */
-export function updateCard(row: UpdateRow, photos: PhotoRow[], review = false): Html {
+export function updateCard(row: UpdateRow, photos: PhotoRow[], review = false, reportable = false): Html {
   return html`<article class="update-card" id="update-${row.id}">
-<p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a> · ${when(row.created_at)}</p>
+<p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a> · ${when(row.created_at)}${reportable ? html` · ${reportLink("update", row.id)}` : ""}</p>
 ${review ? UNDER_REVIEW : ""}
 ${row.body ? html`<div class="body-text">${row.body}</div>` : ""}
 ${photos.length ? html`<div class="photo-grid n${Math.min(photos.length, 4)}">${imgs(row, photos)}</div>` : ""}
@@ -115,6 +117,7 @@ function isTeam(projectId: number, userId: number): boolean {
 export function updatesSection(c: Context, project: { id: number }): Html {
   const me = currentUser(c);
   const admin = isAdmin(me);
+  const blocked = blockedIds(me?.id);
   const rows = (db.prepare(`${ROW_SQL} WHERE up.project_id = ? ORDER BY up.id DESC LIMIT 100`).all(project.id) as UpdateRow[])
     .filter((r) => !isHidden("update", r.id) || admin || r.author_id === me?.id);
   const canPost = !!me && isTeam(project.id, me.id);
@@ -131,7 +134,10 @@ ${canPost ? html`<form method="post" action="/projects/${project.id}/updates" en
 <script src="/public/provenance.js" defer></script>
 <script src="/public/resize.js" defer></script>` : ""}
 <div id="timeline" data-live-topic="project:${project.id}" data-live-target="#timeline" data-live-mode="prepend">
-${rows.map((r) => updateCard(r, photosOf(r.id), isHidden("update", r.id)))}
+${rows.map((r) => {
+  const card = updateCard(r, photosOf(r.id), isHidden("update", r.id), r.author_id !== me?.id);
+  return blocked.has(r.author_id) ? collapsed(card) : card;
+})}
 </div>
 ${rows.length ? "" : html`<p class="muted">No updates yet.</p>`}
 </section>`;

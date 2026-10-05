@@ -7,6 +7,7 @@ import { categoryChip, categoryOf, categorySelect, CATEGORY_BY_SLUG } from "../c
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
 import { canLead } from "../lobbies.ts";
+import { reportLink } from "../reports.ts";
 import { isAdmin, isHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { leaderSection } from "./lobbies.ts";
 import { questionsSection } from "./board.ts";
@@ -120,7 +121,7 @@ projects.get("/projects/:id", (c) => {
 <h1>${p.title}</h1>
 ${hidden ? UNDER_REVIEW : ""}
 <p class="badges">${statusBadge(p.status)} ${p.recruiting ? html`<span class="badge recruiting">Recruiting</span>` : html`<span class="badge muted-badge">Not recruiting</span>`} ${categoryChip(p.category)}
-${canLead(p, me?.id) ? html` <a href="/projects/${p.id}/edit">Edit</a>` : ""}</p>
+${canLead(p, me?.id) ? html` <a href="/projects/${p.id}/edit">Edit</a>` : ""}${me?.id !== p.owner_id ? html` ${reportLink("project", p.id)}` : ""}</p>
 <p class="muted">${place ? html`${place.locality}, ${place.state} ${place.postcode} · ` : ""}${p.leader_pending ? html`electing a leader` : html`${p.formed_from_lobby ? "led" : "by"} <a href="/u/${owner.handle}">${owner.display_name || owner.handle}</a>`} · created ${day(p.created_at)} · updated ${day(p.updated_at)}</p>
 <p class="lead">${p.summary}</p>
 ${p.body ? html`<div class="body-text">${p.body}</div>` : ""}

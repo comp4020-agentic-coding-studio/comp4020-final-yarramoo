@@ -6,22 +6,39 @@ import { lookupPostcode } from "../geo.ts";
 import { awardsFor } from "../awards.ts";
 import { isHidden, notHidden, PLEDGE_ERR, readProvenance, renderBody, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
+import { profileSafety } from "./safety.ts";
 
 export const accounts = new Hono();
 
 const HANDLE = /^[a-z0-9_-]{3,24}$/;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
+const sydneyToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(new Date());
+
+/** "adult" | "minor" | "invalid" for a YYYY-MM-DD date of birth, judged on today's date in Sydney. */
+export function ageCheck(dob: string, today = sydneyToday()): "adult" | "minor" | "invalid" {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob);
+  if (!m) return "invalid";
+  const d = new Date(`${dob}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== dob) return "invalid";
+  const y = Number(today.slice(0, 4));
+  if (dob > today || dob < `${y - 120}${today.slice(4)}`) return "invalid";
+  return dob <= `${y - 18}${today.slice(4)}` ? "adult" : "minor";
+}
+
 const field = (label: string, input: Html) => html`<label>${label}${input}</label>`;
 
-function signupForm(c: Parameters<typeof csrfField>[0], v: { handle?: string; postcode?: string } = {}, error?: string): Html {
+function signupForm(c: Parameters<typeof csrfField>[0], v: { handle?: string; postcode?: string } = {}, error?: string | Html): Html {
   return html`<h1>Sign up</h1>
 ${error ? html`<p class="error">${error}</p>` : ""}
 <form method="post" action="/signup" class="stack">
   ${csrfField(c)}
   ${field("Handle (3–24 chars: a-z, 0-9, _ or -)", html`<input name="handle" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_\\-]+" autocomplete="username" value="${v.handle ?? ""}">`)}
   ${field("Password (8+ characters)", html`<input name="password" type="password" required minlength="8" autocomplete="new-password">`)}
+  ${field("Date of birth (accounts are 18+; we check it and don't keep it)", html`<input name="dob" type="date" required autocomplete="bday">`)}
+  <label class="check"><input type="checkbox" name="safety_ok" value="1" required> I've read the <a href="/safety" target="_blank">safety page</a>.</label>
   ${field("Postcode (optional, AU)", html`<input name="postcode" inputmode="numeric" maxlength="4" value="${v.postcode ?? ""}">`)}
+  <p class="muted help">Meeting people to build things is mostly great. <a href="/safety">Read how to stay safe</a>.</p>
   <button type="submit">Create account</button>
 </form>
 <p>Already have an account? <a href="/login">Log in</a>.</p>`;
@@ -34,15 +51,19 @@ accounts.post("/signup", async (c) => {
   const handle = str(b.handle).trim().toLowerCase();
   const pw = str(b.password);
   const postcode = str(b.postcode).trim();
-  const fail = (msg: string, status: 400 | 409 = 400) =>
+  const fail = (msg: string | Html, status: 400 | 409 = 400) =>
     page(c, { title: "Sign up", body: signupForm(c, { handle, postcode }, msg), status });
   if (!HANDLE.test(handle)) return fail("Handle must be 3–24 characters: letters, digits, _ or -.");
   if (pw.length < 8) return fail("Password must be at least 8 characters.");
+  const age = ageCheck(str(b.dob).trim());
+  if (age === "invalid") return fail("Please enter your date of birth as a real date.");
+  if (age === "minor") return fail(html`Sorry, accounts are for people aged 18 and over. Young people are welcome at meetups with a parent or guardian: see <a href="/safety#young-people">our safety page</a>.`);
+  if (!str(b.safety_ok)) return fail("Please tick the box to say you've read the safety page.");
   if (postcode && !lookupPostcode(postcode)) return fail("Unknown postcode.");
   if (db.prepare("SELECT 1 FROM users WHERE handle = ?").get(handle)) return fail("That handle is taken.", 409);
   let id: number;
   try {
-    id = Number(db.prepare("INSERT INTO users (handle, pw_hash, display_name, postcode) VALUES (?,?,?,?)").run(handle, hashPassword(pw), handle, postcode || null).lastInsertRowid);
+    id = Number(db.prepare("INSERT INTO users (handle, pw_hash, display_name, postcode, adult_confirmed_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)").run(handle, hashPassword(pw), handle, postcode || null).lastInsertRowid);
   } catch {
     return fail("That handle is taken.", 409);
   }
@@ -152,7 +173,8 @@ accounts.get("/u/:handle", (c) => {
   const place = u.postcode ? lookupPostcode(u.postcode) : null;
   const skills = skillsOf(u.id);
   const hidden = isHidden("profile", u.id);
-  const mine = currentUser(c)?.id === u.id;
+  const me = currentUser(c);
+  const mine = me?.id === u.id;
   const awards = awardsFor(u.id);
   const answers = db.prepare(
     `SELECT a.id, a.question_id, q.title FROM answers a JOIN questions q ON q.id = a.question_id
@@ -170,6 +192,7 @@ accounts.get("/u/:handle", (c) => {
     body: html`<h1>${u.display_name || u.handle}</h1>
 <p class="muted">@${u.handle}${place ? html` · ${place.locality}, ${place.state} ${place.postcode}` : ""}</p>
 ${hidden && mine ? UNDER_REVIEW : ""}
+${me && !mine ? profileSafety(c, me.id, u) : mine ? "" : html`<p class="safety-actions"><a class="report-link" href="/report?type=profile&amp;id=${u.id}" rel="nofollow">Report</a></p>`}
 ${about ? html`<section id="user-about">
 ${u.background ? html`<h2>Studies and work</h2>${renderBody(u.background)}` : ""}
 ${u.interests ? html`<h2>Interests</h2>${renderBody(u.interests)}` : ""}

@@ -16,6 +16,7 @@ import { projects } from "./routes/projects.ts";
 import { regions } from "./routes/regions.ts";
 import { requests } from "./routes/requests.ts";
 import { resources } from "./routes/resources.ts";
+import { safety } from "./routes/safety.ts";
 import { readme } from "./routes/readme.ts";
 import { updates, updatesBodyLimit } from "./routes/updates.ts";
 import { style } from "./routes/style.ts"; // TEMPORARY theme switcher
@@ -35,6 +36,7 @@ app.use("*", csrfGuard);
 app.route("/", busRoutes);
 app.route("/", accounts);
 app.route("/", readme);
+app.route("/", safety);
 app.route("/", projects);
 app.route("/", browse);
 app.route("/", regions);

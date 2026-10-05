@@ -4,7 +4,9 @@ import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { blockedIds, collapsed } from "../blocks.ts";
 import { notify, short } from "../notify.ts";
+import { reportLink } from "../reports.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, provenanceLabel, readProvenance, renderBody, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
@@ -164,7 +166,7 @@ ${o.viewer === o.qAuthor ? html`<form method="post" action="/questions/${a.quest
   <p class="muted q-meta">${o.accepted ? html`<span class="badge status-done">Accepted</span> ` : ""}${who(a)} · ${day(a.created_at)}</p>
   ${o.review ? UNDER_REVIEW : ""}
   ${renderBody(a.body)}
-  <p class="answer-actions">${actions}</p>
+  <p class="answer-actions">${actions}${o.c && o.viewer !== a.author_id ? html` ${reportLink("answer", a.id)}` : ""}</p>
 </article>`;
 }
 
@@ -180,6 +182,7 @@ function questionPage(c: Context, q: Q, o: { answerBody?: string; error?: string
   const skills = skillsOf(q.id);
   const project = q.project_id ? (db.prepare("SELECT id, title FROM projects WHERE id = ?").get(q.project_id) as { id: number; title: string } | undefined) : undefined;
   const admin = isAdmin(me);
+  const blocked = blockedIds(me?.id);
   const answers = (db.prepare(`${A_SQL} WHERE a.question_id = ? ORDER BY (a.id = ?) DESC, n_helped DESC, a.id ASC`).all(q.id, q.accepted_answer_id ?? -1) as A[])
     .filter((a) => !isHidden("answer", a.id) || admin || a.author_id === me?.id);
   const helpedSet = new Set(me ? (db.prepare("SELECT h.answer_id FROM helped h JOIN answers a ON a.id = h.answer_id WHERE a.question_id = ? AND h.user_id = ?").all(q.id, me.id) as { answer_id: number }[]).map((r) => r.answer_id) : []);
@@ -188,7 +191,7 @@ function questionPage(c: Context, q: Q, o: { answerBody?: string; error?: string
     status: o.status,
     body: html`<article class="question" data-provenance="${provenanceLabel("question", q.id)}">
 <h1>${q.title}</h1>
-<p class="muted q-meta">asked by ${who(q)} · ${day(q.created_at)}</p>
+<p class="muted q-meta">asked by ${who(q)} · ${day(q.created_at)}${me?.id !== q.author_id ? html` · ${reportLink("question", q.id)}` : ""}</p>
 ${isHidden("question", q.id) ? UNDER_REVIEW : ""}
 ${project ? html`<p>About the project <a href="/projects/${project.id}">${project.title}</a></p>` : ""}
 ${skills.length ? html`<ul class="tags">${skills.map((s) => html`<li><a href="/questions?skill=${encodeURIComponent(s)}">${s}</a></li>`)}</ul>` : ""}
@@ -196,7 +199,8 @@ ${renderBody(q.body)}
 </article>
 <h2>${answers.length} ${answers.length === 1 ? "answer" : "answers"}</h2>
 <div id="answers" data-live-topic="question:${q.id}" data-live-target="#answers" data-live-mode="append">${answers.map((a) =>
-      answerCard(a, { c, viewer: me?.id ?? null, qAuthor: q.author_id, accepted: q.accepted_answer_id === a.id, review: isHidden("answer", a.id), helpedByMe: helpedSet.has(a.id) }))}</div>
+      { const card = answerCard(a, { c, viewer: me?.id ?? null, qAuthor: q.author_id, accepted: q.accepted_answer_id === a.id, review: isHidden("answer", a.id), helpedByMe: helpedSet.has(a.id) });
+        return blocked.has(a.author_id) ? collapsed(card) : card; })}</div>
 <h2>Your answer</h2>
 ${me ? html`${o.error ? html`<p class="error" role="alert">${o.error}</p>` : ""}
 <form method="post" action="/questions/${q.id}/answers" class="stack wide">

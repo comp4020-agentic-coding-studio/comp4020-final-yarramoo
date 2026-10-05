@@ -1,12 +1,14 @@
 import { html } from "hono/html";
 import { publish } from "./bus.ts";
+import { isBlockedEither } from "./blocks.ts";
 import { db } from "./db/index.ts";
 
 // Personal, persistent notifications (the counterpart of the public, fleeting activity toasts).
 // Kinds beyond the first five are reserved for the lobbies slice, which will call notify() itself.
 export type NotifyKind =
   | "request-received" | "request-decided" | "answer-received" | "answer-accepted" | "project-update"
-  | "team-formed" | "leader-vote" | "leader-elected"; // reserved: lobbies
+  | "team-formed" | "leader-vote" | "leader-elected" // reserved: lobbies
+  | "report-received";
 
 export type NotificationRow = { id: number; kind: string; text: string; href: string; created_at: string; read_at: string | null };
 
@@ -29,6 +31,7 @@ export function notificationItem(n: NotificationRow) {
 export function notify(userId: number, kind: NotifyKind, o: { text: string; href: string; actorId?: number }): void {
   try {
     if (o.actorId === userId) return;
+    if (o.actorId != null && isBlockedEither(userId, o.actorId)) return; // blocks are silent in both directions
     if (!/^\/(?![/\\])[^\s\\]*$/.test(o.href)) return;
     const text = short(o.text, 140);
     const id = Number(db.prepare("INSERT INTO notifications (user_id, kind, text, href, actor_id) VALUES (?,?,?,?,?)").run(userId, kind, text, o.href, o.actorId ?? null).lastInsertRowid);

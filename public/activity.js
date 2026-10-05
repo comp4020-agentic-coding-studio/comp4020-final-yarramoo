@@ -8,6 +8,7 @@
   const list = region.querySelector(".activity-list");
   const pauseBtn = region.querySelector(".activity-pause");
   const me = document.body.dataset.userId || "";
+  const blocked = (document.body.dataset.blockedIds || "").split(",").filter(Boolean);
   const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const MAX_SHOWN = 3, MAX_QUEUE = 5, GAP_MS = 3000, LIFE_MS = 6000;
   let paused = false, last = 0, timer = 0;
@@ -61,6 +62,7 @@
     if (!p || p.type !== "activity" || !p.data || !p.html || !KINDS.includes(p.data.kind)) return;
     if (paused) return;
     if (me && String(p.data.actor) === me) return; // your own actions don't toast you
+    if (p.data.actor != null && blocked.includes(String(p.data.actor))) return; // you blocked this member
     if (queue.length >= MAX_QUEUE) return;
     queue.push(p);
     if (!timer) pump();

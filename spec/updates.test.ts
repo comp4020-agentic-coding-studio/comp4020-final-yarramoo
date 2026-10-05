@@ -42,7 +42,7 @@ function client() {
 const pw = "correct horse battery";
 async function signedUp(name: string) {
   const c = client();
-  expect((await c.post("/signup", { handle: `${name}_${run}`, password: pw })).status).toBe(302);
+  expect((await c.post("/signup", { handle: `${name}_${run}`, password: pw, dob: "1990-01-01", safety_ok: "1" })).status).toBe(302);
   return c;
 }
 

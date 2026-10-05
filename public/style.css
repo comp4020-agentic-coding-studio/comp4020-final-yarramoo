@@ -196,3 +196,10 @@ html[data-theme=blend] .activity-toast { border-radius:12px; }
 .votes .vote-count { color:var(--muted); min-width:5rem; }
 @media (prefers-reduced-motion: reduce) { .lobby-bar > span { transition:none; } }
 /* --- end lobbies --- */
+
+/* safety */
+footer.site { max-width:60rem; margin:2rem auto 1rem; padding:1rem; border-top:1px solid currentColor; font-size:.85rem; display:flex; gap:1rem; opacity:.8; }
+a.report-link, button.report-link { font-size:.8rem; color:var(--muted); text-decoration:underline; }
+.safety-actions { display:flex; gap:1rem; align-items:center; }
+details.blocked-hidden { margin:.5rem 0; color:var(--muted); font-size:.9rem; }
+details.blocked-hidden summary { cursor:pointer; }

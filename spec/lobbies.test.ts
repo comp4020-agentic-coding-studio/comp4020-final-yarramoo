@@ -39,7 +39,7 @@ const pw = "correct horse battery";
 async function signedUp(name: string, postcode = "2601"): Promise<{ c: C; id: string; handle: string }> {
   const c = client();
   const handle = `${name}_${run}`;
-  expect((await c.post("/signup", { handle, password: pw, postcode }, "/signup")).status).toBe(302);
+  expect((await c.post("/signup", { handle, password: pw, dob: "1990-01-01", safety_ok: "1", postcode }, "/signup")).status).toBe(302);
   const id = (await (await c.req("/me/requests")).text()).match(/data-user-id="(\d+)"/)![1];
   return { c, id, handle };
 }
