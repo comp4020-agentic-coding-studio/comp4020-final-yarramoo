@@ -3,6 +3,7 @@ import { html } from "hono/html";
 import { currentUser } from "../auth.ts";
 import { db } from "../db/index.ts";
 import { bbox, haversineKm, lookupPostcode } from "../geo.ts";
+import { notHidden } from "../provenance.ts";
 import { page } from "../views/layout.ts";
 import { statusBadge } from "./projects.ts";
 
@@ -25,7 +26,7 @@ browse.get("/", (c) => {
   const km = KMS.includes(q.km ?? "") ? q.km! : "25";
   const limitKm = origin && km !== "any" ? Number(km) : null;
 
-  const where: string[] = [];
+  const where: string[] = [notHidden("project", "p.id")];
   const args: (string | number)[] = [];
   if (status === "") where.push("p.status IN ('open','in_progress')");
   else if (status !== "any") { where.push("p.status = ?"); args.push(status); }

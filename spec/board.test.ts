@@ -138,23 +138,9 @@ it("only the author accepts; the accepted answer sorts first", async () => {
   expect(await (await B.req("/questions?skill=soldering")).text()).toContain("Accepted");
 });
 
-const longProse = "word ".repeat(200); // 1000 chars
-
-it("an answer that is mostly pasted prose is labelled, without naming any machine", async () => {
-  const res = await answer(B, longProse, { prov_typed: "10", prov_pasted_prose: "900" });
-  expect(res.status).toBe(302);
-  const id = res.headers.get("location")!.split("#answer-")[1];
-  const text = await (await A.req(`/questions/${qid}`)).text();
-  expect(text).toContain("contains pasted text");
-  expect(text).not.toContain("potentially");
-  expect(text).not.toContain("AI-generated");
-  const json = await (await A.req("/provenance.json")).json() as { items: { type: string; id: number; label: string }[] };
-  expect(json.items.find((i) => i.type === "answer" && i.id === Number(id))?.label).toBe("pasted");
-});
-
-it("pasted text inside ``` fences is not flagged", async () => {
+it("pasted text inside ``` fences does not count as pasted prose", async () => {
   const body = `Here is my log, which I pasted.\n\n\`\`\`\n${"E".repeat(900)}\n\`\`\`\n`;
-  const res = await answer(B, body, { prov_typed: "30", prov_pasted_prose: "900" });
+  const res = await answer(B, body, { prov_typed: "30", prov_pasted_prose: "0", prov_active_ms: "60000", prov_deletions: "5" });
   expect(res.status).toBe(302);
   const id = res.headers.get("location")!.split("#answer-")[1];
   const json = await (await A.req("/provenance.json")).json() as { items: { type: string; id: number; label: string }[] };
@@ -166,22 +152,6 @@ it("without the script's fields the label is unknown", async () => {
   const id = res.headers.get("location")!.split("#answer-")[1];
   const json = await (await A.req("/provenance.json")).json() as { items: { type: string; id: number; label: string }[] };
   expect(json.items.find((i) => i.type === "answer" && i.id === Number(id))?.label).toBe("unknown");
-});
-
-it("three distinct flags flip the label to pasted", async () => {
-  const res = await answer(B, "A perfectly ordinary typed answer about flux.", { prov_typed: "44", prov_pasted_prose: "0" });
-  const id = res.headers.get("location")!.split("#answer-")[1];
-  const label = async () => {
-    const json = await (await A.req("/provenance.json")).json() as { items: { type: string; id: number; label: string }[] };
-    return json.items.find((i) => i.type === "answer" && i.id === Number(id))?.label;
-  };
-  expect(await label()).toBe("typed");
-  const flaggers = [A, await signedUp("boardC"), await signedUp("boardD")];
-  for (const f of flaggers) {
-    expect((await f.post("/flags", { target_type: "answer", target_id: id }, `/questions/${qid}`)).status).toBe(302);
-  }
-  expect(await (await flaggers[0].req(`/questions/${qid}`)).text()).toContain("Flagged — thanks");
-  expect(await label()).toBe("pasted");
 });
 
 it("robots.txt is plain text", async () => {

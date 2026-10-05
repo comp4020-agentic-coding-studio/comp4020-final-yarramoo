@@ -28,10 +28,11 @@ function client() {
     body.set("_csrf", await csrf(formPage));
     return req(path, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded" } });
   }
-  async function upload(path: string, text: string, files: { name: string; type: string; data: Uint8Array }[], formPage: string) {
+  async function upload(path: string, text: string, files: { name: string; type: string; data: Uint8Array }[], formPage: string, pledge = true) {
     const fd = new FormData();
     fd.set("_csrf", await csrf(formPage));
     fd.set("body", text);
+    if (pledge) fd.set("pledge", "1");
     for (const f of files) fd.append("photos", new File([f.data as BlobPart], f.name, { type: f.type }));
     return req(path, { method: "POST", body: fd });
   }
@@ -62,7 +63,7 @@ const text = `Welded the frame ${run}`;
 it("sets up an owner and a non-member", async () => {
   owner = await signedUp("upown");
   other = await signedUp("upother");
-  const res = await owner.post("/projects/new", { title, summary: "s", body: "", skills: "", postcode: "2601" });
+  const res = await owner.post("/projects/new", { title, summary: "s", body: "", skills: "", postcode: "2601", pledge: "1" });
   expect(res.status).toBe(302);
   pid = res.headers.get("location")!.split("/")[2];
   page = `/projects/${pid}`;

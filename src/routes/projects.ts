@@ -4,6 +4,7 @@ import { currentUser, requireUser } from "../auth.ts";
 import { publish } from "../bus.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
+import { isAdmin, isHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { questionsSection } from "./board.ts";
 import { joinSection, teamList } from "./requests.ts";
 import { updatesSection } from "./updates.ts";
@@ -31,14 +32,16 @@ ${error ? html`<p class="error">${error}</p>` : ""}
 <form method="post" action="${action}" class="stack wide">
   ${csrfField(c)}
   <label>Title<input name="title" required maxlength="100" value="${v.title}"></label>
-  <label>Summary (one or two lines)<textarea name="summary" required rows="2" maxlength="280">${v.summary}</textarea></label>
-  <label>Details<textarea name="body" rows="10" maxlength="10000">${v.body}</textarea></label>
+  <label>Summary (one or two lines)<textarea name="summary" required rows="2" maxlength="280" data-provenance>${v.summary}</textarea></label>
+  <label>Details<textarea name="body" rows="10" maxlength="10000" data-provenance>${v.body}</textarea></label>
   <label>Skills needed (comma-separated)<input name="skills" maxlength="300" value="${v.skills}" placeholder="welding, arduino"></label>
   <label>Postcode (AU)<input name="postcode" required inputmode="numeric" maxlength="4" value="${v.postcode}"></label>
   ${edit ? html`<label>Status<select name="status">${STATUSES.map((s) => html`<option value="${s}" ${v.status === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`)}</select></label>
   <label class="check"><input type="checkbox" name="recruiting" value="1" ${v.recruiting ? "checked" : ""}> Recruiting for more collaborators</label>` : ""}
+  ${pledgeField}
   <button type="submit">${edit ? "Save changes" : "Create project"}</button>
-</form>`;
+</form>
+<script src="/public/provenance.js" defer></script>`;
 }
 
 /** Validate shared fields; returns error string or cleaned values. */
@@ -67,12 +70,18 @@ projects.post("/projects/new", requireUser, async (c) => {
     const raw: Values = { title: str(b.title), summary: str(b.summary), body: str(b.body), skills: str(b.skills), postcode: str(b.postcode) };
     return page(c, { title: "New project", body: form(c, "/projects/new", raw, false, r.error), status: 400 });
   }
+  if (!str(b.pledge)) {
+    const raw: Values = { title: str(b.title), summary: str(b.summary), body: str(b.body), skills: str(b.skills), postcode: str(b.postcode) };
+    return page(c, { title: "New project", body: form(c, "/projects/new", raw, false, PLEDGE_ERR), status: 400 });
+  }
   const v = r.v;
+  const prov = readProvenance(b, `${v.summary}\n${v.body}`);
   const id = tx(() => {
     const pid = Number(db.prepare("INSERT INTO projects (owner_id, title, summary, body, postcode) VALUES (?,?,?,?,?)").run(u.id, v.title, v.summary, v.body, v.postcode).lastInsertRowid);
     db.prepare("INSERT INTO members (project_id, user_id, role) VALUES (?,?,'owner')").run(pid, u.id);
     const ins = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?,?)");
     for (const sid of skillIds(v.skills)) ins.run(pid, sid);
+    saveProvenance("project", pid, prov);
     return pid;
   });
   publish("feed", { type: "project", data: { id } });
@@ -90,6 +99,8 @@ projects.get("/projects/:id", (c) => {
   const p = load(c.req.param("id"));
   if (!p) return notFound(c);
   const me = currentUser(c);
+  const hidden = isHidden("project", p.id);
+  if (hidden && (!me || (me.id !== p.owner_id && !isAdmin(me)))) return notFound(c);
   const owner = db.prepare("SELECT handle, display_name FROM users WHERE id = ?").get(p.owner_id) as { handle: string; display_name: string | null };
   const place = p.postcode ? lookupPostcode(p.postcode) : null;
   const skills = db.prepare(
@@ -99,6 +110,7 @@ projects.get("/projects/:id", (c) => {
     title: p.title,
     body: html`<article class="project">
 <h1>${p.title}</h1>
+${hidden ? UNDER_REVIEW : ""}
 <p class="badges">${statusBadge(p.status)} ${p.recruiting ? html`<span class="badge recruiting">Recruiting</span>` : html`<span class="badge muted-badge">Not recruiting</span>`}
 ${me && me.id === p.owner_id ? html` <a href="/projects/${p.id}/edit">Edit</a>` : ""}</p>
 <p class="muted">${place ? html`${place.locality}, ${place.state} ${place.postcode} · ` : ""}by <a href="/u/${owner.handle}">${owner.display_name || owner.handle}</a> · created ${day(p.created_at)} · updated ${day(p.updated_at)}</p>
@@ -144,11 +156,14 @@ projects.post("/projects/:id/edit", requireUser, async (c) => {
   if (status !== p.status && !NEXT[p.status]!.includes(status)) {
     return editPage(c, p, raw, `Cannot move a project from ${STATUS_LABEL[p.status]} to ${STATUS_LABEL[status]}.`, 400);
   }
+  if (!str(b.pledge)) return editPage(c, p, raw, PLEDGE_ERR, 400);
   const v = r.v;
+  const prov = readProvenance(b, `${v.summary}\n${v.body}`);
   let kept: string[] = [];
   tx(() => {
     db.prepare("UPDATE projects SET title=?, summary=?, body=?, postcode=?, status=?, recruiting=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(v.title, v.summary, v.body, v.postcode, status, recruiting ? 1 : 0, p.id);
+    saveProvenance("project", p.id, prov);
     const want = new Set(skillIds(v.skills));
     const have = db.prepare("SELECT ps.skill_id, ps.filled_by, s.name FROM project_skills ps JOIN skills s ON s.id = ps.skill_id WHERE ps.project_id = ?")
       .all(p.id) as { skill_id: number; filled_by: number | null; name: string }[];

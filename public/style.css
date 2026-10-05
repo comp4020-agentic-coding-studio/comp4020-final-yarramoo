@@ -84,5 +84,6 @@ article.answer.accepted { border-color:var(--accent); box-shadow:inset 4px 0 0 v
 .answer-actions { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; margin:.5rem 0 0; font-size:.95rem; }
 button.ghost { background:none; color:var(--accent); border:1px solid var(--accent); padding:.25rem .75rem; }
 button.on { background:var(--accent); color:#fff; border:1px solid var(--accent); padding:.25rem .75rem; }
-.badge.prov-pasted { background:var(--card); border:1px solid var(--line); color:var(--muted); }
-.prov-note { margin:.25rem 0 0; padding:.5rem .75rem; border-left:3px solid var(--accent); background:var(--card); font-size:.9rem; font-weight:400; }
+.review-note { font-style:italic; }
+table.signals { border-collapse:collapse; width:100%; font-size:.9rem; }
+table.signals th, table.signals td { border-bottom:1px solid var(--line); padding:.3rem .5rem; text-align:left; vertical-align:top; }

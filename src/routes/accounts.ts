@@ -3,6 +3,7 @@ import { html } from "hono/html";
 import { currentUser, endSession, hashPassword, requireUser, safeNext, startSession, verifyPassword } from "../auth.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
+import { notHidden } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
 
 export const accounts = new Hono();
@@ -135,7 +136,7 @@ accounts.get("/u/:handle", (c) => {
   const place = u.postcode ? lookupPostcode(u.postcode) : null;
   const skills = skillsOf(u.id);
   const theirProjects = db.prepare(
-    "SELECT p.id, p.title, p.status, m.role FROM members m JOIN projects p ON p.id = m.project_id WHERE m.user_id = ? ORDER BY p.updated_at DESC",
+    `SELECT p.id, p.title, p.status, m.role FROM members m JOIN projects p ON p.id = m.project_id WHERE m.user_id = ? AND ${notHidden("project", "p.id")} ORDER BY p.updated_at DESC`,
   ).all(u.id) as { id: number; title: string; status: string; role: string }[];
   const plist = (role: string) => theirProjects.filter((p) => (p.role === "owner") === (role === "owner"));
   const section = (label: string, rows: typeof theirProjects) =>

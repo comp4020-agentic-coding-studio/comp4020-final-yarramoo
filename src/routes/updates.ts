@@ -7,6 +7,7 @@ import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
 import { publish } from "../bus.ts";
 import { db, tx } from "../db/index.ts";
+import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
 
 export const updates = new Hono();
@@ -69,7 +70,7 @@ export function sniffImage(b: Uint8Array): Img | null {
   return null;
 }
 
-export type UpdateRow = { id: number; project_id: number; body: string; created_at: string; handle: string; display_name: string | null; project_title: string };
+export type UpdateRow = { id: number; project_id: number; author_id: number; body: string; created_at: string; handle: string; display_name: string | null; project_title: string };
 export type PhotoRow = { path: string; width: number | null; height: number | null };
 
 const when = (s: string) => html`<time datetime="${s.replace(" ", "T")}Z">${s.slice(0, 16)} UTC</time>`;
@@ -78,9 +79,10 @@ const imgs = (row: UpdateRow, photos: PhotoRow[]) =>
   photos.map((p) => html`<img src="/uploads/${p.path}" ${p.width && p.height ? html`width="${p.width}" height="${p.height}"` : ""} loading="lazy" alt="Progress photo for ${row.project_title}">`);
 
 /** One timeline entry (project page). */
-export function updateCard(row: UpdateRow, photos: PhotoRow[]): Html {
+export function updateCard(row: UpdateRow, photos: PhotoRow[], review = false): Html {
   return html`<article class="update-card" id="update-${row.id}">
 <p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a> · ${when(row.created_at)}</p>
+${review ? UNDER_REVIEW : ""}
 ${row.body ? html`<div class="body-text">${row.body}</div>` : ""}
 ${photos.length ? html`<div class="photo-grid n${Math.min(photos.length, 4)}">${imgs(row, photos)}</div>` : ""}
 </article>`;
@@ -98,7 +100,7 @@ ${row.body ? html`<p class="feed-body">${row.body.length > 240 ? row.body.slice(
 </article>`;
 }
 
-const ROW_SQL = `SELECT up.id, up.project_id, up.body, up.created_at, u.handle, u.display_name, p.title AS project_title
+const ROW_SQL = `SELECT up.id, up.project_id, up.author_id, up.body, up.created_at, u.handle, u.display_name, p.title AS project_title
   FROM updates up JOIN users u ON u.id = up.author_id JOIN projects p ON p.id = up.project_id`;
 const photosOf = (id: number) =>
   db.prepare("SELECT path, width, height FROM photos WHERE update_id = ? ORDER BY id").all(id) as PhotoRow[];
@@ -110,20 +112,24 @@ function isTeam(projectId: number, userId: number): boolean {
 /** HTML for the project page's progress-updates section (the <section id="updates"> element itself). */
 export function updatesSection(c: Context, project: { id: number }): Html {
   const me = currentUser(c);
-  const rows = db.prepare(`${ROW_SQL} WHERE up.project_id = ? ORDER BY up.id DESC LIMIT 100`).all(project.id) as UpdateRow[];
+  const admin = isAdmin(me);
+  const rows = (db.prepare(`${ROW_SQL} WHERE up.project_id = ? ORDER BY up.id DESC LIMIT 100`).all(project.id) as UpdateRow[])
+    .filter((r) => !isHidden("update", r.id) || admin || r.author_id === me?.id);
   const canPost = !!me && isTeam(project.id, me.id);
   return html`<section id="updates">
 <h2>Progress updates</h2>
 ${canPost ? html`<form method="post" action="/projects/${project.id}/updates" enctype="multipart/form-data" class="stack wide update-form" id="update-form">
   ${csrfField(c)}
-  <label>What's new?<textarea name="body" required rows="3" maxlength="${MAX_BODY}"></textarea></label>
+  <label>What's new?<textarea name="body" required rows="3" maxlength="${MAX_BODY}" data-provenance></textarea></label>
   <label>Photos (up to ${MAX_FILES}, 2 MB each)<input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
   <div class="preview-strip" id="preview-strip" aria-live="polite"></div>
+  ${pledgeField}
   <button type="submit">Post update</button>
 </form>
+<script src="/public/provenance.js" defer></script>
 <script src="/public/resize.js" defer></script>` : ""}
 <div id="timeline" data-live-topic="project:${project.id}" data-live-target="#timeline" data-live-mode="prepend">
-${rows.map((r) => updateCard(r, photosOf(r.id)))}
+${rows.map((r) => updateCard(r, photosOf(r.id), isHidden("update", r.id)))}
 </div>
 ${rows.length ? "" : html`<p class="muted">No updates yet.</p>`}
 </section>`;
@@ -145,6 +151,8 @@ updates.post("/projects/:id/updates", requireUser, async (c) => {
   const body = String(form.get("body") ?? "").replace(/\r\n/g, "\n").trim();
   if (!body) return fail(c, "Please write something.", 400);
   if (body.length > MAX_BODY) return fail(c, `Updates are limited to ${MAX_BODY} characters.`, 400);
+  if (!form.get("pledge")) return fail(c, PLEDGE_ERR, 400);
+  const prov = readProvenance(Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === "string")), body);
   const files = form.getAll("photos").filter((f): f is File => typeof f !== "string" && f.size > 0);
   if (files.length > MAX_FILES) return fail(c, `At most ${MAX_FILES} photos per update.`, 400);
 
@@ -163,6 +171,7 @@ updates.post("/projects/:id/updates", requireUser, async (c) => {
     const id = Number(db.prepare("INSERT INTO updates (project_id, author_id, body) VALUES (?,?,?)").run(pid, me.id, body).lastInsertRowid);
     const ins = db.prepare("INSERT INTO photos (update_id, project_id, path, width, height) VALUES (?,?,?,?,?)");
     for (const s of saved) ins.run(id, pid, s.name, s.img.width, s.img.height);
+    saveProvenance("update", id, prov);
     db.prepare("UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(pid);
     return id;
   });
@@ -189,7 +198,7 @@ updates.get("/uploads/:file", (c) => {
 });
 
 updates.get("/updates", (c) => {
-  const rows = db.prepare(`${ROW_SQL} WHERE EXISTS (SELECT 1 FROM photos ph WHERE ph.update_id = up.id) ORDER BY up.id DESC LIMIT 30`).all() as UpdateRow[];
+  const rows = db.prepare(`${ROW_SQL} WHERE EXISTS (SELECT 1 FROM photos ph WHERE ph.update_id = up.id) AND ${notHidden("update", "up.id")} AND ${notHidden("project", "up.project_id")} ORDER BY up.id DESC LIMIT 30`).all() as UpdateRow[];
   return page(c, {
     title: "Inspiration",
     body: html`<h1>Inspiration</h1>
