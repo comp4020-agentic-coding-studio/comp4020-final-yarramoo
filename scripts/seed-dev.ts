@@ -100,6 +100,18 @@ function client() {
   return { req, post, upload };
 }
 
+/** Throw (with the response body) unless the response is a redirect, optionally to a path matching `loc`. */
+async function expectRedirect(res: Response, what: string, loc?: RegExp) {
+  const location = res.headers.get("location") ?? "";
+  if (res.status !== 302 || (loc && !loc.test(location))) {
+    const body = (await res.text()).slice(0, 2000);
+    throw new Error(
+      `${what}: expected 302${loc ? ` to ${loc}` : ""}, got ${res.status} location=${location || "(none)"}\n${body}`
+    );
+  }
+  return location;
+}
+
 function makeProvenance(textLength: number) {
   return {
     prov_typed: String(Math.floor(textLength * 0.7)),
@@ -296,6 +308,10 @@ interface Project {
   id: number;
   ownerId: number;
   title: string;
+  summary: string;
+  body: string;
+  skills: string;
+  postcode: string;
   status: string;
   recruiting: boolean;
 }
@@ -346,15 +362,18 @@ async function main() {
 
     const textLength = background.length + interests.length;
     const prov = makeProvenance(textLength);
-    await user.client.post("/me", {
-      display_name: displayName,
-      background,
-      interests,
-      skills: userSkills,
-      postcode: postcodes[users.indexOf(user)]!,
-      pledge: "1",
-      ...prov,
-    });
+    await expectRedirect(
+      await user.client.post("/me", {
+        display_name: displayName,
+        background,
+        interests,
+        skills: userSkills,
+        postcode: postcodes[users.indexOf(user)]!,
+        pledge: "1",
+        ...prov,
+      }),
+      `profile ${user.handle}`
+    );
     console.log(`✓ Profile ${user.handle}`);
   }
 
@@ -443,11 +462,16 @@ async function main() {
       pledge: "1",
       ...prov,
     });
-    const pid = Number(res.headers.get("location")?.split("/")[2]);
+    const loc = await expectRedirect(res, `create project "${title}"`, /^\/projects\/\d+$/);
+    const pid = Number(loc.split("/")[2]);
     projects.push({
       id: pid,
       ownerId: users.indexOf(owner),
       title,
+      summary,
+      body,
+      skills: skillsNeeded,
+      postcode: projectPostcode,
       status: "open",
       recruiting: true,
     });
@@ -474,17 +498,32 @@ async function main() {
     const textLength = p.title.length;
     const prov = makeProvenance(textLength);
 
-    await owner.client.post(`/projects/${p.id}/edit`, {
-      title: p.title,
-      summary: "Updated",
-      body: "Status updated",
-      skills: "Arduino",
-      postcode: "2600",
-      status: update.status,
-      recruiting: update.recruiting ? "1" : "",
-      pledge: "1",
-      ...prov,
-    });
+    // The server only allows open -> in_progress -> done, so step through in_progress.
+    const steps = update.status === "done" ? ["in_progress", "done"] : [update.status];
+    for (const status of steps) {
+      if (status === p.status) continue;
+      const last = status === update.status;
+      await expectRedirect(
+        await owner.client.post(
+          `/projects/${p.id}/edit`,
+          {
+            title: p.title,
+            summary: p.summary,
+            body: p.body,
+            skills: p.skills,
+            postcode: p.postcode,
+            status,
+            recruiting: last && !update.recruiting ? "" : "1",
+            pledge: "1",
+            ...prov,
+          },
+          `/projects/${p.id}/edit`
+        ),
+        `edit project ${p.id} -> ${status}`,
+        new RegExp(`^/projects/${p.id}$`)
+      );
+      p.status = status;
+    }
     p.status = update.status;
     p.recruiting = update.recruiting;
     console.log(`✓ Updated project ${p.id} to ${update.status}`);
@@ -514,12 +553,14 @@ async function main() {
         "I have some spare time this month, can jump in.",
       ][i % 6] || "";
 
-    const res = await user.client.post(`/projects/${project.id}/requests`, {
-      skill_id: "",
-      message,
-    });
+    const res = await user.client.post(
+      `/projects/${project.id}/requests`,
+      { skill_id: "", message },
+      `/projects/${project.id}`
+    );
 
-    if (res.status === 302) {
+    await expectRedirect(res, `join request ${user.handle} -> ${project.id}`, new RegExp(`^/projects/${project.id}$`));
+    {
       joinRequests.push({
         projectId: project.id,
         userId: userIdx,
@@ -543,38 +584,34 @@ async function main() {
       `/projects/${project.id}/requests`
     );
     const requestsHtml = await requestsPage.text();
-    const idMatch = requestsHtml.match(
-      /id="request-(\d+)">[\s\S]*?@.*?<\/form>/g
-    );
+    // Pending rows are the ones that carry an accept form.
+    const pendingIds = requestsHtml
+      .split('<li class="request"')
+      .filter((chunk) => chunk.includes("/accept"))
+      .map((chunk) => chunk.match(/id="request-(\d+)"/)?.[1])
+      .filter((x): x is string => !!x);
 
-    if (idMatch && idMatch.length > 0) {
-      for (const match of idMatch) {
-        const rid = match.match(/id="request-(\d+)"/)![1];
-
-        if (acceptCount < 8) {
-          await owner.client.post(
-            `/projects/${project.id}/requests/${rid}/accept`,
-            {}
-          );
-          req.status = "accepted";
-          acceptCount++;
-          console.log(
-            `✓ Accepted request ${rid} for project ${project.id}`
-          );
-          break;
-        } else if (declineCount < 2) {
-          await owner.client.post(
-            `/projects/${project.id}/requests/${rid}/decline`,
-            {}
-          );
-          req.status = "declined";
-          declineCount++;
-          console.log(
-            `✓ Declined request ${rid} for project ${project.id}`
-          );
-          break;
-        }
+    for (const rid of pendingIds) {
+      const verb = acceptCount < 8 ? "accept" : declineCount < 2 ? "decline" : null;
+      if (!verb) break;
+      await expectRedirect(
+        await owner.client.post(
+          `/projects/${project.id}/requests/${rid}/${verb}`,
+          {},
+          `/projects/${project.id}/requests`
+        ),
+        `${verb} request ${rid} on project ${project.id}`,
+        new RegExp(`^/projects/${project.id}/requests$`)
+      );
+      if (verb === "accept") {
+        req.status = "accepted";
+        acceptCount++;
+      } else {
+        req.status = "declined";
+        declineCount++;
       }
+      console.log(`✓ ${verb}ed request ${rid} for project ${project.id}`);
+      break;
     }
 
     if (acceptCount >= 8 && declineCount >= 2) break;
@@ -658,15 +695,8 @@ async function main() {
     const updatePath = `/projects/${project.id}/updates`;
     const res = await owner.client.upload(updatePath, body, photos, `/projects/${project.id}`, true);
 
-    if (res.status === 302) {
-      console.log(
-        `✓ Update on project ${project.id} with ${photoCount} photo(s)`
-      );
-    } else {
-      console.error(
-        `Failed to create update on project ${project.id}: ${res.status}`
-      );
-    }
+    await expectRedirect(res, `progress update on project ${project.id}`);
+    console.log(`✓ Update on project ${project.id} with ${photoCount} photo(s)`);
   }
 
   // 8. Create Q&A (10 questions, ~22 answers)
@@ -716,7 +746,8 @@ async function main() {
       ...prov,
     });
 
-    if (res.status === 302) {
+    await expectRedirect(res, `question "${title}"`, /^\/questions\/\d+/);
+    {
       const qid = Number(res.headers.get("location")?.split("/")[2]);
       console.log(`✓ Question ${qid}: ${title}`);
 
@@ -751,7 +782,8 @@ async function main() {
           }
         );
 
-        if (answerRes.status === 302) {
+        await expectRedirect(answerRes, `answer on question ${qid}`);
+        {
           console.log(
             `  ✓ Answer by ${answerer.handle} on question ${qid}`
           );
