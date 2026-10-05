@@ -78,14 +78,14 @@ async function as(handle: string) {
   return c;
 }
 
-type P = { id: number; handle: string; owner_id: number; title: string; summary: string; body: string; postcode: string; status: string; recruiting: number };
+type P = { id: number; handle: string; owner_id: number; title: string; summary: string; body: string; postcode: string; category: string | null; status: string; recruiting: number };
 const project = (id: number) =>
-  q<P>(`SELECT p.id, u.handle, p.owner_id, p.title, p.summary, p.body, p.postcode, p.status, p.recruiting
+  q<P>(`SELECT p.id, u.handle, p.owner_id, p.title, p.summary, p.body, p.postcode, p.category, p.status, p.recruiting
         FROM projects p JOIN users u ON u.id = p.owner_id WHERE p.id = ?`, id)[0]!;
 const pending = (pid: number) =>
   q<{ id: number; user_id: number }>(`SELECT id, user_id FROM join_requests WHERE project_id = ? AND status = 'pending' ORDER BY id`, pid);
 
-async function edit(id: number, status: string, recruiting: boolean) {
+async function edit(id: number, status: string, recruiting: boolean, category = project(id).category ?? "other") {
   const p = project(id);
   const skills = q<{ name: string }>(
     `SELECT s.name FROM project_skills ps JOIN skills s ON s.id = ps.skill_id WHERE ps.project_id = ? ORDER BY s.name`, id,
@@ -93,12 +93,41 @@ async function edit(id: number, status: string, recruiting: boolean) {
   const text = p.summary.length + p.body.length;
   const c = await as(p.handle);
   await c.post(`/projects/${id}/edit`, {
-    title: p.title, summary: p.summary, body: p.body, skills, postcode: p.postcode,
+    title: p.title, summary: p.summary, body: p.body, skills, postcode: p.postcode, category,
     status, recruiting: recruiting ? "1" : "", pledge: "1",
     prov_typed: String(Math.floor(text * 0.7)), prov_pasted_prose: "0", prov_active_ms: String(text * 250),
     prov_paste_events: "0", prov_deletions: String(Math.floor(text * 0.05)),
   }, `/projects/${id}/edit`, new RegExp(`^/projects/${id}$`), `edit project ${id} -> ${status}`);
   console.log(`project ${id} -> ${status}, recruiting=${recruiting}`);
+}
+
+/** Sensible category for a seeded project, from its title. */
+function categoryFor(title: string): string {
+  const rules: [RegExp, string][] = [
+    [/ham radio|radio restoration|vintage radio/i, "radio"], [/home automation/i, "home-automation"],
+    [/greenhouse|garden|watering/i, "garden-tech"], [/bike|bicycle/i, "bikes"], [/3d print/i, "3d-printing"],
+    [/rocket/i, "rocketry"], [/robot/i, "robotics"], [/workbench|wood|timber/i, "woodwork"],
+    [/weld|drill press|cnc|metal|lathe|steel/i, "metalwork"], [/arduino|lora|pcb|amp\b|laser|solder|circuit|electronic/i, "electronics"],
+  ];
+  return rules.find(([re]) => re.test(title))?.[1] ?? "other";
+}
+
+const ROCKET_PROJECTS = [
+  { handle: "sparky_jo", postcode: "2601", title: "Model rocket altimeter payload", skills: "arduino, soldering", summary: "Fly a small barometric altimeter on a mid-power rocket and log the flight." },
+  { handle: "bench_dave", postcode: "2602", title: "Launch rail and ignition box", skills: "welding, electronics", summary: "A portable launch rail with a safe key-switch ignition box for club launches." },
+  { handle: "weld_sam", postcode: "2000", title: "Dual-deploy recovery bay", skills: "3d printing, arduino", summary: "Design a dual-deploy electronics bay for a certified high-power rocket." },
+];
+
+async function createRocket(r: (typeof ROCKET_PROJECTS)[number]) {
+  const c = await as(r.handle);
+  const text = r.summary.length;
+  await c.post("/projects/new", {
+    title: r.title, summary: r.summary, body: "", skills: r.skills, postcode: r.postcode, category: "rocketry", pledge: "1",
+    prov_typed: String(Math.floor(text * 0.7)), prov_pasted_prose: "0", prov_active_ms: String(text * 250),
+    prov_paste_events: "0", prov_deletions: String(Math.floor(text * 0.05)),
+  }, "/projects/new", /^\/projects\/\d+$/, `create ${r.title}`);
+  const id = q<{ id: number }>(`SELECT p.id FROM projects p JOIN users u ON u.id = p.owner_id WHERE p.title = ? AND u.handle = ?`, r.title, r.handle)[0]!.id;
+  console.log(`created rocketry project ${id}: ${r.title}`);
 }
 
 async function decide(pid: number, rid: number, verb: "accept" | "decline") {
@@ -132,6 +161,20 @@ const filled = (pid: number) =>
   q<{ n: number }>(`SELECT COUNT(*) n FROM project_skills WHERE project_id = ? AND filled_by IS NOT NULL`, pid)[0]!.n;
 
 async function main() {
+  // 0. Categories: give every seeded project with no category one, as its owner, via the edit form.
+  const uncategorised = q<{ id: number; title: string }>(
+    `SELECT p.id, p.title FROM projects p JOIN users u ON u.id = p.owner_id WHERE u.handle IN (${marks}) AND p.category IS NULL ORDER BY p.id`, ...HANDLES,
+  );
+  for (const p of uncategorised) {
+    const cat = categoryFor(p.title);
+    const cur = project(p.id);
+    await edit(p.id, cur.status, !!cur.recruiting, cat);
+    console.log(`project ${p.id} category -> ${cat}`);
+  }
+  for (const r of ROCKET_PROJECTS) {
+    if (!q(`SELECT 1 FROM projects WHERE title = ?`, r.title).length) await createRocket(r);
+  }
+
   const inProgress = q<{ id: number }>(
     `SELECT p.id FROM projects p JOIN users u ON u.id = p.owner_id WHERE u.handle IN (${marks}) AND p.status = 'in_progress' ORDER BY p.recruiting DESC, p.id`,
     ...HANDLES,

@@ -513,6 +513,7 @@ async function main() {
             body: p.body,
             skills: p.skills,
             postcode: p.postcode,
+            category: "other",
             status,
             recruiting: last && !update.recruiting ? "" : "1",
             pledge: "1",
