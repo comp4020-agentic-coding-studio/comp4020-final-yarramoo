@@ -23,4 +23,22 @@ form.inline { display:inline; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem; margin:0 0 1rem; }
 .prose img { max-width:100%; height:auto; }
 .prose pre { overflow-x:auto; background:var(--card); padding:.75rem; border-radius:6px; }
+.stack.wide { max-width:40rem; }
+label.check { display:flex; gap:.5rem; align-items:center; font-weight:400; }
+label.check input { width:auto; }
+.filters { display:grid; grid-template-columns:repeat(auto-fit, minmax(9rem, 1fr)); gap:.75rem; align-items:end; margin:0 0 1.5rem; }
+.filters label.check, .filters button { align-self:center; }
+.project-card h2 { margin:0 0 .25rem; font-size:1.2rem; }
+.project-card p { margin:.4rem 0; }
+.badges { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; margin:.25rem 0; }
+.badge { display:inline-block; padding:.05rem .6rem; border-radius:99px; font-size:.8rem; font-weight:600; border:1px solid var(--line); background:var(--card); }
+.badge.status-open, .badge.recruiting { border-color:var(--accent); color:var(--accent); }
+.badge.status-in_progress { border-color:#b7791f; color:#b7791f; }
+.badge.status-done, .badge.muted-badge { color:var(--muted); }
+.tags li a { text-decoration:none; }
+.body-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.lead { font-size:1.1rem; overflow-wrap:anywhere; }
+.skill-list, .team { padding-left:1.2rem; }
+.skill-list li.filled { color:var(--muted); }
+.empty { padding:2rem 0; text-align:center; }
 @media (min-width: 1200px) { main { max-width:56rem; font-size:1.05rem; } }

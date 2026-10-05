@@ -6,6 +6,8 @@ import "./db/index.ts";
 import { csrfGuard } from "./auth.ts";
 import { busRoutes } from "./bus.ts";
 import { accounts } from "./routes/accounts.ts";
+import { browse } from "./routes/browse.ts";
+import { projects } from "./routes/projects.ts";
 import { readme } from "./routes/readme.ts";
 import { page } from "./views/layout.ts";
 
@@ -20,8 +22,8 @@ app.use("*", csrfGuard);
 app.route("/", busRoutes);
 app.route("/", accounts);
 app.route("/", readme);
-
-app.get("/", (c) => page(c, { title: "Browse", body: html`<h1>Browse projects</h1><p>Browse coming soon.</p>` }));
+app.route("/", projects);
+app.route("/", browse);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));
 app.onError((e, c) => {

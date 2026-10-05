@@ -134,6 +134,12 @@ accounts.get("/u/:handle", (c) => {
   if (!u) return page(c, { title: "Not found", body: html`<h1>No such user</h1>`, status: 404 });
   const place = u.postcode ? lookupPostcode(u.postcode) : null;
   const skills = skillsOf(u.id);
+  const theirProjects = db.prepare(
+    "SELECT p.id, p.title, p.status, m.role FROM members m JOIN projects p ON p.id = m.project_id WHERE m.user_id = ? ORDER BY p.updated_at DESC",
+  ).all(u.id) as { id: number; title: string; status: string; role: string }[];
+  const plist = (role: string) => theirProjects.filter((p) => (p.role === "owner") === (role === "owner"));
+  const section = (label: string, rows: typeof theirProjects) =>
+    rows.length ? html`<h3>${label}</h3><ul>${rows.map((p) => html`<li><a href="/projects/${p.id}">${p.title}</a> <span class="badge status-${p.status}">${p.status.replace("_", " ")}</span></li>`)}</ul>` : "";
   return page(c, {
     title: u.display_name || u.handle,
     body: html`<h1>${u.display_name || u.handle}</h1>
@@ -141,6 +147,6 @@ accounts.get("/u/:handle", (c) => {
 ${u.bio ? html`<p class="bio">${u.bio}</p>` : ""}
 ${skills.length ? html`<h2>Skills</h2><ul class="tags">${skills.map((s) => html`<li>${s}</li>`)}</ul>` : ""}
 <!-- SLICE-HOOK: later slices list this user's projects (owned and joined) here. -->
-<section id="user-projects"></section>`,
+<section id="user-projects">${theirProjects.length ? html`<h2>Projects</h2>` : ""}${section("Owned", plist("owner"))}${section("Joined", plist("member"))}</section>`,
   });
 });
