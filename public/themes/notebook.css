@@ -1,0 +1,94 @@
+/* TEMPORARY theme: notebook (builder's graph-paper notebook). Layer over style.css.
+   Contrast (text on background, WCAG AA needs 4.5):
+   navy ink #1b2a4a on cream #fbf6e6 12 | blueprint #1d3f8f on cream 8.6, on white card 9.0
+   muted #4a5878 on cream 6.1 | red pencil #c62828 on cream 5.0, on white 5.6 | error #b71c1c on cream 5.9
+   white on blueprint button #1d3f8f 9.7 | flash ink #1b2a4a on sticky #fff3a8 11 | #7f1010 on #fde0dd 7.9 */
+html[data-theme=notebook] {
+  --fg:#1b2a4a; --muted:#4a5878; --bg:#fbf6e6; --card:#fffefa; --line:#b7c3e0; --accent:#1d3f8f; --err:#b71c1c;
+  --f-head:"Source Serif 4", Georgia, serif;
+  --f-body:"Source Serif 4", Georgia, serif;
+  --f-label:"IBM Plex Mono", ui-monospace, monospace;
+  --f-hand:Caveat, Kalam, "Comic Sans MS", cursive;
+  color-scheme:light;
+}
+html[data-theme=notebook] body {
+  font-family:var(--f-body); font-size:1.0625rem; color:var(--fg); background-color:var(--bg);
+  background-image:
+    linear-gradient(rgba(29,63,143,.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29,63,143,.22) 1px, transparent 1px),
+    linear-gradient(rgba(29,63,143,.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29,63,143,.10) 1px, transparent 1px);
+  background-size:120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  background-position:-1px -1px;
+}
+html[data-theme=notebook] main { background:transparent; border:0; border-radius:0; box-shadow:none; }
+html[data-theme=notebook] h1, html[data-theme=notebook] h2, html[data-theme=notebook] h3 { font-family:var(--f-head); font-weight:600; color:#1d3f8f; letter-spacing:0; text-transform:none; }
+html[data-theme=notebook] h1 { font-size:2rem; display:inline-block; background:none; border:0; padding:0; margin-left:0; text-decoration:underline; text-decoration-color:#c62828; text-decoration-thickness:3px; text-underline-offset:7px; text-decoration-style:solid; }
+html[data-theme=notebook] a { color:#1d3f8f; }
+html[data-theme=notebook] header.site { background:#fbf6e6; color:var(--fg); border-bottom:2px solid #1d3f8f; box-shadow:none; }
+html[data-theme=notebook] header.site a, html[data-theme=notebook] header.site button.link { color:#1d3f8f; }
+html[data-theme=notebook] header.site .brand { font-family:var(--f-label); font-weight:600; font-size:1.1rem; letter-spacing:0; text-transform:none; color:#1d3f8f; }
+html[data-theme=notebook] header.site nav a { font-family:var(--f-label); font-size:.9rem; font-weight:400; text-transform:none; letter-spacing:0; }
+html[data-theme=notebook] .muted { color:var(--muted); }
+html[data-theme=notebook] .card .muted, html[data-theme=notebook] .q-item .muted, html[data-theme=notebook] .answer .muted, html[data-theme=notebook] .question .muted, html[data-theme=notebook] .update-card .muted, html[data-theme=notebook] .feed-card .muted { color:var(--muted); }
+html[data-theme=notebook] .q-meta, html[data-theme=notebook] .update-meta, html[data-theme=notebook] .project-card p.muted { font-family:var(--f-label); font-size:.85rem; }
+html[data-theme=notebook] .flash { background:#fff3a8; color:#1b2a4a; border-bottom:1px solid rgba(0,0,0,.2); box-shadow:0 2px 4px rgba(0,0,0,.15); font-family:var(--f-body); font-weight:600; }
+html[data-theme=notebook] .flash.error { background:#fde0dd; color:#7f1010; }
+html[data-theme=notebook] input, html[data-theme=notebook] textarea, html[data-theme=notebook] select { background:#fffefa; border:1px solid #1d3f8f; border-bottom-width:2px; border-radius:2px; font-family:var(--f-body); color:var(--fg); }
+html[data-theme=notebook] input:focus-visible, html[data-theme=notebook] textarea:focus-visible, html[data-theme=notebook] select:focus-visible, html[data-theme=notebook] button:focus-visible, html[data-theme=notebook] a:focus-visible { outline:3px solid #c62828; outline-offset:2px; }
+html[data-theme=notebook] label { font-family:var(--f-label); font-size:.85rem; font-weight:600; text-transform:none; letter-spacing:0; }
+html[data-theme=notebook] label.check { font-family:var(--f-body); font-size:1rem; font-weight:400; }
+html[data-theme=notebook] button { background:#1d3f8f; color:#fff; border:2px solid #1d3f8f; border-radius:3px; font-family:var(--f-label); font-size:.9rem; font-weight:600; letter-spacing:0; text-transform:none; box-shadow:none; }
+html[data-theme=notebook] button:active { transform:none; box-shadow:none; background:#14306e; }
+html[data-theme=notebook] button.link { background:none; border:0; color:#1d3f8f; text-decoration:underline; font-family:var(--f-body); font-size:inherit; font-weight:400; }
+html[data-theme=notebook] button.secondary { background:transparent; color:#1d3f8f; }
+html[data-theme=notebook] button.ghost { background:transparent; color:#1d3f8f; border:2px solid #1d3f8f; box-shadow:none; }
+html[data-theme=notebook] button.on { background:#1d3f8f; color:#fff; border:2px solid #1d3f8f; box-shadow:none; }
+html[data-theme=notebook] .filters { background:#fffefa; border:1px solid #cfc7ad; padding:.9rem 1rem; box-shadow:1px 2px 4px rgba(0,0,0,.15); }
+
+/* taped-in pages */
+html[data-theme=notebook] .card, html[data-theme=notebook] .update-card, html[data-theme=notebook] .feed-card, html[data-theme=notebook] .q-item, html[data-theme=notebook] article.answer, html[data-theme=notebook] article.question {
+  position:relative; background:#fffefa; color:var(--fg); border:1px solid #cfc7ad; border-radius:1px; overflow:visible;
+  box-shadow:1px 3px 6px rgba(40,30,10,.2);
+}
+html[data-theme=notebook] .card::before, html[data-theme=notebook] .update-card::before, html[data-theme=notebook] .feed-card::before, html[data-theme=notebook] .q-item::before, html[data-theme=notebook] article.answer::before, html[data-theme=notebook] article.question::before {
+  content:""; position:absolute; top:-9px; left:14px; width:72px; height:20px; margin-left:0; z-index:1; pointer-events:none;
+  background:rgba(240,215,120,.6); box-shadow:0 1px 1px rgba(0,0,0,.15); rotate:-4deg; clip-path:none;
+}
+html[data-theme=notebook] .project-card:nth-child(odd), html[data-theme=notebook] .q-item:nth-child(odd), html[data-theme=notebook] .update-card:nth-child(odd), html[data-theme=notebook] .feed-card:nth-child(odd) { rotate:-.35deg; }
+html[data-theme=notebook] .project-card:nth-child(even), html[data-theme=notebook] .q-item:nth-child(even), html[data-theme=notebook] .update-card:nth-child(even), html[data-theme=notebook] .feed-card:nth-child(even) { rotate:.4deg; }
+html[data-theme=notebook] .project-card:nth-child(3n)::before, html[data-theme=notebook] .q-item:nth-child(3n)::before, html[data-theme=notebook] .feed-card:nth-child(3n)::before { left:auto; right:14px; rotate:3deg; }
+html[data-theme=notebook] .project-card h2, html[data-theme=notebook] .q-item h2, html[data-theme=notebook] .feed-text h2 { font-family:var(--f-head); font-weight:600; text-transform:none; letter-spacing:0; }
+html[data-theme=notebook] .feed-card { overflow:visible; }
+html[data-theme=notebook] .feed-photo { background:#e6e2d2; }
+html[data-theme=notebook] .photo-count { background:#1d3f8f; border-radius:2px; font-family:var(--f-label); }
+html[data-theme=notebook] .photo-grid img, html[data-theme=notebook] .preview-strip img { border-radius:1px; border:6px solid #fff; box-shadow:1px 2px 4px rgba(0,0,0,.3); }
+html[data-theme=notebook] .rich pre, html[data-theme=notebook] .prose pre { background:#f3eedb; border:1px dashed #1d3f8f; }
+html[data-theme=notebook] .rich code { font-family:var(--f-label); }
+
+/* accepted answer: red pencil ring */
+html[data-theme=notebook] article.answer.accepted { border:2.5px solid #c62828; border-radius:14px 30px 16px 34px / 30px 14px 32px 16px; box-shadow:1px 3px 6px rgba(40,30,10,.2), inset 0 0 0 1px rgba(198,40,40,.25); }
+html[data-theme=notebook] article.answer.accepted::before { top:-9px; left:14px; }
+
+/* pencil annotations (Caveat) */
+html[data-theme=notebook] .badge {
+  font-family:var(--f-hand); font-size:1.2rem; font-weight:700; letter-spacing:0; text-transform:none; line-height:1.1;
+  padding:0 .7rem; background:transparent; color:#1d3f8f; border:2px solid #1d3f8f; box-shadow:none;
+  border-radius:255px 15px 225px 15px / 15px 225px 15px 255px; rotate:-1.5deg;
+}
+html[data-theme=notebook] .badge::before { content:none; }
+html[data-theme=notebook] .badge.status-open, html[data-theme=notebook] .badge.recruiting { color:#1d3f8f; border-color:#1d3f8f; background:transparent; }
+html[data-theme=notebook] .badge.status-in_progress { color:#c62828; border-color:#c62828; background:transparent; }
+html[data-theme=notebook] .badge.status-done, html[data-theme=notebook] .badge.muted-badge { color:#c62828; border-color:#c62828; background:transparent; }
+html[data-theme=notebook] .tags li { background:transparent; border:1px dashed #1d3f8f; border-radius:3px; font-family:var(--f-label); font-size:.82rem; letter-spacing:0; text-transform:none; text-shadow:none; box-shadow:none; color:#1d3f8f; padding:.1rem .6rem; font-weight:400; }
+html[data-theme=notebook] .tags li a, html[data-theme=notebook] .tags li a:visited { color:#1d3f8f; }
+html[data-theme=notebook] table.signals { font-family:var(--f-label); }
+html[data-theme=notebook] table.signals th, html[data-theme=notebook] table.signals td { border-bottom:1px solid #b7c3e0; }
+
+@media (max-width:600px) {
+  html[data-theme=notebook] main { margin-left:0; margin-right:0; padding-left:1rem; padding-right:1rem; }
+  html[data-theme=notebook] :is(.card,.update-card,.feed-card,.q-item,article.answer,article.question):nth-child(n) { rotate:none; }
+  html[data-theme=notebook] :is(.card,.update-card,.feed-card,.q-item,article.answer,article.question):nth-child(n)::before { left:14px; right:auto; rotate:-3deg; }
+  html[data-theme=notebook] .badge { rotate:none; }
+  html[data-theme=notebook] h1 { font-size:1.7rem; }
+}

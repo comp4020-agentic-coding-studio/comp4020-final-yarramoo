@@ -1,0 +1,96 @@
+/* TEMPORARY theme: enamel (1950s machine-shop catalogue). Layer over style.css.
+   Contrast (text on background, WCAG AA needs 4.5):
+   ink #2a241a on cream panel #f4ecd8 13 | muted #5a5140 on cream 6.7 | link #8c1d18 on cream 7.8
+   cream #f4ecd8 on hammertone header #3f4f49 7.0 | brass #e6c677 on #3f4f49 5.0
+   cream on enamel red #a3201a 6.5 | red #a3201a on cream 7.0 | cream on green #1f5e4a 6.5
+   ink on brass #e6c677 9.6 | cream on slate #4b4f50 6.9 | flash ink #1c3b30 on cream 10 */
+html[data-theme=enamel] {
+  --fg:#2a241a; --muted:#5a5140; --bg:#5f716a; --card:#fbf6e6; --line:#9c8c63; --accent:#8c1d18; --err:#8c1d18;
+  --f-head:Oswald, "Bebas Neue", "Arial Narrow", Impact, sans-serif;
+  --f-body:"Source Serif 4", Georgia, serif;
+  --paper:#f4ecd8; --red:#a3201a; --brass:#b08d3c; --slate:#3f4f49;
+  color-scheme:light;
+}
+html[data-theme=enamel] body {
+  font-family:var(--f-body); font-size:1.0625rem; color:var(--fg); background-color:var(--bg);
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255,255,255,.10) 0 1.5px, transparent 2px),
+    radial-gradient(circle at 70% 60%, rgba(0,0,0,.16) 0 1.5px, transparent 2px),
+    radial-gradient(circle at 45% 85%, rgba(255,255,255,.08) 0 1px, transparent 1.5px),
+    linear-gradient(135deg, rgba(255,255,255,.06), rgba(0,0,0,.10));
+  background-size:11px 11px, 13px 13px, 7px 7px, 100% 100%;
+  counter-reset:entry;
+}
+html[data-theme=enamel] main { background:var(--paper); margin:1.25rem auto 2rem; border:3px solid var(--brass); box-shadow:0 0 0 3px var(--slate), 0 6px 18px rgba(0,0,0,.4); padding-top:1.5rem; counter-reset:entry; }
+html[data-theme=enamel] h1, html[data-theme=enamel] h2, html[data-theme=enamel] h3 { font-family:var(--f-head); text-transform:uppercase; letter-spacing:.04em; font-weight:700; color:var(--fg); }
+html[data-theme=enamel] h1 { font-size:2.2rem; border-bottom:4px double var(--brass); padding-bottom:.25rem; }
+html[data-theme=enamel] a { color:var(--accent); }
+html[data-theme=enamel] header.site { background:var(--slate); background-image:linear-gradient(rgba(255,255,255,.07), rgba(0,0,0,.18)); color:var(--paper); border-bottom:4px solid var(--brass); }
+html[data-theme=enamel] header.site a, html[data-theme=enamel] header.site button.link { color:var(--paper); }
+html[data-theme=enamel] header.site .brand { font-family:var(--f-head); font-size:1.5rem; text-transform:uppercase; letter-spacing:.1em; color:#e6c677; }
+html[data-theme=enamel] header.site nav a { font-family:var(--f-head); text-transform:uppercase; letter-spacing:.08em; font-size:.95rem; }
+html[data-theme=enamel] .flash { background:var(--paper); color:#1c3b30; border-bottom:3px solid var(--brass); font-family:var(--f-body); font-weight:600; }
+html[data-theme=enamel] .flash.error { color:#8c1d18; }
+html[data-theme=enamel] input, html[data-theme=enamel] textarea, html[data-theme=enamel] select { background:#fffdf4; border:2px solid #6b7a73; border-radius:2px; font-family:var(--f-body); color:var(--fg); }
+html[data-theme=enamel] input:focus-visible, html[data-theme=enamel] textarea:focus-visible, html[data-theme=enamel] select:focus-visible, html[data-theme=enamel] button:focus-visible, html[data-theme=enamel] a:focus-visible { outline:3px solid #2a5d7a; outline-offset:2px; }
+html[data-theme=enamel] label { font-family:var(--f-head); text-transform:uppercase; letter-spacing:.05em; font-size:.9rem; }
+html[data-theme=enamel] label.check { font-family:var(--f-body); text-transform:none; letter-spacing:0; font-size:1rem; }
+html[data-theme=enamel] button { background:var(--red); color:var(--paper); border:0; border-radius:2px; font-family:var(--f-head); text-transform:uppercase; letter-spacing:.08em; box-shadow:0 3px 0 #5c110d, inset 0 1px 0 rgba(255,255,255,.25); }
+html[data-theme=enamel] button:active { transform:translateY(2px); box-shadow:0 1px 0 #5c110d; }
+html[data-theme=enamel] button.link { background:none; box-shadow:none; color:var(--accent); text-transform:none; letter-spacing:0; font-family:var(--f-body); text-decoration:underline; }
+html[data-theme=enamel] header.site button.link { color:var(--paper); }
+html[data-theme=enamel] button.secondary { background:var(--slate); color:var(--paper); box-shadow:0 3px 0 #1f2a26; }
+html[data-theme=enamel] button.ghost { background:transparent; color:var(--accent); border:2px solid var(--red); box-shadow:none; }
+html[data-theme=enamel] button.on { background:var(--red); color:var(--paper); border:2px solid var(--red); box-shadow:none; }
+html[data-theme=enamel] .filters { background:#e9dfc2; border:1px solid #8a7a55; padding:.9rem 1rem; box-shadow:inset 0 0 0 3px #e9dfc2, inset 0 0 0 4px #b9a77a; }
+
+/* catalogue entries with rivets */
+html[data-theme=enamel] .card, html[data-theme=enamel] .update-card, html[data-theme=enamel] .feed-card, html[data-theme=enamel] .q-item, html[data-theme=enamel] article.answer, html[data-theme=enamel] article.question {
+  position:relative; border:1px solid #8a7a55; border-radius:2px; color:var(--fg);
+  background-color:var(--card);
+  background-image:
+    radial-gradient(circle at 50% 50%, #e6cf8d 0 1.5px, #9a7d2e 3px, transparent 4px),
+    radial-gradient(circle at 50% 50%, #e6cf8d 0 1.5px, #9a7d2e 3px, transparent 4px),
+    radial-gradient(circle at 50% 50%, #e6cf8d 0 1.5px, #9a7d2e 3px, transparent 4px),
+    radial-gradient(circle at 50% 50%, #e6cf8d 0 1.5px, #9a7d2e 3px, transparent 4px);
+  background-size:9px 9px; background-repeat:no-repeat;
+  background-position:left 5px top 5px, right 5px top 5px, left 5px bottom 5px, right 5px bottom 5px;
+  box-shadow:inset 0 0 0 4px var(--card), inset 0 0 0 5px #b9a77a, 0 2px 0 rgba(0,0,0,.2);
+  padding:1.1rem 1.4rem;
+}
+html[data-theme=enamel] .feed-card { padding:1.1rem 1.1rem; }
+html[data-theme=enamel] .feed-photo { margin:0 0 .5rem; }
+html[data-theme=enamel] .feed-text { padding:.5rem .25rem .25rem; }
+html[data-theme=enamel] .project-card { counter-increment:entry; }
+html[data-theme=enamel] .q-item { counter-increment:entry; }
+html[data-theme=enamel] .feed-card { counter-increment:entry; }
+html[data-theme=enamel] .project-card h2::before, html[data-theme=enamel] .q-item h2::before, html[data-theme=enamel] .feed-text h2::before {
+  content:"No. " counter(entry); display:block; font-family:var(--f-head); font-size:.75rem; letter-spacing:.2em; color:var(--red); font-weight:500;
+}
+html[data-theme=enamel] .project-card h2, html[data-theme=enamel] .q-item h2, html[data-theme=enamel] .feed-text h2 { font-family:var(--f-head); text-transform:uppercase; letter-spacing:.03em; }
+html[data-theme=enamel] article.answer.accepted { border-color:#1f5e4a; box-shadow:inset 0 0 0 4px var(--card), inset 0 0 0 6px #1f5e4a, 0 2px 0 rgba(0,0,0,.2); }
+html[data-theme=enamel] .rich pre, html[data-theme=enamel] .prose pre { background:#ece3cb; border:1px solid #b9a77a; }
+html[data-theme=enamel] .photo-count { background:var(--slate); border-radius:2px; font-family:var(--f-head); letter-spacing:.08em; }
+html[data-theme=enamel] .feed-photo, html[data-theme=enamel] .photo-grid img { background:#d8cdaa; }
+html[data-theme=enamel] .photo-grid img, html[data-theme=enamel] .preview-strip img { border-radius:2px; border:1px solid #8a7a55; }
+html[data-theme=enamel] .muted { color:var(--muted); }
+
+/* stamped enamel plates */
+html[data-theme=enamel] .badge {
+  font-family:var(--f-head); font-weight:500; text-transform:uppercase; letter-spacing:.1em; font-size:.78rem;
+  border:1px solid #6b5d38; border-radius:3px; padding:.1rem .65rem; background:#f4ecd8; color:var(--fg);
+  box-shadow:inset 0 0 0 2px #fbf6e6, inset 0 0 0 3px #8a7a55, 0 1px 0 rgba(0,0,0,.3);
+}
+html[data-theme=enamel] .badge.status-open { background:#1f5e4a; color:var(--paper); }
+html[data-theme=enamel] .badge.status-in_progress { background:#e6c677; color:var(--fg); }
+html[data-theme=enamel] .badge.status-done, html[data-theme=enamel] .badge.muted-badge { background:#4b4f50; color:var(--paper); }
+html[data-theme=enamel] .badge.recruiting { background:var(--red); color:var(--paper); }
+html[data-theme=enamel] .tags li { background:#e9dfc2; border:1px solid #8a7a55; border-radius:2px; font-family:var(--f-head); text-transform:uppercase; letter-spacing:.07em; font-size:.8rem; padding:.1rem .6rem; box-shadow:inset 0 -2px 0 rgba(0,0,0,.12); }
+html[data-theme=enamel] .tags li a { color:var(--fg); }
+html[data-theme=enamel] table.signals th, html[data-theme=enamel] table.signals td { border-bottom:1px solid #b9a77a; }
+
+@media (max-width:600px) {
+  html[data-theme=enamel] main { margin:.6rem .5rem 1.5rem; padding-left:.75rem; padding-right:.75rem; }
+  html[data-theme=enamel] h1 { font-size:1.8rem; }
+  html[data-theme=enamel] .card, html[data-theme=enamel] .update-card, html[data-theme=enamel] .q-item, html[data-theme=enamel] article.answer, html[data-theme=enamel] article.question { padding:1rem 1.1rem; }
+}

@@ -4,6 +4,7 @@ import { html, raw } from "hono/html";
 import type { HtmlEscapedString } from "hono/utils/html";
 import { csrfToken, currentUser } from "../auth.ts";
 import { isAdmin } from "../provenance.ts";
+import { themeFonts, themeOf } from "../routes/style.ts"; // TEMPORARY theme switcher
 
 export type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
@@ -36,15 +37,20 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
     ? html`<a href="/me">${user.display_name || user.handle}</a>
         <form method="post" action="/logout" class="inline">${csrfField(c)}<button type="submit" class="link">Log out</button></form>`
     : html`<a href="/signup">Sign up</a> <a href="/login">Log in</a>`;
+  const theme = themeOf(c); // TEMPORARY theme switcher
+  const fonts = themeFonts(theme);
+  const seg = c.req.path.split("/")[1] || "home";
   const doc = html`<!doctype html>
-<html lang="en-AU">
+<html lang="en-AU" data-theme="${theme}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${opts.title} · Makers Wanted</title>
 <link rel="stylesheet" href="/public/style.css">
+${fonts ? raw(`<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="${fonts}">`) : raw("")}
+${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.css">`) : raw("")}
 </head>
-<body>
+<body data-page="${seg}">
 <header class="site">
   <a class="brand" href="/">Makers Wanted</a>
   <nav>
@@ -52,6 +58,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
     <a href="/updates">Updates</a>
     <a href="/questions">Questions</a>
     <a href="/readme/">About</a>
+    <a href="/style">Styles</a><!-- TEMPORARY: theme switcher -->
     ${isAdmin(user) ? html`<a href="/admin/signals">Admin</a>` : ""}
     ${nav}
   </nav>

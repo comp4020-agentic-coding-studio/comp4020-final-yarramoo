@@ -13,6 +13,7 @@ import { projects } from "./routes/projects.ts";
 import { requests } from "./routes/requests.ts";
 import { readme } from "./routes/readme.ts";
 import { updates, updatesBodyLimit } from "./routes/updates.ts";
+import { style } from "./routes/style.ts"; // TEMPORARY theme switcher
 import { page } from "./views/layout.ts";
 
 const app = new Hono();
@@ -35,6 +36,7 @@ app.route("/", requests);
 app.route("/", updates);
 app.route("/", board);
 app.route("/", admin);
+app.route("/", style); // TEMPORARY theme switcher
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));
 app.onError((e, c) => {

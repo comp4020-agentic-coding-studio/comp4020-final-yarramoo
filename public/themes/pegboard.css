@@ -1,0 +1,103 @@
+/* TEMPORARY theme: pegboard (1970s garage wall). Layer over style.css.
+   Contrast (text on background, WCAG AA needs 4.5):
+   text sits on a solid panel #d6b88d (dots only show outside it): graphite #262626 on panel 7.3, on kraft #c8a578 6.6 | muted #3f3122 on kraft 5.4 | link #6b2600 on kraft 4.8, on card #f6f0e0 9.6
+   graphite on card 13 | muted #5a4a36 on card 7.4 | #111 on safety orange #e8590c 5.3
+   cream #f6f0e0 on graphite header #2b2b2b 13 | orange #ff8a3d on #2b2b2b 6.0
+   white on black tape #1b1b1b 17 | white on red #b3261e 6.5 | white on blue #1f4e9c 8
+   white on green #2e6b3a 6.4 | white on grey #5a5a5a 6.9 | #111 on yellow #ffd23f 12 | error #5e0b0b on kraft 6.0 */
+html[data-theme=pegboard] {
+  --fg:#262626; --muted:#3f3122; --bg:#c8a578; --card:#f6f0e0; --line:#a8956f; --accent:#6b2600; --err:#5e0b0b;
+  --f-head:"Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --f-body:Inter, "Source Sans 3", system-ui, sans-serif;
+  --f-label:"Stardos Stencil", "Allerta Stencil", Impact, sans-serif;
+  --cardmuted:#5a4a36; --orange:#e8590c;
+  color-scheme:light;
+}
+html[data-theme=pegboard] body {
+  font-family:var(--f-body);
+  background-color:var(--bg);
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(50,32,16,.55) 0 2.2px, rgba(255,240,210,.25) 2.4px 3.6px, transparent 4px);
+  background-size:26px 26px;
+  background-position:0 0;
+}
+html[data-theme=pegboard] main { background:#d6b88d; border:2px solid #9c8156; border-radius:4px; box-shadow:0 3px 0 rgba(40,25,10,.3); margin-top:1rem; margin-bottom:2rem; }
+html[data-theme=pegboard] h1, html[data-theme=pegboard] h2, html[data-theme=pegboard] h3 { font-family:var(--f-head); font-weight:700; letter-spacing:.01em; color:var(--fg); }
+html[data-theme=pegboard] h1 { font-size:2.1rem; display:inline-block; background:linear-gradient(transparent 62%, rgba(232,89,12,.55) 62% 90%, transparent 90%); padding:0 .25rem; margin-left:-.25rem; }
+html[data-theme=pegboard] a { color:var(--accent); }
+html[data-theme=pegboard] header.site { background:#2b2b2b; border-bottom:5px solid var(--orange); color:#f6f0e0; box-shadow:0 3px 0 rgba(0,0,0,.25); }
+html[data-theme=pegboard] header.site a, html[data-theme=pegboard] header.site button.link { color:#f6f0e0; }
+html[data-theme=pegboard] header.site .brand { font-family:var(--f-label); font-size:1.35rem; letter-spacing:.06em; text-transform:uppercase; color:#ff8a3d; }
+html[data-theme=pegboard] header.site nav a { font-weight:600; }
+html[data-theme=pegboard] .muted { color:var(--muted); }
+html[data-theme=pegboard] .card .muted, html[data-theme=pegboard] .q-item .muted, html[data-theme=pegboard] .answer .muted, html[data-theme=pegboard] .question .muted, html[data-theme=pegboard] .update-card .muted, html[data-theme=pegboard] .feed-card .muted { color:var(--cardmuted); }
+html[data-theme=pegboard] .flash { background:#ffe27a; color:#262626; border-bottom:3px dashed rgba(0,0,0,.35); font-weight:600; }
+html[data-theme=pegboard] .flash.error { background:#ffd2c4; color:#5e0b0b; }
+html[data-theme=pegboard] input, html[data-theme=pegboard] textarea, html[data-theme=pegboard] select { background:#fffdf5; border:2px solid #7a6a4c; border-radius:3px; font-family:var(--f-body); color:#262626; }
+html[data-theme=pegboard] input:focus-visible, html[data-theme=pegboard] textarea:focus-visible, html[data-theme=pegboard] select:focus-visible, html[data-theme=pegboard] button:focus-visible, html[data-theme=pegboard] a:focus-visible { outline:3px solid #1f4e9c; outline-offset:2px; }
+html[data-theme=pegboard] label { font-family:var(--f-body); color:var(--fg); }
+html[data-theme=pegboard] button { background:var(--orange); color:#111; font-weight:700; border:2px solid #7a2f06; border-radius:3px; box-shadow:0 3px 0 #7a2f06; font-family:var(--f-body); }
+html[data-theme=pegboard] button:active { transform:translateY(2px); box-shadow:0 1px 0 #7a2f06; }
+html[data-theme=pegboard] button.link { background:none; box-shadow:none; border:0; font-weight:600; text-decoration:underline; }
+html[data-theme=pegboard] button.secondary { background:#2b2b2b; color:#f6f0e0; border-color:#000; box-shadow:0 3px 0 #000; }
+html[data-theme=pegboard] button.ghost { background:transparent; color:#262626; border:2px solid #262626; box-shadow:none; }
+html[data-theme=pegboard] button.on { background:#262626; color:#f6f0e0; border:2px solid #262626; box-shadow:none; }
+html[data-theme=pegboard] .filters { background:rgba(246,240,224,.92); padding:.9rem 1rem; border:2px solid #8a7656; border-radius:3px; box-shadow:3px 4px 0 rgba(0,0,0,.2); }
+html[data-theme=pegboard] .filters label { color:#262626; }
+
+/* pinned, taped cards */
+html[data-theme=pegboard] .card, html[data-theme=pegboard] .update-card, html[data-theme=pegboard] .feed-card, html[data-theme=pegboard] .q-item, html[data-theme=pegboard] article.answer, html[data-theme=pegboard] article.question {
+  position:relative; background:var(--card); color:var(--fg); border:1px solid #b6a583; border-radius:3px;
+  box-shadow:2px 4px 0 rgba(40,25,10,.3); overflow:visible;
+}
+html[data-theme=pegboard] .card::before, html[data-theme=pegboard] .update-card::before, html[data-theme=pegboard] .feed-card::before, html[data-theme=pegboard] .q-item::before, html[data-theme=pegboard] article.answer::before, html[data-theme=pegboard] article.question::before {
+  content:""; position:absolute; top:-11px; left:50%; width:84px; height:22px; margin-left:-42px; z-index:1; pointer-events:none;
+  background:repeating-linear-gradient(90deg, rgba(255,255,255,.18) 0 3px, transparent 3px 6px), rgba(240,232,205,.88);
+  box-shadow:0 1px 2px rgba(0,0,0,.25); rotate:-3deg;
+  clip-path:polygon(0 0, 4% 40%, 0 70%, 3% 100%, 100% 100%, 97% 60%, 100% 30%, 96% 0);
+}
+html[data-theme=pegboard] .project-card:nth-child(odd), html[data-theme=pegboard] .q-item:nth-child(odd), html[data-theme=pegboard] .update-card:nth-child(odd), html[data-theme=pegboard] .feed-card:nth-child(odd) { rotate:-.6deg; }
+html[data-theme=pegboard] .project-card:nth-child(even), html[data-theme=pegboard] .q-item:nth-child(even), html[data-theme=pegboard] .update-card:nth-child(even), html[data-theme=pegboard] .feed-card:nth-child(even) { rotate:.5deg; }
+html[data-theme=pegboard] .project-card:nth-child(3n)::before, html[data-theme=pegboard] .q-item:nth-child(3n)::before, html[data-theme=pegboard] .feed-card:nth-child(3n)::before { left:22%; rotate:4deg; }
+html[data-theme=pegboard] article.answer.accepted { border-color:#2e6b3a; box-shadow:inset 6px 0 0 #2e6b3a, 2px 4px 0 rgba(40,25,10,.3); }
+html[data-theme=pegboard] .project-card h2, html[data-theme=pegboard] .feed-text h2, html[data-theme=pegboard] .q-item h2 { font-family:var(--f-head); font-weight:700; }
+html[data-theme=pegboard] .feed-card { overflow:visible; }
+html[data-theme=pegboard] .feed-photo { border-radius:3px 3px 0 0; overflow:hidden; background:#d9cba9; }
+html[data-theme=pegboard] .photo-count { background:#2b2b2b; border-radius:2px; font-family:var(--f-label); }
+html[data-theme=pegboard] .photo-grid img, html[data-theme=pegboard] .preview-strip img { border-radius:2px; border:3px solid #fffdf5; box-shadow:1px 2px 3px rgba(0,0,0,.35); }
+html[data-theme=pegboard] .rich pre, html[data-theme=pegboard] .prose pre { background:#ece3cb; border:1px solid #b6a583; }
+
+/* Dymo embossed label tape */
+html[data-theme=pegboard] .tags li {
+  --tape:#1b1b1b;
+  background:var(--tape); color:#fff; border:0; border-radius:2px; padding:.15rem .6rem; font-size:.8rem; font-weight:600;
+  letter-spacing:.12em; text-transform:uppercase; font-family:var(--f-body);
+  text-shadow:0 -1px 0 rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.25);
+  box-shadow:inset 0 2px 3px rgba(0,0,0,.6), inset 0 -1px 0 rgba(255,255,255,.18), 0 1px 0 rgba(255,255,255,.3);
+}
+html[data-theme=pegboard] .tags li:nth-child(3n+2) { --tape:#b3261e; }
+html[data-theme=pegboard] .tags li:nth-child(3n) { --tape:#1f4e9c; }
+html[data-theme=pegboard] .tags li a, html[data-theme=pegboard] .tags li a:visited { color:#fff; }
+
+/* painted tags */
+html[data-theme=pegboard] .badge {
+  font-family:var(--f-label); font-weight:700; letter-spacing:.07em; text-transform:uppercase; font-size:.78rem;
+  border:2px solid rgba(0,0,0,.55); border-radius:2px 10px 10px 2px; padding:.05rem .7rem .05rem .8rem;
+  background:#f6f0e0; color:#262626; position:relative; box-shadow:1px 1px 0 rgba(0,0,0,.3);
+}
+html[data-theme=pegboard] .badge::before { content:""; display:inline-block; width:.45rem; height:.45rem; margin-right:.4rem; border-radius:50%; background:rgba(40,25,10,.6); box-shadow:inset 0 1px 1px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.4); vertical-align:.05em; }
+html[data-theme=pegboard] .badge.status-open { background:#2e6b3a; color:#fff; border-color:#173a1e; }
+html[data-theme=pegboard] .badge.status-in_progress { background:var(--orange); color:#111; border-color:#7a2f06; }
+html[data-theme=pegboard] .badge.status-done, html[data-theme=pegboard] .badge.muted-badge { background:#5a5a5a; color:#fff; border-color:#222; }
+html[data-theme=pegboard] .badge.recruiting { background:#ffd23f; color:#111; border-color:#7a5d00; }
+
+html[data-theme=pegboard] .update-card .body-text, html[data-theme=pegboard] .feed-body { font-family:var(--f-body); }
+html[data-theme=pegboard] table.signals th, html[data-theme=pegboard] table.signals td { border-bottom:1px solid #a8956f; }
+html[data-theme=pegboard] .empty { color:var(--fg); }
+
+@media (max-width:600px) {
+  html[data-theme=pegboard] main { margin-left:.4rem; margin-right:.4rem; padding-left:.8rem; padding-right:.8rem; }
+  html[data-theme=pegboard] :is(.card,.update-card,.feed-card,.q-item,article.answer,article.question):nth-child(n) { rotate:none; }
+  html[data-theme=pegboard] :is(.card,.update-card,.feed-card,.q-item,article.answer,article.question):nth-child(n)::before { left:50%; rotate:-2deg; }
+  html[data-theme=pegboard] h1 { font-size:1.7rem; }
+}
