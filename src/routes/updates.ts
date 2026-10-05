@@ -7,6 +7,7 @@ import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { notify, short } from "../notify.ts";
 import { db, tx } from "../db/index.ts";
 import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
@@ -181,6 +182,10 @@ updates.post("/projects/:id/updates", requireUser, async (c) => {
   publish(`project:${pid}`, { type: "update", html: String(updateCard(row, photos)) });
   publish("feed", { type: "update-feed", html: String(feedCard(row, photos)) });
   announce("update-posted", { projectId: pid, updateId: uid, photos: photos.length, actorId: me.id });
+  if (!isHidden("project", pid) && !isHidden("update", uid)) {
+    const team = db.prepare("SELECT user_id AS id FROM members WHERE project_id = ? UNION SELECT owner_id FROM projects WHERE id = ?").all(pid, pid) as { id: number }[];
+    for (const t of team) notify(t.id, "project-update", { text: `New update on ${short(project.title)}`, href: `/projects/${pid}#update-${uid}`, actorId: me.id });
+  }
   flash(c, "Update posted.");
   return c.redirect(`/projects/${pid}#updates`);
 });

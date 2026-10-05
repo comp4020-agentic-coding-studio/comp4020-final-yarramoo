@@ -167,3 +167,13 @@ html[data-theme=raw] .activity-toast { border-radius:0; box-shadow:none; border-
 html[data-theme=blend] .activity-toast { border-radius:12px; }
 .resource-list { padding-left:1.2rem; }
 .resource-list li { margin:.4rem 0; }
+
+/* --- notifications --- */
+.unread-count { display:inline-block; min-width:1.2em; padding:0 .35em; border-radius:999px; background:var(--accent); color:var(--bg); font-size:.75em; line-height:1.4; text-align:center; font-weight:600; }
+.unread-count[hidden] { display:none; }
+.notifications { list-style:none; padding:0; margin:1rem 0; }
+.notification { padding:.6rem .75rem; border:1px solid var(--line); border-left-width:4px; border-radius:6px; background:var(--card); margin:.4rem 0; }
+.notification.read { border-left-color:var(--line); color:var(--muted); }
+.notification.unread { border-left-color:var(--accent); font-weight:600; }
+.notification a { color:inherit; }
+/* --- end notifications --- */

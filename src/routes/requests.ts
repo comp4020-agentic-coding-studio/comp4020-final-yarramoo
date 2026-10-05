@@ -4,6 +4,8 @@ import { html } from "hono/html";
 import { csrfToken, currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { notify, short } from "../notify.ts";
+import { isHidden } from "../provenance.ts";
 import { db, tx } from "../db/index.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
 
@@ -112,6 +114,7 @@ requests.post("/projects/:id/requests", requireUser, async (c) => {
   }
   publish(`user:${p.owner_id}`, { type: "request", html: String(await inboxRow(getRow(rid), "", true)), data: { id: rid, project_id: p.id } });
   publish(`project:${p.id}`, { type: "request-count", data: { pending: pendingCount(p.id) } });
+  if (!isHidden("project", p.id)) notify(p.owner_id, "request-received", { text: `@${me.handle} asked to join ${short(getRow(rid).title)}`, href: `/projects/${p.id}/requests`, actorId: me.id });
   flash(c, "Request sent.");
   return c.redirect(`/projects/${p.id}`);
 });
@@ -129,7 +132,7 @@ requests.get("/projects/:id/requests", requireUser, (c) => {
     title: "Join requests",
     body: html`<h1>Join requests</h1><p><a href="/projects/${p.id}">Back to project</a></p>
 <h2>Pending</h2>
-<div data-live-topic="user:${me.id}" data-live-target="#pending" data-live-mode="prepend" data-user-id="${me.id}">
+<div data-live-topic="user:${me.id}" data-live-target="#pending" data-live-types="request" data-live-mode="prepend" data-user-id="${me.id}">
 <ul id="pending" class="requests" data-csrf="${csrf}">${pending.map((r) => inboxRow(r, csrf, true))}</ul></div>
 <h2>Recently decided</h2>
 <ul class="requests">${decided.map((r) => inboxRow(r, csrf, false))}</ul>
@@ -161,6 +164,7 @@ async function decide(c: Context, accept: boolean) {
     html: String(html`<p class="flash ${accept ? "ok" : "error"}">Your request to join <a href="/projects/${p.id}">${title}</a> was ${accept ? "accepted" : "declined"}.</p>`),
     data: { project_id: p.id, status: accept ? "accepted" : "declined" },
   });
+  if (!isHidden("project", p.id)) notify(r.user_id, "request-decided", { text: `Your request to join ${short(title)} was ${accept ? "accepted" : "declined"}`, href: `/projects/${p.id}`, actorId: me.id });
   if (accept) {
     publish(`project:${p.id}`, { type: "team", html: String(await teamInner(p.id)) });
     const h = (db.prepare("SELECT handle FROM users WHERE id = ?").get(r.user_id) as { handle: string }).handle;
@@ -193,7 +197,7 @@ requests.get("/me/requests", requireUser, (c) => {
   return page(c, {
     title: "My requests",
     body: html`<h1>My join requests</h1>
-<div data-live-topic="user:${me.id}" data-live-target="#notices" data-live-mode="prepend" data-user-id="${me.id}">
+<div data-live-topic="user:${me.id}" data-live-target="#notices" data-live-types="decision" data-live-mode="prepend" data-user-id="${me.id}">
 <div id="notices"></div></div>
 ${rows.length ? html`<ul class="requests">${rows.map((r) => myRow(c, r))}</ul>` : html`<p class="muted">No requests yet.</p>`}`,
   });

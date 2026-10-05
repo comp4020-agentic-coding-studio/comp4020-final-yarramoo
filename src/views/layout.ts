@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import type { HtmlEscapedString } from "hono/utils/html";
 import { csrfToken, currentUser } from "../auth.ts";
+import { unreadCount } from "../notify.ts";
 import { isAdmin } from "../provenance.ts";
 import { themeFonts, themeOf } from "../routes/style.ts"; // TEMPORARY theme switcher
 
@@ -33,8 +34,10 @@ function takeFlash(c: Context): { kind: string; msg: string } | null {
 export function page(c: Context, opts: { title: string; body: Html; status?: 200 | 400 | 403 | 404 | 409 | 422 | 500 }): Response | Promise<Response> {
   const user = currentUser(c);
   const f = takeFlash(c);
+  const unread = user ? unreadCount(user.id) : 0;
   const nav = user
-    ? html`<a href="/me">${user.display_name || user.handle}</a>
+    ? html`<a href="/inbox">Inbox <span class="unread-count" data-count="${unread}"${unread ? "" : raw(" hidden")}>${unread}</span></a>
+        <a href="/me">${user.display_name || user.handle}</a>
         <form method="post" action="/logout" class="inline">${csrfField(c)}<button type="submit" class="link">Log out</button></form>`
     : html`<a href="/signup">Sign up</a> <a href="/login">Log in</a>`;
   const theme = themeOf(c); // TEMPORARY theme switcher
@@ -73,8 +76,10 @@ ${f ? html`<div class="flash ${f.kind}" role="status">${f.msg}</div>` : raw("")}
   <button type="button" class="activity-pause link" aria-pressed="false" hidden>Pause activity</button>
   <div class="activity-list" aria-live="polite" role="log"></div>
 </div>
+${user ? html`<div hidden data-live-topic="user:${user.id}" data-live-mode="none"></div>` : ""}
 <script src="/public/live.js" defer></script>
 <script src="/public/activity.js" defer></script>
+${user ? html`<script src="/public/notify.js" defer></script>` : ""}
 </body>
 </html>`;
   return c.html(doc, opts.status ?? 200);

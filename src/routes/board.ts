@@ -4,6 +4,7 @@ import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { notify, short } from "../notify.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, provenanceLabel, readProvenance, renderBody, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
@@ -241,6 +242,7 @@ board.post("/questions/:id/answers", requireUser, async (c) => {
     return Number(r.lastInsertRowid);
   });
   publish(`question:${q.id}`, { type: "answer", html: genericCard(aid) });
+  if (!isHidden("question", q.id) && !isHidden("answer", aid)) notify(q.author_id, "answer-received", { text: `@${me.handle} answered: ${short(q.title)}`, href: `/questions/${q.id}#answer-${aid}`, actorId: me.id });
   return c.redirect(`/questions/${q.id}#answer-${aid}`);
 });
 
@@ -275,6 +277,7 @@ board.post("/questions/:id/accept/:aid", requireUser, (c) => {
   if (q.accepted_answer_id && q.accepted_answer_id !== a.id) announceChange(q.accepted_answer_id);
   announceChange(a.id);
   if (next !== null && !isHidden("answer", a.id)) announce("answer-accepted", { questionId: q.id, actorId: q.author_id });
+  if (next !== null && !isHidden("answer", a.id) && !isHidden("question", q.id)) notify(a.author_id, "answer-accepted", { text: `Your answer was accepted: ${short(q.title)}`, href: `/questions/${q.id}#answer-${a.id}`, actorId: q.author_id });
   return c.redirect(`/questions/${q.id}#answer-${a.id}`);
 });
 
