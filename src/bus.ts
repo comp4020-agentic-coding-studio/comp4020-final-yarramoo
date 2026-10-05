@@ -5,7 +5,7 @@ import { currentSession } from "./auth.ts";
 export type BusEvent = { type: string; html?: string; data?: unknown };
 type Fn = (e: BusEvent) => void;
 
-// Topics: `project:<id>`, `user:<id>`, `feed`. Every event goes out as an
+// Topics: `project:<id>`, `question:<id>`, `user:<id>`, `feed`. Every event goes out as an
 // unnamed SSE message with its `type` in the JSON payload, so the client needs
 // no list of event names and a new type can never be silently dropped.
 const subs = new Map<string, Set<Fn>>();
@@ -31,7 +31,7 @@ export const busRoutes = new Hono();
 busRoutes.get("/events", (c) => {
   const s = currentSession(c);
   const topics = [...new Set(c.req.queries("topic") ?? [])]
-    .filter((t) => t === "feed" || /^project:\d+$/.test(t) || (s && t === `user:${s.user_id}`))
+    .filter((t) => t === "feed" || /^project:\d+$/.test(t) || /^question:\d+$/.test(t) || (s && t === `user:${s.user_id}`))
     .slice(0, 20);
   return streamSSE(c, async (stream) => {
     const unsubs = topics.map((t) =>

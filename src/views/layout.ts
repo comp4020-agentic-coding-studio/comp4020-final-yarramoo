@@ -49,6 +49,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
   <nav>
     <a href="/">Browse</a>
     <a href="/updates">Updates</a>
+    <a href="/questions">Questions</a>
     <a href="/readme/">About</a>
     ${nav}
   </nav>

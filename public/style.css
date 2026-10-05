@@ -70,3 +70,19 @@ label.check input { width:auto; }
   body:has(.feed-grid) main { max-width:84rem; }
 }
 @media (min-width: 1700px) { .feed-grid { grid-template-columns:repeat(4, 1fr); } }
+
+/* --- board --- */
+.q-list { display:grid; gap:.75rem; }
+.q-item, article.answer, article.question { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.75rem 1rem; margin:0 0 .75rem; overflow-wrap:anywhere; }
+article.question { padding:1rem 1.25rem; }
+.q-item h2 { margin:0 0 .25rem; font-size:1.1rem; }
+.q-meta { margin:.25rem 0; font-size:.9rem; }
+article.answer.accepted { border-color:var(--accent); box-shadow:inset 4px 0 0 var(--accent); }
+.rich p { margin:.5rem 0; }
+.rich pre { overflow-x:auto; background:var(--bg); border:1px solid var(--line); padding:.75rem; border-radius:6px; max-width:100%; }
+.rich code { font:.9rem/1.45 ui-monospace, monospace; }
+.answer-actions { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; margin:.5rem 0 0; font-size:.95rem; }
+button.ghost { background:none; color:var(--accent); border:1px solid var(--accent); padding:.25rem .75rem; }
+button.on { background:var(--accent); color:#fff; border:1px solid var(--accent); padding:.25rem .75rem; }
+.badge.prov-pasted { background:var(--card); border:1px solid var(--line); color:var(--muted); }
+.prov-note { margin:.25rem 0 0; padding:.5rem .75rem; border-left:3px solid var(--accent); background:var(--card); font-size:.9rem; font-weight:400; }

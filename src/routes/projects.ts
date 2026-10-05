@@ -4,6 +4,7 @@ import { currentUser, requireUser } from "../auth.ts";
 import { publish } from "../bus.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
+import { questionsSection } from "./board.ts";
 import { joinSection, teamList } from "./requests.ts";
 import { updatesSection } from "./updates.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
@@ -111,6 +112,8 @@ ${teamList(p.id)}
 ${joinSection(c, p)}
 <!-- SLICE-HOOK 2b: progress updates -->
 ${updatesSection(c, p)}
+<!-- board: questions about this project -->
+${questionsSection(p.id)}
 </article>`,
   });
 });

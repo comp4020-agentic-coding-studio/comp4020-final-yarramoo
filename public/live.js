@@ -4,6 +4,7 @@
 //   data-live-target  CSS selector to modify when an event for that topic carries `html`
 //                     (the element itself if omitted).
 //   data-live-mode    replace (default) | prepend | append | outer
+// An event whose data.target is a selector replaces that element's outerHTML instead.
 // Server events: unnamed SSE messages with JSON data {topic, type, html?, data?}. Also dispatches a
 // bubbling "live" CustomEvent on document (detail = the payload) for custom handling.
 (() => {
@@ -17,6 +18,15 @@
     try { p = JSON.parse(ev.data); } catch { return; }
     document.dispatchEvent(new CustomEvent("live", { detail: p }));
     if (!p.html) return;
+    // An event with data.target (a selector) replaces that element in place, once, if this page
+    // listens to the topic; it never goes through the per-element modes below.
+    if (p.data && typeof p.data.target === "string") {
+      if (!els.some((el) => el.dataset.liveTopic.split(/\s+/).includes(p.topic))) return;
+      let t = null;
+      try { t = document.querySelector(p.data.target); } catch { /* bad selector */ }
+      if (t) t.outerHTML = p.html;
+      return;
+    }
     for (const el of els) {
       if (!el.dataset.liveTopic.split(/\s+/).includes(p.topic)) continue;
       const target = el.dataset.liveTarget ? document.querySelector(el.dataset.liveTarget) : el;
