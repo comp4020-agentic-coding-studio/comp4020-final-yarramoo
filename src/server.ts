@@ -3,6 +3,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { html } from "hono/html";
 import "./db/index.ts";
+import { csrfGuard } from "./auth.ts";
 import { busRoutes } from "./bus.ts";
 import { accounts } from "./routes/accounts.ts";
 import { readme } from "./routes/readme.ts";
@@ -11,6 +12,9 @@ import { page } from "./views/layout.ts";
 const app = new Hono();
 
 app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("Cache-Control", "public, max-age=300"); } }));
+
+// Every POST, in every route module, must carry a valid `_csrf` field.
+app.use("*", csrfGuard);
 
 // Route modules mount here; later slices add theirs below.
 app.route("/", busRoutes);

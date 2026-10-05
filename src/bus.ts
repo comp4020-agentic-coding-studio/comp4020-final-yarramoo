@@ -5,7 +5,9 @@ import { currentSession } from "./auth.ts";
 export type BusEvent = { type: string; html?: string; data?: unknown };
 type Fn = (e: BusEvent) => void;
 
-// Topics: `project:<id>`, `user:<id>`, `feed`.
+// Topics: `project:<id>`, `user:<id>`, `feed`. Every event goes out as an
+// unnamed SSE message with its `type` in the JSON payload, so the client needs
+// no list of event names and a new type can never be silently dropped.
 const subs = new Map<string, Set<Fn>>();
 
 export function publish(topic: string, event: BusEvent): void {
@@ -34,11 +36,11 @@ busRoutes.get("/events", (c) => {
   return streamSSE(c, async (stream) => {
     const unsubs = topics.map((t) =>
       subscribe(t, (e) => {
-        stream.writeSSE({ event: e.type, data: JSON.stringify({ topic: t, ...e }) }).catch(() => {});
+        stream.writeSSE({ data: JSON.stringify({ topic: t, ...e }) }).catch(() => {});
       }),
     );
     const done = new Promise<void>((resolve) => stream.onAbort(resolve));
-    await stream.writeSSE({ event: "ready", data: JSON.stringify({ topics }) });
+    await stream.writeSSE({ data: JSON.stringify({ type: "ready", topics }) });
     const beat = setInterval(() => { stream.write(": hb\n\n").catch(() => {}); }, 25_000);
     await done;
     clearInterval(beat);

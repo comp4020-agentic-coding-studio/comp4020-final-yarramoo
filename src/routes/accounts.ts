@@ -1,12 +1,11 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
-import { csrfGuard, currentUser, endSession, hashPassword, requireUser, safeNext, startSession, verifyPassword } from "../auth.ts";
+import { currentUser, endSession, hashPassword, requireUser, safeNext, startSession, verifyPassword } from "../auth.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
 
 export const accounts = new Hono();
-accounts.use("*", csrfGuard);
 
 const HANDLE = /^[a-z0-9_-]{3,24}$/;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
