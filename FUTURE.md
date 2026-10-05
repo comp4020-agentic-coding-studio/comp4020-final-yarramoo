@@ -36,3 +36,13 @@ Members follow a project and see its new updates in a personal feed.
   search.
 - **Why:** progress updates are the inspiration half of the site, and a follow
   is a low-effort way to keep people coming back to a build.
+
+## Pin projects to a profile
+
+People choose one to three projects to sit at the top of their profile, so it
+opens with the work they're proudest of rather than the most recent.
+
+- **Source:** suggested by the worker that built profiles and awards,
+  2026-10-05.
+- **Why:** profiles have no photos, so what someone has made is their face. It
+  should be their pick.
