@@ -46,3 +46,49 @@ opens with the work they're proudest of rather than the most recent.
   2026-10-05.
 - **Why:** profiles have no photos, so what someone has made is their face. It
   should be their pick.
+
+## Search projects and questions
+
+Full-text search with SQLite's built-in FTS5 index, so no new dependency.
+
+- **Source:** recommended in planning, 2026-10-05.
+- **Why:** people would find an existing answer before asking again, which
+  fits a site that values working things out.
+
+## Tool and workshop sharing
+
+Members list tools or workshop access by region, for example "lathe available
+in Belconnen, weekends".
+
+- **Source:** recommended in planning, 2026-10-05.
+- **Why:** it's very local and very DIY, and it lowers the barrier for people
+  who have ideas but no garage.
+
+## Team meetups
+
+A team proposes a time and place, and members RSVP. The safety advice appears
+at the point of planning.
+
+- **Source:** recommended in planning, 2026-10-05.
+- **Why:** meeting in person is where the 18+ rule and the "parents may
+  accompany kids" policy actually matter.
+
+## Download or delete my data
+
+A privacy page, plus a way to export or delete your own posts and the
+behaviour signals the site keeps about them.
+
+- **Source:** recommended in planning, 2026-10-05.
+- **Why:** the honest counterpart to collecting provenance signals, and a
+  strong point in the "good" argument.
+
+## Instruments dashboard
+
+An admin health page showing live connection counts, slow requests and
+errors, database and volume size against the 256 MB machine, and trends in
+the honesty signals.
+
+- **Source:** recommended in planning, 2026-10-05, with crit 10 ("Fly by
+  instruments") in mind.
+- **Why:** you can't fly a live app blind. It also gives spec checks for
+  real-time latency and persistence something to protect.
