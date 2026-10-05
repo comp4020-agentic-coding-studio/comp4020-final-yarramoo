@@ -98,3 +98,10 @@ table.signals th, table.signals td { border-bottom:1px solid var(--line); paddin
 .award.tier-silver { border-left-color:#9aa0a6; }
 .award.tier-gold { border-left-color:#d4a017; }
 .award.tier-none { border-left-color:var(--accent); }
+
+/* regions and categories */
+ul.plain { list-style:none; padding:0; margin:.25rem 0 1rem; }
+ul.plain li { padding:.2rem 0; }
+.chip { display:inline-block; padding:.05rem .6rem; border-radius:99px; font-size:.85rem; border:1px solid var(--line); background:var(--card); text-decoration:none; }
+.chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.5rem 0 1rem; }
+.chip.current { border-color:var(--accent); color:var(--accent); font-weight:600; }

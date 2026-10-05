@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { regionOf } from "../regions.ts";
 
 const dataDir = process.env.DATA_DIR ?? "/data";
 mkdirSync(dataDir, { recursive: true });
@@ -52,7 +53,7 @@ function splitCsv(line: string): string[] {
 
 function loadPostcodes(): void {
   const n = (db.prepare("SELECT COUNT(*) AS n FROM postcodes").get() as { n: number }).n;
-  if (n > 0) return;
+  if (n > 0) { fillRegions(); return; }
   const file = join(root, "data/postcodes.csv");
   if (!existsSync(file)) return;
   const lines = readFileSync(file, "utf8").split(/\r?\n/).slice(1).filter(Boolean);
@@ -62,6 +63,17 @@ function loadPostcodes(): void {
     const [pc, loc, st, lat, lon] = splitCsv(l);
     ins.run(pc, loc, st, Number(lat), Number(lon));
   }
+  db.exec("COMMIT");
+  fillRegions();
+}
+
+/** Set postcodes.region wherever it is NULL (fresh load, or a table loaded before migration 005). */
+function fillRegions(): void {
+  const rows = db.prepare("SELECT postcode, state, lat, lon FROM postcodes WHERE region IS NULL").all() as { postcode: string; state: string; lat: number; lon: number }[];
+  if (!rows.length) return;
+  const upd = db.prepare("UPDATE postcodes SET region = ? WHERE postcode = ?");
+  db.exec("BEGIN");
+  for (const r of rows) upd.run(regionOf(r), r.postcode);
   db.exec("COMMIT");
 }
 
