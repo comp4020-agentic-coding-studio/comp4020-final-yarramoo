@@ -6,6 +6,7 @@ import { REGION_BY_SLUG, regionsByState } from "../regions.ts";
 import { CATEGORIES, CATEGORY_BY_SLUG } from "../categories.ts";
 import { page } from "../views/layout.ts";
 import { projectCard, recruitingProjects } from "../views/cards.ts";
+import { regionLobbiesSection } from "./lobbies.ts";
 
 export const regions = new Hono();
 
@@ -38,8 +39,6 @@ regions.get("/regions/:slug", (c) => {
 <div class="results">
 ${cards.length ? cards.map((p) => projectCard(p, null)) : html`<p class="empty">No projects are recruiting here yet. <a href="/projects/new">Start one</a>.</p>`}
 </div>
-<section id="lobbies">
-<!-- reserved for the next slice: lobbies for this region -->
-</section>`,
+${regionLobbiesSection(c, r.slug)}`,
   });
 });

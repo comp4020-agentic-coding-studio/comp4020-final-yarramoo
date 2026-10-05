@@ -6,7 +6,9 @@ import { publish } from "../bus.ts";
 import { categoryChip, categoryOf, categorySelect, CATEGORY_BY_SLUG } from "../categories.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
+import { canLead } from "../lobbies.ts";
 import { isAdmin, isHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
+import { leaderSection } from "./lobbies.ts";
 import { questionsSection } from "./board.ts";
 import { joinSection, teamList } from "./requests.ts";
 import { updatesSection } from "./updates.ts";
@@ -22,6 +24,7 @@ const NEXT: Record<string, string[]> = { open: ["in_progress"], in_progress: ["o
 type Project = {
   id: number; owner_id: number; title: string; summary: string; body: string; status: string;
   recruiting: number; postcode: string | null; category: string | null; created_at: string; updated_at: string;
+  leader_pending: number; formed_from_lobby: string | null;
 };
 type Values = { title: string; summary: string; body: string; skills: string; postcode: string; category: string; status?: string; recruiting?: boolean };
 
@@ -105,7 +108,7 @@ projects.get("/projects/:id", (c) => {
   if (!p) return notFound(c);
   const me = currentUser(c);
   const hidden = isHidden("project", p.id);
-  if (hidden && (!me || (me.id !== p.owner_id && !isAdmin(me)))) return notFound(c);
+  if (hidden && (!me || (!canLead(p, me.id) && !isAdmin(me)))) return notFound(c);
   const owner = db.prepare("SELECT handle, display_name FROM users WHERE id = ?").get(p.owner_id) as { handle: string; display_name: string | null };
   const place = p.postcode ? lookupPostcode(p.postcode) : null;
   const skills = db.prepare(
@@ -117,12 +120,13 @@ projects.get("/projects/:id", (c) => {
 <h1>${p.title}</h1>
 ${hidden ? UNDER_REVIEW : ""}
 <p class="badges">${statusBadge(p.status)} ${p.recruiting ? html`<span class="badge recruiting">Recruiting</span>` : html`<span class="badge muted-badge">Not recruiting</span>`} ${categoryChip(p.category)}
-${me && me.id === p.owner_id ? html` <a href="/projects/${p.id}/edit">Edit</a>` : ""}</p>
-<p class="muted">${place ? html`${place.locality}, ${place.state} ${place.postcode} · ` : ""}by <a href="/u/${owner.handle}">${owner.display_name || owner.handle}</a> · created ${day(p.created_at)} · updated ${day(p.updated_at)}</p>
+${canLead(p, me?.id) ? html` <a href="/projects/${p.id}/edit">Edit</a>` : ""}</p>
+<p class="muted">${place ? html`${place.locality}, ${place.state} ${place.postcode} · ` : ""}${p.leader_pending ? html`electing a leader` : html`${p.formed_from_lobby ? "led" : "by"} <a href="/u/${owner.handle}">${owner.display_name || owner.handle}</a>`} · created ${day(p.created_at)} · updated ${day(p.updated_at)}</p>
 <p class="lead">${p.summary}</p>
 ${p.body ? html`<div class="body-text">${p.body}</div>` : ""}
 <h2>Skills needed</h2>
 ${skills.length ? html`<ul class="skill-list">${skills.map((s) => html`<li class="${s.filled ? "filled" : "open"}"><strong>${s.name}</strong> ${s.filled ? html`filled by <a href="/u/${s.filled}">@${s.filled}</a>` : html`<span class="muted">open</span>`}</li>`)}</ul>` : html`<p class="muted">No skills listed.</p>`}
+${leaderSection(c, p)}
 <h2>Team</h2>
 ${teamList(p.id)}
 <p class="muted">Your team's workspace lives elsewhere: <a href="/resources">see resources</a>.</p>
@@ -143,7 +147,7 @@ function editPage(c: Parameters<typeof csrfField>[0], p: Project, v: Values, err
 projects.get("/projects/:id/edit", requireUser, (c) => {
   const p = load(c.req.param("id"));
   if (!p) return notFound(c);
-  if (p.owner_id !== currentUser(c)!.id) return page(c, { title: "Forbidden", body: html`<h1>Only the owner can edit this project</h1>`, status: 403 });
+  if (!canLead(p, currentUser(c)!.id)) return page(c, { title: "Forbidden", body: html`<h1>${p.leader_pending ? "This team is still electing a leader" : "Only the owner can edit this project"}</h1>`, status: 403 });
   const skills = (db.prepare("SELECT s.name FROM project_skills ps JOIN skills s ON s.id = ps.skill_id WHERE ps.project_id = ? ORDER BY s.name").all(p.id) as { name: string }[]).map((s) => s.name).join(", ");
   return editPage(c, p, { title: p.title, summary: p.summary, body: p.body, skills, postcode: p.postcode ?? "", category: categoryOf(p.category), status: p.status, recruiting: !!p.recruiting });
 });
@@ -151,7 +155,7 @@ projects.get("/projects/:id/edit", requireUser, (c) => {
 projects.post("/projects/:id/edit", requireUser, async (c) => {
   const p = load(c.req.param("id"));
   if (!p) return notFound(c);
-  if (p.owner_id !== currentUser(c)!.id) return page(c, { title: "Forbidden", body: html`<h1>Only the owner can edit this project</h1>`, status: 403 });
+  if (!canLead(p, currentUser(c)!.id)) return page(c, { title: "Forbidden", body: html`<h1>${p.leader_pending ? "This team is still electing a leader" : "Only the owner can edit this project"}</h1>`, status: 403 });
   const b = await c.req.parseBody();
   const status = str(b.status);
   const recruiting = str(b.recruiting) === "1";

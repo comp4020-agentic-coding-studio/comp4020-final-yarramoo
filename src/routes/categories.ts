@@ -6,6 +6,7 @@ import { notHidden } from "../provenance.ts";
 import { REGION_BY_SLUG, regionSelect } from "../regions.ts";
 import { page } from "../views/layout.ts";
 import { projectCard, recruitingProjects } from "../views/cards.ts";
+import { categoryLobbySection } from "./lobbies.ts";
 
 export const categories = new Hono();
 
@@ -19,7 +20,7 @@ categories.get("/c", (c) => {
   return page(c, {
     title: "Categories",
     body: html`<h1>Categories</h1>
-<p class="muted">Counts are projects currently recruiting.</p>
+<p class="muted">Counts are projects currently recruiting. <a href="/lobbies">See interest lobbies</a>.</p>
 <ul class="plain">${CATEGORIES.map((k) => html`<li><a href="/c/${k.slug}">${k.name}</a> <span class="muted">${counts.get(k.slug) ?? 0} recruiting · ${k.description}</span></li>`)}</ul>`,
   });
 });
@@ -44,8 +45,6 @@ ${k.resources?.length ? html`<h2>Clubs and resources</h2>
 <div class="results">
 ${cards.length ? cards.map((p) => projectCard(p, null)) : html`<p class="empty">No projects are recruiting in this category${region ? " and region" : ""} yet. <a href="/projects/new">Start one</a>.</p>`}
 </div>
-<section id="lobby">
-<!-- reserved for the next slice: the lobby for this category -->
-</section>`,
+${categoryLobbySection(c, k.slug, region)}`,
   });
 });

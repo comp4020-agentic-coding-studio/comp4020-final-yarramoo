@@ -160,6 +160,47 @@ async function addRequest(pid: number, withSkill: boolean, msg: string) {
 const filled = (pid: number) =>
   q<{ n: number }>(`SELECT COUNT(*) n FROM project_skills WHERE project_id = ? AND filled_by IS NOT NULL`, pid)[0]!.n;
 
+// Lobbies: 3 Canberra users wait in rocketry (teamSize 5); 3 more fill robotics (teamSize 3), which forms
+// a team that then votes in a leader. Each step checks the DB first, so re-runs do nothing.
+const LOBBY_REGION = "canberra";
+const ROCKET_WAITING = ["sparky_jo", "bench_dave", "weld_sam"];
+const ROBOT_TEAM = ["etch_maya", "crank_lee", "solder_pat"];
+
+async function ensureRegion(handle: string) {
+  const u = q<{ postcode: string | null; display_name: string | null; background: string | null; interests: string | null; region: string | null; id: number }>(
+    `SELECT u.id, u.postcode, u.display_name, u.background, u.interests, pc.region FROM users u LEFT JOIN postcodes pc ON pc.postcode = u.postcode WHERE u.handle = ?`, handle,
+  )[0]!;
+  if (u.region === LOBBY_REGION) return;
+  const skills = q<{ name: string }>(`SELECT s.name FROM user_skills us JOIN skills s ON s.id = us.skill_id WHERE us.user_id = ?`, u.id).map((s) => s.name).join(", ");
+  await (await as(handle)).post("/me", {
+    display_name: u.display_name ?? handle, background: u.background ?? "", interests: u.interests ?? "", postcode: "2601", skills,
+  }, "/me", /^\/me$|^\/u\//, `set ${handle} postcode`);
+  console.log(`${handle} postcode -> 2601`);
+}
+
+async function joinLobbyAs(handle: string, category: string, loc: RegExp) {
+  if (q(`SELECT 1 FROM lobby_members l JOIN users u ON u.id = l.user_id WHERE u.handle = ? AND l.category = ? AND l.region = ?`, handle, category, LOBBY_REGION).length) return;
+  await ensureRegion(handle);
+  await (await as(handle)).post(`/lobbies/${category}/${LOBBY_REGION}/join`, {}, `/c/${category}`, loc, `${handle} joins ${category} lobby`);
+  console.log(`${handle} joined ${category}:${LOBBY_REGION}`);
+}
+
+async function seedLobbies() {
+  for (const h of ROCKET_WAITING) await joinLobbyAs(h, "rocketry", new RegExp(`^/c/rocketry$`));
+  const formed = () => q<{ id: number; leader_pending: number }>(`SELECT id, leader_pending FROM projects WHERE formed_from_lobby = ?`, `robotics:${LOBBY_REGION}`)[0];
+  if (!formed()) for (const h of ROBOT_TEAM) await joinLobbyAs(h, "robotics", /^\/(c\/robotics|projects\/\d+)$/);
+  const team = formed();
+  if (!team) throw new Error("robotics lobby did not form a team");
+  if (team.leader_pending) {
+    const ids = new Map(q<{ id: number; handle: string }>(`SELECT id, handle FROM users WHERE handle IN (${ROBOT_TEAM.map(() => "?").join(",")})`, ...ROBOT_TEAM).map((u) => [u.handle, u.id]));
+    const pick = ROBOT_TEAM[1]!;
+    for (const h of ROBOT_TEAM.slice(0, 2)) {
+      await (await as(h)).post(`/projects/${team.id}/vote`, { candidate: String(ids.get(pick)) }, `/projects/${team.id}`, new RegExp(`^/projects/${team.id}$`), `${h} votes for ${pick}`);
+      console.log(`${h} voted for ${pick}`);
+    }
+  }
+}
+
 async function main() {
   // 0. Categories: give every seeded project with no category one, as its owner, via the edit form.
   const uncategorised = q<{ id: number; title: string }>(
@@ -216,6 +257,7 @@ async function main() {
       declined++;
     } else await decide(r.project_id, r.id, "accept");
   }
+  await seedLobbies();
   console.log("top-up complete");
 }
 

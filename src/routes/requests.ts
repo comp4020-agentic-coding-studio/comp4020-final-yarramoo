@@ -4,6 +4,7 @@ import { html } from "hono/html";
 import { csrfToken, currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
+import { canLead } from "../lobbies.ts";
 import { notify, short } from "../notify.ts";
 import { isHidden } from "../provenance.ts";
 import { db, tx } from "../db/index.ts";
@@ -12,7 +13,7 @@ import { csrfField, flash, page, type Html } from "../views/layout.ts";
 export const requests = new Hono();
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-type P = { id: number; owner_id: number; recruiting: number };
+type P = { id: number; owner_id: number; recruiting: number; leader_pending: number };
 type Row = {
   id: number; project_id: number; user_id: number; skill_id: number | null; message: string | null; status: string;
   created_at: string; decided_at: string | null; handle: string; display_name: string | null; skill: string | null; title: string;
@@ -23,7 +24,7 @@ const ROW_SQL = `SELECT r.*, u.handle, u.display_name, s.name AS skill, p.title
   LEFT JOIN skills s ON s.id = r.skill_id`;
 const getRow = (id: number) => db.prepare(`${ROW_SQL} WHERE r.id = ?`).get(id) as Row;
 const pendingCount = (pid: number) => (db.prepare("SELECT COUNT(*) AS n FROM join_requests WHERE project_id = ? AND status = 'pending'").get(pid) as { n: number }).n;
-const loadProject = (s: string) => (/^\d{1,12}$/.test(s) ? (db.prepare("SELECT id, owner_id, recruiting FROM projects WHERE id = ?").get(Number(s)) as P | undefined) ?? null : null);
+const loadProject = (s: string) => (/^\d{1,12}$/.test(s) ? (db.prepare("SELECT id, owner_id, recruiting, leader_pending FROM projects WHERE id = ?").get(Number(s)) as P | undefined) ?? null : null);
 
 const deny = (c: Context, msg: string, status: 400 | 403 | 404 | 409 = 400) =>
   page(c, { title: "Not allowed", body: html`<h1>${msg}</h1><p><a href="/">Back to browse</a></p>`, status });
@@ -61,7 +62,7 @@ export function joinSection(c: Context, p: P): Html {
   const me = currentUser(c);
   let inner: Html;
   if (!me) inner = html`<p><a href="/login?next=/projects/${p.id}">Log in to ask to join</a></p>`;
-  else if (me.id === p.owner_id) {
+  else if (canLead(p, me.id)) {
     const n = pendingCount(p.id);
     inner = html`<p><a href="/projects/${p.id}/requests">Join requests inbox</a> (<span id="pending-count">${n}</span> pending)</p>`;
   } else if (db.prepare("SELECT 1 FROM members WHERE project_id = ? AND user_id = ?").get(p.id, me.id)) inner = html`<p>You're on this team</p>`;
@@ -123,7 +124,7 @@ requests.get("/projects/:id/requests", requireUser, (c) => {
   const me = currentUser(c)!;
   const p = loadProject(c.req.param("id"));
   if (!p) return deny(c, "No such project", 404);
-  if (p.owner_id !== me.id) return deny(c, "Only the owner can see join requests", 403);
+  if (!canLead(p, me.id)) return deny(c, p.leader_pending ? "This team is still electing a leader" : "Only the owner can see join requests", 403);
   const rows = db.prepare(`${ROW_SQL} WHERE r.project_id = ? ORDER BY r.id DESC`).all(p.id) as Row[];
   const pending = rows.filter((r) => r.status === "pending");
   const decided = rows.filter((r) => r.status !== "pending").slice(0, 20);
@@ -144,7 +145,7 @@ async function decide(c: Context, accept: boolean) {
   const me = currentUser(c)!;
   const p = loadProject(c.req.param("id") ?? "");
   if (!p) return deny(c, "No such project", 404);
-  if (p.owner_id !== me.id) return deny(c, "Only the owner can decide requests", 403);
+  if (!canLead(p, me.id)) return deny(c, p.leader_pending ? "This team is still electing a leader" : "Only the owner can decide requests", 403);
   const rid = c.req.param("rid") ?? "";
   const r = /^\d{1,12}$/.test(rid) ? (db.prepare("SELECT id, user_id, skill_id, status FROM join_requests WHERE id = ? AND project_id = ?").get(Number(rid), p.id) as { id: number; user_id: number; skill_id: number | null; status: string } | undefined) : undefined;
   if (!r) return deny(c, "No such request", 404);

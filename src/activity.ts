@@ -7,7 +7,7 @@ import { isHidden } from "./provenance.ts";
 import { REGION_BY_SLUG, regionOf } from "./regions.ts";
 
 // "Something just happened" toasts. Text carries only titles, handles, category and region, never bodies.
-export type Kind = "project-posted" | "project-finished" | "project-started" | "team-grew" | "update-posted" | "question-asked" | "answer-accepted";
+export type Kind = "project-posted" | "project-finished" | "project-started" | "team-grew" | "update-posted" | "question-asked" | "answer-accepted" | "team-formed";
 type Opts = { projectId?: number; questionId?: number; actorId?: number; handle?: string; photos?: number; updateId?: number };
 type P = { id: number; title: string; postcode: string | null; category: string | null };
 
@@ -33,6 +33,7 @@ export function announce(kind: Kind, o: Opts): void {
       if (kind === "project-posted") text = `New project: ${t}${inRegion}`;
       else if (kind === "project-finished") text = `${t} is finished!`;
       else if (kind === "project-started") text = `${t} is under way`;
+      else if (kind === "team-formed") text = `A team formed: ${t}`;
       else if (kind === "team-grew") text = `${o.handle ? "@" + o.handle : "Someone"} joined ${t}`;
       else if (kind === "update-posted") {
         if (o.updateId !== undefined && isHidden("update", o.updateId)) return;
