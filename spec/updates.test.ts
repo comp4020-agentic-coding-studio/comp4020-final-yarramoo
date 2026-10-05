@@ -63,7 +63,7 @@ const text = `Welded the frame ${run}`;
 it("sets up an owner and a non-member", async () => {
   owner = await signedUp("upown");
   other = await signedUp("upother");
-  const res = await owner.post("/projects/new", { title, summary: "s", body: "", skills: "", postcode: "2601", pledge: "1" });
+  const res = await owner.post("/projects/new", { title, summary: "s", body: "", skills: "", postcode: "2601", category: "other", pledge: "1" });
   expect(res.status).toBe(302);
   pid = res.headers.get("location")!.split("/")[2];
   page = `/projects/${pid}`;

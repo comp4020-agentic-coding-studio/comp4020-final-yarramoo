@@ -71,7 +71,7 @@ it("the pledge is required on questions, answers, projects and updates", async (
   expect((await ans({})).status).toBe(400);
   expect((await ans({ pledge: "1" })).status).toBe(302);
 
-  const proj = { title: `Pledge project ${run}`, summary: "s", body: "", skills: "", postcode: "2601" };
+  const proj = { title: `Pledge project ${run}`, summary: "s", body: "", skills: "", postcode: "2601", category: "other" };
   expect((await A.post("/projects/new", proj)).status).toBe(400);
   const p = await A.post("/projects/new", { ...proj, pledge: "1" });
   expect(p.status).toBe(302);

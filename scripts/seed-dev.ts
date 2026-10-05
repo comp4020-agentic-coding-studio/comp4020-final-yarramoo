@@ -459,6 +459,7 @@ async function main() {
       body,
       skills: skillsNeeded,
       postcode: projectPostcode,
+      category: "other",
       pledge: "1",
       ...prov,
     });

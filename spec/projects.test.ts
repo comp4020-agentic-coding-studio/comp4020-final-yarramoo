@@ -41,7 +41,7 @@ async function signedUp(name: string) {
 const title = `Rocket stove ${run}`;
 let pid = "";
 let owner: Awaited<ReturnType<typeof signedUp>>;
-const fields = (extra: Record<string, string> = {}) => ({ title, summary: "A stove", body: "Line one\n\nLine two", skills: "welding, Arduino", postcode: "2601", status: "open", recruiting: "1", pledge: "1", ...extra });
+const fields = (extra: Record<string, string> = {}) => ({ title, summary: "A stove", body: "Line one\n\nLine two", skills: "welding, Arduino", postcode: "2601", category: "rocketry", status: "open", recruiting: "1", pledge: "1", ...extra });
 
 it("redirects signed-out /projects/new to /login", async () => {
   const res = await client().req("/projects/new");

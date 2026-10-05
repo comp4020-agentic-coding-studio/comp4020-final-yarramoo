@@ -39,7 +39,7 @@ async function signedUp(name: string) {
   return c;
 }
 async function newProject(c: Awaited<ReturnType<typeof signedUp>>, title: string) {
-  const res = await c.post("/projects/new", { title, summary: "s", body: "", skills: "welding", postcode: "2601", pledge: "1" });
+  const res = await c.post("/projects/new", { title, summary: "s", body: "", skills: "welding", postcode: "2601", category: "other", pledge: "1" });
   expect(res.status).toBe(302);
   return res.headers.get("location")!.split("/")[2];
 }
@@ -57,7 +57,7 @@ it("setup: A owns two recruiting projects", async () => {
   // new projects are created not recruiting; turn recruiting on via edit
   for (const t of ["One", "Two"]) {
     const id = await newProject(A, `Req ${t} ${run}`);
-    const res = await A.post(`/projects/${id}/edit`, { title: `Req ${t} ${run}`, summary: "s", body: "", skills: "welding", postcode: "2601", status: "open", recruiting: "1", pledge: "1" }, `/projects/${id}/edit`);
+    const res = await A.post(`/projects/${id}/edit`, { title: `Req ${t} ${run}`, summary: "s", body: "", skills: "welding", postcode: "2601", category: "other", status: "open", recruiting: "1", pledge: "1" }, `/projects/${id}/edit`);
     expect(res.status).toBe(302);
     if (t === "One") p1 = id; else p2 = id;
   }

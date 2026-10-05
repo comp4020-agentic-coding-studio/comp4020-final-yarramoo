@@ -6,6 +6,7 @@ import { bbox, haversineKm, lookupPostcode } from "../geo.ts";
 import { notHidden } from "../provenance.ts";
 import { page } from "../views/layout.ts";
 import { projectCard, CARD_SELECT, type CardRow } from "../views/cards.ts";
+import { CATEGORY_BY_SLUG, categorySelect } from "../categories.ts";
 import { REGION_BY_SLUG, regionSelect } from "../regions.ts";
 
 export const browse = new Hono();
@@ -22,6 +23,7 @@ browse.get("/", (c) => {
   const recruitingOnly = submitted ? q.recruiting !== "all" : true;
   const nearRaw = "near" in q ? (q.near ?? "").trim() : (me?.postcode ?? "");
   const region = REGION_BY_SLUG.has(q.region ?? "") ? q.region! : "";
+  const category = CATEGORY_BY_SLUG.has(q.category ?? "") ? q.category! : "";
   const origin = nearRaw && !region ? lookupPostcode(nearRaw) : null; // a chosen region wins over near/km
   const km = KMS.includes(q.km ?? "") ? q.km! : "25";
   const limitKm = origin && km !== "any" ? Number(km) : null;
@@ -35,6 +37,7 @@ browse.get("/", (c) => {
     where.push("EXISTS (SELECT 1 FROM project_skills ps JOIN skills s ON s.id = ps.skill_id WHERE ps.project_id = p.id AND s.name = ?)");
     args.push(skill);
   }
+  if (category) { where.push("COALESCE(p.category, 'other') = ?"); args.push(category); }
   if (region) { where.push("pc.region = ?"); args.push(region); }
   if (origin && limitKm !== null) {
     const b = bbox(origin.lat, origin.lon, limitKm);
@@ -60,6 +63,7 @@ browse.get("/", (c) => {
   <input type="hidden" name="go" value="1">
   <label>Skill<input name="skill" list="skill-names" value="${skill}" placeholder="any"></label>
   <label>Status<select name="status">${STATUS_OPTS.map(([v, l]) => html`<option value="${v}" ${v === status ? "selected" : ""}>${l}</option>`)}</select></label>
+  <label>Category${categorySelect(category, "Any category")}</label>
   <label>Region${regionSelect(region)}</label>
   <label>Near postcode<input name="near" inputmode="numeric" maxlength="4" value="${nearRaw}" placeholder="any"></label>
   <label>Distance<select name="km">${KMS.map((k) => html`<option value="${k}" ${k === km ? "selected" : ""}>${k === "any" ? "Any" : k + " km"}</option>`)}</select></label>

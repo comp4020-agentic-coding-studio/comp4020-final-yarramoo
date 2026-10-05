@@ -72,7 +72,7 @@ it("saves background and interests with a pledge and shows them escaped", async 
 it("awards: founder and first build from a finished project", async () => {
   const handle = `founder_${run}`;
   const c = await signedUp(handle);
-  const f = { title: `Award project ${run}`, summary: "s", body: "", skills: "", postcode: "2601", pledge: "1" };
+  const f = { title: `Award project ${run}`, summary: "s", body: "", skills: "", postcode: "2601", category: "other", pledge: "1" };
   const res = await c.post("/projects/new", f);
   const pid = res.headers.get("location")!.split("/")[2];
   const edit = `/projects/${pid}/edit`;

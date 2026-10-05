@@ -30,7 +30,7 @@ function client() {
 
 const owner = client();
 const titles = { canberra: `Region ACT ${run}`, queanbeyan: `Region Queanbeyan ${run}`, sydney: `Region Sydney ${run}`, wagga: `Region Wagga ${run}` };
-const base = { summary: "s", body: "", skills: "", pledge: "1" };
+const base = { summary: "s", body: "", skills: "", pledge: "1", category: "other" };
 
 it("assigns projects to regions by postcode", async () => {
   expect((await owner.post("/signup", { handle: `regions_${run}`, password: "correct horse battery" })).status).toBe(302);
@@ -78,4 +78,33 @@ it("shows region index and page with a lobbies section", async () => {
   expect(res.status).toBe(200);
   expect(await res.text()).toContain('<section id="lobbies">');
   expect((await client().req("/regions/nope")).status).toBe(404);
+});
+
+const crgTitle = `Rocket club build ${run}`;
+
+it("lists rocketry projects and both club links on /c/rocketry", async () => {
+  const res = await owner.post("/projects/new", { ...base, title: crgTitle, postcode: "2601", category: "rocketry" }, "/projects/new");
+  expect(res.status).toBe(302);
+  const text = await (await client().req("/c/rocketry")).text();
+  expect(text).toContain(crgTitle);
+  expect(text).toContain('href="https://crg.tidyhq.com/"');
+  expect(text).toContain('href="https://nswrocketry.org.au/"');
+  expect(text).toContain('rel="noopener" target="_blank"');
+  expect(text).toContain('<section id="lobby">');
+  expect(await (await client().req("/c/rocketry?region=sydney")).text()).not.toContain(crgTitle);
+  expect(await (await client().req("/c/rocketry?region=canberra")).text()).toContain(crgTitle);
+  expect(await (await client().req("/?category=rocketry&near=&go=1")).text()).toContain(crgTitle);
+  expect(await (await client().req("/?category=robotics&near=&go=1")).text()).not.toContain(crgTitle);
+  expect(await (await client().req("/regions/canberra?category=rocketry")).text()).toContain(crgTitle);
+});
+
+it("rejects a project without a valid category", async () => {
+  const { category: _, ...fields } = { ...base, title: `No category ${run}`, postcode: "2601" };
+  expect((await owner.post("/projects/new", fields, "/projects/new")).status).toBe(400);
+  expect((await owner.post("/projects/new", { ...fields, category: "nope" }, "/projects/new")).status).toBe(400);
+});
+
+it("serves the category index and 404s unknown slugs", async () => {
+  expect((await client().req("/c")).status).toBe(200);
+  expect((await client().req("/c/nope")).status).toBe(404);
 });

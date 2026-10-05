@@ -55,6 +55,8 @@ ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.
   <a class="brand" href="/">Makers Wanted</a>
   <nav>
     <a href="/">Browse</a>
+    <a href="/regions">Regions</a>
+    <a href="/c">Categories</a>
     <a href="/updates">Updates</a>
     <a href="/questions">Questions</a>
     <a href="/readme/">About</a>
