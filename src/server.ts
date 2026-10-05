@@ -8,6 +8,7 @@ import { busRoutes } from "./bus.ts";
 import { accounts } from "./routes/accounts.ts";
 import { browse } from "./routes/browse.ts";
 import { projects } from "./routes/projects.ts";
+import { requests } from "./routes/requests.ts";
 import { readme } from "./routes/readme.ts";
 import { page } from "./views/layout.ts";
 
@@ -24,6 +25,7 @@ app.route("/", accounts);
 app.route("/", readme);
 app.route("/", projects);
 app.route("/", browse);
+app.route("/", requests);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));
 app.onError((e, c) => {

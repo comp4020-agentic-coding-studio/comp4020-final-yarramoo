@@ -4,6 +4,7 @@ import { currentUser, requireUser } from "../auth.ts";
 import { publish } from "../bus.ts";
 import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
+import { joinSection, teamList } from "./requests.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
 
 export const projects = new Hono();
@@ -92,9 +93,6 @@ projects.get("/projects/:id", (c) => {
   const skills = db.prepare(
     "SELECT s.name, u.handle AS filled FROM project_skills ps JOIN skills s ON s.id = ps.skill_id LEFT JOIN users u ON u.id = ps.filled_by WHERE ps.project_id = ? ORDER BY s.name",
   ).all(p.id) as { name: string; filled: string | null }[];
-  const team = db.prepare(
-    "SELECT u.handle, u.display_name, m.role FROM members m JOIN users u ON u.id = m.user_id WHERE m.project_id = ? ORDER BY m.role DESC, m.joined_at",
-  ).all(p.id) as { handle: string; display_name: string | null; role: string }[];
   return page(c, {
     title: p.title,
     body: html`<article class="project">
@@ -107,9 +105,9 @@ ${p.body ? html`<div class="body-text">${p.body}</div>` : ""}
 <h2>Skills needed</h2>
 ${skills.length ? html`<ul class="skill-list">${skills.map((s) => html`<li class="${s.filled ? "filled" : "open"}"><strong>${s.name}</strong> ${s.filled ? html`filled by <a href="/u/${s.filled}">@${s.filled}</a>` : html`<span class="muted">open</span>`}</li>`)}</ul>` : html`<p class="muted">No skills listed.</p>`}
 <h2>Team</h2>
-<ul class="team">${team.map((m) => html`<li><a href="/u/${m.handle}">${m.display_name || m.handle}</a> <span class="muted">${m.role}</span></li>`)}</ul>
+${teamList(p.id)}
 <!-- SLICE-HOOK 2a: ask-to-join -->
-<section id="join"></section>
+${joinSection(c, p)}
 <!-- SLICE-HOOK 2b: progress updates -->
 <section id="updates"></section>
 </article>`,
