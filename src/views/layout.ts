@@ -36,11 +36,19 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
   const user = currentUser(c);
   const f = takeFlash(c);
   const unread = user ? unreadCount(user.id) : 0;
-  const nav = user
-    ? html`<a href="/inbox">Inbox <span class="unread-count" data-count="${unread}"${unread ? "" : raw(" hidden")}>${unread}</span></a>
-        <a href="/me">${user.display_name || user.handle}</a>
+  const path = c.req.path;
+  const link = (href: string, label: string): Html => {
+    const cur = href === "/" ? path === "/" : path === href || path.startsWith(href.endsWith("/") ? href : href + "/");
+    return html`<a href="${href}"${cur ? raw(' aria-current="page"') : ""}>${label}</a>`;
+  };
+  const account = user
+    ? html`${link("/me", user.display_name || user.handle)}
+        ${isAdmin(user) ? link("/admin/signals", "Admin") : ""}
         <form method="post" action="/logout" class="inline">${csrfField(c)}<button type="submit" class="link">Log out</button></form>`
-    : html`<a href="/signup">Sign up</a> <a href="/login">Log in</a>`;
+    : html`${link("/signup", "Sign up")} ${link("/login", "Log in")}`;
+  const inbox = user
+    ? html`<a class="nav-inbox" href="/inbox"${path === "/inbox" ? raw(' aria-current="page"') : ""}>Inbox <span class="unread-count" data-count="${unread}"${unread ? "" : raw(" hidden")}>${unread}</span></a>`
+    : "";
   const theme = themeOf(c); // TEMPORARY theme switcher
   const fonts = themeFonts(theme);
   const seg = c.req.path.split("/")[1] || "home";
@@ -57,21 +65,31 @@ ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.
 <body data-page="${seg}"${user ? raw(` data-user-id="${user.id}" data-blocked-ids="${[...blockedIds(user.id)].join(",")}"`) : raw("")}>
 <header class="site">
   <a class="brand" href="/">Makers Wanted</a>
-  <nav>
-    <a href="/">Browse</a>
-    <a href="/regions">Regions</a>
-    <a href="/c">Categories</a>
-    <a href="/t">Themes</a>
-    <a href="/finished">Finished</a>
-    <a href="/lobbies">Lobbies</a>
-    <a href="/updates">Updates</a>
-    <a href="/questions">Questions</a>
-    <a href="/resources">Resources</a>
-    <a href="/philosophy">Why</a>
-    <a href="/readme/">About</a>
-    <a href="/style">Styles</a><!-- TEMPORARY: theme switcher -->
-    ${isAdmin(user) ? html`<a href="/admin/signals">Admin</a>` : ""}
-    ${nav}
+  <nav aria-label="Main">
+    <details class="menu" open>
+      <summary>Menu</summary>
+      <div class="menu-body">
+        ${link("/", "Browse")}
+        ${link("/lobbies", "Lobbies")}
+        ${link("/questions", "Questions")}
+        ${link("/finished", "Finished")}
+        ${link("/updates", "Updates")}
+        <details class="group"><summary>Explore</summary><div class="panel">
+          ${link("/regions", "Regions")}
+          ${link("/c", "Categories")}
+          ${link("/t", "Themes")}
+          ${link("/resources", "Resources")}
+        </div></details>
+        <details class="group"><summary>About</summary><div class="panel">
+          ${link("/philosophy", "Why")}
+          ${link("/safety", "Safety")}
+          ${link("/readme/", "About")}
+          ${link("/style", "Styles")}<!-- TEMPORARY: theme switcher -->
+        </div></details>
+        <span class="nav-account">${account}</span>
+      </div>
+    </details>
+    ${inbox}
   </nav>
 </header>
 ${f ? html`<div class="flash ${f.kind}" role="status">${f.msg}</div>` : raw("")}
@@ -82,6 +100,7 @@ ${f ? html`<div class="flash ${f.kind}" role="status">${f.msg}</div>` : raw("")}
   <div class="activity-list" aria-live="polite" role="log"></div>
 </div>
 ${user ? html`<div hidden data-live-topic="user:${user.id}" data-live-mode="none"></div>` : ""}
+<script src="/public/nav.js" defer></script>
 <script src="/public/live.js" defer></script>
 <script src="/public/activity.js" defer></script>
 ${user ? html`<script src="/public/notify.js" defer></script>` : ""}
