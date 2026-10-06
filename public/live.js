@@ -41,6 +41,7 @@
         const old = m && document.getElementById(m[1]);
         if (old && target.contains(old)) old.remove();
         target.insertAdjacentHTML("afterbegin", p.html);
+        if (target.firstElementChild) target.firstElementChild.setAttribute("data-live-new", ""); // entrance animation hook
         const empty = el.parentElement && el.parentElement.querySelector(".finished-empty");
         if (empty) empty.hidden = true;
       }

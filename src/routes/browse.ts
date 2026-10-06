@@ -57,6 +57,8 @@ browse.get("/", (c) => {
 
   const allSkills = db.prepare("SELECT name FROM skills ORDER BY name").all() as { name: string }[];
 
+  // Live-prepend new cards only when the view has no effective filter; otherwise just offer a refresh pill.
+  const unfiltered = !skill && !category && !region && !status && limitKm === null && recruitingOnly;
   return page(c, {
     title: "Browse",
     body: html`<h1>Browse projects</h1>
@@ -75,7 +77,7 @@ ${finishedStrip()}
 </form>
 ${region && nearRaw ? html`<p class="muted">Showing ${REGION_BY_SLUG.get(region)!.name}; the postcode and distance filters are not applied.</p>` : ""}
 ${nearRaw && !region && !origin ? html`<p class="error">Unknown postcode "${nearRaw}"; showing projects from anywhere.</p>` : ""}
-<div class="results" data-live-topic="feed" data-live-types="project">
+${unfiltered ? html`<div class="results" data-live-topic="feed" data-live-types="project-new" data-live-mode="prepend">` : html`<div class="results" data-live-topic="feed" data-live-mode="none" data-new-pill>`}
 ${cards.length ? cards.map(({ r, d }) => projectCard(r, d)) : html`<p class="empty">No projects match these filters. <a href="/projects/new">Start one</a>.</p>`}
 </div>`,
   });

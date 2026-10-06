@@ -28,7 +28,7 @@ const openSkills = db.prepare("SELECT s.name FROM project_skills ps JOIN skills 
 /** One project card; `d` is the distance in km from the viewer's chosen postcode, if any. */
 export function projectCard(r: CardRow, d: number | null): Html {
   const regionName = r.region ? REGION_BY_SLUG.get(r.region)?.name : null;
-  return html`<article class="card project-card">
+  return html`<article class="card project-card" id="project-card-${r.id}">
   <h2><a href="/projects/${r.id}">${r.title}</a></h2>
   <p class="badges">${statusBadge(r.status)} ${r.recruiting ? html`<span class="badge recruiting">Recruiting</span>` : ""} ${categoryChip(r.category)} ${themeChips(r.id)} <span class="upvote-count" title="Community upvotes">▲ ${r.upvotes}</span></p>
   <p>${r.summary}</p>

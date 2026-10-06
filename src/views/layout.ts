@@ -20,6 +20,18 @@ export function flash(c: Context, msg: string, kind: "ok" | "error" = "ok"): voi
   setCookie(c, "flash", encodeURIComponent(`${kind}:${msg}`), { path: "/", httpOnly: true, sameSite: "Lax", maxAge: 60 });
 }
 
+/** Set a one-shot celebration (own action) played by celebrate.js on the next page render. */
+export function celebrate(c: Context, kind: "posted" | "finished"): void {
+  setCookie(c, "celebrate", kind, { path: "/", httpOnly: true, sameSite: "Lax", maxAge: 60 });
+}
+
+function takeCelebrate(c: Context): "posted" | "finished" | null {
+  const v = getCookie(c, "celebrate");
+  if (!v) return null;
+  deleteCookie(c, "celebrate", { path: "/" });
+  return v === "posted" || v === "finished" ? v : null;
+}
+
 function takeFlash(c: Context): { kind: string; msg: string } | null {
   const v = getCookie(c, "flash");
   if (!v) return null;
@@ -35,6 +47,7 @@ function takeFlash(c: Context): { kind: string; msg: string } | null {
 export function page(c: Context, opts: { title: string; body: Html; status?: 200 | 400 | 403 | 404 | 409 | 422 | 500 }): Response | Promise<Response> {
   const user = currentUser(c);
   const f = takeFlash(c);
+  const cel = takeCelebrate(c);
   const unread = user ? unreadCount(user.id) : 0;
   const path = c.req.path;
   const link = (href: string, label: string): Html => {
@@ -62,7 +75,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
 ${fonts ? raw(`<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="${fonts}">`) : raw("")}
 ${theme !== "plain" ? raw(`<link rel="stylesheet" href="/public/themes/${theme}.css">`) : raw("")}
 </head>
-<body data-page="${seg}"${user ? raw(` data-user-id="${user.id}" data-blocked-ids="${[...blockedIds(user.id)].join(",")}"`) : raw("")}>
+<body data-page="${seg}"${cel ? raw(` data-celebrate="${cel}"`) : raw("")}${user ? raw(` data-user-id="${user.id}" data-blocked-ids="${[...blockedIds(user.id)].join(",")}"`) : raw("")}>
 <header class="site">
   <a class="brand" href="/">Makers Wanted</a>
   <nav aria-label="Main">
@@ -103,6 +116,7 @@ ${user ? html`<div hidden data-live-topic="user:${user.id}" data-live-mode="none
 <script src="/public/nav.js" defer></script>
 <script src="/public/live.js" defer></script>
 <script src="/public/activity.js" defer></script>
+<script src="/public/celebrate.js" defer></script>
 ${user ? html`<script src="/public/notify.js" defer></script>` : ""}
 </body>
 </html>`;

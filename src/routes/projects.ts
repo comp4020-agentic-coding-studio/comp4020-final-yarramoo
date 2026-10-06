@@ -8,15 +8,16 @@ import { db, skillIds, tx } from "../db/index.ts";
 import { lookupPostcode } from "../geo.ts";
 import { canLead } from "../lobbies.ts";
 import { reportLink } from "../reports.ts";
-import { isAdmin, isHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
+import { isAdmin, isHidden, notHidden, PLEDGE_ERR, pledgeField, readProvenance, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { themeChips, themeCheckboxes, themesOf, themesFrom, readThemes, saveThemes } from "../themes.ts";
+import { projectCard, CARD_SELECT, type CardRow } from "../views/cards.ts";
 import { upvoteSection } from "../upvotes.ts";
 import { finishedCardById } from "./finished.ts";
 import { leaderSection } from "./lobbies.ts";
 import { questionsSection } from "./board.ts";
 import { joinSection, teamList } from "./requests.ts";
 import { updatesSection } from "./updates.ts";
-import { csrfField, flash, page, type Html } from "../views/layout.ts";
+import { celebrate, csrfField, flash, page, type Html } from "../views/layout.ts";
 
 export const projects = new Hono();
 
@@ -100,8 +101,11 @@ projects.post("/projects/new", requireUser, async (c) => {
     return pid;
   });
   publish("feed", { type: "project", data: { id } });
+  const row = db.prepare(`${CARD_SELECT} WHERE p.id = ? AND ${notHidden("project", "p.id")}`).get(id) as CardRow | undefined;
+  if (row) publish("feed", { type: "project-new", html: String(await projectCard(row, null)), data: { id } });
   announce("project-posted", { projectId: id, actorId: u.id });
   flash(c, "Project created.");
+  celebrate(c, "posted");
   return c.redirect(`/projects/${id}`);
 });
 
@@ -199,6 +203,7 @@ projects.post("/projects/:id/edit", requireUser, async (c) => {
   publish("feed", { type: "project", data: { id: p.id } });
   if (status !== p.status && status === "done") {
     announce("project-finished", { projectId: p.id, actorId: p.owner_id });
+    celebrate(c, "finished");
     const card = finishedCardById(p.id);
     if (card) publish("feed", { type: "finished", html: String(card), data: { id: p.id } });
   }
