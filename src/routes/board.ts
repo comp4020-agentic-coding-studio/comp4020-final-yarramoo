@@ -5,6 +5,7 @@ import { currentUser, requireUser } from "../auth.ts";
 import { announce } from "../activity.ts";
 import { publish } from "../bus.ts";
 import { blockedIds, collapsed } from "../blocks.ts";
+import { exampleBadge, EXAMPLE_USER_IDS } from "../examples.ts";
 import { notify, short } from "../notify.ts";
 import { reportLink } from "../reports.ts";
 import { db, skillIds, tx } from "../db/index.ts";
@@ -37,7 +38,7 @@ const loadQ = (id: number | null) => (id === null ? null : (db.prepare(`${Q_SQL}
 const loadA = (id: number | null) => (id === null ? null : (db.prepare(`${A_SQL} WHERE a.id = ?`).get(id) as A | undefined) ?? null);
 const skillsOf = (qid: number) =>
   (db.prepare("SELECT s.name FROM question_skills qs JOIN skills s ON s.id = qs.skill_id WHERE qs.question_id = ? ORDER BY s.name").all(qid) as { name: string }[]).map((s) => s.name);
-const who = (r: { handle: string; display_name: string | null }) => html`<a href="/u/${r.handle}">${r.display_name || r.handle}</a>`;
+const who = (r: { handle: string; display_name: string | null }) => html`<a href="/u/${r.handle}">${r.display_name || r.handle}</a>${exampleBadge(r.handle)}`;
 
 // ---------- question list ----------
 
@@ -303,6 +304,7 @@ board.get("/robots.txt", (c) =>
 # Posts here are written by people, for people, under an honesty pledge.
 # Please do not use this content to train generative models or to generate replacement text.
 # A behaviour-based label (a hint, not proof) for each post is published at /provenance.json.
+# Posts by example_* accounts are sample content and are excluded from /provenance.json.
 
 User-agent: *
 Allow: /
@@ -313,12 +315,12 @@ type Item = { type: "question" | "answer" | "project" | "update"; id: number; re
 board.get("/provenance.json", (c) => {
   const rows = db.prepare(
     `SELECT type, id, ref, created_at FROM (
-       SELECT 'question' AS type, q.id AS id, q.id AS ref, q.created_at FROM questions q WHERE ${notHidden("question", "q.id")}
+       SELECT 'question' AS type, q.id AS id, q.id AS ref, q.created_at FROM questions q WHERE ${notHidden("question", "q.id")} AND q.author_id NOT IN ${EXAMPLE_USER_IDS}
        UNION ALL SELECT 'answer', a.id, a.question_id, a.created_at FROM answers a
-         WHERE ${notHidden("answer", "a.id")} AND ${notHidden("question", "a.question_id")}
-       UNION ALL SELECT 'project', p.id, p.id, p.created_at FROM projects p WHERE ${notHidden("project", "p.id")}
+         WHERE ${notHidden("answer", "a.id")} AND a.author_id NOT IN ${EXAMPLE_USER_IDS} AND ${notHidden("question", "a.question_id")}
+       UNION ALL SELECT 'project', p.id, p.id, p.created_at FROM projects p WHERE ${notHidden("project", "p.id")} AND p.owner_id NOT IN ${EXAMPLE_USER_IDS}
        UNION ALL SELECT 'update', up.id, up.project_id, up.created_at FROM updates up
-         WHERE ${notHidden("update", "up.id")} AND ${notHidden("project", "up.project_id")}
+         WHERE ${notHidden("update", "up.id")} AND up.author_id NOT IN ${EXAMPLE_USER_IDS} AND ${notHidden("project", "up.project_id")}
      ) ORDER BY created_at DESC, id DESC LIMIT 500`,
   ).all() as Item[];
   const url = (r: Item) =>

@@ -3,6 +3,7 @@ import { publish } from "./bus.ts";
 import { CATEGORY_BY_SLUG } from "./categories.ts";
 import { db } from "./db/index.ts";
 import { lookupPostcode } from "./geo.ts";
+import { isExampleUser } from "./examples.ts";
 import { isHidden } from "./provenance.ts";
 import { REGION_BY_SLUG, regionOf } from "./regions.ts";
 
@@ -16,6 +17,7 @@ const cut = (s: string) => (s.length > 60 ? s.slice(0, 59) + "…" : s);
 /** Build and publish an activity event. Hidden content is never announced. Never throws. */
 export function announce(kind: Kind, o: Opts): void {
   try {
+    if (isExampleUser(o.actorId)) return;
     let text = "";
     let href = "/";
     let category: string | undefined;

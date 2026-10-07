@@ -6,6 +6,7 @@ import { lookupPostcode } from "../geo.ts";
 import { awardsFor } from "../awards.ts";
 import { isHidden, notHidden, PLEDGE_ERR, readProvenance, renderBody, saveProvenance, UNDER_REVIEW } from "../provenance.ts";
 import { csrfField, flash, page, type Html } from "../views/layout.ts";
+import { exampleBadge, isExampleHandle, seedKeyOk } from "../examples.ts";
 import { profileSafety } from "./safety.ts";
 
 export const accounts = new Hono();
@@ -54,6 +55,7 @@ accounts.post("/signup", async (c) => {
   const fail = (msg: string | Html, status: 400 | 409 = 400) =>
     page(c, { title: "Sign up", body: signupForm(c, { handle, postcode }, msg), status });
   if (!HANDLE.test(handle)) return fail("Handle must be 3–24 characters: letters, digits, _ or -.");
+  if (isExampleHandle(handle) && !seedKeyOk(c.req.header("x-example-seed"))) return fail("Handles starting with example_ are reserved for labelled sample content.");
   if (pw.length < 8) return fail("Password must be at least 8 characters.");
   const age = ageCheck(str(b.dob).trim());
   if (age === "invalid") return fail("Please enter your date of birth as a real date.");
@@ -190,6 +192,7 @@ accounts.get("/u/:handle", (c) => {
   return page(c, {
     title: u.display_name || u.handle,
     body: html`<h1>${u.display_name || u.handle}</h1>
+${isExampleHandle(u.handle) ? html`<p><span class="badge example-badge">Example account — sample content, not a real member</span></p>` : ""}
 <p class="muted">@${u.handle}${place ? html` · ${place.locality}, ${place.state} ${place.postcode}` : ""}</p>
 ${hidden && mine ? UNDER_REVIEW : ""}
 ${me && !mine ? profileSafety(c, me.id, u) : mine ? "" : html`<p class="safety-actions"><a class="report-link" href="/report?type=profile&amp;id=${u.id}" rel="nofollow">Report</a></p>`}

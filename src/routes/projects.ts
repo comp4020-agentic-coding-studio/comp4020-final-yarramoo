@@ -1,3 +1,4 @@
+import { exampleBadge } from "../examples.ts";
 import { Hono } from "hono";
 import { html } from "hono/html";
 import { currentUser, requireUser } from "../auth.ts";
@@ -133,7 +134,7 @@ projects.get("/projects/:id", (c) => {
 ${hidden ? UNDER_REVIEW : ""}
 <p class="badges">${statusBadge(p.status)} ${p.recruiting ? html`<span class="badge recruiting">Recruiting</span>` : html`<span class="badge muted-badge">Not recruiting</span>`} ${categoryChip(p.category)} ${themeChips(p.id)}
 ${canLead(p, me?.id) ? html` <a href="/projects/${p.id}/edit">Edit</a>` : ""}${me?.id !== p.owner_id ? html` ${reportLink("project", p.id)}` : ""}</p>
-<p class="muted">${place ? html`${place.locality}, ${place.state} ${place.postcode} · ` : ""}${p.leader_pending ? html`electing a leader` : html`${p.formed_from_lobby ? "led" : "by"} <a href="/u/${owner.handle}">${owner.display_name || owner.handle}</a>`} · created ${day(p.created_at)} · updated ${day(p.updated_at)}</p>
+<p class="muted">${place ? html`${place.locality}, ${place.state} ${place.postcode} · ` : ""}${p.leader_pending ? html`electing a leader` : html`${p.formed_from_lobby ? "led" : "by"} <a href="/u/${owner.handle}">${owner.display_name || owner.handle}</a>${exampleBadge(owner.handle)}`} · created ${day(p.created_at)} · updated ${day(p.updated_at)}</p>
 <p class="lead">${p.summary}</p>
 ${upvoteSection(c, p)}
 ${p.body ? html`<div class="body-text">${p.body}</div>` : ""}

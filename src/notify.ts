@@ -1,3 +1,4 @@
+import { isExampleUser } from "./examples.ts";
 import { html } from "hono/html";
 import { publish } from "./bus.ts";
 import { isBlockedEither } from "./blocks.ts";
@@ -30,7 +31,7 @@ export function notificationItem(n: NotificationRow) {
  */
 export function notify(userId: number, kind: NotifyKind, o: { text: string; href: string; actorId?: number }): void {
   try {
-    if (o.actorId === userId) return;
+    if (o.actorId === userId || isExampleUser(o.actorId)) return;
     if (o.actorId != null && isBlockedEither(userId, o.actorId)) return; // blocks are silent in both directions
     if (!/^\/(?![/\\])[^\s\\]*$/.test(o.href)) return;
     const text = short(o.text, 140);

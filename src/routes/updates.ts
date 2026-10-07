@@ -1,3 +1,4 @@
+import { exampleBadge } from "../examples.ts";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -85,7 +86,7 @@ const imgs = (row: UpdateRow, photos: PhotoRow[]) =>
 /** One timeline entry (project page). */
 export function updateCard(row: UpdateRow, photos: PhotoRow[], review = false, reportable = false): Html {
   return html`<article class="update-card" id="update-${row.id}">
-<p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a> · ${when(row.created_at)}${reportable ? html` · ${reportLink("update", row.id)}` : ""}</p>
+<p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a>${exampleBadge(row.handle)} · ${when(row.created_at)}${reportable ? html` · ${reportLink("update", row.id)}` : ""}</p>
 ${review ? UNDER_REVIEW : ""}
 ${row.body ? html`<div class="body-text">${row.body}</div>` : ""}
 ${photos.length ? html`<div class="photo-grid n${Math.min(photos.length, 4)}">${imgs(row, photos)}</div>` : ""}
@@ -99,7 +100,7 @@ ${photos.length ? html`<a class="feed-photo" href="/projects/${row.project_id}#u
 <div class="feed-text">
 <h2><a href="/projects/${row.project_id}">${row.project_title}</a></h2>
 ${row.body ? html`<p class="feed-body">${row.body.length > 240 ? row.body.slice(0, 240) + "…" : row.body}</p>` : ""}
-<p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a> · ${when(row.created_at)}</p>
+<p class="muted update-meta"><a href="/u/${row.handle}">${row.display_name || row.handle}</a>${exampleBadge(row.handle)} · ${when(row.created_at)}</p>
 </div>
 </article>`;
 }

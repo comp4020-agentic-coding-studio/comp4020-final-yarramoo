@@ -279,3 +279,7 @@ header.site .nav-inbox { white-space:nowrap; }
   .celebrate-layer { display:none; }
   [data-live-new] { animation:cel-fade .4s ease both; }
 }
+
+/* --- examples --- */
+.example-badge { background: transparent; color: var(--muted, #666); border: 1px dashed currentColor; font-weight: 400; }
+/* --- end examples --- */

@@ -8,7 +8,8 @@
     "check": "pnpm typecheck && pnpm test",
     "check:evidence": "node scripts/check-evidence.ts",
     "test": "vitest run",
-    "seed:dev": "node scripts/seed-dev.ts"
+    "seed:dev": "node scripts/seed-dev.ts",
+    "seed:examples": "node scripts/seed-examples.ts"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",
