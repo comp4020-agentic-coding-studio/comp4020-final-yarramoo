@@ -129,7 +129,7 @@ for (const q of QUESTIONS) {
 }
 
 for (const h of ["example_jo", "example_sam"]) {
-  await as(h).post("/lobbies/rocketry/canberra/join", { skills: "general building" }, "/c/rocketry", /^\/c\/rocketry/, `lobby ${h}`);
+  await as(h).post("/lobbies/rocketry/canberra/join", { skills: "general building" }, "/c/rocketry", /^\/(c\/rocketry|projects\/\d+)/, `lobby ${h}`);
   console.log(`${h} joined rocketry/canberra`);
 }
 
