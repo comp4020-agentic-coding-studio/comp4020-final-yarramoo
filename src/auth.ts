@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 
-const isSecure = (c: Context) => c.req.header("x-forwarded-proto") === "https" || c.req.url.startsWith("https:");
+export const isSecure = (c: Context) => c.req.header("x-forwarded-proto") === "https" || c.req.url.startsWith("https:");
 
 /**
  * CSRF by double-submit: a random httpOnly `csrf` cookie, set on first use,

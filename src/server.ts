@@ -4,7 +4,8 @@ import { Hono } from "hono";
 import { html } from "hono/html";
 import "./db/index.ts";
 import { csrfGuard } from "./auth.ts";
-import { busRoutes } from "./bus.ts";
+import { flushRooms, startRooms } from "./game/rooms.ts";
+import { mission } from "./routes/mission.ts";
 import { home } from "./routes/home.ts";
 import { readme } from "./routes/readme.ts";
 import { page } from "./views/layout.ts";
@@ -17,8 +18,8 @@ app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("C
 app.use("*", csrfGuard);
 
 // Route modules mount here; later slices add theirs below.
-app.route("/", busRoutes);
 app.route("/", home);
+app.route("/", mission);
 app.route("/", readme);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));
@@ -26,6 +27,14 @@ app.onError((e, c) => {
   console.error(e);
   return page(c, { title: "Error", body: html`<h1>Something went wrong</h1>`, status: 500 });
 });
+
+startRooms();
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.on(sig, () => {
+    flushRooms();
+    process.exit(0);
+  });
+}
 
 const port = Number(process.env.PORT ?? 8080);
 serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, () => console.log(`listening on :${port}`));
