@@ -148,7 +148,9 @@ The total is $70 against an $80 cap, which leaves a $10 buffer for one retry.
   at a phase, nothing red is committed: the run reverts to the last green
   commit, writes what failed into the morning report, and stops.
 - **Check what you see.** Phases 4 to 7 end with two `agent-browser` contexts
-  playing the change, not only tests.
+  playing the change, not only tests. Use `agent-browser --session <role>`:
+  each named session has its own cookies, so two sessions are two crew
+  members. Close the sessions when done.
 - **Ask, don't guess.** Anything that is the owner's call (the README argument,
   a veto-worthy design choice) goes into the morning report as a question.
 - **Push every phase** to `origin/mission-control`.
