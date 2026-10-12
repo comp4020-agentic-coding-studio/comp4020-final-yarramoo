@@ -83,7 +83,14 @@
     emitLayout();
   };
   viewToggle.addEventListener("click", () => setView(root.dataset.view === "3d" ? "2d" : "3d", true));
-  sheetToggle.addEventListener("click", () => setSheet(root.dataset.sheet === "collapsed"));
+  sheetToggle.addEventListener("click", () => {
+    const opening = root.dataset.sheet === "collapsed";
+    setSheet(opening);
+    if (!opening) window.dispatchEvent(new CustomEvent("mc:recentre")); // "Look": back to the rocket, zoom reset
+  });
+  // Zoom buttons for the scene (wheel and pinch are handled there).
+  $("zoom-in").addEventListener("click", () => window.dispatchEvent(new CustomEvent("mc:zoom", { detail: { ratio: 1.35 } })));
+  $("zoom-out").addEventListener("click", () => window.dispatchEvent(new CustomEvent("mc:zoom", { detail: { ratio: 1 / 1.35 } })));
   // The bar itself is a big target too: tap anywhere on it that is not a control.
   $("hud").addEventListener("click", (e) => {
     if (e.target instanceof Element && !e.target.closest("a, button")) setSheet(root.dataset.sheet === "collapsed");
@@ -159,7 +166,7 @@
       const w = s.waitingOn.map((x) => x.label || `a task on ${ROLE_LABELS[x.role]}`);
       right = `<span class="st">${w.length ? "Waiting: " + esc(w.join(", ")) : "Locked"}</span>`;
     } else right = `<span class="st">${s.status === "done" ? "DONE" : "MISSED"}</span>`;
-    return `<li class="step ${esc(s.status)}"><div class="step-main"><span class="step-label">${esc(s.label)}${s.required ? "" : ' <em class="opt">optional</em>'}</span>
+    return `<li class="step ${esc(s.status)}"><span class="lamp ${esc(s.status)}" aria-hidden="true"></span><div class="step-main"><span class="step-label">${esc(s.label)}${s.required ? "" : ' <em class="opt">optional</em>'}</span>
       <span class="win">${esc(win(s.window))}</span></div>${right}</li>`;
   };
 
@@ -176,11 +183,16 @@
       ${reports ? `<ul class="reps">${reports}</ul>` : ""}${ctl}</div>`;
   }).join("");
 
+  // The seat's place in the ring, for the stencil strip.
+  const stationNo = (role) => {
+    const li = document.querySelector(`#seats li[data-role="${role}"]`);
+    return li && li.parentElement ? [...li.parentElement.children].indexOf(li) + 1 : 1;
+  };
   const consoleHtml = (role, v) => {
     const cautions = v.cautions.map((c) => `<li class="caution-row">${light("amber", "caution")}${esc(c)}</li>`).join("");
-    const values = v.values.map((x) => `<div class="val${x.caution ? " caution" : ""}"><div class="val-head"><span>${esc(x.label)}</span>
+    const values = v.values.map((x) => `<div class="val${x.caution ? " caution" : ""}"><div class="val-head"><span class="val-label">${x.caution ? light("amber", "caution") : '<span class="light off" aria-hidden="true"></span>'}${esc(x.label)}</span>
       <span class="val-num">${x.value.toFixed(1)} <small>${esc(x.unit)}</small> ${trendMark(role, x)}</span></div>${gauge(x)}</div>`).join("");
-    const checks = v.crossChecks.map((x) => `<li class="check ${x.reading}">${light(x.reading === "normal" ? "green" : "red", x.reading)}${esc(x.label)}: <strong>${x.reading === "normal" ? "NORMAL" : "ABNORMAL"}</strong></li>`).join("");
+    const checks = v.crossChecks.map((x) => `<li class="check ${x.reading}">${light(x.reading === "normal" ? "green" : "red", x.reading)}<span class="engr">${esc(x.label)}</span> <strong>${x.reading === "normal" ? "NORMAL" : "ABNORMAL"}</strong></li>`).join("");
     const steps = v.steps.map((s) => stepRow(role, s, v)).join("");
     const ascent = v.phase === "ascent";
     // Range Safety's one big red control, only while the vehicle is in ascent
@@ -192,8 +204,8 @@
     if (role === "flight") {
       const items = (v.checklist || []).map((c) => `<li class="${esc(c.status)}"><span class="cl-role">${esc(ROLE_LABELS[c.role])}</span> ${esc(c.label)} <span class="st">${esc(c.status.toUpperCase())}</span></li>`).join("");
       const can = v.phase === "count" || v.phase === "hold";
-      flight = `<section class="panel"><h3>Master checklist</h3><ul class="checklist">${items}</ul></section>
-        <section class="panel controls"><h3>Flight controls</h3><div class="ctl">
+      flight = `<section class="panel logbook"><h3>Master checklist · flight log</h3><ul class="checklist">${items}</ul></section>
+        <section class="panel controls"><h3>Flight controls · guarded</h3><div class="ctl">
         ${btn("flight:hold", "big hold-btn", "HOLD", { act: "hold", role }, v.phase !== "count")}
         ${btn("flight:resume", "big", "RESUME", { act: "resume", role }, v.phase !== "hold")}
         ${btn("flight:scrub", "big nogo", "SCRUB", { act: "scrub", role, confirm: "Scrub the mission? This ends it." }, !can)}</div></section>`;
@@ -202,7 +214,7 @@
     // telemetry slot and never replaces a button mid-press. The clock text is
     // left empty here; drawClock fills every `.countdown`.
     return [
-      `<div class="console-head"><h2>${esc(ROLE_LABELS[role])}</h2><span class="mini-clock countdown"></span>${badge(v.phase)}<span class="holds">${ascent ? `Ascent · no holds · ends at T+${v.ascentSec} s` : `Holds ${v.holds} · window ${Math.ceil(v.holdLeftMs / 1000)}s of hold left`}</span></div>`,
+      `<div class="stencil" aria-hidden="true">${esc(ROLE_LABELS[role].toUpperCase())} · STATION ${stationNo(role)}</div><div class="console-head"><h2>${esc(ROLE_LABELS[role])}</h2><span class="mini-clock countdown"></span>${badge(v.phase)}<span class="holds">${ascent ? `Ascent · no holds · ends at T+${v.ascentSec} s` : `Holds ${v.holds} · window ${Math.ceil(v.holdLeftMs / 1000)}s of hold left`}</span></div>`,
       cautions ? `<ul class="cautions">${cautions}</ul>` : "",
       terminate,
       values ? `<section class="panel"><h3>Telemetry</h3>${values}</section>` : "",
@@ -249,8 +261,8 @@
     if (!out) { outcomePanel.hidden = true; return; }
     const title = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT", terminated: "TERMINATED", range_violation: "RANGE VIOLATION" }[out.kind] || out.kind.toUpperCase();
     outcomePanel.hidden = false;
-    outcomePanel.className = `outcome ${esc(out.kind)}`;
-    outcomePanel.innerHTML = `<h2>${esc(title)}</h2><p class="countdown-final">${fmt(out.atT)}</p><ul>${out.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    outcomePanel.className = `outcome report ${esc(out.kind)}`;
+    outcomePanel.innerHTML = `<p class="report-head">Incident report · mission ${esc(code)} · ${esc(root.dataset.sequence || "")}</p><h2>${esc(title)}</h2><p class="countdown-final">${fmt(out.atT)}</p><ul>${out.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
       ${debrief ? debriefHtml(debrief, out) : '<p class="muted">The full debrief is shown to the crew.</p>'}<p><a class="btnlink" href="/missions/${esc(code)}">Full replay</a> <a class="btnlink" href="/">Back to the hub</a></p>`;
   };
 

@@ -5,6 +5,7 @@
 //   mc:seat   { activeRole }                              (tab changed)
 //   mc:layout { right, bottom }                           (px of the canvas the overlay covers)
 //   mc:view   { mode: "3d" | "2d" }
+//   mc:zoom { ratio }, mc:recentre {}                      (the +/- and Look buttons)
 //   mc:gesture { type, role, kind, at }                   (another seat acted: kind only, never what)
 //   mc:look    { type, heads: { role: [yaw, pitch] } }    (where seats are looking)
 // and the scene emits mc:mylook { yaw, pitch } for console.js to throttle and post.
@@ -29,7 +30,7 @@ if (root && container) {
     try {
       const { mountScene } = await import("/public/scene/scene.js");
       if (root.dataset.view !== "3d") return; // switched to 2D while loading
-      handle = mountScene(container, { sequenceId: root.dataset.sequence, roles, initial: last });
+      handle = mountScene(container, { sequenceId: root.dataset.sequence, ascentSec: root.dataset.ascentSec, roles, initial: last });
       handle.setInsets(...insets());
       if (window.__mc && window.__mc.heads) handle.looks(window.__mc.heads); // heads received before the scene existed
     } catch (e) {
@@ -54,6 +55,8 @@ if (root && container) {
   window.addEventListener("mc:gesture", (e) => { if (handle) handle.gesture(e.detail.role, e.detail.kind); });
   window.addEventListener("mc:look", (e) => { if (handle) handle.looks(e.detail.heads); });
   window.addEventListener("mc:layout", (e) => { if (handle) handle.setInsets(e.detail.right, e.detail.bottom); });
+  window.addEventListener("mc:zoom", (e) => { if (handle) handle.zoomBy(e.detail.ratio); });
+  window.addEventListener("mc:recentre", () => { if (handle) handle.recentre(); });
   window.addEventListener("mc:view", (e) => (e.detail.mode === "3d" ? mount() : unmount()));
 
   if (window.__mc && window.__mc.state) last = window.__mc.state;

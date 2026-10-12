@@ -17,7 +17,6 @@ import { buildClock } from "./clock.js";
 
 // Static sequence data (data/sequences/*.json), not secret: a sequence with an
 // ascent climbs this many seconds after T+0; the others get a short cinematic.
-const ASCENT_SEC = { kestrel3: 60 };
 const CINEMATIC_SEC = 12;
 const BOOM_DELAY = 0.8; // pad explosion: ignition rumble, then the boom
 const SCALE = { mvp: 1, kestrel2: 1.3, kestrel3: 1.7 };
@@ -59,12 +58,12 @@ const fmt = (ms) => {
   return `T${ms < 0 ? "-" : "+"}${p(Math.floor(t / 60))}:${p(t % 60)}`;
 };
 
-export function buildEffects({ scene, container, rocket, pad, stations, lights, sequenceId, invalidate, reduced }) {
-  const A = ASCENT_SEC[sequenceId] || 0;
+export function buildEffects({ scene, container, rocket, pad, stations, lights, sequenceId, ascentSec, invalidate, reduced }) {
+  const A = Number(ascentSec) > 0 ? Number(ascentSec) : 0; // from the page (data-ascent-sec), not a table
   const RS = SCALE[sequenceId] || 1;
 
   // ---------------------------------------------------------------- objects
-  const clock = buildClock();
+  const clock = buildClock(rocket.height);
   scene.add(clock.group);
 
   const puffs = makePool(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ flatShading: true, fog: false }), 200, { gravity: -0.8, drag: 0.5 });
@@ -387,6 +386,7 @@ export function buildEffects({ scene, container, rocket, pad, stations, lights, 
 
   return {
     setState,
+    boardBeside: (x) => clock.beside(x),
     tick,
     out,
     get epoch() { return S.epoch; },

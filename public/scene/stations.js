@@ -33,6 +33,7 @@ export function buildStations(roles) {
   const mat = litMaterial();
   const group = new THREE.Group();
   const figures = {};
+  const flags = {};
   let triangles = 0;
 
   // The ring road the stations sit on.
@@ -55,15 +56,25 @@ export function buildStations(roles) {
     b.cyl(0.06, 0.06, seatTop, 6, { y: seatTop / 2 }, P.steelDark);
     b.box(0.46 * FIGURE_SCALE, 0.1, 0.5 * FIGURE_SCALE, { y: seatTop - 0.05, z: FIGURE_BACK - 0.02 }, P.bezel);
     b.box(0.46 * FIGURE_SCALE, 0.7 * FIGURE_SCALE, 0.09, { y: seatTop + 0.35 * FIGURE_SCALE, z: backZ }, P.bezel);
-    // flag post to the side, tall enough to be seen from across the ring
-    b.cyl(0.05, 0.06, 3.4, 6, { x: 2.6, y: 1.7, z: -2.4 }, P.steelDark);
-    b.box(0.95, 0.55, 0.05, { x: 3.1, y: 3.0, z: -2.4 }, color);
+    // flag post to the side, tall enough to be seen from across the ring. Its own
+    // mesh per seat: your own post is hidden, since it cuts across the view of a neighbour.
+    const fb = new Batch();
+    fb.setBase(frame(angles[i]));
+    fb.cyl(0.05, 0.06, 3.4, 6, { x: 2.6, y: 1.7, z: -2.4 }, P.steelDark);
+    fb.box(0.95, 0.55, 0.05, { x: 3.1, y: 3.0, z: -2.4 }, color);
+    const fg = fb.geometry();
+    triangles += fb.triangles;
+    const fm = new THREE.Mesh(fg, mat);
+    fm.frustumCulled = false;
+    flags[role] = { mesh: fm, geo: fg };
   });
   const geo = b.geometry();
   triangles += b.triangles;
   const staticMesh = new THREE.Mesh(geo, mat);
   staticMesh.frustumCulled = false;
   group.add(staticMesh);
+
+  for (const f of Object.values(flags)) group.add(f.mesh);
 
   // Crew figures: one per seat, shown only when someone holds it.
   roles.forEach((role, i) => {
@@ -84,6 +95,7 @@ export function buildStations(roles) {
     setSeats(occupied, hideRole, present) {
       let shown = 0;
       for (const role of roles) {
+        flags[role].mesh.visible = role !== hideRole;
         const f = figures[role], name = occupied[role];
         const v = !!name && role !== hideRole;
         f.group.visible = v;
@@ -108,6 +120,6 @@ export function buildStations(roles) {
       for (const role of roles) out[role] = { visible: figures[role].group.visible, ...figures[role].debug() };
       return out;
     },
-    dispose() { geo.dispose(); mat.dispose(); for (const f of Object.values(figures)) f.dispose(); },
+    dispose() { geo.dispose(); for (const f of Object.values(flags)) f.geo.dispose(); mat.dispose(); for (const f of Object.values(figures)) f.dispose(); },
   };
 }

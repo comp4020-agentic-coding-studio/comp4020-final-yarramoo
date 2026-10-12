@@ -20,7 +20,7 @@ const app = new Hono();
 // Static files only: compressing the SSE routes would buffer the stream. The
 // vendored Three.js bundle drops from ~740 KB to ~190 KB.
 app.use("/public/*", compress());
-app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("Cache-Control", "public, max-age=300"); } }));
+app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("Cache-Control", process.env["NODE_ENV"] === "production" ? "public, max-age=300" : "no-cache"); } }));
 
 // Nothing here takes a large body: forms and a few short fields. Refuse the rest
 // before anything (the CSRF guard included) reads it. Hono checks Content-Length

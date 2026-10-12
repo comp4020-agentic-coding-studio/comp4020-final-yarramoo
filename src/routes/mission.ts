@@ -60,7 +60,7 @@ function renderMission(c: Context, code: string, crew: Crew | null, opts: { erro
   return page(c, {
     title: `Mission ${m.code}`,
     status: opts.status ?? 200,
-    body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}" data-callsign="${crew?.callsign ?? ""}" data-sequence="${m.sequence_id}">
+    body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}" data-callsign="${crew?.callsign ?? ""}" data-sequence="${m.sequence_id}" data-ascent-sec="${seq.ascentSec ?? ""}">
 <div id="scene" aria-hidden="true"></div>
 <div id="overlay">
 <div id="hud" class="hud">
@@ -68,6 +68,7 @@ function renderMission(c: Context, code: string, crew: Crew | null, opts: { erro
   <span class="hud-code">${m.code}</span>
   <span class="countdown hud-clock"></span>
   <span id="hud-phase" class="phase phase-${m.status}">${m.status.toUpperCase()}</span>
+  <span class="zoom-ctl"><button type="button" id="zoom-out" class="secondary" aria-label="Zoom out">&minus;</button><button type="button" id="zoom-in" class="secondary" aria-label="Zoom in">+</button></span>
   <span id="hud-actions" class="hud-actions"></span>
   <button type="button" id="sheet-toggle" class="secondary" aria-controls="overlay-body" aria-expanded="true" aria-label="Collapse the panel to look around">Look</button>
 </div>

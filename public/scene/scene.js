@@ -86,9 +86,24 @@ export function mountScene(container, opts) {
     ? { theta: stations.theta(role), radius: RING_RADIUS, height: EYE_HEIGHT }
     : { theta: 0, radius: SPECTATOR.radius, height: SPECTATOR.height });
 
+  // Zoom narrows the field of view (68 or 74 degrees at 1x down to about 25) so a
+  // figure across the ring can be made out. Drags get finer as you zoom, since
+  // they are measured in field of view.
+  const MAX_ZOOM = 2.8;
+  let zoom = 1, baseFov = 68;
+  const setZoom = (z) => {
+    zoom = clamp(z, 1, MAX_ZOOM);
+    camera.fov = baseFov / zoom;
+    camera.updateProjectionMatrix();
+    lastInput = performance.now();
+    invalidate();
+  };
+  const recentre = () => { tween = null; look.stop(); look.set(0, homePitch(rig)); lastInput = -1e9; setZoom(1); };
   const look = createLook(container, {
     radPerPx: () => (camera.fov * Math.PI) / 180 / Math.max(300, container.clientHeight),
     onChange: () => { lastInput = performance.now(); invalidate(); },
+    onZoom: (ratio) => setZoom(zoom * ratio),
+    onReset: recentre,
   });
 
   function placeCamera() {
@@ -193,6 +208,7 @@ export function mountScene(container, opts) {
     if (seatRole === undefined) { seatRole = wanted; goTo(wanted, true); }
     else if (wanted !== seatRole) { seatRole = wanted; goTo(wanted, false); }
     dbg.figures = stations.setSeats(seats, seatRole, present);
+    fx.boardBeside(seatRole && stations.hasRole(seatRole) ? Math.sin(stations.theta(seatRole)) : 0); // pad board: on your side of the tower
     invalidate();
   }
 
@@ -229,7 +245,8 @@ export function mountScene(container, opts) {
     renderer.setPixelRatio(dpr);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
-    camera.fov = w / h < 0.9 ? 74 : 68; // portrait phones need a taller field
+    baseFov = w / h < 0.9 ? 74 : 68; // portrait phones need a taller field
+    camera.fov = baseFov / zoom;
     applyOffset();
     invalidate();
   }
@@ -262,6 +279,8 @@ export function mountScene(container, opts) {
     arc: (p) => fx.pathAt(p),
     gesture: (role, kind) => gesture(role, kind),
     camera: { theta: 0, yaw: 0, pitch: 0, fov: 60 },
+    zoomBy: (r) => setZoom(zoom * r),
+    recentre: () => recentre(),
     bench(ms = 2000) {
       return new Promise((resolve) => {
         benching = performance.now() + ms; frames.length = 0; invalidate();
@@ -318,6 +337,8 @@ export function mountScene(container, opts) {
     gesture,
     looks,
     setInsets,
+    zoomBy: (ratio) => setZoom(zoom * ratio),
+    recentre,
     invalidate,
     dispose() {
       if (disposed) return;
