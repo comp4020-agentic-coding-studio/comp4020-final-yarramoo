@@ -38,7 +38,8 @@ describe("view redaction", () => {
   it("the flight view has the master checklist but no values, faults or cross-checks", () => {
     const v = view(seq, midMission().state, "flight");
     const text = JSON.stringify(v);
-    expect(v.checklist).toHaveLength(seq.steps.length);
+    // every step except the fix steps, which stay hidden until done (next test)
+    expect(v.checklist).toHaveLength(seq.steps.length - seq.faults.filter((f) => f.fixStep).length);
     expect(v.checklist!.map((c) => c.label)).toContain("Chill engine to start temperature");
     expect(v.values).toEqual([]);
     expect(v.cautions).toEqual([]);
@@ -46,6 +47,18 @@ describe("view redaction", () => {
     for (const secret of ["tank_pressure", "bus_voltage", "Propellant tank pressure", "Pad power bus B", "Tank vent valve position unconfirmed", "Pad bus B voltage sag", "Vent line temperature", "Umbilical bus ammeter"]) {
       expect(text, secret).not.toContain(secret);
     }
+  });
+
+  it("the flight checklist does not reveal another console's fault through its fix step", () => {
+    // Faults are active and unfixed mid-mission, so their fix steps are ready.
+    const run = midMission();
+    expect(run.state.steps.fix_vent!.status).toBe("ready");
+    const ids = view(seq, run.state, "flight").checklist!.map((c) => c.id);
+    expect(ids).not.toContain("fix_vent");
+    expect(ids).not.toContain("fix_bus");
+    // Once a console actually does the fix, it is an action like any other.
+    const fixed = runBot(begin(seq, BOTH_REAL), { fix: true, untilTMs: -60_000 });
+    expect(view(seq, fixed.state, "flight").checklist!.map((c) => c.id)).toContain("fix_vent");
   });
 
   it("non-flight views carry no checklist and no other console's step ids", () => {

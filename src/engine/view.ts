@@ -108,7 +108,11 @@ export function view(seq: Sequence, state: State, role: Role): ConsoleView {
   };
 
   if (role === "flight") {
-    const checklist: ChecklistItem[] = seq.steps.map((st) => ({
+    // A fix step unlocks only when its fault appears, so listing it would tell
+    // flight about another console's caution before anyone reports it. It
+    // shows only once someone has actually done it.
+    const fixSteps = new Set(seq.faults.map((f) => f.fixStep).filter((id): id is string => !!id));
+    const checklist: ChecklistItem[] = seq.steps.filter((st) => !fixSteps.has(st.id) || state.steps[st.id]!.status === "done").map((st) => ({
       id: st.id,
       label: st.label,
       role: st.role,

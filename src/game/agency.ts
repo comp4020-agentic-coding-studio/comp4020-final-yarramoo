@@ -51,6 +51,14 @@ function pickRocket(excludeMission: number | null): Rocket | undefined {
   return ready.find((r) => !held.has(r.id)) ?? ready[0];
 }
 
+/**
+ * Prefer a rocket no live mission is flying. When every ready rocket is
+ * flying, missions share one rather than queue: a small fleet must not cap
+ * how many crews can play at once (applyOutcome copes with a shared rocket).
+ */
+const flyingElsewhere = (rocketId: number, missionId: number): boolean =>
+  db.prepare("SELECT 1 FROM missions WHERE status = 'live' AND rocket_id = ? AND id != ?").get(rocketId, missionId) !== undefined;
+
 /** At mission creation: the first free ready rocket and the first pad. May be null (the lobby says why). */
 export function assignment(): { rocketId: number | null; padId: number | null } {
   return { rocketId: pickRocket(null)?.id ?? null, padId: getPads()[0]?.id ?? null };
@@ -62,7 +70,7 @@ export interface StartPreview { rocket: Rocket | undefined; pad: Pad | undefined
 export function previewStart(m: { id: number; rocket_id: number | null; pad_id: number | null }): StartPreview {
   const pad = padById(m.pad_id);
   let rocket = rocketById(m.rocket_id);
-  if (!rocket || rocket.status !== "ready") rocket = pickRocket(m.id) ?? rocket;
+  if (!rocket || rocket.status !== "ready" || flyingElsewhere(rocket.id, m.id)) rocket = pickRocket(m.id) ?? rocket;
   let blocked: string | null = null;
   if (!rocket || rocket.status !== "ready") blocked = "No rocket is ready. Repair or buy one on the Agency page.";
   else if (pad && pad.condition < PAD_MIN_CONDITION) blocked = `Pad ${pad.name} is at ${pad.condition}%. Repair it on the Agency page.`;
@@ -102,7 +110,10 @@ export function applyOutcome(missionId: number, state: State, now: number): void
   c.lines.forEach((l, i) => addLedger(now, missionId, null, l.budget, l.reputation, i === 0 ? l.reason + note : l.reason));
 
   const rocket = rocketById(row.rocket_id);
-  if (rocket) {
+  // A shared rocket may already have been lost on another mission; it stays lost.
+  if (rocket && rocket.status === "lost") {
+    addLedger(now, missionId, null, 0, 0, `Rocket ${rocket.name} was already lost on another mission; no further damage recorded`);
+  } else if (rocket) {
     const cond = clamp(rocket.condition + c.rocket.conditionDelta, 0, 100);
     db.prepare("UPDATE rockets SET condition = ?, status = ?, flights = flights + ? WHERE id = ?").run(cond, c.rocket.status ?? rocket.status, c.rocket.flight ? 1 : 0, rocket.id);
     if (c.rocket.status) addLedger(now, missionId, null, 0, 0, `Rocket ${rocket.name} ${c.rocket.status === "lost" ? "lost" : "needs repair"}`);

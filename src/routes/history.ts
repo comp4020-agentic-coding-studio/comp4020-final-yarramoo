@@ -30,7 +30,7 @@ const crewList = (seats: Seats): Html =>
   html`<ul class="crew-list">${ROLES.map((r) => (seats[r] ? html`<li><span class="muted">${ROLE_LABELS[r]}</span> <span class="callsign">${seats[r]}</span></li>` : ""))}</ul>`;
 
 history.get("/missions", (c) => {
-  const pageNo = Math.max(1, Math.floor(Number(c.req.query("page"))) || 1);
+  const pageNo = Math.min(1_000_000, Math.max(1, Math.floor(Number(c.req.query("page"))) || 1)); // a huge OFFSET makes SQLite throw
   const live = liveMissions();
   const total = countDone();
   const done = doneMissions(PAGE_SIZE, (pageNo - 1) * PAGE_SIZE);
