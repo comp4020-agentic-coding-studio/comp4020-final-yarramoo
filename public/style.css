@@ -13,7 +13,7 @@ h3 { font-size:.8rem; letter-spacing:.12em; text-transform:uppercase; color:var(
 header.site { display:flex; flex-wrap:wrap; gap:.25rem 1.5rem; align-items:center; justify-content:space-between; padding:.5rem 16px; border-bottom:1px solid var(--line); background:var(--panel); }
 header.site .brand { font:700 1rem var(--mono); letter-spacing:.1em; text-transform:uppercase; text-decoration:none; color:var(--fg); padding:.6rem 0; }
 header.site nav { display:flex; flex-wrap:wrap; gap:.25rem 1rem; align-items:center; }
-header.site nav a { padding:.6rem 0; }
+header.site nav a { display:inline-flex; align-items:center; min-height:44px; min-width:44px; }
 .callsign { font-family:var(--mono); color:var(--green); }
 main { max-width:48rem; margin:0 auto; padding:1.25rem 16px 4rem; }
 body[data-page=m] main { max-width:90rem; }
@@ -180,3 +180,9 @@ table.record td:not(:first-child) { white-space:nowrap; }
 button:disabled { opacity:.45; cursor:not-allowed; }
 .blocked { color:var(--amber); font-family:var(--mono); }
 .grounded { border-color:var(--amber); }
+/* Keep the clock, phase and hold window in view while scrolling to steps. The
+   head sits in its own slot div, so the slot is what sticks. */
+.console > div:first-child { position:sticky; top:0; z-index:5; }
+.console > div:first-child .console-head { box-shadow:0 6px 12px rgba(0,0,0,.45); }
+/* Links in tables are tap targets on a phone. */
+table td a { display:inline-block; padding:.7rem .25rem; margin:-.7rem 0; }

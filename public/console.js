@@ -148,7 +148,7 @@
     const done = lobby && lobby.phase === "done";
     consoles.hidden = done || myRoles.length === 0 || !live();
     if (myRoles.length === 0 && live()) $("observer-note").hidden = false;
-    $("tabs").hidden = myRoles.length < 2 || done;
+    $("tabs").hidden = myRoles.length < 2 || done || !live();
     consoles.dataset.n = String(myRoles.length);
     for (const role of myRoles) {
       const v = views[role];
