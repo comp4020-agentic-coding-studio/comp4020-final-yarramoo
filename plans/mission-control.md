@@ -159,8 +159,19 @@ anything on `main`, sound, hangar upgrades, new dependencies.
 ## Rules for the run
 
 - **Dispatch cap.** One worker at a time, never in parallel (the engine and
-  server share a contract). Sonnet only; at most 2 attempts per phase. No
-  worker spawns subagents. Each brief lists the files the worker may touch.
+  server share a contract). At most 2 attempts per phase. No worker spawns
+  subagents. Each brief lists the files the worker may touch.
+- **Triage per `CLAUDE.md`.** Each brief states model and effort:
+  - **Sonnet, high effort:** phases 2 and 3 and stretch S1, where the engine
+    and server contract and the concurrency get settled.
+  - **Sonnet, medium effort:** every other implementation phase, and the S2
+    review.
+  - **Haiku, low effort:** mechanical work only. Capturing the screenshot sweeps
+    (S3 capture, and the repeat captures in phases 5 to 7 once the session has
+    done the first play-through itself in phase 4), and tallying spend per phase
+    for the morning report.
+  - **The session:** briefs, review, the first two-browser play-through,
+    fixes of a few lines, and the morning report.
 - **Budget stop.** The balance is checked after every phase. If
   `current_week_spend` reaches **$80** (baseline $4.45 plus a $75 working
   margin), the run finishes the current commit and stops.
