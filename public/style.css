@@ -215,3 +215,67 @@ button.terminate-btn { background:var(--red); color:#2a0408; width:100%; min-hei
 .tbar .tick.k-terminate, .tbar .tick.k-anomaly_active { top:0; bottom:0; background:var(--red); }
 .ev.k-anomaly_active .ev-s, .ev.k-terminate .ev-s, .ev.k-liftoff .ev-s { font-weight:700; }
 .ev.k-anomaly_active .ev-s { color:var(--amber); }
+
+/* 3D open pad. The scene is a canvas behind the page; the HTML console is an
+   overlay on top of it (a side panel on desktop, a bottom sheet on phones).
+   Everything is scoped to #mission[data-view="3d"], so the 2D view is untouched.
+   console.js sets data-view; with no script nothing here applies. */
+#scene, #hud { display:none; }
+#overlay { display:contents; }
+.view-toggle { min-height:36px; padding:.25rem .8rem; font-size:.85rem; margin:0 0 .5rem; }
+body:has(#mission[data-view="3d"]) { overflow:hidden; }
+body:has(#mission[data-view="3d"]) header.site { display:none; }
+body:has(#mission[data-view="3d"]) main { max-width:none; margin:0; padding:0; }
+#mission[data-view="3d"] #scene { display:block; position:fixed; inset:0; z-index:0; background:#9db7d3; }
+#mission[data-view="3d"] #scene canvas { outline:none; }
+#mission[data-view="3d"] #overlay {
+  display:flex; flex-direction:column; position:fixed; z-index:10; pointer-events:auto;
+  background:rgba(11,14,20,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  border:1px solid var(--line); color:var(--fg);
+}
+#mission[data-view="3d"] #hud {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .7rem; flex:none; position:relative;
+  padding:.5rem 12px; border-bottom:1px solid var(--line); cursor:pointer;
+}
+#mission[data-view="3d"] #hud::before { content:""; position:absolute; top:4px; left:50%; width:36px; height:4px; margin-left:-18px; border-radius:2px; background:var(--line); }
+.hud-home { color:var(--muted); font:.8rem var(--mono); text-decoration:none; display:inline-flex; align-items:center; min-height:44px; }
+.hud-code { font:700 .95rem var(--mono); letter-spacing:.15em; color:var(--green); }
+.hud-clock { font:700 1.7rem/1 var(--mono); font-variant-numeric:tabular-nums; }
+.hud .phase { font-size:.8rem; padding:.15rem .5rem; }
+.hud-actions { display:contents; }
+.hud button { min-height:44px; padding:.3rem .8rem; font-size:.85rem; margin:0; }
+.hud-actions .view-toggle { margin:0; }
+#mission[data-view="3d"] .hud-actions { display:contents; }
+#mission[data-view="3d"] #hud #sheet-toggle { margin-left:auto; }
+#mission[data-view="3d"] #overlay-body { overflow-y:auto; overscroll-behavior:contain; padding:12px 12px 20px; flex:1 1 auto; min-height:0; }
+#mission[data-view="3d"][data-sheet=collapsed] #overlay-body { display:none; }
+#mission[data-view="3d"] .mission-head h1 { font-size:1.2rem; margin:0 0 .25rem; }
+#mission[data-view="3d"] .mission-head h1 .code { font-size:1.4rem; }
+#mission[data-view="3d"] .mission-head .view-toggle { display:none; }
+#mission[data-view="3d"] .consoles { grid-template-columns:minmax(0, 1fr); }
+#mission[data-view="3d"] .tabs:not([hidden]) { display:flex !important; }
+#mission[data-view="3d"] .consoles .console.inactive { display:none; }
+#mission[data-view="3d"] .mini-clock { font-size:2.2rem; }
+#mission[data-view="3d"] .console-head { padding:.5rem .75rem; }
+#mission[data-view="3d"] .outcome h2 { font-size:2rem; }
+#mission[data-view="3d"] #lobby .seats li { padding:.45rem .6rem; }
+#mission[data-view="3d"] #lobby .seats .role { min-width:7rem; }
+
+/* Phone: a bottom sheet, at most 55% of the height, that collapses to a bar. */
+@media (max-width: 899.98px) {
+  #mission[data-view="3d"] #overlay {
+    left:0; right:0; bottom:0; max-height:55vh; max-height:55dvh;
+    border-width:1px 0 0; border-radius:14px 14px 0 0; padding-bottom:env(safe-area-inset-bottom);
+  }
+  #mission[data-view="3d"] #hud { padding-top:.9rem; }
+  #mission[data-view="3d"][data-sheet=collapsed] .hud-home, #mission[data-view="3d"][data-sheet=collapsed] .hud-actions { display:none; }
+  #mission[data-view="3d"] .hud-home, #mission[data-view="3d"] .hud-code { display:none; }
+  #mission[data-view="3d"] .hud-clock { font-size:1.5rem; }
+  .hud button { padding:.3rem .6rem; }
+}
+/* Desktop: a 420 px panel on the right, scrollable. */
+@media (min-width: 900px) {
+  #mission[data-view="3d"] #overlay { top:0; right:0; bottom:0; width:420px; border-width:0 0 0 1px; }
+  #mission[data-view="3d"][data-sheet=collapsed] #overlay { bottom:auto; border-radius:0 0 0 10px; border-width:0 0 1px 1px; }
+  #mission[data-view="3d"] #hud::before { display:none; }
+}

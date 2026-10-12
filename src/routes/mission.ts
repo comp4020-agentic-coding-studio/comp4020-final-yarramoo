@@ -59,11 +59,23 @@ function renderMission(c: Context, code: string, crew: Crew | null, opts: { erro
   return page(c, {
     title: `Mission ${m.code}`,
     status: opts.status ?? 200,
-    body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}" data-callsign="${crew?.callsign ?? ""}">
+    body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}" data-callsign="${crew?.callsign ?? ""}" data-sequence="${m.sequence_id}">
+<div id="scene" aria-hidden="true"></div>
+<div id="overlay">
+<div id="hud" class="hud">
+  <a class="hud-home" href="/">&larr; Hub</a>
+  <span class="hud-code">${m.code}</span>
+  <span class="countdown hud-clock"></span>
+  <span id="hud-phase" class="phase phase-${m.status}">${m.status.toUpperCase()}</span>
+  <span id="hud-actions" class="hud-actions"></span>
+  <button type="button" id="sheet-toggle" class="secondary" aria-controls="overlay-body" aria-expanded="true" aria-label="Collapse the panel to look around">Look</button>
+</div>
+<div id="overlay-body">
 <div class="mission-head">
   <p class="eyebrow">${seq.name}</p>
   <h1>Mission <span id="mission-code" class="code">${m.code}</span></h1>
   ${lobby ? html`<p class="share">Share this code or link: <button type="button" id="copy-link" class="secondary">Copy link</button></p>` : ""}
+  <button type="button" id="view-toggle" class="secondary view-toggle" hidden>2D view</button>
 </div>
 <p id="error" class="error" role="alert">${opts.error ?? ""}</p>
 <p id="conn" class="conn" hidden>reconnecting…</p>
@@ -87,7 +99,11 @@ ${crew ? "" : html`<p>Take a callsign to join this mission.</p>${callsignForm(c,
 <div id="consoles" class="consoles" hidden></div>
 <section id="outcome-panel" class="outcome" hidden aria-live="polite"></section>
 </div>
-<script src="/public/console.js" defer></script>`,
+</div>
+</div>
+<script type="importmap">{"imports":{"three":"/public/vendor/three/three.module.min.js"}}</script>
+<script src="/public/console.js" defer></script>
+<script type="module" src="/public/scene/boot.js"></script>`,
   });
 }
 

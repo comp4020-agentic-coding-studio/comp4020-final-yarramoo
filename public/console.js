@@ -32,6 +32,72 @@
   };
   setInterval(drawClock, 100);
 
+  // ------------------------------------------------------------ 3D view
+  // The HTML console is the same in both views. In 3D it sits as an overlay on a
+  // canvas that public/scene/boot.js mounts; in 2D (no WebGL, reduced motion, or
+  // the player's choice, remembered here) it is the plain page. Only public
+  // data crosses to the scene: see publishState and emitLayout below.
+  const mq = (q) => (window.matchMedia ? window.matchMedia(q).matches : false);
+  const mc = (window.__mc = window.__mc || { state: null, layout: { right: 0, bottom: 0 } });
+  const prefs = {
+    get: () => { try { return localStorage.getItem("mc-view"); } catch { return null; } },
+    set: (v) => { try { localStorage.setItem("mc-view", v); } catch { /* private mode: not remembered */ } },
+  };
+  const hasWebGL = () => {
+    try {
+      const c = document.createElement("canvas");
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      if (gl && gl.getExtension("WEBGL_lose_context")) gl.getExtension("WEBGL_lose_context").loseContext();
+      return !!gl;
+    } catch { return false; }
+  };
+  const gl = hasWebGL();
+  const viewToggle = $("view-toggle");
+  const sheetToggle = $("sheet-toggle");
+  const emitLayout = () => {
+    let right = 0, bottom = 0;
+    const o = $("overlay");
+    if (root.dataset.view === "3d" && o) {
+      const r = o.getBoundingClientRect();
+      if (mq("(min-width: 900px)")) right = root.dataset.sheet === "collapsed" ? 0 : Math.max(0, window.innerWidth - r.left);
+      else bottom = Math.max(0, window.innerHeight - r.top);
+    }
+    if (right === mc.layout.right && bottom === mc.layout.bottom) return;
+    mc.layout = { right, bottom };
+    window.dispatchEvent(new CustomEvent("mc:layout", { detail: mc.layout }));
+  };
+  const setView = (mode, persist) => {
+    root.dataset.view = mode;
+    if (persist) prefs.set(mode);
+    viewToggle.hidden = !gl;
+    viewToggle.textContent = mode === "3d" ? "2D view" : "3D view";
+    (mode === "3d" ? $("hud-actions") : document.querySelector(".mission-head")).appendChild(viewToggle);
+    window.dispatchEvent(new CustomEvent("mc:view", { detail: { mode } }));
+    emitLayout();
+  };
+  const setSheet = (open) => {
+    root.dataset.sheet = open ? "open" : "collapsed";
+    sheetToggle.setAttribute("aria-expanded", String(open));
+    sheetToggle.textContent = open ? "Look" : "Panel";
+    sheetToggle.setAttribute("aria-label", open ? "Collapse the panel to look around" : "Show the panel");
+    emitLayout();
+  };
+  viewToggle.addEventListener("click", () => setView(root.dataset.view === "3d" ? "2d" : "3d", true));
+  sheetToggle.addEventListener("click", () => setSheet(root.dataset.sheet === "collapsed"));
+  // The bar itself is a big target too: tap anywhere on it that is not a control.
+  $("hud").addEventListener("click", (e) => {
+    if (e.target instanceof Element && !e.target.closest("a, button")) setSheet(root.dataset.sheet === "collapsed");
+  });
+  window.addEventListener("mc:scene-error", () => setView("2d", false));
+  if (window.ResizeObserver) new ResizeObserver(emitLayout).observe($("overlay"));
+  window.addEventListener("resize", emitLayout);
+  {
+    const pref = prefs.get();
+    const reduced = mq("(prefers-reduced-motion: reduce)");
+    setSheet(true);
+    setView(!gl || pref === "2d" || (pref !== "3d" && reduced) ? "2d" : "3d", false);
+  }
+
   // --------------------------------------------------------------- state
   let lobby = null;
   let views = {};
@@ -218,6 +284,12 @@
   };
 
   let activeTab = myRoles[0];
+  // The scene's whole view of the game: the public lobby message and which seats
+  // this browser holds. Never `views`.
+  const publishState = () => {
+    mc.state = { lobby, myRoles: [...myRoles], activeRole: activeTab, sequenceId: root.dataset.sequence };
+    window.dispatchEvent(new CustomEvent("mc:state", { detail: mc.state }));
+  };
   const tabs = $("tabs");
   for (const r of myRoles) {
     const b = document.createElement("button");
@@ -229,6 +301,8 @@
     const r = e.target instanceof HTMLElement && e.target.dataset.tab;
     if (!r) return;
     activeTab = r;
+    window.dispatchEvent(new CustomEvent("mc:seat", { detail: { activeRole: r } }));
+    if (mc.state) mc.state.activeRole = r;
     for (const b of tabs.children) b.setAttribute("aria-pressed", String(b.dataset.tab === r));
     for (const c of consoles.children) c.classList.toggle("inactive", c.dataset.role !== r);
   });
@@ -281,6 +355,9 @@
       for (const f of document.querySelectorAll("#lobby form")) f.remove();
     }
     $("phase").textContent = lobby.phase;
+    const hp = $("hud-phase");
+    hp.className = `phase phase-${lobby.phase}`;
+    hp.textContent = lobby.phase === "hold" ? "HOLD" : lobby.phase.toUpperCase();
   };
 
   // -------------------------------------------------------------- stream
@@ -313,6 +390,7 @@
         connect();
       }
       drawClock();
+      publishState();
     };
     source.onerror = () => {
       status.hidden = false;

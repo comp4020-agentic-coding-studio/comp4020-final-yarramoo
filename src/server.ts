@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { bodyLimit } from "hono/body-limit";
 import { html } from "hono/html";
 import "./db/index.ts";
@@ -16,6 +17,9 @@ import { page } from "./views/layout.ts";
 
 const app = new Hono();
 
+// Static files only: compressing the SSE routes would buffer the stream. The
+// vendored Three.js bundle drops from ~740 KB to ~190 KB.
+app.use("/public/*", compress());
 app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("Cache-Control", "public, max-age=300"); } }));
 
 // Nothing here takes a large body: forms and a few short fields. Refuse the rest
