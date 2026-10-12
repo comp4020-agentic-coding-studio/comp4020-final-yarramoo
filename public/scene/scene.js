@@ -67,7 +67,7 @@ export function mountScene(container, opts) {
   // The launch moment (P3): clock, atmosphere, liftoff, outcomes. Public state only.
   const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const fx = buildEffects({
-    scene, container, rocket, pad, stations, sequenceId: opts.sequenceId, reduced,
+    scene, container, rocket, pad, stations, sequenceId: opts.sequenceId, ascentSec: opts.ascentSec, reduced,
     lights: { hemi, sun, hemi0: hemi.intensity, sun0: sun.intensity },
     invalidate: () => invalidate(),
   });
@@ -219,6 +219,16 @@ export function mountScene(container, opts) {
     stations.gesture(role, kind);
     invalidate();
   }
+  // Idle fidgets: during the count every other figure taps its desk now and
+  // then. A fix step can only be pressed while its fault is active, so without
+  // this noise a "press" from a seat with nothing else to do would give the
+  // fault away. Random and local to each viewer, so it carries no information.
+  const fidgetTimer = setInterval(() => {
+    if (disposed || document.hidden || (phase !== "count" && phase !== "hold")) return;
+    let any = false;
+    for (const role of roles) if (role !== seatRole && Math.random() < 0.12) { stations.gesture(role, "press"); any = true; }
+    if (any) invalidate();
+  }, 1000);
   function looks(heads) {
     if (disposed) return;
     stations.look(heads);
@@ -345,6 +355,7 @@ export function mountScene(container, opts) {
       disposed = true;
       cancelAnimationFrame(raf);
       clearInterval(blinkTimer);
+      clearInterval(fidgetTimer);
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVis);
       canvas.removeEventListener("webglcontextlost", onLost);

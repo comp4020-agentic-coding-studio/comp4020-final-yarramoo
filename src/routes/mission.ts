@@ -173,6 +173,8 @@ mission.post(
     // Time never comes from the client: only these fields are read.
     const action = buildAction(role, body);
     if (typeof action === "string") return c.json({ ok: false, error: action });
+    // The page only offers Start to the Flight Director; the server must hold that line too.
+    if (action.type === "start" && role !== "flight") return c.json({ ok: false, error: "only the Flight Director can start the count" });
     const result = action.type === "start" ? startMission(m, crew.id) : act(code, crew.id, action);
     if (result.ok) publishGesture(code, action); // only accepted actions; the gesture carries the type, never an id
     return c.json(result);

@@ -208,7 +208,10 @@ function drawLabel(canvas, text, color, away) {
   const w = Math.min(LABEL_W - 8, g.measureText(text).width + 44);
   const x = (LABEL_W - w) / 2;
   g.fillStyle = "rgba(14,20,30,0.72)";
-  g.beginPath(); g.roundRect(x, 8, w, away ? 108 : 82, 16); g.fill();
+  g.beginPath();
+  if (g.roundRect) g.roundRect(x, 8, w, away ? 108 : 82, 16);
+  else g.rect(x, 8, w, away ? 108 : 82); // older Safari/Chrome lack roundRect; a square plate beats a dead scene
+  g.fill();
   g.fillStyle = "#f2f5f9";
   g.textAlign = "center"; g.textBaseline = "middle";
   g.fillText(text, LABEL_W / 2, 44);

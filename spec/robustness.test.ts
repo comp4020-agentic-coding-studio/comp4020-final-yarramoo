@@ -54,6 +54,12 @@ describe("simultaneous and repeated use", () => {
     expect((await b.post(`/m/${code}/seat`, { role: "propulsion" })).status).toBe(303);
   });
 
+  it("only the Flight Director can start the count", async () => {
+    const r = await b.act(code, { role: "propulsion", type: "start" });
+    expect(r.body.ok).toBe(false);
+    expect(r.body.error).toMatch(/Flight Director/);
+  });
+
   it("a Start pressed in two tabs at once starts the count once", async () => {
     const lobby = a.stream(`/m/${code}/stream`);
     const seated = await lobby.waitFor((x) => x.type === "lobby", 2000);
