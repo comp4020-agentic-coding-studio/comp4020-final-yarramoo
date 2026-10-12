@@ -11,11 +11,12 @@ import { buildRocket } from "./rocket.js";
 import { buildStations, RING_RADIUS, EYE_HEIGHT } from "./stations.js";
 import { createLook } from "./look.js";
 import { PALETTE as P } from "./palette.js";
+import { buildEffects } from "./effects.js";
 
 const SPECTATOR = { radius: 64, height: 20 };
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const angDiff = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
-const WRECKED = new Set(["explosion", "terminated", "range_violation"]);
 
 function skyTexture() {
   const c = document.createElement("canvas");
@@ -45,7 +46,8 @@ export function mountScene(container, opts) {
   const sky = skyTexture();
   scene.background = sky;
   scene.fog = new THREE.Fog(P.fog, 70, 330);
-  scene.add(new THREE.HemisphereLight("#cfe0f5", "#6c6b58", 2.1));
+  const hemi = new THREE.HemisphereLight("#cfe0f5", "#6c6b58", 2.1);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight("#fff0d4", 2.6);
   sun.position.set(-60, 90, 40);
   scene.add(sun);
@@ -59,8 +61,17 @@ export function mountScene(container, opts) {
   rocket.group.position.y = MOUNT_TOP;
   scene.add(pad.group, rocket.group, stations.group);
 
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 900);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1800);
   camera.rotation.order = "YXZ";
+
+  // The launch moment (P3): clock, atmosphere, liftoff, outcomes. Public state only.
+  const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const fx = buildEffects({
+    scene, container, rocket, pad, stations, sequenceId: opts.sequenceId, reduced,
+    lights: { hemi, sun, hemi0: hemi.intensity, sun0: sun.intensity },
+    invalidate: () => invalidate(),
+  });
+  let lastInput = -1e9; // last time the player dragged or pressed an arrow key
 
   // ------------------------------------------------------------- camera rig
   // The rig is polar around the pad: theta (angle on the ring), radius, height.
@@ -77,12 +88,20 @@ export function mountScene(container, opts) {
 
   const look = createLook(container, {
     radPerPx: () => (camera.fov * Math.PI) / 180 / Math.max(300, container.clientHeight),
-    onChange: () => invalidate(),
+    onChange: () => { lastInput = performance.now(); invalidate(); },
   });
 
   function placeCamera() {
     camera.position.set(rig.radius * Math.sin(rig.theta), rig.height, rig.radius * Math.cos(rig.theta));
     camera.rotation.set(look.pitch, rig.theta + look.yaw, 0);
+    const s = fx.out.shake;
+    if (s > 0) { // launch shake, scaled by distance in effects.js; skipped under reduced motion
+      const t = performance.now();
+      camera.rotation.x += s * Math.sin(t * 0.093);
+      camera.rotation.y += s * Math.sin(t * 0.071 + 1.3);
+      camera.rotation.z += s * 0.6 * Math.sin(t * 0.117 + 2.1);
+      camera.position.y += s * 14 * Math.sin(t * 0.083);
+    }
   }
 
   function goTo(role, instant) {
@@ -130,8 +149,6 @@ export function mountScene(container, opts) {
   }
 
   function applyPhase() {
-    rocket.flame.visible = phase === "ascent";
-    rocket.group.visible = !(phase === "done" && (outcomeKind === "success" || WRECKED.has(outcomeKind)));
     clearInterval(blinkTimer);
     blinkTimer = 0;
     if (phase === "hold") {
@@ -142,8 +159,21 @@ export function mountScene(container, opts) {
   }
 
   let lastKey = "";
+  let previewing = false;
+  // Debug and test hook: show a synthetic PUBLIC state locally ({phase, tMs, outcome, since}).
+  // It changes only this browser's visuals and sends nothing; preview(null) returns to the live state.
+  function preview(p) {
+    if (disposed) return;
+    if (!p) { previewing = false; lastKey = ""; return; }
+    previewing = true;
+    const now = performance.now();
+    phase = p.phase; outcomeKind = (p.outcome && p.outcome.kind) || null;
+    applyPhase();
+    fx.setState(p.phase, p.tMs || 0, now, p.outcome || null, now, { force: true, live: true, since: p.since });
+    invalidate();
+  }
   function update(state) {
-    if (disposed || !state) return;
+    if (disposed || !state || previewing) return;
     const lobby = state.lobby || null;
     const mine = state.myRoles || [];
     const wanted = state.activeRole && mine.includes(state.activeRole) ? state.activeRole : mine[0] || null;
@@ -151,6 +181,11 @@ export function mountScene(container, opts) {
     const ph = (lobby && lobby.phase) || "lobby";
     const oc = (lobby && lobby.outcome && lobby.outcome.kind) || null;
     const present = (lobby && lobby.present) || null;
+    if (!previewing) {
+      // The clock from console.js (already extrapolated there) is public; use it only while it is the same phase.
+      const same = state.clockPhase === ph && Number.isFinite(state.clockMs);
+      fx.setState(ph, same ? state.clockMs : (lobby ? lobby.tMs : 0), same ? state.clockAt : performance.now(), (lobby && lobby.outcome) || null, performance.now());
+    }
     const key = JSON.stringify([ph, oc, seats, wanted, present]);
     if (key === lastKey) return; // lobby messages repeat; nothing visible changed
     lastKey = key;
@@ -222,6 +257,9 @@ export function mountScene(container, opts) {
     fps: 0, figures: 0, drawCalls: 0, triangles: 0, geometries: 0, frames: 0,
     phase, seat: null, sequenceId: opts.sequenceId, roles: roles.slice(),
     figureState: () => stations.debug(),
+    preview: (p) => preview(p),
+    fx: () => fx.debug(),
+    arc: (p) => fx.pathAt(p),
     gesture: (role, kind) => gesture(role, kind),
     camera: { theta: 0, yaw: 0, pitch: 0, fov: 60 },
     bench(ms = 2000) {
@@ -239,10 +277,17 @@ export function mountScene(container, opts) {
     if (disposed) return;
     const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0.016;
     lastT = now;
-    const moving = look.step(dt) || stepTween(now);
+    let moving = look.step(dt) || stepTween(now);
+    // After a quiet 3 s the camera tilts up to follow the climb; any drag or key takes it back.
+    if (fx.out.following && !tween && !look.dragging && now - lastInput > 3000) {
+      const cx = rig.radius * Math.sin(rig.theta), cz = rig.radius * Math.cos(rig.theta);
+      const f = fx.out.focus, want = Math.atan2(f.y - rig.height, Math.hypot(f.x - cx, f.z - cz));
+      look.pitch += (clamp(want, -0.2, 1.3) - look.pitch) * (1 - Math.exp(-dt * 2.5));
+      moving = true;
+    }
     placeCamera();
     emitMyLook();
-    const animating = stations.tick(dt, now, camera);
+    const animating = fx.tick(dt, now, camera) | stations.tick(dt, now, camera);
     renderer.render(scene, camera);
     // Debug figures: fps only means something while frames are continuous.
     frames.push(now);
@@ -284,6 +329,7 @@ export function mountScene(container, opts) {
       canvas.removeEventListener("webglcontextlost", onLost);
       canvas.removeEventListener("webglcontextrestored", onRestored);
       look.dispose();
+      fx.dispose();
       rocket.dispose(); pad.dispose(); stations.dispose();
       sky.dispose();
       renderer.dispose();

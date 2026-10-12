@@ -53,27 +53,28 @@ export function buildPad({ rocketHeight, mastThetas = [0.9, 2.3, 4.1, 5.3] }) {
 
   // Service tower to the north (the side with no stations): four legs, rings and
   // diagonals every 4 m, a swing arm reaching south to the rocket.
+  const tb = new Batch(), ab = new Batch(); // tower and arm are their own meshes so they can tilt and swing
   const TX = 0, TZ = -9, half = 1.7;
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    b.box(0.5, towerH, 0.5, { x: TX + sx * half, y: towerH / 2, z: TZ + sz * half }, P.steel);
+    tb.box(0.5, towerH, 0.5, { x: TX + sx * half, y: towerH / 2, z: TZ + sz * half }, P.steel);
   }
   for (let y = 4; y <= towerH; y += 4) {
-    b.box(half * 2, 0.3, 0.3, { x: TX, y, z: TZ + half }, P.steelDark);
-    b.box(half * 2, 0.3, 0.3, { x: TX, y, z: TZ - half }, P.steelDark);
-    b.box(0.3, 0.3, half * 2, { x: TX + half, y, z: TZ }, P.steelDark);
-    b.box(0.3, 0.3, half * 2, { x: TX - half, y, z: TZ }, P.steelDark);
+    tb.box(half * 2, 0.3, 0.3, { x: TX, y, z: TZ + half }, P.steelDark);
+    tb.box(half * 2, 0.3, 0.3, { x: TX, y, z: TZ - half }, P.steelDark);
+    tb.box(0.3, 0.3, half * 2, { x: TX + half, y, z: TZ }, P.steelDark);
+    tb.box(0.3, 0.3, half * 2, { x: TX - half, y, z: TZ }, P.steelDark);
     if (y > 4) {
       const l = Math.hypot(half * 2, 4);
       const a = Math.atan2(4, half * 2);
-      b.box(l, 0.2, 0.2, { x: TX, y: y - 2, z: TZ + half, rz: a }, P.steelDark);
-      b.box(l, 0.2, 0.2, { x: TX, y: y - 2, z: TZ - half, rz: -a }, P.steelDark);
+      tb.box(l, 0.2, 0.2, { x: TX, y: y - 2, z: TZ + half, rz: a }, P.steelDark);
+      tb.box(l, 0.2, 0.2, { x: TX, y: y - 2, z: TZ - half, rz: -a }, P.steelDark);
     }
   }
-  b.box(half * 2 + 1.4, 0.5, half * 2 + 1.4, { x: TX, y: towerH + 0.25, z: TZ }, P.concreteDark);
-  b.cyl(0.08, 0.14, 7, 6, { x: TX, y: towerH + 4, z: TZ }, P.steelDark);
+  tb.box(half * 2 + 1.4, 0.5, half * 2 + 1.4, { x: TX, y: towerH + 0.25, z: TZ }, P.concreteDark);
+  tb.cyl(0.08, 0.14, 7, 6, { x: TX, y: towerH + 4, z: TZ }, P.steelDark);
   const armY = Math.round(towerH * 0.68);
   const armLen = -(TZ + half) - 1.9;
-  b.box(1.1, 1.1, armLen, { x: TX, y: armY, z: TZ + half + armLen / 2 }, P.steel);
+  tb.box(1.1, 1.1, armLen, { x: TX, y: armY, z: TZ + half + armLen / 2 }, P.steel);
   b.box(1.4, 1.5, 1.2, { x: TX, y: armY, z: TZ + half + armLen }, P.steelDark);
 
   // Fuel tanks, a service building and a windsock pole, all at the edges, away from the stations.
@@ -119,6 +120,21 @@ export function buildPad({ rocketHeight, mastThetas = [0.9, 2.3, 4.1, 5.3] }) {
   staticMesh.frustumCulled = false;
   group.add(staticMesh);
 
+  // Tower: one group (tower, beacons, arm) so P3 can lean it after an explosion;
+  // the arm swings on a pivot at the tower corner.
+  const tower = new THREE.Group();
+  const towerGeo = tb.geometry();
+  const towerMesh = new THREE.Mesh(towerGeo, mat);
+  towerMesh.frustumCulled = false;
+  const armGeo = ab.geometry();
+  const armMesh = new THREE.Mesh(armGeo, mat);
+  armMesh.frustumCulled = false;
+  const arm = new THREE.Group();
+  arm.position.set(TX, armY, TZ + half);
+  arm.add(armMesh);
+  tower.add(towerMesh, arm);
+  group.add(tower);
+
   // Beacons: amber boxes on the tower corners and the arm tip. One merged
   // mesh with one basic material, so blinking is a colour change.
   const bb = new Batch();
@@ -132,13 +148,14 @@ export function buildPad({ rocketHeight, mastThetas = [0.9, 2.3, 4.1, 5.3] }) {
   const beaconMat = new THREE.MeshBasicMaterial({ color: P.beaconOff });
   const beacons = new THREE.Mesh(beaconGeo, beaconMat);
   beacons.frustumCulled = false;
-  group.add(beacons);
+  tower.add(beacons);
 
   return {
     group,
     towerHeight: towerH,
+    tower: { group: tower, base: new THREE.Vector3(TX, 0, TZ), arm },
     beacons: { mesh: beacons, mat: beaconMat },
-    triangles: b.triangles + bb.triangles,
-    dispose() { geo.dispose(); mat.dispose(); beaconGeo.dispose(); beaconMat.dispose(); },
+    triangles: b.triangles + bb.triangles + tb.triangles + ab.triangles,
+    dispose() { geo.dispose(); towerGeo.dispose(); armGeo.dispose(); mat.dispose(); beaconGeo.dispose(); beaconMat.dispose(); },
   };
 }

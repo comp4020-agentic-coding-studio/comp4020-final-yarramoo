@@ -111,6 +111,29 @@ export const GESTURES = {
     [0.6, { lean: -0.4, r: [1.4, 0.1, 0.05] }],
     [1.0, {}],
   ] },
+  // Reactions to the launch moment (driven by public outcome state, not the wire).
+  // `look` overrides the head target while the gesture runs: [yaw, pitch].
+  watch: { dur: 5, look: [0, 1.0], keys: [ // stand and look up at the rocket
+    [0, {}],
+    [0.6, { stand: 1, r: [0.3, 0.1, 0.25], l: [0.3, 0.1, 0.25] }],
+    [4.4, { stand: 1, r: [0.3, 0.1, 0.25], l: [0.3, 0.1, 0.25] }],
+    [5, {}],
+  ] },
+  flinch: { dur: 2.6, look: [0, -0.3], keys: [ // duck and cover
+    [0, {}],
+    [0.15, { lean: -0.6, nod: -0.4, r: [2.3, -0.3, 1.9], l: [2.3, -0.3, 1.9] }],
+    [2.0, { lean: -0.6, nod: -0.4, r: [2.3, -0.3, 1.9], l: [2.3, -0.3, 1.9] }],
+    [2.6, {}],
+  ] },
+  cheer: { dur: 4, look: [0, 0.9], keys: [ // stand, both arms up, bounce
+    [0, {}],
+    [0.4, { stand: 1, r: [3.0, 0.5, 0.1], l: [3.0, 0.5, 0.1] }],
+    [0.9, { stand: 1, r: [2.7, 0.9, 0.1], l: [3.1, 0.2, 0.1] }],
+    [1.4, { stand: 1, r: [3.1, 0.2, 0.1], l: [2.7, 0.9, 0.1] }],
+    [1.9, { stand: 1, r: [2.7, 0.9, 0.1], l: [3.1, 0.2, 0.1] }],
+    [3.5, { stand: 1, r: [3.0, 0.5, 0.1], l: [3.0, 0.5, 0.1] }],
+    [4, {}],
+  ] },
 };
 const keyed = (g) => g.keys.map(([t, p]) => [t, keep(p)]);
 for (const g of Object.values(GESTURES)) g.frames = keyed(g);
@@ -315,7 +338,8 @@ export function buildFigure(role, frame) {
       for (const key of POSE_KEYS) { const d = tgt[key] - c[key]; c[key] += d * k; if (Math.abs(d) > 0.004) moving = true; }
       for (const arm of ["r", "l"]) for (let j = 0; j < 3; j++) { const d = tgt[arm][j] - c[arm][j]; c[arm][j] += d * k; if (Math.abs(d) > 0.004) moving = true; }
       // head: toward what was received (or a glance at the rocket), smoothed
-      const [hy, hp] = st.head || [0, 0.18];
+      const lk = st.gesture && st.gesture.look;
+      const [hy, hp] = lk || st.head || [0, 0.18];
       const kh = 1 - Math.exp(-dt * 9);
       const dy = Math.atan2(Math.sin(hy - st.yaw), Math.cos(hy - st.yaw)), dp = hp - st.pitch;
       st.yaw += dy * kh; st.pitch += dp * kh;

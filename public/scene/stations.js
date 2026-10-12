@@ -95,6 +95,8 @@ export function buildStations(roles) {
     },
     gesture(role, kind) { if (figures[role] && figures[role].group.visible) figures[role].gesture(kind); },
     look(heads) { for (const [role, h] of Object.entries(heads || {})) if (figures[role] && Array.isArray(h)) figures[role].setHead(h[0], h[1]); },
+    /** A launch reaction (watch, flinch, cheer) for every drawn figure; public state only. */
+    react(kind) { for (const role of roles) if (figures[role].group.visible) figures[role].gesture(kind); },
     /** Advance every visible figure; true while any is still moving. */
     tick(dt, now, camera) {
       let moving = false;

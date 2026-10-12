@@ -1,7 +1,7 @@
 // Mounts the 3D scene behind the HTML console, and unmounts it when the player
 // switches to the 2D view. console.js owns the stream, the panel and the 2D
 // toggle; it publishes three public events and this file listens:
-//   mc:state  { lobby, myRoles, activeRole, sequenceId }  (public lobby data and my own roles)
+//   mc:state  { lobby, myRoles, activeRole, sequenceId, clockMs, clockAt, clockPhase }  (public lobby, my roles, the mission clock)
 //   mc:seat   { activeRole }                              (tab changed)
 //   mc:layout { right, bottom }                           (px of the canvas the overlay covers)
 //   mc:view   { mode: "3d" | "2d" }

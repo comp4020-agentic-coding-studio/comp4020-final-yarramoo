@@ -287,7 +287,8 @@
   // The scene's whole view of the game: the public lobby message and which seats
   // this browser holds. Never `views`.
   const publishState = () => {
-    mc.state = { lobby, myRoles: [...myRoles], activeRole: activeTab, sequenceId: root.dataset.sequence };
+    // clockMs/clockAt/clockPhase: the public mission clock as last received (tMs at performance.now() = clockAt).
+    mc.state = { lobby, myRoles: [...myRoles], activeRole: activeTab, sequenceId: root.dataset.sequence, clockMs: clock.tMs, clockAt: clock.at, clockPhase: clock.phase };
     window.dispatchEvent(new CustomEvent("mc:state", { detail: mc.state }));
   };
   const tabs = $("tabs");
