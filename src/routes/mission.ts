@@ -96,6 +96,12 @@ ${crew ? "" : html`<p>Take a callsign to join this mission.</p>${callsignForm(c,
     ? html`<form id="start-form" data-action method="post" action="/m/${m.code}/act">${csrfField(c)}<input type="hidden" name="role" value="flight"><input type="hidden" name="type" value="start"><button type="submit" class="big go-btn">Start the count</button></form>`
     : ""}
 </section>
+<section id="spectator" class="panel spectator" aria-label="Press stand" hidden>
+  <p class="spectator-head"><span class="code">${m.code}</span> <span class="muted">${seq.name}</span> <span id="spectator-phase" class="phase"></span> <span class="countdown spectator-clock"></span></p>
+  <ul id="spectator-crew" class="spectator-crew"></ul>
+  <p class="muted">Consoles are private &mdash; you&rsquo;re watching from the press stand. Drag to look around.</p>
+  ${crew ? "" : html`<p><a href="#callsign-form">Take a callsign</a> to join your own missions.</p>`}
+</section>
 <p id="observer-note" class="muted" hidden>You are watching without a seat. Every console is private to the person at it.</p>
 <div id="tabs" class="tabs" role="group" aria-label="Consoles" hidden></div>
 <div id="consoles" class="consoles" hidden></div>

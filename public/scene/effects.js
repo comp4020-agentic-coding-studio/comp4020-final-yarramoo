@@ -115,6 +115,7 @@ export function buildEffects({ scene, container, rocket, pad, stations, lights, 
   };
   let armCur = 0, tiltCur = 0, lightCur = 1, snap = true;
   const acc = { vent: 0, smoke: 0, trail: 0, abort: 0 };
+  let pq = 1; // particle quality (1 full, 0.5 halved by adaptive quality in scene.js)
   let lastClock = 0, clockTimer = 0;
   const out = { following: false, focus: new THREE.Vector3(), shake: 0 };
   const dbgState = { tSec: 0, liftSec: -1, p: 0, eOut: Infinity, rocket: false, flame: 0, air: false, alive: 0 };
@@ -156,18 +157,21 @@ export function buildEffects({ scene, container, rocket, pad, stations, lights, 
     puffs.spawn(Math.cos(a) * 1.5, MOUNT_TOP + rnd(0, 1.5), Math.sin(a) * 1.5, Math.cos(a) * sp, rnd(0.8, 2.2), Math.sin(a) * sp, rnd(4.5, 6), 1.0, rnd(3, 4.5), C.white, C.padSmoke);
   }
   function fireball(x, y, z, n, spread, size) {
+    n = Math.max(1, Math.round(n * pq));
     for (let i = 0; i < n; i++) {
       fire.spawn(x + rnd(-1, 1) * 2, y + rnd(0, 3), z + rnd(-1, 1) * 2, rnd(-1, 1) * spread, rnd(0.2, 1) * spread * 0.8, rnd(-1, 1) * spread, rnd(0.9, 1.9), size * 0.3, size * rnd(0.7, 1.2), C.fireA, C.fireB);
     }
     fire.spawn(x, y, z, 0, 0, 0, 0.45, size * 0.5, size * 2.4, C.white, C.fireC); // the flash core
   }
   function blastSmoke(x, y, z, n, size) {
+    n = Math.round(n * pq);
     for (let i = 0; i < n; i++) {
       const a = rnd(0, Math.PI * 2), sp = rnd(3, 11);
       puffs.spawn(x, y + rnd(0, 3), z, Math.cos(a) * sp, rnd(2, 9), Math.sin(a) * sp, rnd(5, 8.5), size * 0.25, size * rnd(0.7, 1.2), C.blastA, C.blastB);
     }
   }
   function debrisBurst(x, y, z, n, up, spread, lifeSec) {
+    n = Math.round(n * pq);
     for (let i = 0; i < n; i++) {
       const a = rnd(0, Math.PI * 2), sp = rnd(0.3, 1) * spread, s = rnd(0.35, 1.15);
       const c = DEBRIS[(Math.random() * DEBRIS.length) | 0];
@@ -332,20 +336,20 @@ export function buildEffects({ scene, container, rocket, pad, stations, lights, 
 
     // --- emitters, forward from now
     let emitting = false;
-    if (ph === "count" && tSec > -10 && tSec < 0) { acc.vent += (5 + (tSec + 10) * 1.2) * dt; emitting = true; }
+    if (ph === "count" && tSec > -10 && tSec < 0) { acc.vent += (5 + (tSec + 10) * 1.2) * dt * pq; emitting = true; }
     else acc.vent = 0;
     for (let n = 0; acc.vent >= 1 && n < 6; n++) { acc.vent--; ventPuff(); }
 
     const lifting = flying && liftSec < 9 && arc.y < 60;
-    if (lifting) { acc.smoke += (liftSec < 2 ? 18 : 30 * (1 - liftSec / 9)) * dt; emitting = true; } else acc.smoke = 0;
+    if (lifting) { acc.smoke += (liftSec < 2 ? 18 : 30 * (1 - liftSec / 9)) * dt * pq; emitting = true; } else acc.smoke = 0;
     for (let n = 0; acc.smoke >= 1 && n < 8; n++) { acc.smoke--; groundSmoke(0, MOUNT_TOP - 1.5 + (arc.y > 0 ? 0 : 0), liftSec < 3); }
 
     if (flying && liftSec > 0.5 && rocketVis) {
-      acc.trail += 16 * dt; emitting = true;
+      acc.trail += 16 * dt * pq; emitting = true;
       for (let n = 0; acc.trail >= 1 && n < 6; n++) { acc.trail--; trailPuff(arc.x, MOUNT_TOP + arc.y); }
     } else acc.trail = 0;
 
-    if (done && kind === "pad_abort" && eOut >= 1.2 && eOut < 8) { acc.abort += 16 * dt; emitting = true; } else acc.abort = 0;
+    if (done && kind === "pad_abort" && eOut >= 1.2 && eOut < 8) { acc.abort += 16 * dt * pq; emitting = true; } else acc.abort = 0;
     for (let n = 0; acc.abort >= 1 && n < 6; n++) { acc.abort--; abortPuff(); }
 
     // --- advance the pools; cap is fixed by construction (200 + 80 + 70)
@@ -387,6 +391,7 @@ export function buildEffects({ scene, container, rocket, pad, stations, lights, 
   return {
     setState,
     boardBeside: (x) => clock.beside(x),
+    setParticleQuality(q) { pq = q; },
     tick,
     out,
     get epoch() { return S.epoch; },

@@ -13,7 +13,9 @@ import { createLook } from "./look.js";
 import { PALETTE as P } from "./palette.js";
 import { buildEffects } from "./effects.js";
 
-const SPECTATOR = { radius: 64, height: 20 };
+const SPECTATOR = { radius: 66, height: 24 };
+const ORBIT_RATE = 0.11; // rad/s: about a minute a lap
+const IDLE_RESUME_MS = 8000; // an observer's drag holds the camera this long
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const angDiff = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
@@ -246,10 +248,11 @@ export function mountScene(container, opts) {
 
   // ------------------------------------------------- sizing and view offset
   const insets = { right: 0, bottom: 0 };
-  let width = 0, height = 0, dpr = 1;
+  let width = 0, height = 0, dpr = 1, dprCap = 4;
+  function baseDpr(w) { return Math.max(1, Math.min(window.devicePixelRatio || 1, w < 700 ? 1.5 : 2)); }
   function resize() {
     const w = Math.max(1, container.clientWidth), h = Math.max(1, container.clientHeight);
-    dpr = Math.min(window.devicePixelRatio || 1, w < 700 ? 1.5 : 2);
+    dpr = Math.max(1, Math.min(baseDpr(w), dprCap));
     if (w === width && h === height && renderer.getPixelRatio() === dpr) { applyOffset(); return; }
     width = w; height = h;
     renderer.setPixelRatio(dpr);
@@ -280,6 +283,47 @@ export function mountScene(container, opts) {
   // -------------------------------------------------------------- the loop
   let disposed = false, raf = 0, lastT = 0, benching = 0;
   const frames = [];
+
+  // ---- frame timing and adaptive quality. Intervals between consecutive frames
+  // while the loop is running continuously (sleep gaps are not counted).
+  const FT = new Float32Array(120);
+  let ftN = 0, ftI = 0;
+  const recent = new Float32Array(30); let rN = 0, rI = 0;
+  const pushFt = (ms) => {
+    FT[ftI] = ms; ftI = (ftI + 1) % 120; if (ftN < 120) ftN++;
+    recent[rI] = ms; rI = (rI + 1) % 30; if (rN < 30) rN++;
+  };
+  function frameStats() {
+    if (!ftN) return { avg: 0, p95: 0, n: 0 };
+    const a = Array.from(FT.subarray(0, ftN)).sort((x, y) => x - y);
+    const avg = a.reduce((t, v) => t + v, 0) / a.length;
+    return { avg: +avg.toFixed(1), p95: +a[Math.min(a.length - 1, Math.floor(a.length * 0.95))].toFixed(1), n: a.length };
+  }
+  // Tiers: 0 full; then the pixel ratio steps down by 0.25 to 1; then half the
+  // particles; then lite (no fog). There is no extra sky geometry (one gradient texture).
+  const Q = { tier: 0, adaptive: true, slowMs: 0, fastMs: 0, upWaitMs: 10000, lastUp: -1e9 };
+  const nDpr = () => Math.ceil((baseDpr(width || 390) - 1) / 0.25 - 1e-6);
+  const maxTier = () => nDpr() + 2;
+  const fog0 = scene.fog;
+  function applyQuality() {
+    const nd = nDpr();
+    dprCap = Q.tier === 0 ? 4 : Math.max(1, baseDpr(width || 390) - 0.25 * Math.min(Q.tier, nd));
+    fx.setParticleQuality(Q.tier > nd ? 0.5 : 1);
+    scene.fog = Q.tier > nd + 1 ? null : fog0;
+    resize(); invalidate();
+    dbg.tier = Q.tier; dbg.dpr = renderer.getPixelRatio();
+  }
+  function setTier(t) { Q.tier = clamp(t, 0, maxTier()); Q.slowMs = Q.fastMs = 0; rN = 0; rI = 0; applyQuality(); }
+  function adapt(ms, now) {
+    if (!Q.adaptive || rN < 20) return;
+    let sum = 0; for (let i = 0; i < rN; i++) sum += recent[i];
+    const avg = sum / rN;
+    if (avg > 25) { Q.slowMs += ms; Q.fastMs = 0; } else if (avg < 20) { Q.fastMs += ms; Q.slowMs = 0; } else { Q.slowMs = 0; }
+    if (Q.slowMs >= 2000 && Q.tier < maxTier()) {
+      if (now - Q.lastUp < 30000) Q.upWaitMs = Math.min(80000, Q.upWaitMs * 2); // it bounced: wait longer next time
+      setTier(Q.tier + 1);
+    } else if (Q.fastMs >= Q.upWaitMs && Q.tier > 0) { Q.lastUp = now; setTier(Q.tier - 1); }
+  }
   const dbg = {
     fps: 0, figures: 0, drawCalls: 0, triangles: 0, geometries: 0, frames: 0,
     phase, seat: null, sequenceId: opts.sequenceId, roles: roles.slice(),
@@ -291,6 +335,11 @@ export function mountScene(container, opts) {
     camera: { theta: 0, yaw: 0, pitch: 0, fov: 60 },
     zoomBy: (r) => setZoom(zoom * r),
     recentre: () => recentre(),
+    frameStats, tier: 0, dpr: 1, spectating: false,
+    setTier: (t) => setTier(t),
+    setAdaptive: (on) => { Q.adaptive = !!on; },
+    resetStats() { ftN = ftI = rN = rI = 0; },
+    memory: () => ({ geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs ? renderer.info.programs.length : 0 }),
     bench(ms = 2000) {
       return new Promise((resolve) => {
         benching = performance.now() + ms; frames.length = 0; invalidate();
@@ -304,11 +353,22 @@ export function mountScene(container, opts) {
   function frame(now) {
     raf = 0;
     if (disposed) return;
-    const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0.016;
+    const raw = lastT ? now - lastT : 0;
+    const dt = lastT ? Math.min(0.1, raw / 1000) : 0.016;
     lastT = now;
+    if (raw > 0 && raw < 250) { pushFt(raw); adapt(raw, now); }
     let moving = look.step(dt) || stepTween(now);
-    // After a quiet 3 s the camera tilts up to follow the climb; any drag or key takes it back.
-    if (fx.out.following && !tween && !look.dragging && now - lastInput > 3000) {
+    // After a quiet 3 s (8 s for a spectator) the camera tilts up to follow the climb; any drag or key takes it back.
+    const spectating = seatRole === null;
+    dbg.spectating = spectating;
+    let orbiting = false;
+    if (spectating && !tween && !look.dragging && now - lastInput > IDLE_RESUME_MS) {
+      // Press stand: a slow lap of the pad. The yaw and pitch from a drag ease back to centred.
+      rig.theta += dt * (fx.out.following ? ORBIT_RATE * 0.4 : ORBIT_RATE);
+      if (!fx.out.following) look.set(look.yaw * (1 - Math.min(1, dt * 2)), look.pitch + (homePitch(rig) - look.pitch) * Math.min(1, dt * 2));
+      orbiting = true; moving = true;
+    }
+    if (fx.out.following && !tween && !look.dragging && now - lastInput > (spectating ? IDLE_RESUME_MS : 3000)) {
       const cx = rig.radius * Math.sin(rig.theta), cz = rig.radius * Math.cos(rig.theta);
       const f = fx.out.focus, want = Math.atan2(f.y - rig.height, Math.hypot(f.x - cx, f.z - cz));
       look.pitch += (clamp(want, -0.2, 1.3) - look.pitch) * (1 - Math.exp(-dt * 2.5));

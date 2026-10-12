@@ -269,7 +269,6 @@
   const renderConsoles = () => {
     const done = lobby && lobby.phase === "done";
     consoles.hidden = done || myRoles.length === 0 || !live();
-    if (myRoles.length === 0 && live()) $("observer-note").hidden = false;
     $("tabs").hidden = myRoles.length < 2 || done || !live();
     consoles.dataset.n = String(myRoles.length);
     for (const role of myRoles) {
@@ -344,6 +343,27 @@
     li.appendChild(f);
   };
 
+  // Spectators (no seat) on a mission in progress get a strip of public lobby data
+  // in place of a console: the crew with presence dots, the clock, and why there is
+  // no console. Nothing here comes from a console view.
+  const renderSpectator = () => {
+    const strip = $("spectator");
+    if (!strip || !lobby) return;
+    const on = myRoles.length === 0 && lobby.phase !== "lobby" && lobby.phase !== "done";
+    strip.hidden = !on;
+    $("lobby").hidden = on;
+    if (!on) return;
+    const present = lobby.present || {};
+    const key = JSON.stringify([lobby.seats, present, lobby.phase]);
+    if (strip.dataset.key === key) return;
+    strip.dataset.key = key;
+    $("spectator-phase").textContent = lobby.phase === "hold" ? "HOLD" : lobby.phase.toUpperCase();
+    $("spectator-crew").innerHTML = Object.keys(lobby.seats).map((r) => {
+      const who = lobby.seats[r];
+      return `<li><span class="pdot ${who && present[r] ? "on" : ""}" aria-label="${who && present[r] ? "connected" : "away"}"></span><span class="role">${esc(ROLE_LABELS[r] || r)}</span> <span class="who">${who ? esc(who) : "open"}</span></li>`;
+    }).join("");
+  };
+
   const renderLobby = () => {
     if (!lobby) return;
     for (const li of document.querySelectorAll("#seats li[data-role]")) {
@@ -368,6 +388,7 @@
       for (const f of document.querySelectorAll("#lobby form")) f.remove();
     }
     $("phase").textContent = lobby.phase;
+    renderSpectator();
     const hp = $("hud-phase");
     hp.className = `phase phase-${lobby.phase}`;
     hp.textContent = lobby.phase === "hold" ? "HOLD" : lobby.phase.toUpperCase();

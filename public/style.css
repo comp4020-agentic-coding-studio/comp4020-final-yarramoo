@@ -453,3 +453,15 @@ button.go-btn:disabled { filter:saturate(.3) brightness(.55); box-shadow:0 0 0 3
   #mission[data-view="3d"][data-sheet=open] #hud .phase { display:none; }
   .console .console-head { padding:.4rem .7rem; } .console .mini-clock { font-size:2rem; }
 }
+
+/* ------------------------------------------------------------------ spectators (press stand) */
+.spectator { margin:0 0 .6rem; }
+.spectator-head { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .7rem; margin:0 0 .4rem; }
+.spectator-head .code { font:700 .95rem var(--mono); letter-spacing:.15em; color:var(--green); }
+.spectator-clock { font:700 1.3rem/1 var(--mono); font-variant-numeric:tabular-nums; margin-left:auto; }
+.spectator-crew { list-style:none; margin:.2rem 0 .5rem; padding:0; display:grid; gap:.25rem; }
+.spectator-crew li { display:flex; align-items:center; gap:.5rem; font-size:.9rem; }
+.spectator-crew .role { color:var(--muted); min-width:8rem; }
+.pdot { width:.6rem; height:.6rem; border-radius:50%; background:#555d69; flex:none; }
+.pdot.on { background:var(--green); box-shadow:0 0 6px rgba(61,220,132,.7); }
+#mission[data-view="3d"]:has(#spectator:not([hidden])) .mission-head { display:none; }
