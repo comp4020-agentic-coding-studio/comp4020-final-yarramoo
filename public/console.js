@@ -239,11 +239,15 @@
   let source = null;
   let retry = 500;
   const status = $("conn");
+  let lastMsg = performance.now();
   const connect = () => {
     if (source) source.close();
+    lastMsg = performance.now();
     source = new EventSource(`/m/${code}/stream`);
     source.onopen = () => { retry = 500; status.hidden = true; };
     source.onmessage = (e) => {
+      lastMsg = performance.now();
+      status.hidden = true;
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
       if (m.type === "lobby") {
@@ -267,19 +271,38 @@
     };
   };
 
+  // A dropped Wi-Fi link often closes nothing: the stream just goes quiet and no
+  // error fires. A live mission is pushed to every second, so five quiet seconds
+  // means the link is dead; say so and reconnect (a fresh connection starts with
+  // a full snapshot). Lobbies and finished missions are legitimately quiet.
+  setInterval(() => {
+    if (!lobby || lobby.phase === "lobby" || lobby.phase === "done") return;
+    if (performance.now() - lastMsg < 5000) return;
+    status.hidden = false;
+    // Give this attempt its own five seconds; otherwise a slow link would be
+    // reconnected every second, each attempt killing the last before it opens.
+    lastMsg = performance.now();
+    connect();
+  }, 1000);
+
   // ------------------------------------------------------------- actions
   const err = $("error");
   const send = async (key, fields) => {
     busy.add(key);
     for (const b of document.querySelectorAll(`[data-key="${CSS.escape(key)}"]`)) b.disabled = true;
     const body = new URLSearchParams({ _csrf: csrf(), ...fields });
+    // A slow or dead connection must not leave the button stuck: give up after
+    // 10 s. The action may still have reached the server; the next push shows it.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
     try {
-      const res = await fetch(`/m/${code}/act`, { method: "POST", body });
+      const res = await fetch(`/m/${code}/act`, { method: "POST", body, signal: ctrl.signal });
       const out = await res.json();
       err.textContent = out.ok ? "" : out.error || "rejected";
-    } catch {
-      err.textContent = "could not reach the server";
+    } catch (e) {
+      err.textContent = e && e.name === "AbortError" ? "No reply from mission control — try again" : "could not reach the server";
     } finally {
+      clearTimeout(timer);
       busy.delete(key);
       for (const b of document.querySelectorAll(`[data-key="${CSS.escape(key)}"]`)) b.disabled = false;
       renderLobby();

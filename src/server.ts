@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { html } from "hono/html";
 import "./db/index.ts";
 import { csrfGuard } from "./auth.ts";
@@ -15,6 +16,14 @@ import { page } from "./views/layout.ts";
 const app = new Hono();
 
 app.use("/public/*", serveStatic({ root: "./", onFound: (_p, c) => { c.header("Cache-Control", "public, max-age=300"); } }));
+
+// Nothing here takes a large body: forms and a few short fields. Refuse the rest
+// before anything (the CSRF guard included) reads it. Hono checks Content-Length
+// and, for chunked bodies, counts bytes as they stream.
+app.use("*", async (c, next) => {
+  if (c.req.method !== "POST") return next();
+  return bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.text("Request body too large", 413) })(c, next);
+});
 
 // Every POST, in every route module, must carry a valid `_csrf` field.
 app.use("*", csrfGuard);

@@ -4,6 +4,7 @@ import { safeNext } from "../auth.ts";
 import { createCrew, currentCrew, setCrewCookie } from "../crew.ts";
 import { agencySummary } from "../game/agency.ts";
 import { CODE_RE, getMission, openMissionsFor } from "../game/store.ts";
+import { clientIp, scaled } from "../ratelimit.ts";
 import { csrfField, page, type Html } from "../views/layout.ts";
 import type { Context } from "hono";
 
@@ -55,10 +56,32 @@ ${mine.length > 0
   });
 });
 
+// 30 new crew members per minute per address: a whole class signing up from
+// one NAT at a crit or the showcase must fit; a script creating callsigns in
+// bulk must not. Only a callsign actually created counts, so typos and name
+// clashes never lock anyone out.
+const signups = scaled(30, 60_000);
+
+/** A friendly 429 page. `extra` (a form, say) goes under the message. layout's page() has no 429, so re-status its response. */
+export async function tooManyPage(c: Context, message: string, retryAfterSec: number, extra: Html | "" = ""): Promise<Response> {
+  const r = await page(c, {
+    title: "Slow down",
+    body: html`<h1>Slow down</h1><p id="error" class="error" role="alert">${message} Try again in ${retryAfterSec} ${retryAfterSec === 1 ? "second" : "seconds"}.</p>${extra}<p><a href="/">Back to the hub</a></p>`,
+  });
+  return new Response(r.body, { status: 429, headers: r.headers });
+}
+
 home.post("/crew", async (c) => {
   const body = await c.req.parseBody();
   const next = safeNext(typeof body["next"] === "string" ? body["next"] : "/");
   if (currentCrew(c)) return c.redirect(next, 303);
+  const ip = clientIp(c);
+  const wait = signups.blocked(ip);
+  if (wait.blocked) {
+    const secs = Math.max(1, Math.ceil(wait.retryAfterMs / 1000));
+    c.header("Retry-After", String(secs));
+    return tooManyPage(c, "Too many callsigns have been taken from this address just now.", secs, callsignForm(c, next));
+  }
   const callsign = typeof body["callsign"] === "string" ? body["callsign"].trim() : "";
   const r = createCrew(callsign);
   if (!r.ok) {
@@ -68,6 +91,7 @@ home.post("/crew", async (c) => {
       status: r.status,
     });
   }
+  signups.hit(ip);
   setCrewCookie(c, r.token);
   return c.redirect(next, 303);
 });

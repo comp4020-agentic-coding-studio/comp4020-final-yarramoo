@@ -10,19 +10,36 @@ import { getSequence } from "../game/sequences.ts";
 import { claimSeat, createMission, getMission, holds, releaseSeat, rolesHeld, seatsOf } from "../game/store.ts";
 import { ROLES, ROLE_LABELS, type Action, type ConsoleView, type Role } from "../engine/types.ts";
 import { csrfToken } from "../auth.ts";
+import { clientIp, rateLimit } from "../ratelimit.ts";
 import { csrfField, page } from "../views/layout.ts";
-import { callsignForm } from "./home.ts";
+import { callsignForm, tooManyPage } from "./home.ts";
 
 export const mission = new Hono();
 
 const isRole = (v: unknown): v is Role => typeof v === "string" && (ROLES as readonly string[]).includes(v);
 const short = (v: unknown): string | null => (typeof v === "string" && v.length > 0 && v.length <= 64 ? v : null);
 
-mission.post("/missions", (c) => {
+const perCrewOrIp = (c: Context): string => {
   const crew = currentCrew(c);
-  if (!crew) return c.redirect("/", 303);
-  return c.redirect(`/m/${createMission(crew.id).code}`, 303);
-});
+  return crew ? `crew:${crew.id}` : `ip:${clientIp(c)}`;
+};
+
+// 10 new missions a minute per crew member; 20 actions a second, which is far
+// more than anyone plays at and stops a script.
+mission.post(
+  "/missions",
+  rateLimit({
+    limit: 10,
+    windowMs: 60_000,
+    key: perCrewOrIp,
+    reject: (c, secs) => tooManyPage(c, "You have started a lot of missions in the last minute.", secs),
+  }),
+  (c) => {
+    const crew = currentCrew(c);
+    if (!crew) return c.redirect("/", 303);
+    return c.redirect(`/m/${createMission(crew.id).code}`, 303);
+  },
+);
 
 function renderMission(c: Context, code: string, crew: Crew | null, opts: { error?: string; status?: 200 | 403 | 404 | 409 | 422 } = {}) {
   const m = getMission(code);
@@ -110,22 +127,31 @@ function buildAction(role: Role, body: Record<string, unknown>): Action | string
   }
 }
 
-mission.post("/m/:code/act", async (c) => {
-  const code = c.req.param("code").toUpperCase();
-  const m = getMission(code);
-  if (!m) return c.json({ ok: false, error: "no such mission" }, 404);
-  const crew = currentCrew(c);
-  const body = (await c.req.parseBody()) as Record<string, unknown>;
-  const role = body["role"];
-  if (!crew || !isRole(role) || !holds(m.id, crew.id, role)) {
-    return c.json({ ok: false, error: "you do not hold that seat" }, 403);
-  }
-  // Time never comes from the client: only these fields are read.
-  const action = buildAction(role, body);
-  if (typeof action === "string") return c.json({ ok: false, error: action });
-  const result = action.type === "start" ? startMission(m, crew.id) : act(code, crew.id, action);
-  return c.json(result);
-});
+mission.post(
+  "/m/:code/act",
+  rateLimit({
+    limit: 20,
+    windowMs: 1000,
+    key: perCrewOrIp,
+    reject: (c, secs) => c.json({ ok: false, error: `too many actions, slow down and try again in ${secs} s` }, 429),
+  }),
+  async (c) => {
+    const code = c.req.param("code").toUpperCase();
+    const m = getMission(code);
+    if (!m) return c.json({ ok: false, error: "no such mission" }, 404);
+    const crew = currentCrew(c);
+    const body = (await c.req.parseBody()) as Record<string, unknown>;
+    const role = body["role"];
+    if (!crew || !isRole(role) || !holds(m.id, crew.id, role)) {
+      return c.json({ ok: false, error: "you do not hold that seat" }, 403);
+    }
+    // Time never comes from the client: only these fields are read.
+    const action = buildAction(role, body);
+    if (typeof action === "string") return c.json({ ok: false, error: action });
+    const result = action.type === "start" ? startMission(m, crew.id) : act(code, crew.id, action);
+    return c.json(result);
+  },
+);
 
 // One SSE stream per console window. A crew member is subscribed to the topics
 // of the roles they hold plus the lobby, so another console's view never
