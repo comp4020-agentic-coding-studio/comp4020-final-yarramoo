@@ -136,6 +136,26 @@ its findings.
 
 The total is $70 against an $80 cap, which leaves a $10 buffer for one retry.
 
+## If there's budget left: stretch phases
+
+Taken strictly in this order, after phase 8 and before the final morning
+report. A stretch phase starts only if `current_week_spend` plus its budget plus
+$5 is still under the $80 stop, and it goes through the same gate (worker,
+review, green check, commit, push). Stopping with money unspent is fine: the
+budget is a ceiling, not a target.
+
+| # | Stretch | Worker | Budget |
+|---|---|---|---|
+| S1 | **Robustness.** Two seats act on the same step in the same instant; an SSE drop and reconnect mid-countdown (`Last-Event-ID` or a full re-render); a server restart mid-mission rebuilds the same state; double-submitted POSTs are idempotent. Spec tests for each, plus a throttled-network run in `agent-browser`. The top band marks this. | Sonnet | $6 |
+| S2 | **Independent review.** A fresh agent reads the branch diff cold, with no plan or conclusions given, and lists correctness bugs to `plans/reports/S2-review.md`. The session fixes the confirmed ones. | Sonnet | $5 |
+| S3 | **Viewports.** Every page at phone and desktop widths in two sessions, with screenshots; fix overflow, tap targets and countdown legibility. | Sonnet | $4 |
+| S4 | **Weather console.** A fourth role whose readouts drift during holds and feed the go/no-go decision. | Sonnet | $8 |
+| S5 | **Crew records.** Per-callsign mission count, outcomes, and how often that seat reported go on a fault, on `/crew/:callsign`. | Sonnet | $5 |
+| S6 | **Range Safety and in-flight anomaly.** A fifth role with a seconds-long terminate-or-ride decision after liftoff. | Sonnet | $8 |
+
+Never stretch work, even with money left: README, PROCESS or reflection prose,
+anything on `main`, sound, hangar upgrades, new dependencies.
+
 ## Rules for the run
 
 - **Dispatch cap.** One worker at a time, never in parallel (the engine and
