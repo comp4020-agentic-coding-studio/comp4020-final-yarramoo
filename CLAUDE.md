@@ -110,3 +110,33 @@ A starting point, not a rulebook. As the schema, the identity model and the
 real-time transport take shape, write down what you learn here --- a
 convention the work has to hold to, a sensor that keeps catching you out, a
 fact about the stack that's easy to get wrong --- and wire it into `check`.
+
+## Mission Control conventions (drafted by the agent, 2026-10-12; review and own them)
+
+These came out of the overnight build on `mission-control`. Each one either
+broke once or would break quietly.
+
+- **The engine is pure.** `src/engine/` takes time as `nowMs` and randomness
+  from the seeded PRNG in State: no `Date.now()`, no `Math.random()`, no I/O.
+  Any chunking of ticks must give identical state; the engine tests check
+  it, so a change that breaks it is red, not a judgement call.
+- **Fault truth never reaches a client before the mission is done.** Clients
+  get `view(state, role)` only, over per-seat topics; engine events carry the
+  truth and stay server-side. `/missions/:code` redirects while a mission is
+  live. A spec test reads a seat's stream and fails on any other role's data.
+- **The client never sends time or free-form actions.** `POST /m/:code/act`
+  builds the engine action from an allowlist of fields and checks the seat.
+- **Shared agency writes are one transaction with a conditional UPDATE.** Two
+  people pressing Repair at once must not both pay. Outcome consequences apply
+  in the same transaction that marks the mission done.
+- **The spec assumes a fresh, launchable agency.** CI gives it a throwaway
+  `/data`. Locally, run the app with `DATA_DIR=$(mktemp -d)`; never point
+  `pnpm check` at production, since the tests fly and scrub real missions.
+- **Kill the local app by port** (`lsof -ti:PORT | xargs kill`), never with
+  `pkill -f src/server.ts`, which kills every other local server too.
+- **`agent-browser` misclicks a button that is only partly on screen.** It
+  skips scrolling and clicks the centre, off-screen, and the click lands on
+  `<html>`. Scroll the element into view first, or `requestSubmit()` the form
+  in `eval`. A Start that "does nothing" was this, twice.
+- **In zsh, `A="agent-browser --session a"; $A open …` fails** (no word
+  splitting). Use a function: `A(){ agent-browser --session a "$@"; }`.

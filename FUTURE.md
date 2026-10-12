@@ -120,3 +120,49 @@ outcome only, not admin notes.
 - **Source:** suggested by the worker that built report and block, 2026-10-05.
 - **Why:** a report that disappears into silence teaches people not to bother
   reporting.
+
+# Mission Control
+
+## Open crews on the home page
+
+A "crew wanted" list of lobbies with free seats, so a stranger with only the
+URL can join a mission instead of starting an empty one.
+
+- **Source:** the phase 4 worker, 2026-10-12, noting the home page lists only
+  your own missions.
+- **Why:** week 11's crit has two classmates testing from the URL alone, and
+  markers arrive cold. Without this, two strangers can't find each other.
+
+## Re-claim a callsign on a second device
+
+A short one-time code shown on your profile lets another browser take over the
+same callsign.
+
+- **Source:** the phase 3 worker, 2026-10-12; the cookie is the only identity.
+- **Why:** clearing cookies or switching laptop loses your record, which
+  matters once crew records count go-on-caution reports.
+
+## Replay playhead
+
+Play a finished mission back on the timeline bar, consoles side by side,
+revealing what each seat saw at the moment it reported.
+
+- **Source:** the phase 5 worker, 2026-10-12.
+- **Why:** the argument is "you could see it and said GO anyway"; showing the
+  console at that instant makes it land harder than a table row.
+
+## Sound cues
+
+A tone when a caution lights and when a poll opens.
+
+- **Source:** the phase 4 worker, 2026-10-12.
+- **Why:** under time pressure eyes are on your own panel; a sound pulls
+  attention without anyone shouting.
+
+## Agency history chart
+
+Budget and reputation over time on the Agency page, with outcomes marked.
+
+- **Source:** the phase 7 worker, 2026-10-12.
+- **Why:** it makes the shared consequence visible: you can see the dip the
+  crew before you caused.
