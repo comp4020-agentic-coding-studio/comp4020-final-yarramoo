@@ -123,16 +123,6 @@ outcome only, not admin notes.
 
 # Mission Control
 
-## Open crews on the home page
-
-A "crew wanted" list of lobbies with free seats, so a stranger with only the
-URL can join a mission instead of starting an empty one.
-
-- **Source:** the phase 4 worker, 2026-10-12, noting the home page lists only
-  your own missions.
-- **Why:** week 11's crit has two classmates testing from the URL alone, and
-  markers arrive cold. Without this, two strangers can't find each other.
-
 ## Re-claim a callsign on a second device
 
 A short one-time code shown on your profile lets another browser take over the

@@ -11,6 +11,7 @@ import { agency } from "./routes/agency.ts";
 import { mission } from "./routes/mission.ts";
 import { crewPages } from "./routes/crew-pages.ts";
 import { history } from "./routes/history.ts";
+import { hub } from "./routes/hub.ts";
 import { home } from "./routes/home.ts";
 import { readme } from "./routes/readme.ts";
 import { page } from "./views/layout.ts";
@@ -35,6 +36,7 @@ app.use("*", csrfGuard);
 
 // Route modules mount here; later slices add theirs below.
 app.route("/", home);
+app.route("/", hub);
 app.route("/", mission);
 app.route("/", history);
 app.route("/", crewPages);

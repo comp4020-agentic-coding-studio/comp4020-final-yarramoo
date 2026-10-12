@@ -8,7 +8,7 @@ import { applyOutcome, claimForStart, publishAgency } from "./agency.ts";
 import { rebuild, type LoggedAction } from "./replay.ts";
 import { getSequence } from "./sequences.ts";
 import { clearMission, currentHeads, gestureKind, presentRoles, setSinks, streamOpened } from "./presence.ts";
-import { deleteStaleLobbies, getMission, seatsOf, type MissionRow, type Seats } from "./store.ts";
+import { deleteStaleLobbies, getMission, publishHub, seatsOf, type MissionRow, type Seats } from "./store.ts";
 
 // Live missions: in memory, ticked every 250 ms, persisted on every accepted
 // action and event and at least every 5 s. The engine's clock is
@@ -190,6 +190,7 @@ function commit(
     clearMission(room.code);
   }
   if (agencyChanged) publishAgency();
+  if (state.phase === "done") publishHub();
 }
 
 // ---------------------------------------------------------------------- clock
@@ -269,6 +270,7 @@ export function startMission(m: MissionRow, crewId: number): ActResult {
     lastConsoleAt: now,
   };
   live.set(m.code, room);
+  publishHub();
   publishState(m.code, seq, room.state, seats);
   return { ok: true };
 }

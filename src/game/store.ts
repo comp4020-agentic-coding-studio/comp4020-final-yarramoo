@@ -1,9 +1,22 @@
 import { randomInt } from "node:crypto";
+import { publish } from "../bus.ts";
 import { db, tx } from "../db/index.ts";
 import { init } from "../engine/engine.ts";
 import { ROLES, type Role } from "../engine/types.ts";
 import { assignment } from "./agency.ts";
 import { DEFAULT_SEQUENCE, getSequence } from "./sequences.ts";
+
+export const HUB_TOPIC = "hub";
+let hubTimer: NodeJS.Timeout | null = null;
+/** Tell the home page something public changed (a lobby, a seat, a start or an end). Debounced to ~300 ms. */
+export function publishHub(): void {
+  if (hubTimer) return;
+  hubTimer = setTimeout(() => {
+    hubTimer = null;
+    publish(HUB_TOPIC, { type: "hub" });
+  }, 300);
+  hubTimer.unref();
+}
 
 export interface MissionRow {
   id: number;
@@ -46,6 +59,7 @@ export function createMission(crewId: number, sequenceId: string = DEFAULT_SEQUE
       db.prepare(
         "INSERT INTO missions (code, sequence_id, seed, status, state_json, created_by, created_at, rocket_id, pad_id) VALUES (?, ?, ?, 'lobby', ?, ?, ?, ?, ?)",
       ).run(code, seq.id, seed, state, crewId, Date.now(), rocketId, padId);
+      publishHub();
       return getMission(code)!;
     } catch (e) {
       if (!String((e as Error).message).includes("UNIQUE")) throw e;
@@ -81,6 +95,7 @@ export function claimSeat(m: MissionRow, crewId: number, role: Role): string | n
   if (!getSequence(m.sequence_id).roles.includes(role)) return "That role is not part of this mission.";
   try {
     db.prepare("INSERT INTO seats (mission_id, role, crew_id) VALUES (?, ?, ?)").run(m.id, role, crewId);
+    publishHub();
     return null;
   } catch (e) {
     if (String((e as Error).message).includes("UNIQUE")) return "Someone already holds that seat.";
@@ -91,12 +106,15 @@ export function claimSeat(m: MissionRow, crewId: number, role: Role): string | n
 export function releaseSeat(m: MissionRow, crewId: number, role: Role): string | null {
   if (m.status !== "lobby") return "Seats can only change while the mission is in the lobby.";
   const r = db.prepare("DELETE FROM seats WHERE mission_id = ? AND role = ? AND crew_id = ?").run(m.id, role, crewId);
-  return r.changes === 0 ? "You do not hold that seat." : null;
+  if (r.changes === 0) return "You do not hold that seat.";
+  publishHub();
+  return null;
 }
 
 /** Unstarted lobbies older than a day are deleted (seats cascade). */
 export function deleteStaleLobbies(now: number): number {
   const r = db.prepare("DELETE FROM missions WHERE status = 'lobby' AND created_at < ?").run(now - 24 * 3600_000);
+  if (Number(r.changes) > 0) publishHub();
   return Number(r.changes);
 }
 
@@ -173,4 +191,74 @@ export function goOnCautionCounts(ids: number[]): Map<number, number> {
     if (d.report === "go" && d.showing === "caution") out.set(r.mission_id, (out.get(r.mission_id) ?? 0) + 1);
   }
   return out;
+}
+
+// ---------------------------------------------------------------- hub (public)
+
+const DAY_MS = 24 * 3600_000;
+
+export interface OpenLobby { code: string; sequenceName: string; roles: string[]; seats: Seats; createdAt: number; free: number }
+
+/** Lobbies under a day old with a free seat: most filled first, then newest. */
+export function openLobbies(now: number, limit = 20): OpenLobby[] {
+  const rows = db
+    .prepare("SELECT id, code, sequence_id, created_at FROM missions WHERE status = 'lobby' AND created_at > ?")
+    .all(now - DAY_MS) as unknown as { id: number; code: string; sequence_id: string; created_at: number }[];
+  const seats = seatsOfMany(rows.map((r) => r.id));
+  const out: OpenLobby[] = [];
+  for (const r of rows) {
+    const seq = getSequence(r.sequence_id);
+    const s = seats.get(r.id) ?? {};
+    const free = seq.roles.filter((role) => !s[role]).length;
+    if (free > 0) out.push({ code: r.code, sequenceName: seq.name, roles: [...seq.roles], seats: s, createdAt: r.created_at, free });
+  }
+  out.sort((a, b) => a.free - b.free || b.createdAt - a.createdAt);
+  return out.slice(0, limit);
+}
+
+export interface LiveSummary { code: string; sequenceName: string; callsigns: string[]; tMs: number }
+
+export function liveForHub(limit = 10): LiveSummary[] {
+  const rows = liveMissions().slice(0, limit);
+  const seats = seatsOfMany(rows.map((r) => r.id));
+  return rows.map((m) => ({
+    code: m.code,
+    sequenceName: getSequence(m.sequence_id).name,
+    callsigns: Object.values(seats.get(m.id) ?? {}),
+    tMs: (JSON.parse(m.state_json) as { tMs: number }).tMs,
+  }));
+}
+
+/**
+ * Seat `crewId` in the open lobby with the fewest free seats (ties: oldest), in
+ * one transaction; the seats primary key still guards each claim. With no open
+ * lobby, create a Kestrel-1 mission and seat them as Flight Director. Someone
+ * already seated in a lobby (full or not) is sent back to it instead of taking a second seat.
+ */
+export function quickJoin(crewId: number, now = Date.now()): string {
+  const code = tx(() => {
+    const rows = db
+      .prepare("SELECT id, code, sequence_id, created_at FROM missions WHERE status = 'lobby' AND created_at > ?")
+      .all(now - DAY_MS) as unknown as { id: number; code: string; sequence_id: string; created_at: number }[];
+    const seats = seatsOfMany(rows.map((r) => r.id));
+    const cands: { code: string; id: number; free: Role[]; createdAt: number }[] = [];
+    for (const r of rows) {
+      const s = seats.get(r.id) ?? {};
+      const free = getSequence(r.sequence_id).roles.filter((role) => !s[role]);
+      if (rolesHeld(r.id, crewId).length > 0) return r.code; // already in a forming crew (full or not)
+      if (free.length === 0) continue;
+      cands.push({ code: r.code, id: r.id, free, createdAt: r.created_at });
+    }
+    cands.sort((a, b) => a.free.length - b.free.length || a.createdAt - b.createdAt);
+    const pick = cands[0];
+    if (pick) {
+      db.prepare("INSERT INTO seats (mission_id, role, crew_id) VALUES (?, ?, ?)").run(pick.id, pick.free[0], crewId);
+      return pick.code;
+    }
+    const m = createMission(crewId);
+    db.prepare("INSERT INTO seats (mission_id, role, crew_id) VALUES (?, 'flight', ?)").run(m.id, crewId);
+    return m.code;
+  });
+  publishHub();
+  return code;
 }

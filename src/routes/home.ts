@@ -5,6 +5,7 @@ import { createCrew, currentCrew, setCrewCookie } from "../crew.ts";
 import { agencySummary } from "../game/agency.ts";
 import { CODE_RE, getMission, openMissionsFor } from "../game/store.ts";
 import { clientIp, scaled } from "../ratelimit.ts";
+import { hubSections } from "./hub.ts";
 import { csrfField, page, type Html } from "../views/layout.ts";
 import type { Context } from "hono";
 
@@ -33,7 +34,7 @@ home.get("/", (c) => {
   if (!crew) {
     return page(c, {
       title: "Mission Control",
-      body: html`<h1>Mission Control</h1><p class="lead">A cooperative launch countdown. Each player sits at one console and sees only that console.</p>${callsignForm(c, "/")}`,
+      body: html`<h1>Mission Control</h1><p class="lead">A cooperative launch countdown. Each player sits at one console and sees only that console.</p>${callsignForm(c, "/")}<div id="hub">${hubSections(c, null)}</div><script src="/public/hub.js" defer></script>`,
     });
   }
   const mine = openMissionsFor(crew.id);
@@ -56,9 +57,11 @@ ${agencyStrip()}
   <input id="join-code" name="code" maxlength="5" required autocomplete="off" autocapitalize="characters">
   <button type="submit">Join</button>
 </form></div>
+<div id="hub">${hubSections(c, crew)}</div>
 ${mine.length > 0
   ? html`<h2>Your open missions</h2><ul id="my-missions" class="missions">${mine.map((m) => html`<li data-code="${m.code}" data-status="${m.status}"><a href="/m/${m.code}"><span class="code">${m.code}</span> ${m.status}</a></li>`)}</ul>`
-  : ""}`,
+  : ""}
+<script src="/public/hub.js" defer></script>`,
   });
 });
 
