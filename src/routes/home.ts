@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { html } from "hono/html";
 import { safeNext } from "../auth.ts";
 import { createCrew, currentCrew, setCrewCookie } from "../crew.ts";
+import { agencySummary } from "../game/agency.ts";
 import { CODE_RE, getMission, openMissionsFor } from "../game/store.ts";
 import { csrfField, page, type Html } from "../views/layout.ts";
 import type { Context } from "hono";
@@ -21,6 +22,11 @@ export function callsignForm(c: Context, next: string, error?: string): Html {
 </form>`;
 }
 
+function agencyStrip(): Html {
+  const s = agencySummary();
+  return html`<a id="agency-strip" class="agency-strip" href="/agency">Agency: budget ${s.budget} · reputation ${s.reputation} · pad ${s.pad ? `${s.pad.name} ${s.pad.condition}%` : "none"} · ${s.ready} ready ${s.ready === 1 ? "rocket" : "rockets"}</a>`;
+}
+
 home.get("/", (c) => {
   const crew = currentCrew(c);
   if (!crew) {
@@ -34,6 +40,7 @@ home.get("/", (c) => {
     title: "Mission Control",
     body: html`<h1>Mission Control</h1>
 <p>Callsign <strong id="who">${crew.callsign}</strong></p>
+${agencyStrip()}
 <p class="howto">How to play: each console sees only its own panel, so talk to each other, by voice call or in the same room. The Flight Director polls the crew before launch. You can report GO while your console shows a fault; the record will show it.</p>
 <div class="home-actions">
 <form id="new-mission" method="post" action="/missions">${csrfField(c)}<button type="submit" class="big go-btn">Start a mission</button></form>

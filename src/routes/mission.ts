@@ -4,6 +4,7 @@ import { html } from "hono/html";
 import { streamSSE } from "hono/streaming";
 import { subscribe } from "../bus.ts";
 import { currentCrew, type Crew } from "../crew.ts";
+import { previewStart } from "../game/agency.ts";
 import { act, attach, lobbyTopic, publishSeatChange, roleTopic, snapshot, startMission } from "../game/rooms.ts";
 import { getSequence } from "../game/sequences.ts";
 import { claimSeat, createMission, getMission, holds, releaseSeat, rolesHeld, seatsOf } from "../game/store.ts";
@@ -30,6 +31,7 @@ function renderMission(c: Context, code: string, crew: Crew | null, opts: { erro
   const seats = seatsOf(m.id);
   const mine = crew ? rolesHeld(m.id, crew.id) : [];
   const lobby = m.status === "lobby";
+  const prep = previewStart(m);
   return page(c, {
     title: `Mission ${m.code}`,
     status: opts.status ?? 200,
@@ -46,6 +48,8 @@ ${crew ? "" : html`<p>Take a callsign to join this mission.</p>${callsignForm(c,
 <section id="lobby" class="panel" aria-label="Crew">
   <h2>Crew</h2>
   <p class="muted">Phase <span id="phase">${m.status}</span></p>
+  <p id="hardware" class="muted">Rocket <strong id="rocket-name">${prep.rocket?.name ?? "none"}</strong> · Pad <strong id="pad-name">${prep.pad ? `${prep.pad.name} (${prep.pad.condition}%)` : "none"}</strong> · <a href="/agency">Agency</a></p>
+  ${lobby && prep.blocked ? html`<p id="start-blocked" class="blocked">Cannot start: ${prep.blocked}</p>` : ""}
   <ul id="seats" class="seats">${seq.roles.map((r) => html`<li data-role="${r}"><span class="role">${ROLE_LABELS[r]}</span><span class="holder">${seats[r] ?? "open"}</span>
     ${lobby && crew && !seats[r] ? html`<form class="inline" method="post" action="/m/${m.code}/seat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit">Take seat</button></form>` : ""}
     ${lobby && mine.includes(r) ? html`<form class="inline" method="post" action="/m/${m.code}/unseat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit" class="secondary">Leave seat</button></form>` : ""}</li>`)}</ul>

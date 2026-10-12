@@ -5,6 +5,7 @@ import { html } from "hono/html";
 import "./db/index.ts";
 import { csrfGuard } from "./auth.ts";
 import { flushRooms, startRooms } from "./game/rooms.ts";
+import { agency } from "./routes/agency.ts";
 import { mission } from "./routes/mission.ts";
 import { history } from "./routes/history.ts";
 import { home } from "./routes/home.ts";
@@ -22,6 +23,7 @@ app.use("*", csrfGuard);
 app.route("/", home);
 app.route("/", mission);
 app.route("/", history);
+app.route("/", agency);
 app.route("/", readme);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));

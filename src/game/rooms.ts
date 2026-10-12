@@ -4,6 +4,7 @@ import { db, tx } from "../db/index.ts";
 import { apply, tick } from "../engine/engine.ts";
 import type { Action, ConsoleView, EngineEvent, Outcome, Phase, Role, Sequence, State } from "../engine/types.ts";
 import { view } from "../engine/view.ts";
+import { applyOutcome, claimForStart, publishAgency } from "./agency.ts";
 import { rebuild, type LoggedAction } from "./replay.ts";
 import { getSequence } from "./sequences.ts";
 import { deleteStaleLobbies, getMission, seatsOf, type MissionRow, type Seats } from "./store.ts";
@@ -126,6 +127,7 @@ function commit(
   const now = Date.now();
   let actionSeq = room.nextActionSeq;
   let eventSeq = room.nextEventSeq;
+  let agencyChanged = false;
   tx(() => {
     if (logged) {
       insertAction().run(room.id, actionSeq++, logged.nowMs, logged.crewId, JSON.stringify(logged.action));
@@ -135,9 +137,16 @@ function commit(
       ie.run(room.id, eventSeq++, e.atT, e.kind, e.role ?? null, e.data ? JSON.stringify(e.data) : null);
     }
     if (state.phase === "done") {
-      db.prepare(
-        "UPDATE missions SET status = 'done', state_json = ?, last_seen_ms = ?, outcome_json = ?, ended_at = ? WHERE id = ?",
+      const r = db.prepare(
+        "UPDATE missions SET status = 'done', state_json = ?, last_seen_ms = ?, outcome_json = ?, ended_at = ? WHERE id = ? AND status != 'done'",
       ).run(JSON.stringify(state), now, JSON.stringify(state.outcome), now, room.id);
+      // AGENCY HOOK: the outcome's budget, reputation, rocket and pad consequences
+      // are written in THIS transaction, so a mission is never done without them
+      // (and never charged twice: the status guard above makes this run once).
+      if (Number(r.changes) > 0) {
+        applyOutcome(room.id, state, now);
+        agencyChanged = true;
+      }
     } else {
       db.prepare("UPDATE missions SET state_json = ?, last_seen_ms = ? WHERE id = ?").run(
         JSON.stringify(state),
@@ -151,6 +160,7 @@ function commit(
   room.state = state;
   room.lastPersistAt = now;
   if (state.phase === "done") live.delete(room.code);
+  if (agencyChanged) publishAgency();
 }
 
 // ---------------------------------------------------------------------- clock
@@ -196,6 +206,10 @@ export function startMission(m: MissionRow, crewId: number): ActResult {
   const seats = seatsOf(m.id);
   const open = seq.roles.filter((r) => !seats[r]);
   if (open.length > 0) return { ok: false, error: `every seat must be filled before the count starts; open: ${open.join(", ")}` };
+
+  // Agency gate: the rocket must still be ready and the pad usable. The engine is not called if not.
+  const blocked = claimForStart(m);
+  if (blocked) return { ok: false, error: blocked };
 
   const state0 = JSON.parse(m.state_json) as State;
   const offset = Date.now(); // nowMs 0 at the start

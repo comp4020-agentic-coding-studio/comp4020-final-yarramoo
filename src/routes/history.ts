@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
 import { currentCrew } from "../crew.ts";
+import { ledgerForMission } from "../game/agency.ts";
+import { ledgerTable } from "./agency.ts";
 import { getSequence } from "../game/sequences.ts";
 import { countDone, doneMissions, eventsOf, getMission, goOnCautionCounts, liveMissions, seatsOf, seatsOfMany, type EventRow, type MissionRow, type Seats } from "../game/store.ts";
 import { ROLES, ROLE_LABELS, type Role } from "../engine/types.ts";
@@ -124,6 +126,8 @@ history.get("/missions/:code", (c) => {
 <section class="outcome ${out?.kind ?? ""}"><h2>${out ? OUTCOME_LABEL[out.kind] ?? out.kind : "ENDED"}</h2>
   ${out ? html`<p class="countdown-final">${fmtT(out.atT)}</p><ul>${out.reasons.map((r) => html`<li>${r}</li>`)}</ul>` : ""}</section>
 <section class="panel"><h3>Crew</h3>${crewList(seats)}</section>
+
+<section aria-labelledby="h-cost"><h2 id="h-cost">What it cost the agency</h2>${ledgerTable(ledgerForMission(m.id), { showMission: false })}</section>
 
 <section aria-labelledby="h-record"><h2 id="h-record">The record</h2>
 <p class="muted">${nCaution} go-on-caution ${nCaution === 1 ? "report" : "reports"}: a seat said GO while its own console showed a caution.</p>

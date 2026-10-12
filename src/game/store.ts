@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import { db, tx } from "../db/index.ts";
 import { init } from "../engine/engine.ts";
 import { ROLES, type Role } from "../engine/types.ts";
+import { assignment } from "./agency.ts";
 import { DEFAULT_SEQUENCE, getSequence } from "./sequences.ts";
 
 export interface MissionRow {
@@ -18,6 +19,8 @@ export interface MissionRow {
   created_at: number;
   started_at: number | null;
   ended_at: number | null;
+  rocket_id: number | null;
+  pad_id: number | null;
 }
 
 /** Callsign per role; roles nobody holds are absent. */
@@ -35,13 +38,14 @@ export function createMission(crewId: number): MissionRow {
   const seq = getSequence(DEFAULT_SEQUENCE);
   const seed = randomInt(0, 2 ** 32);
   const state = JSON.stringify(init(seq, seed));
+  const { rocketId, padId } = assignment();
   for (let attempt = 0; attempt < 20; attempt++) {
     let code = "";
     for (let i = 0; i < 5; i++) code += CODE_CHARS[randomInt(CODE_CHARS.length)];
     try {
       db.prepare(
-        "INSERT INTO missions (code, sequence_id, seed, status, state_json, created_by, created_at) VALUES (?, ?, ?, 'lobby', ?, ?, ?)",
-      ).run(code, seq.id, seed, state, crewId, Date.now());
+        "INSERT INTO missions (code, sequence_id, seed, status, state_json, created_by, created_at, rocket_id, pad_id) VALUES (?, ?, ?, 'lobby', ?, ?, ?, ?, ?)",
+      ).run(code, seq.id, seed, state, crewId, Date.now(), rocketId, padId);
       return getMission(code)!;
     } catch (e) {
       if (!String((e as Error).message).includes("UNIQUE")) throw e;
