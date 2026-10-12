@@ -166,3 +166,22 @@ Budget and reputation over time on the Agency page, with outcomes marked.
 - **Source:** the phase 7 worker, 2026-10-12.
 - **Why:** it makes the shared consequence visible: you can see the dip the
   crew before you caused.
+
+## Advisories to the Flight Director
+
+Weather and Range Safety can send Flight a one-line advisory ("recommend
+hold: ceiling dropping") that the record keeps alongside poll reports.
+
+- **Source:** the S4 and S6 workers, 2026-10-13, each noting their seat can
+  see trouble but can't call a hold.
+- **Why:** it gives a seat a way to speak up between polls, which is exactly
+  the behaviour the game argues for, and the replay can show who warned whom.
+
+## A second anomaly type
+
+A stage-separation fault in ascent whose cross-check sits on a different
+console from the trajectory anomaly.
+
+- **Source:** the S6 worker, 2026-10-13.
+- **Why:** with one anomaly type, a practised crew learns that Propulsion's
+  cross-check is the only thing to watch; a second spreads the evidence.
