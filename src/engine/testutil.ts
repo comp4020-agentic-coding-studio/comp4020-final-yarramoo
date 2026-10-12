@@ -6,9 +6,19 @@ import type { Action, EngineEvent, Report, Role, Sequence, State } from "./types
 
 // Test helpers only: loads mvp.json and drives a crew with a simple bot.
 
-export function loadMvp(): Sequence {
-  const raw = JSON.parse(readFileSync(new URL("../../data/sequences/mvp.json", import.meta.url), "utf8"));
+export function loadSequence(id: string): Sequence {
+  const raw = JSON.parse(readFileSync(new URL(`../../data/sequences/${id}.json`, import.meta.url), "utf8"));
   return parseSequence(raw);
+}
+
+export const loadMvp = (): Sequence => loadSequence("mvp");
+export const loadKestrel2 = (): Sequence => loadSequence("kestrel2");
+
+/** True when any weather readout is outside its nominal band right now. */
+export function weatherAmber(state: State, seq: Sequence): boolean {
+  return Object.entries(seq.values).some(
+    ([id, d]) => d.role === "weather" && (state.values[id]! < d.nominal[0] || state.values[id]! > d.nominal[1]),
+  );
 }
 
 export function findSeed(seq: Sequence, pred: (s: State) => boolean): number {
@@ -60,6 +70,9 @@ export interface BotOptions {
   stepMs?: number;
   skip?: string[]; // step ids the crew never does
   resume?: boolean; // resume holds at once (default true)
+  canResume?: (run: Run) => boolean; // when set, flight resumes only while this is true
+  repoll?: (run: Run, pollId: string) => boolean; // when set, a no-go poll is re-opened only while this is true
+  holdWhen?: (run: Run) => boolean; // when set, flight calls a hold while counting whenever this is true
 }
 
 /** A prompt crew: every ready step is done at once, polls opened and answered. */
@@ -85,7 +98,7 @@ export function runBot(run: Run, opts: BotOptions = {}): Run {
         const p = run.state.polls[poll.id]!;
         const reopen =
           p.status === "closed" && !seq.roles.filter((r) => r !== "flight").every((r) => p.reports[r]?.report === "go");
-        if (p.status === "ready" || p.status === "missed" || reopen) {
+        if (p.status === "ready" || p.status === "missed" || (reopen && (opts.repoll?.(run, poll.id) ?? true))) {
           if (act(run, { role: "flight", type: "poll_open", pollId: poll.id }).ok) progress = true;
         }
         if (run.state.polls[poll.id]!.status === "open") {
@@ -97,7 +110,10 @@ export function runBot(run: Run, opts: BotOptions = {}): Run {
           }
         }
       }
-      if (run.state.phase === "hold" && (opts.resume ?? true)) {
+      if (run.state.phase === "count" && opts.holdWhen?.(run)) {
+        if (act(run, { role: "flight", type: "hold" }).ok) progress = true;
+      }
+      if (run.state.phase === "hold" && (opts.resume ?? true) && (opts.canResume?.(run) ?? true)) {
         if (act(run, { role: "flight", type: "resume" }).ok) progress = true;
       }
     }

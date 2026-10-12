@@ -18,3 +18,7 @@ export function getSequence(id: string): Sequence {
 }
 
 export const DEFAULT_SEQUENCE = "mvp";
+
+/** Ids a client may ask for when creating a mission (the allowlist is the registry itself). */
+export const sequenceIds = (): string[] => [...loaded.keys()];
+export const hasSequence = (id: string): boolean => loaded.has(id);

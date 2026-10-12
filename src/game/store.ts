@@ -34,8 +34,8 @@ export function getMission(code: string): MissionRow | undefined {
   return db.prepare("SELECT * FROM missions WHERE code = ?").get(code) as unknown as MissionRow | undefined;
 }
 
-export function createMission(crewId: number): MissionRow {
-  const seq = getSequence(DEFAULT_SEQUENCE);
+export function createMission(crewId: number, sequenceId: string = DEFAULT_SEQUENCE): MissionRow {
+  const seq = getSequence(sequenceId); // throws on an unknown id; the route checks the allowlist first
   const seed = randomInt(0, 2 ** 32);
   const state = JSON.stringify(init(seq, seed));
   const { rocketId, padId } = assignment();

@@ -111,6 +111,20 @@ export function parseSequence(raw: unknown): Sequence {
       nominal: pair(v.nominal, `${p}.nominal`),
       limit: pair(v.limit, `${p}.limit`),
     };
+    if (v.fronts !== undefined) {
+      const f = obj(v.fronts, `${p}.fronts`);
+      const everySec = num(f.everySec, `${p}.fronts.everySec`);
+      if (everySec <= 0) fail(`${p}.fronts.everySec`, "expected a positive number of seconds");
+      const rate = pair(f.driftPerSec, `${p}.fronts.driftPerSec`);
+      if (rate[0] > rate[1]) fail(`${p}.fronts.driftPerSec`, "min is above max");
+      def.fronts = { everySec, driftPerSec: rate };
+    }
+    if (v.atT0 !== undefined) {
+      if (v.atT0 !== "explode" && v.atT0 !== "abort" && v.atT0 !== "scrub") {
+        fail(`${p}.atT0`, 'expected "explode", "abort" or "scrub"');
+      }
+      def.atT0 = v.atT0;
+    }
     if (def.role === "flight") fail(`${p}.role`, "flight has no values");
     if (def.nominal[0] > def.nominal[1]) fail(`${p}.nominal`, "low is above high");
     if (def.limit[0] > def.nominal[0] || def.limit[1] < def.nominal[1]) {
@@ -147,6 +161,9 @@ export function parseSequence(raw: unknown): Sequence {
         const eff: { value: string; set?: number; driftPerSec?: number } = { value };
         if (e.set !== undefined) eff.set = num(e.set, `${ep}.set`);
         if (e.driftPerSec !== undefined) eff.driftPerSec = num(e.driftPerSec, `${ep}.driftPerSec`);
+        if (eff.driftPerSec !== undefined && values[value]!.fronts) {
+          fail(`${ep}.driftPerSec`, `"${value}" has weather fronts, which own its drift rate; a step may only set it`);
+        }
         if (eff.set === undefined && eff.driftPerSec === undefined) {
           fail(ep, "an effect needs set and/or driftPerSec");
         }

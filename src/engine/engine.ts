@@ -60,6 +60,36 @@ function rebase(seq: Sequence, s: State): void {
   syncValues(seq, s);
 }
 
+/**
+ * Weather fronts due by now: re-anchor the value at the current elapsed time
+ * and switch to the new rate. Ticks are split at every front, so this runs at
+ * exactly `at` whatever the tick granularity (a late snapshot still catches up).
+ */
+function applyFronts(seq: Sequence, s: State): void {
+  if (!s.fronts) return;
+  for (const [id, sched] of Object.entries(s.fronts)) {
+    let i = s.frontIdx[id] ?? 0;
+    while (i < sched.length && sched[i]!.at <= s.elapsedMs) {
+      s.anchors[id] = { v: computeValue(seq, s, id), e: s.elapsedMs };
+      s.drift[id] = sched[i]!.rate;
+      i++;
+    }
+    s.frontIdx[id] = i;
+  }
+  syncValues(seq, s);
+}
+
+/** Elapsed ms of the next unapplied front, or Infinity. */
+function nextFrontAt(s: State): number {
+  let next = Infinity;
+  if (!s.fronts) return next;
+  for (const [id, sched] of Object.entries(s.fronts)) {
+    const f = sched[s.frontIdx[id] ?? 0];
+    if (f && f.at < next) next = f.at;
+  }
+  return next;
+}
+
 function outsideNominal(seq: Sequence, s: State, id: string): boolean {
   const d = seq.values[id]!;
   const v = s.values[id]!;
@@ -153,6 +183,8 @@ function evaluateT0(c: Ctx): void {
   syncValues(seq, s);
   const blast: string[] = [];
   const abort: string[] = [];
+  const scrubs: string[] = [];
+  const scrubWho: string[] = [];
   for (const f of seq.faults) {
     const fs = s.faults[f.id]!;
     if (fs.active && fs.real && !fs.resolved) {
@@ -163,10 +195,17 @@ function evaluateT0(c: Ctx): void {
   for (const [id, d] of Object.entries(seq.values)) {
     const v = s.values[id]!;
     const at = `${ROLE_LABELS[d.role]}: ${d.label} read ${v.toFixed(1)} ${d.unit} at T-0`;
+    const mode = d.atT0 ?? "abort";
     if (v < d.limit[0] || v > d.limit[1]) {
-      blast.push(`${at}, outside the limit ${d.limit[0]} to ${d.limit[1]}`);
+      const why = `outside the limit ${d.limit[0]} to ${d.limit[1]}`;
+      blast.push(mode === "scrub" ? `Launched into ${d.label} ${v.toFixed(1)} ${d.unit}, ${why}` : `${at}, ${why}`);
     } else if (outsideNominal(seq, s, id)) {
-      abort.push(`${at}, outside nominal ${d.nominal[0]} to ${d.nominal[1]}`);
+      const why = `${at}, outside nominal ${d.nominal[0]} to ${d.nominal[1]}`;
+      if (mode === "explode") blast.push(why);
+      else if (mode === "scrub") {
+        scrubs.push(why);
+        if (!scrubWho.includes(d.role)) scrubWho.push(d.role);
+      } else abort.push(why);
     }
   }
   if (blast.length > 0) return finish(c, "explosion", blast);
@@ -188,6 +227,11 @@ function evaluateT0(c: Ctx): void {
     // runs into T-0 again and re-evaluates.
     s.tMs = -1000;
     return enterHold(c, `T-0 reached with unmet requirements: ${unmet.join("; ")}`);
+  }
+  if (scrubs.length > 0) {
+    const reasons = [...scrubWho.map((r) => `${ROLE_LABELS[r as Role]} outside launch criteria at T-0`), ...scrubs];
+    emit(c, "scrub", undefined, { reason: reasons[0], cause: "criteria" });
+    return finish(c, "scrub", reasons);
   }
   finish(c, "success", [
     "All required steps done, every poll closed with all seats go, no unresolved real fault, every value inside its limit",
@@ -272,19 +316,19 @@ function runTo(c: Ctx, nowMs: number): void {
     if (s.phase === "hold") {
       // clock frozen, values keep drifting; the launch window runs out at the
       // budget, so the interval is split there
-      const dt = Math.min(remaining, Math.max(0, ms(seq.holdBudgetSec) - s.holdMs));
+      const dt = Math.min(remaining, Math.max(0, ms(seq.holdBudgetSec) - s.holdMs), Math.max(0, nextFrontAt(s) - s.elapsedMs));
       s.elapsedMs += dt;
       s.holdMs += dt;
       remaining -= dt;
-      syncValues(seq, s);
+      applyFronts(seq, s);
       if (s.holdMs >= ms(seq.holdBudgetSec)) closeWindow(c);
       continue;
     }
-    const step = Math.max(1, Math.min(remaining, nextBoundary(c) - s.tMs));
+    const step = Math.max(1, Math.min(remaining, nextBoundary(c) - s.tMs, nextFrontAt(s) - s.elapsedMs));
     s.tMs += step;
     s.elapsedMs += step;
     remaining -= step;
-    syncValues(seq, s);
+    applyFronts(seq, s);
     settle(c);
   }
   // If the mission ended mid-interval, lastNowMs stops where it ended, so the
@@ -322,6 +366,8 @@ export function init(seq: Sequence, seed: number): State {
     values: {},
     drift: {},
     anchors: {},
+    fronts: {},
+    frontIdx: {},
     faults: {},
     polls: {},
     outcome: null,
@@ -348,6 +394,17 @@ export function init(seq: Sequence, seed: number): State {
       active: false,
       resolved: false,
     };
+  }
+  // Weather fronts: after every fault die is cast, so a sequence without
+  // fronts rolls exactly what it always did. One draw per front.
+  for (const [id, d] of Object.entries(seq.values)) {
+    if (!d.fronts) continue;
+    const every = ms(d.fronts.everySec);
+    const [lo, hi] = d.fronts.driftPerSec;
+    const n = Math.ceil(ms(seq.countdownSec + seq.holdBudgetSec) / every) + 2;
+    s.fronts[id] = [];
+    s.frontIdx[id] = 0;
+    for (let k = 1; k <= n; k++) s.fronts[id].push({ at: k * every, rate: lo + roll() * (hi - lo) });
   }
   s.rng = rng;
   return s;

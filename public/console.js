@@ -7,8 +7,7 @@
   if (!root) return;
   const code = root.dataset.code;
   const myRoles = (root.dataset.roles || "").split(" ").filter(Boolean);
-  const ROLES = ["flight", "propulsion", "ground"];
-  const ROLE_LABELS = { flight: "Flight Director", propulsion: "Propulsion", ground: "Ground Systems" };
+  const ROLE_LABELS = { flight: "Flight Director", propulsion: "Propulsion", ground: "Ground Systems", weather: "Weather" };
   const $ = (id) => document.getElementById(id);
   const csrf = () => (document.querySelector("input[name=_csrf]") || {}).value || "";
 
@@ -60,6 +59,33 @@
       <div class="marker${v.caution ? " caution" : ""}" style="left:${pc(v.value)}%"></div></div>`;
   };
 
+  // Trend arrows are drawn here from the change between views the server has
+  // pushed; nothing about them comes from the server. Each reading keeps its
+  // last few seconds, and the arrow compares now with the oldest of those.
+  // Below 0.005% of the gauge span per second it reads as steady.
+  const samples = {};
+  const trends = {};
+  const noteTrends = (role, v) => {
+    const now = performance.now();
+    for (const x of v.values) {
+      const key = `${role}:${x.id}`;
+      const list = (samples[key] = samples[key] || []);
+      list.push({ t: now, v: x.value });
+      while (list.length > 2 && now - list[1].t >= 6000) list.shift();
+      const ref = list[0];
+      const dt = now - ref.t;
+      if (dt < 900) continue; // too soon to say; keep the last arrow
+      const per = ((x.value - ref.v) / dt) * 1000;
+      const eps = (x.limit[1] - x.limit[0]) * 5e-5;
+      trends[key] = per > eps ? "up" : per < -eps ? "down" : "flat";
+    }
+  };
+  const TREND = { up: ["\u2191", "rising"], down: ["\u2193", "falling"], flat: ["\u2192", "steady"] };
+  const trendMark = (role, x) => {
+    const [ch, word] = TREND[trends[`${role}:${x.id}`] || "flat"];
+    return `<span class="trend ${trends[`${role}:${x.id}`] || "flat"}" role="img" aria-label="${word}" title="${word}">${ch}</span>`;
+  };
+
   const stepRow = (role, s) => {
     let right;
     if (s.status === "ready") right = btn(`${role}:step:${s.id}`, "big go-btn", "Do it", { act: "step", role, stepid: s.id });
@@ -87,7 +113,7 @@
   const consoleHtml = (role, v) => {
     const cautions = v.cautions.map((c) => `<li class="caution-row">${light("amber", "caution")}${esc(c)}</li>`).join("");
     const values = v.values.map((x) => `<div class="val${x.caution ? " caution" : ""}"><div class="val-head"><span>${esc(x.label)}</span>
-      <span class="val-num">${x.value.toFixed(1)} <small>${esc(x.unit)}</small></span></div>${gauge(x)}</div>`).join("");
+      <span class="val-num">${x.value.toFixed(1)} <small>${esc(x.unit)}</small> ${trendMark(role, x)}</span></div>${gauge(x)}</div>`).join("");
     const checks = v.crossChecks.map((x) => `<li class="check ${x.reading}">${light(x.reading === "normal" ? "green" : "red", x.reading)}${esc(x.label)}: <strong>${x.reading === "normal" ? "NORMAL" : "ABNORMAL"}</strong></li>`).join("");
     const steps = v.steps.map((s) => stepRow(role, s)).join("");
     let flight = "";
@@ -222,7 +248,7 @@
       li.classList.toggle("taken", !!holder);
       if (lobby.phase === "lobby") seatForms(li, holder);
     }
-    const full = ROLES.every((r) => lobby.seats[r]);
+    const full = Object.keys(lobby.seats).every((r) => lobby.seats[r]);
     const start = document.querySelector("#start-form button");
     if (start) { start.disabled = !full || busy.has("start"); }
     const note = $("fill-note");
@@ -257,6 +283,7 @@
         renderConsoles();
       } else if (m.type === "views") {
         Object.assign(views, m.views);
+        for (const [role, view] of Object.entries(m.views)) noteTrends(role, view);
         const any = Object.values(m.views)[0];
         if (any) setClock(any.phase, any.tMs);
         renderConsoles();

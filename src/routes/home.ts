@@ -44,7 +44,12 @@ home.get("/", (c) => {
 ${agencyStrip()}
 <p class="howto">How to play: each console sees only its own panel, so talk to each other, by voice call or in the same room. The Flight Director polls the crew before launch. You can report GO while your console shows a fault; the record will show it.</p>
 <div class="home-actions">
-<form id="new-mission" method="post" action="/missions">${csrfField(c)}<button type="submit" class="big go-btn">Start a mission</button></form>
+<form id="new-mission" method="post" action="/missions" class="stack">${csrfField(c)}
+  <fieldset class="sequence-choice"><legend>Start a mission</legend>
+    <label class="choice"><input type="radio" name="sequence" value="mvp" checked> <span><strong>Kestrel-1 suborbital</strong> <span class="muted">3 seats, ~4 min</span></span></label>
+    <label class="choice"><input type="radio" name="sequence" value="kestrel2"> <span><strong>Kestrel-2 orbital</strong> <span class="muted">4 seats, ~5 min, with weather</span></span></label>
+  </fieldset>
+  <button type="submit" class="big go-btn">Start a mission</button></form>
 <form id="join-mission" method="get" action="/join" class="stack">
   <label for="join-code">Join by code</label>
   <input id="join-code" name="code" maxlength="5" required autocomplete="off" autocapitalize="characters">

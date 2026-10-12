@@ -62,16 +62,29 @@
  *  - ApplyResult failures carry state/events (see Results).
  *
  * T-0 (clock reaches 0 while counting): the outcome ladder. Worst first:
- *   1. explosion: any value outside its `limit`, or an active unresolved REAL
- *      fault whose severity is "explode".
+ *   1. explosion: any value outside its `limit`, an active unresolved REAL
+ *      fault whose severity is "explode", or a value outside `nominal` (but
+ *      inside `limit`) whose `atT0` is "explode".
  *   2. pad_abort: an active unresolved REAL fault with severity "abort", or any
- *      value outside `nominal` (but inside `limit`). Engines shut down at
- *      ignition; the rocket survives and needs repair.
+ *      value outside `nominal` (but inside `limit`) whose `atT0` is "abort"
+ *      (the default). Engines shut down at ignition; the rocket survives and
+ *      needs repair.
  *   3. otherwise, if a required step is undone or a poll is not closed all-go,
  *      the launch does not happen: automatic hold with the clock set back to
  *      T-1 s (tMs = -1000). Resuming runs the clock into T-0 again and
  *      re-evaluates, so the crew can fix things late; values keep drifting.
- *   4. otherwise success.
+ *   4. otherwise (every requirement met, i.e. launch authority was given),
+ *      scrub: any value outside `nominal` (but inside `limit`) whose `atT0` is
+ *      "scrub" (weather). The crew launched anyway, but the vehicle stays on
+ *      the pad: outcome "scrub", reasons "<Role label> outside launch criteria
+ *      at T-0" (e.g. "Weather outside launch criteria at T-0") then one line
+ *      per value; emitted as a `scrub` event (no role) then `outcome`.
+ *      "scrub" sits BELOW the requirements hold, not above it: a scrub on
+ *      weather only makes sense once the crew has actually cleared the
+ *      launch; with a requirement unmet the count never reaches a launch
+ *      decision and the T-1 hold gives the crew time to fix it (the weather
+ *      keeps drifting and is re-evaluated on resume).
+ *   5. otherwise success.
  * Outcome kinds: "success" | "scrub" | "pad_abort" | "explosion". A scrub comes
  * from the Flight Director (action.reason, default "Scrubbed by the Flight
  * Director"; the HTTP layer never forwards a client reason), from the server
@@ -88,19 +101,36 @@
  * "abnormal" at report time (a seat holding evidence about another seat's real
  * fault was shown it).
  *
+ * Weather fronts. A ValueDef with `fronts: { everySec, driftPerSec: [min,max] }`
+ * changes its own drift rate at every `everySec` of ELAPSED time (State.elapsedMs,
+ * so fronts keep arriving during holds: weather does not stop for a hold).
+ * `init` pre-rolls the whole schedule from the seeded PRNG (after every fault,
+ * one draw per front, values in sequence order, so a sequence with no fronts
+ * rolls exactly what it always did): State.fronts[valueId] = [{ at: elapsedMs,
+ * rate }] for at = everySec, 2*everySec, ... covering countdownSec +
+ * holdBudgetSec plus two spare fronts; rate is uniform in [min, max]. Past the
+ * last front the final rate persists. `driftPerSec` is the rate before the
+ * first front (use 0). Step effects may `set` such a value but may not set its
+ * `driftPerSec` (the validator refuses), and fault effects add on top as for
+ * any value. State.frontIdx[valueId] counts fronts already applied. The
+ * schedule never reaches a view or a client.
+ *
  * Granularity independence. With no actions between them, tick(tick(s,a),b)
  * deep-equals tick(s,b). The interval is split at fault activations, step and
- * poll window closes, and T-0. Windows are half-open: ready while
+ * poll window closes, T-0 and (on the elapsed clock, in count AND hold) every
+ * front; at a front the value is re-anchored at that exact instant and the
+ * new rate takes over. Windows are half-open: ready while
  * open <= t < close; at t == close an undone step is missed.
  */
 
-export const ROLES = ["flight", "propulsion", "ground"] as const;
+export const ROLES = ["flight", "propulsion", "ground", "weather"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
   flight: "Flight Director",
   propulsion: "Propulsion",
   ground: "Ground Systems",
+  weather: "Weather",
 };
 
 // ---------------------------------------------------------------- sequence
@@ -115,6 +145,16 @@ export interface ValueDef {
   nominal: [number, number];
   /** outside limit at T-0 = failure */
   limit: [number, number];
+  /**
+   * Weather: the drift rate is re-drawn at every `everySec` of elapsed time
+   * (holds included), uniform in `driftPerSec` [min, max]. See the header.
+   */
+  fronts?: { everySec: number; driftPerSec: [number, number] };
+  /**
+   * What being outside `nominal` (inside `limit`) does at T-0: "abort" (default,
+   * pad abort), "explode" or "scrub" (weather). See the ladder in the header.
+   */
+  atT0?: "explode" | "abort" | "scrub";
 }
 
 export interface StepEffect {
@@ -214,6 +254,10 @@ export interface State {
   drift: Record<string, number>;
   /** value and elapsedMs at its last rate change */
   anchors: Record<string, { v: number; e: number }>;
+  /** pre-rolled weather fronts per value: at = elapsedMs, rate = new drift (units/s) */
+  fronts: Record<string, { at: number; rate: number }[]>;
+  /** fronts already applied, per value in `fronts` */
+  frontIdx: Record<string, number>;
   faults: Record<
     string,
     {

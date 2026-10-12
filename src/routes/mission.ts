@@ -6,7 +6,7 @@ import { subscribe } from "../bus.ts";
 import { currentCrew, type Crew } from "../crew.ts";
 import { previewStart } from "../game/agency.ts";
 import { act, attach, lobbyTopic, publishSeatChange, roleTopic, snapshot, startMission } from "../game/rooms.ts";
-import { getSequence } from "../game/sequences.ts";
+import { DEFAULT_SEQUENCE, getSequence, hasSequence } from "../game/sequences.ts";
 import { claimSeat, createMission, getMission, holds, releaseSeat, rolesHeld, seatsOf } from "../game/store.ts";
 import { ROLES, ROLE_LABELS, type Action, type ConsoleView, type Role } from "../engine/types.ts";
 import { csrfToken } from "../auth.ts";
@@ -34,10 +34,17 @@ mission.post(
     key: perCrewOrIp,
     reject: (c, secs) => tooManyPage(c, "You have started a lot of missions in the last minute.", secs),
   }),
-  (c) => {
+  async (c) => {
     const crew = currentCrew(c);
     if (!crew) return c.redirect("/", 303);
-    return c.redirect(`/m/${createMission(crew.id).code}`, 303);
+    // Which sequence to fly: only a registered id is accepted, and none means Kestrel-1.
+    const body = await c.req.parseBody();
+    const asked = body["sequence"];
+    const sequence = asked === undefined || asked === "" ? DEFAULT_SEQUENCE : asked;
+    if (typeof sequence !== "string" || !hasSequence(sequence)) {
+      return page(c, { title: "Unknown sequence", body: html`<h1>Unknown sequence</h1><p id="error" class="error" role="alert">There is no such mission sequence.</p><p><a href="/">Back to the hub</a></p>`, status: 422 });
+    }
+    return c.redirect(`/m/${createMission(crew.id, sequence).code}`, 303);
   },
 );
 

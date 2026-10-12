@@ -186,3 +186,13 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .console > div:first-child .console-head { box-shadow:0 6px 12px rgba(0,0,0,.45); }
 /* Links in tables are tap targets on a phone. */
 table td a { display:inline-block; padding:.7rem .25rem; margin:-.7rem 0; }
+
+/* weather console (Kestrel-2) */
+.tbar .tick.r-weather { background:#b79cff; }
+.rtag.r-weather { color:#b79cff; border-color:#b79cff; }
+.trend { display:inline-block; min-width:1.1em; text-align:center; color:var(--muted); font-weight:700; }
+.trend.up, .trend.down { color:var(--fg); }
+.sequence-choice { border:1px solid var(--line); border-radius:8px; padding:.6rem .9rem .9rem; margin:0; display:grid; gap:.4rem; }
+.sequence-choice legend { padding:0 .4rem; font-weight:700; }
+.sequence-choice .choice { display:flex; align-items:center; gap:.7rem; min-height:44px; cursor:pointer; }
+.sequence-choice input[type=radio] { width:1.4rem; min-height:0; height:1.4rem; flex:none; accent-color:var(--green); }

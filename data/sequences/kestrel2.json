@@ -1,0 +1,106 @@
+{
+  "id": "kestrel2",
+  "name": "Kestrel-2 orbital",
+  "countdownSec": 300,
+  "holdBudgetSec": 150,
+  "roles": ["flight", "propulsion", "ground", "weather"],
+  "values": {
+    "tank_pressure": {
+      "role": "propulsion",
+      "label": "Propellant tank pressure",
+      "unit": "kPa",
+      "start": 100,
+      "driftPerSec": 0,
+      "nominal": [230, 270],
+      "limit": [50, 335]
+    },
+    "bus_voltage": {
+      "role": "ground",
+      "label": "Pad power bus B",
+      "unit": "V",
+      "start": 28,
+      "driftPerSec": 0,
+      "nominal": [27, 29],
+      "limit": [24, 31]
+    },
+    "ceiling": {
+      "role": "weather",
+      "label": "Cloud base",
+      "unit": "ft",
+      "start": 3600,
+      "driftPerSec": 0,
+      "nominal": [4000, 30000],
+      "limit": [1000, 40000],
+      "fronts": {"everySec": 40, "driftPerSec": [-10, 30]},
+      "atT0": "scrub"
+    },
+    "shear": {
+      "role": "weather",
+      "label": "Upper-level wind shear",
+      "unit": "kt",
+      "start": 10,
+      "driftPerSec": 0,
+      "nominal": [0, 20],
+      "limit": [-10, 40],
+      "fronts": {"everySec": 40, "driftPerSec": [-0.1, 0.1]},
+      "atT0": "scrub"
+    },
+    "lightning": {
+      "role": "weather",
+      "label": "Nearest lightning",
+      "unit": "km",
+      "start": 21,
+      "driftPerSec": 0,
+      "nominal": [25, 200],
+      "limit": [5, 300],
+      "fronts": {"everySec": 40, "driftPerSec": [-0.15, 0.35]},
+      "atT0": "scrub"
+    }
+  },
+  "steps": [
+    {"id": "arm_retract", "role": "ground", "label": "Retract crew access arm", "after": [], "window": [-300, -205], "required": true},
+    {"id": "pad_clear", "role": "ground", "label": "Confirm pad perimeter clear", "after": [], "window": [-300, -190], "required": true},
+    {"id": "balloon_release", "role": "weather", "label": "Release weather balloon", "after": ["pad_clear"], "window": [-275, -170], "required": true},
+    {"id": "tank_pressurise", "role": "propulsion", "label": "Pressurise propellant tank", "after": ["arm_retract", "balloon_release"], "window": [-250, -130], "required": true, "effects": [{"value": "tank_pressure", "set": 250}]},
+    {"id": "feed_prime", "role": "propulsion", "label": "Prime engine feed lines", "after": ["pad_clear"], "window": [-250, -120], "required": true},
+    {"id": "deluge_arm", "role": "ground", "label": "Arm flame-trench coolant deluge", "after": ["pad_clear"], "window": [-240, -110], "required": true},
+    {"id": "bus_transfer", "role": "ground", "label": "Transfer to internal power bus", "after": ["arm_retract"], "window": [-230, -110], "required": true, "effects": [{"value": "bus_voltage", "set": 28}]},
+    {"id": "engine_chill", "role": "propulsion", "label": "Chill engine to start temperature", "after": ["tank_pressurise", "feed_prime"], "window": [-170, -80], "required": true},
+    {"id": "lcc_brief", "role": "weather", "label": "Confirm launch-commit criteria briefing", "after": ["balloon_release", "deluge_arm"], "window": [-130, -60], "required": true},
+    {"id": "range_confirm", "role": "ground", "label": "Confirm range tracking handoff", "after": ["deluge_arm"], "window": [-120, -55], "required": true},
+    {"id": "igniter_arm", "role": "propulsion", "label": "Arm igniter circuit", "after": ["poll_1", "engine_chill"], "window": [-100, -35], "required": true},
+    {"id": "launch_authority", "role": "flight", "label": "Give launch authority", "after": ["poll_2"], "window": [-25, -4], "required": true},
+    {"id": "fix_vent", "role": "propulsion", "label": "Cycle tank vent valve", "after": [], "required": false, "effects": [{"value": "tank_pressure", "set": 250, "driftPerSec": 0}]},
+    {"id": "fix_bus", "role": "ground", "label": "Switch to backup power bus", "after": [], "required": false, "effects": [{"value": "bus_voltage", "set": 28, "driftPerSec": 0}]}
+  ],
+  "polls": [
+    {"id": "poll_1", "label": "Go/no-go: propellant, pad and weather readiness", "after": ["tank_pressurise", "feed_prime", "deluge_arm", "bus_transfer", "lcc_brief"], "window": [-125, -65]},
+    {"id": "poll_2", "label": "Go/no-go: final launch readiness", "after": ["igniter_arm", "range_confirm"], "window": [-50, -10]}
+  ],
+  "faults": [
+    {
+      "id": "vent_stuck",
+      "role": "propulsion",
+      "label": "Tank vent valve position unconfirmed",
+      "window": [-170, -110],
+      "chance": 0.8,
+      "realChance": 0.6,
+      "severity": "explode",
+      "effect": {"value": "tank_pressure", "driftPerSec": 0.9},
+      "crossCheck": {"role": "ground", "label": "Vent line temperature"},
+      "fixStep": "fix_vent"
+    },
+    {
+      "id": "bus_sag",
+      "role": "ground",
+      "label": "Pad bus B voltage sag",
+      "window": [-150, -100],
+      "chance": 0.5,
+      "realChance": 0.5,
+      "severity": "abort",
+      "effect": {"value": "bus_voltage", "driftPerSec": -0.02},
+      "crossCheck": {"role": "propulsion", "label": "Umbilical bus ammeter"},
+      "fixStep": "fix_bus"
+    }
+  ]
+}
