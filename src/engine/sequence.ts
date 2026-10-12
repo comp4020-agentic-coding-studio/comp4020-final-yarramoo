@@ -1,5 +1,5 @@
-import { ROLES } from "./types.ts";
-import type { FaultDef, PollDef, Role, Sequence, StepDef, ValueDef } from "./types.ts";
+import { GLITCH_OUT_SEC, ROLES } from "./types.ts";
+import type { AnomalyDef, FaultDef, PollDef, Role, Sequence, StepDef, ValueDef } from "./types.ts";
 
 // Hand-written validator for data/sequences/*.json. The caller reads the file;
 // this only checks the parsed value. Throws SequenceError whose message starts
@@ -263,5 +263,59 @@ export function parseSequence(raw: unknown): Sequence {
     return def;
   });
 
-  return { id, name, countdownSec, holdBudgetSec, roles, values, steps, polls, faults };
+  const seq: Sequence = { id, name, countdownSec, holdBudgetSec, roles, values, steps, polls, faults };
+
+  if (o.ascentSec !== undefined) {
+    const ascentSec = num(o.ascentSec, "ascentSec");
+    if (ascentSec <= 0) fail("ascentSec", "expected a positive number of seconds");
+    seq.ascentSec = ascentSec;
+  }
+  if (o.anomalies !== undefined) {
+    if (seq.ascentSec === undefined) fail("anomalies", "anomalies happen in ascent: the sequence needs ascentSec");
+    const anomalyIds: string[] = [];
+    seq.anomalies = arr(o.anomalies, "anomalies").map((ar, i): AnomalyDef => {
+      const p = `anomalies[${i}]`;
+      const a = obj(ar, p);
+      const aid = str(a.id, `${p}.id`);
+      unique(`${p}.id`, anomalyIds, aid);
+      anomalyIds.push(aid);
+      const value = str(a.value, `${p}.value`);
+      const vd = values[value];
+      if (!vd) fail(`${p}.value`, `unknown value "${value}"`);
+      if (vd.role !== "range") fail(`${p}.value`, `"${value}" must belong to the range console`);
+      if (vd.driftPerSec !== 0 || vd.fronts) fail(`${p}.value`, `"${value}" must have no drift of its own and no fronts`);
+      const def: AnomalyDef = {
+        id: aid,
+        label: str(a.label, `${p}.label`),
+        window: pair(a.window, `${p}.window`),
+        chance: num(a.chance, `${p}.chance`),
+        realChance: num(a.realChance, `${p}.realChance`),
+        value,
+        driftPerSec: num(a.driftPerSec, `${p}.driftPerSec`),
+      };
+      if (def.window[0] <= 0) fail(`${p}.window[0]`, "must be after liftoff (positive T+ seconds)");
+      if (def.window[0] > def.window[1]) fail(`${p}.window`, "t1 must not be after t2");
+      if (def.window[1] >= seq.ascentSec!) fail(`${p}.window[1]`, "must be before the end of the ascent");
+      for (const k of ["chance", "realChance"] as const) {
+        if (def[k] < 0 || def[k] > 1) fail(`${p}.${k}`, "expected a probability from 0 to 1");
+      }
+      if (def.driftPerSec === 0) fail(`${p}.driftPerSec`, "must not be zero");
+      const peak = vd.start + def.driftPerSec * GLITCH_OUT_SEC;
+      if (peak <= vd.limit[0] || peak >= vd.limit[1]) {
+        fail(`${p}.driftPerSec`, `a glitch would reach ${peak} (${GLITCH_OUT_SEC} s out), which must stay inside the limit ${vd.limit[0]} to ${vd.limit[1]}`);
+      }
+      if (a.crossCheck !== undefined) {
+        const c = obj(a.crossCheck, `${p}.crossCheck`);
+        def.crossCheck = {
+          role: role(c.role, `${p}.crossCheck.role`, roles),
+          label: str(c.label, `${p}.crossCheck.label`),
+        };
+        if (def.crossCheck.role === vd.role) {
+          fail(`${p}.crossCheck.role`, "a cross-check must be on a different console than the anomaly");
+        }
+      }
+      return def;
+    });
+  }
+  return seq;
 }

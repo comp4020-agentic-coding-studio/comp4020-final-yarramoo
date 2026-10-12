@@ -7,7 +7,7 @@ import { callsignLink, page, type Html } from "../views/layout.ts";
 
 export const crewPages = new Hono();
 
-const OUTCOME_LABEL: Record<string, string> = { success: "Success", pad_abort: "Pad abort", explosion: "Explosion", scrub: "Scrubbed" };
+const OUTCOME_LABEL: Record<string, string> = { success: "Success", pad_abort: "Pad abort", explosion: "Explosion", scrub: "Scrubbed", terminated: "Terminated", range_violation: "Range violation" };
 const fmtDate = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const times = (n: number): string => (n === 1 ? "once" : `${n} times`);
 

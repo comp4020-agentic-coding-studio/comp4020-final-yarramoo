@@ -200,3 +200,18 @@ table td a { display:inline-block; padding:.7rem .25rem; margin:-.7rem 0; }
 /* crew */
 ul.plain { list-style:none; padding:0; margin:.25rem 0 1rem; } ul.plain li { margin:.2rem 0; }
 .crew-table th[aria-sort] { color:var(--green); }
+
+/* range safety console and ascent (Kestrel-3) */
+.tbar .tick.r-range { background:#ff8fb1; }
+.rtag.r-range { color:#ff8fb1; border-color:#ff8fb1; }
+.phase-ascent { border-color:var(--blue); color:var(--blue); }
+.terminate-panel { border-color:var(--red); }
+button.terminate-btn { background:var(--red); color:#2a0408; width:100%; min-height:72px; font-size:1.6rem; font-weight:800; letter-spacing:.14em; }
+.outcome.terminated { border-color:var(--amber); } .outcome.terminated h2 { color:var(--amber); }
+.verdict.terminated { color:var(--amber); border-color:var(--amber); }
+.outcome.range_violation { border-color:var(--red); } .outcome.range_violation h2 { color:var(--red); }
+.verdict.range_violation { color:var(--red); border-color:var(--red); }
+.tbar .tick.k-liftoff { top:0; bottom:0; background:var(--blue); width:6px; }
+.tbar .tick.k-terminate, .tbar .tick.k-anomaly_active { top:0; bottom:0; background:var(--red); }
+.ev.k-anomaly_active .ev-s, .ev.k-terminate .ev-s, .ev.k-liftoff .ev-s { font-weight:700; }
+.ev.k-anomaly_active .ev-s { color:var(--amber); }

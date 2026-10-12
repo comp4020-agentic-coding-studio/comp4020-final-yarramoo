@@ -48,6 +48,7 @@ ${agencyStrip()}
   <fieldset class="sequence-choice"><legend>Start a mission</legend>
     <label class="choice"><input type="radio" name="sequence" value="mvp" checked> <span><strong>Kestrel-1 suborbital</strong> <span class="muted">3 seats, ~4 min</span></span></label>
     <label class="choice"><input type="radio" name="sequence" value="kestrel2"> <span><strong>Kestrel-2 orbital</strong> <span class="muted">4 seats, ~5 min, with weather</span></span></label>
+    <label class="choice"><input type="radio" name="sequence" value="kestrel3"> <span><strong>Kestrel-3 crewed cargo</strong> <span class="muted">5 seats, ~6 min, with weather and range safety</span></span></label>
   </fieldset>
   <button type="submit" class="big go-btn">Start a mission</button></form>
 <form id="join-mission" method="get" action="/join" class="stack">

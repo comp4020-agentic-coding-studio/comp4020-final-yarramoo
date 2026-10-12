@@ -7,7 +7,7 @@
   if (!root) return;
   const code = root.dataset.code;
   const myRoles = (root.dataset.roles || "").split(" ").filter(Boolean);
-  const ROLE_LABELS = { flight: "Flight Director", propulsion: "Propulsion", ground: "Ground Systems", weather: "Weather" };
+  const ROLE_LABELS = { flight: "Flight Director", propulsion: "Propulsion", ground: "Ground Systems", weather: "Weather", range: "Range Safety" };
   const $ = (id) => document.getElementById(id);
   const csrf = () => (document.querySelector("input[name=_csrf]") || {}).value || "";
 
@@ -25,7 +25,7 @@
 
   const clock = { phase: "lobby", tMs: 0, at: performance.now() };
   const setClock = (phase, tMs) => { clock.phase = phase; clock.tMs = tMs; clock.at = performance.now(); };
-  const tNow = () => clock.tMs + (clock.phase === "count" ? performance.now() - clock.at : 0);
+  const tNow = () => clock.tMs + (clock.phase === "count" || clock.phase === "ascent" ? performance.now() - clock.at : 0);
   const drawClock = () => {
     const txt = fmt(tNow());
     for (const el of document.querySelectorAll(".countdown")) if (el.textContent !== txt) el.textContent = txt;
@@ -86,9 +86,9 @@
     return `<span class="trend ${trends[`${role}:${x.id}`] || "flat"}" role="img" aria-label="${word}" title="${word}">${ch}</span>`;
   };
 
-  const stepRow = (role, s) => {
+  const stepRow = (role, s, v) => {
     let right;
-    if (s.status === "ready") right = btn(`${role}:step:${s.id}`, "big go-btn", "Do it", { act: "step", role, stepid: s.id });
+    if (s.status === "ready") right = btn(`${role}:step:${s.id}`, "big go-btn", "Do it", { act: "step", role, stepid: s.id }, v.phase === "ascent");
     else if (s.status === "locked") {
       const w = s.waitingOn.map((x) => x.label || `a task on ${ROLE_LABELS[x.role]}`);
       right = `<span class="st">${w.length ? "Waiting: " + esc(w.join(", ")) : "Locked"}</span>`;
@@ -115,7 +115,13 @@
     const values = v.values.map((x) => `<div class="val${x.caution ? " caution" : ""}"><div class="val-head"><span>${esc(x.label)}</span>
       <span class="val-num">${x.value.toFixed(1)} <small>${esc(x.unit)}</small> ${trendMark(role, x)}</span></div>${gauge(x)}</div>`).join("");
     const checks = v.crossChecks.map((x) => `<li class="check ${x.reading}">${light(x.reading === "normal" ? "green" : "red", x.reading)}${esc(x.label)}: <strong>${x.reading === "normal" ? "NORMAL" : "ABNORMAL"}</strong></li>`).join("");
-    const steps = v.steps.map((s) => stepRow(role, s)).join("");
+    const steps = v.steps.map((s) => stepRow(role, s, v)).join("");
+    const ascent = v.phase === "ascent";
+    // Range Safety's one big red control, only while the vehicle is in ascent
+    const terminate = v.terminateAvailable
+      ? `<section class="panel terminate-panel"><h3>Flight termination</h3><p class="muted">Destroys the vehicle at once. Use it only if it is really leaving the safety corridor.</p>
+        ${btn("range:terminate", "big terminate-btn", "TERMINATE", { act: "terminate", role, confirm: "Terminate the flight? This destroys the vehicle and ends the mission." })}</section>`
+      : "";
     let flight = "";
     if (role === "flight") {
       const items = (v.checklist || []).map((c) => `<li class="${esc(c.status)}"><span class="cl-role">${esc(ROLE_LABELS[c.role])}</span> ${esc(c.label)} <span class="st">${esc(c.status.toUpperCase())}</span></li>`).join("");
@@ -130,18 +136,25 @@
     // telemetry slot and never replaces a button mid-press. The clock text is
     // left empty here; drawClock fills every `.countdown`.
     return [
-      `<div class="console-head"><h2>${esc(ROLE_LABELS[role])}</h2><span class="mini-clock countdown"></span>${badge(v.phase)}<span class="holds">Holds ${v.holds} · window ${Math.ceil(v.holdLeftMs / 1000)}s of hold left</span></div>`,
+      `<div class="console-head"><h2>${esc(ROLE_LABELS[role])}</h2><span class="mini-clock countdown"></span>${badge(v.phase)}<span class="holds">${ascent ? `Ascent · no holds · ends at T+${v.ascentSec} s` : `Holds ${v.holds} · window ${Math.ceil(v.holdLeftMs / 1000)}s of hold left`}</span></div>`,
       cautions ? `<ul class="cautions">${cautions}</ul>` : "",
+      terminate,
       values ? `<section class="panel"><h3>Telemetry</h3>${values}</section>` : "",
       checks ? `<section class="panel"><h3>Cross-checks</h3><ul class="checks">${checks}</ul></section>` : "",
-      `<section class="panel"><h3>Steps</h3><ul class="steps">${steps || '<li class="muted">None</li>'}</ul></section>`,
-      v.polls.length ? `<section class="panel"><h3>Go / no-go polls</h3>${pollBlock(role, v)}</section>` : "",
+      ascent ? "" : `<section class="panel"><h3>Steps</h3><ul class="steps">${steps || '<li class="muted">None</li>'}</ul></section>`,
+      v.polls.length && !ascent ? `<section class="panel"><h3>Go / no-go polls</h3>${pollBlock(role, v)}</section>` : "",
       flight,
     ];
   };
 
   const repLine = (r) => `${esc(r.report === "go" ? "GO" : "NO-GO")} <span class="muted">(showing ${esc(r.showing.toUpperCase())})</span>`;
-  const debriefHtml = (d) => {
+  const anomalyResult = (a, out) => {
+    if (!a.active) return "Never appeared";
+    if (a.terminatedAt !== null) return `Terminated at ${fmt(a.terminatedAt)}${a.real ? " (correct call)" : " (a healthy vehicle)"}`;
+    if (a.real) return out && out.kind === "range_violation" ? `Not terminated: range violation at ${fmt(out.atT)}` : "Not terminated";
+    return "Left alone (it cleared)";
+  };
+  const debriefHtml = (d, out) => {
     const rows = [];
     for (const p of d.polls) {
       const rounds = [...(p.history || []), p.reports];
@@ -154,8 +167,13 @@
     }
     const faults = d.faults.filter((f) => f.scheduledT !== null).map((f) =>
       `<tr><td>${esc(f.label)}</td><td>${esc(ROLE_LABELS[f.role])}</td><td>${f.real ? "REAL fault" : "Glitch"}</td><td>${f.active ? (f.resolved ? "Resolved" : "Unresolved") : "Never appeared"}</td></tr>`).join("");
+    const anomalies = (d.anomalies || []).filter((a) => a.scheduledT !== null).map((a) =>
+      `<tr><td>${esc(a.label)}</td><td>${esc(ROLE_LABELS[a.role])}</td><td>${a.real ? "REAL anomaly" : "Glitch"}</td><td>${a.activeAt !== null ? fmt(a.activeAt) : "Never"}</td><td>${esc(anomalyResult(a, out))}</td></tr>`).join("");
+    const anomalyBlock = (d.anomalies || []).length
+      ? `<h3>Anomalies</h3><div class="scroll"><table><thead><tr><th>Anomaly</th><th>Console</th><th>Truth</th><th>Appeared</th><th>Result</th></tr></thead><tbody>${anomalies || '<tr><td colspan="5">No anomaly occurred.</td></tr>'}</tbody></table></div>`
+      : "";
     return `<h3>Poll record</h3><div class="scroll"><table><thead><tr><th>Poll</th><th>Seat</th><th>Reported</th><th>At</th><th></th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="5">No polls were held.</td></tr>'}</tbody></table></div>
-      <h3>Faults</h3><div class="scroll"><table><thead><tr><th>Fault</th><th>Console</th><th>Truth</th><th>Outcome</th></tr></thead><tbody>${faults || '<tr><td colspan="4">No faults occurred.</td></tr>'}</tbody></table></div>`;
+      <h3>Faults</h3><div class="scroll"><table><thead><tr><th>Fault</th><th>Console</th><th>Truth</th><th>Outcome</th></tr></thead><tbody>${faults || '<tr><td colspan="4">No faults occurred.</td></tr>'}</tbody></table></div>${anomalyBlock}`;
   };
 
   const renderOutcome = () => {
@@ -163,11 +181,11 @@
     const out = (vs.find((v) => v.outcome) || {}).outcome || (lobby && lobby.outcome);
     const debrief = (vs.find((v) => v.debrief) || {}).debrief;
     if (!out) { outcomePanel.hidden = true; return; }
-    const title = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT" }[out.kind] || out.kind.toUpperCase();
+    const title = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT", terminated: "TERMINATED", range_violation: "RANGE VIOLATION" }[out.kind] || out.kind.toUpperCase();
     outcomePanel.hidden = false;
     outcomePanel.className = `outcome ${esc(out.kind)}`;
     outcomePanel.innerHTML = `<h2>${esc(title)}</h2><p class="countdown-final">${fmt(out.atT)}</p><ul>${out.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
-      ${debrief ? debriefHtml(debrief) : '<p class="muted">The full debrief is shown to the crew.</p>'}<p><a class="btnlink" href="/missions/${esc(code)}">Full replay</a> <a class="btnlink" href="/">Back to the hub</a></p>`;
+      ${debrief ? debriefHtml(debrief, out) : '<p class="muted">The full debrief is shown to the crew.</p>'}<p><a class="btnlink" href="/missions/${esc(code)}">Full replay</a> <a class="btnlink" href="/">Back to the hub</a></p>`;
   };
 
   const renderConsoles = () => {

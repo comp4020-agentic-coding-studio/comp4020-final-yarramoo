@@ -66,6 +66,10 @@ export function view(seq: Sequence, state: State, role: Role): ConsoleView {
   const cautions = seq.faults
     .filter((f) => f.role === role && state.faults[f.id]!.active && !state.faults[f.id]!.resolved)
     .map((f) => f.label);
+  // an ascent anomaly is a caution on its value's console, real or glitch alike
+  for (const a of seq.anomalies ?? []) {
+    if (seq.values[a.value]!.role === role && state.anomalies?.[a.id]?.active) cautions.push(a.label);
+  }
 
   const crossChecks: ConsoleCrossCheck[] = seq.faults
     .filter((f) => f.crossCheck && f.crossCheck.role === role)
@@ -74,6 +78,11 @@ export function view(seq: Sequence, state: State, role: Role): ConsoleView {
       const abnormal = fs.active && fs.real && !fs.resolved;
       return { label: f.crossCheck!.label, reading: abnormal ? "abnormal" : "normal" };
     });
+  for (const a of seq.anomalies ?? []) {
+    if (a.crossCheck?.role !== role) continue;
+    const st = state.anomalies?.[a.id];
+    crossChecks.push({ label: a.crossCheck.label, reading: st?.active && st.real ? "abnormal" : "normal" });
+  }
 
   const polls: ConsolePoll[] = seq.polls.map((q) => {
     const p = state.polls[q.id]!;
@@ -106,6 +115,9 @@ export function view(seq: Sequence, state: State, role: Role): ConsoleView {
     crossChecks,
     polls,
   };
+
+  if (seq.ascentSec !== undefined) v.ascentSec = seq.ascentSec;
+  if (role === "range" && state.phase === "ascent") v.terminateAvailable = true;
 
   if (role === "flight") {
     // A fix step unlocks only when its fault appears, so listing it would tell
@@ -155,6 +167,19 @@ function debrief(seq: Sequence, state: State): Debrief {
         real: fs.real,
         active: fs.active,
         resolved: fs.resolved,
+      };
+    }),
+    anomalies: (seq.anomalies ?? []).map((a) => {
+      const st = state.anomalies?.[a.id];
+      return {
+        id: a.id,
+        label: a.label,
+        role: seq.values[a.value]!.role,
+        scheduledT: st?.scheduledT ?? null,
+        real: st?.real ?? false,
+        active: st?.active ?? false,
+        activeAt: st?.activeAt ?? null,
+        terminatedAt: state.outcome?.kind === "terminated" && st?.active ? state.outcome.atT : null,
       };
     }),
     values: Object.entries(seq.values).map(([id, d]) => ({

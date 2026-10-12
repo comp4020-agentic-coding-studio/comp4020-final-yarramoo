@@ -84,8 +84,9 @@
  *      launch; with a requirement unmet the count never reaches a launch
  *      decision and the T-1 hold gives the crew time to fix it (the weather
  *      keeps drifting and is re-evaluated on resume).
- *   5. otherwise success.
- * Outcome kinds: "success" | "scrub" | "pad_abort" | "explosion". A scrub comes
+ *   5. otherwise success (or, with `ascentSec`, liftoff: see Ascent below).
+ * Outcome kinds: "success" | "scrub" | "pad_abort" | "explosion" | "terminated" |
+ * "range_violation" (the last two only from ascent, below). A scrub comes
  * from the Flight Director (action.reason, default "Scrubbed by the Flight
  * Director"; the HTTP layer never forwards a client reason), from the server
  * (crew lost contact) or from the launch window closing.
@@ -121,9 +122,52 @@
  * front; at a front the value is re-anchored at that exact instant and the
  * new rate takes over. Windows are half-open: ready while
  * open <= t < close; at t == close an undone step is missed.
+ *
+ * Ascent and the range. A sequence with `ascentSec` does not end at a
+ * successful T-0 (ladder step 5 above): phase becomes "ascent", the clock keeps
+ * running as T+ (tMs > 0, always counting), and the mission is decided at
+ * T+ascentSec. Holds are impossible: hold/resume/scrub and every step/poll
+ * action are rejected with a clear error. A sequence without `ascentSec` ends
+ * at T-0 exactly as before. In ascent:
+ *   - Anomalies (`Sequence.anomalies`) are pre-rolled by `init` AFTER the
+ *     faults and the fronts, three draws each, so no other sequence's dice
+ *     move. scheduledT is in T+ ms. At that instant the anomaly activates and
+ *     emits `anomaly_active` (role = the value's owner, data.real). The range
+ *     console then shows the anomaly label as a caution (real or glitch alike,
+ *     until the mission ends); the cross-check console reads "abnormal" iff
+ *     the anomaly is real and active.
+ *   - Value shape. An anomaly adds to its value's drift rate. A REAL anomaly
+ *     adds +driftPerSec from activation on (the value runs towards its limit).
+ *     A GLITCH adds +driftPerSec for GLITCH_OUT_SEC (8 s), then -driftPerSec
+ *     for another 8 s, then nothing: a symmetric triangle peaking at
+ *     |driftPerSec| * 8 that returns exactly to where it started. The
+ *     validator keeps that peak strictly inside the limit and the value's own
+ *     drift at 0, so a glitch can never end the mission. Both shapes are
+ *     piecewise linear in elapsed time with rate changes at known instants
+ *     (activation, +8 s, +16 s); ticks are split there and the value
+ *     re-anchored, exactly as for fronts, which is what makes them independent
+ *     of tick granularity. State.anomalies[id].stage records the running
+ *     segment: "pending" | "out" | "back" | "over".
+ *   - `terminate` ({ role: "range" } only, ascent only) ends the mission at
+ *     once as outcome "terminated". The first reason says whether it was a
+ *     correct call (a real anomaly is active) or a healthy vehicle destroyed (a
+ *     glitch, or no anomaly, is active). Events: `terminate` (data.real,
+ *     data.reason) then `outcome`.
+ *   - Violation. If a REAL active anomaly's value reaches its `limit` (v <= low
+ *     or v >= high) before termination, the mission ends at that exact instant
+ *     (ticks are split at the crossing, found in whole ms) as "range_violation":
+ *     "Vehicle left the safety corridor before termination".
+ *   - Precedence at one instant in ascent: range_violation, then success at
+ *     T+ascentSec, both before any action sent at that instant (apply() ticks
+ *     first, so a terminate at the crossing instant is too late and is refused
+ *     with "the mission is over").
+ *   - Views. Only the range console is offered `terminateAvailable`, and only
+ *     in ascent. `ascentSec` (static) rides on every view of an ascent
+ *     sequence. The debrief gains `anomalies`. Old snapshots lack
+ *     State.anomalies; sequences without anomalies never read it.
  */
 
-export const ROLES = ["flight", "propulsion", "ground", "weather"] as const;
+export const ROLES = ["flight", "propulsion", "ground", "weather", "range"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -131,6 +175,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   propulsion: "Propulsion",
   ground: "Ground Systems",
   weather: "Weather",
+  range: "Range Safety",
 };
 
 // ---------------------------------------------------------------- sequence
@@ -199,6 +244,25 @@ export interface FaultDef {
   severity: "abort" | "explode";
 }
 
+/** Seconds a glitch drifts out, and the same again coming back (see the header). */
+export const GLITCH_OUT_SEC = 8;
+
+export interface AnomalyDef {
+  id: string;
+  label: string;
+  /** T-plus seconds the anomaly may appear within, inside (0, ascentSec) */
+  window: [number, number];
+  /** probability the anomaly occurs at all this mission */
+  chance: number;
+  /** probability that, if it occurs, it is real (else a glitch) */
+  realChance: number;
+  /** id of a value owned by the range console */
+  value: string;
+  /** units/s added to the value while the anomaly runs; its sign picks the limit a real one heads for */
+  driftPerSec: number;
+  crossCheck?: { role: Role; label: string };
+}
+
 export interface Sequence {
   id: string;
   name: string;
@@ -210,11 +274,14 @@ export interface Sequence {
   steps: StepDef[];
   polls: PollDef[];
   faults: FaultDef[];
+  /** T+ seconds of ascent after a good T-0; absent = the mission ends at T-0 */
+  ascentSec?: number;
+  anomalies?: AnomalyDef[];
 }
 
 // ------------------------------------------------------------------- state
 
-export type Phase = "lobby" | "count" | "hold" | "done";
+export type Phase = "lobby" | "count" | "hold" | "ascent" | "done";
 export type StepStatus = "locked" | "ready" | "done" | "missed";
 export type PollStatus = "locked" | "ready" | "open" | "closed" | "missed";
 export type Report = "go" | "nogo";
@@ -228,7 +295,7 @@ export interface PollReport {
 export type PollReports = Partial<Record<Role, PollReport>>;
 
 export interface Outcome {
-  kind: "success" | "scrub" | "pad_abort" | "explosion";
+  kind: "success" | "scrub" | "pad_abort" | "explosion" | "terminated" | "range_violation";
   reasons: string[];
   atT: number;
 }
@@ -272,6 +339,20 @@ export interface State {
     string,
     { status: PollStatus; reports: PollReports; history: PollReports[] }
   >;
+  /** pre-rolled ascent anomalies (absent in snapshots saved before ascent existed) */
+  anomalies: Record<
+    string,
+    {
+      /** T+ ms; null = will not occur this mission */
+      scheduledT: number | null;
+      real: boolean;
+      active: boolean;
+      /** the running drift segment; see the header */
+      stage: "pending" | "out" | "back" | "over";
+      /** mission clock ms when it appeared */
+      activeAt: number | null;
+    }
+  >;
   outcome: Outcome | null;
 }
 
@@ -285,6 +366,7 @@ export type Action = { role: Role } & (
   | { type: "scrub"; reason?: string }
   | { type: "poll_open"; pollId: string }
   | { type: "poll_report"; pollId: string; report: Report }
+  | { type: "terminate" }
 );
 
 export interface EngineEvent {
@@ -366,6 +448,18 @@ export interface Debrief {
     resolved: boolean;
   }[];
   values: { id: string; label: string; role: Role; unit: string; value: number; limit: [number, number] }[];
+  anomalies: {
+    id: string;
+    label: string;
+    role: Role;
+    scheduledT: number | null;
+    real: boolean;
+    active: boolean;
+    /** mission clock ms it appeared, or null */
+    activeAt: number | null;
+    /** mission clock ms the range terminated the flight while it was active, or null */
+    terminatedAt: number | null;
+  }[];
 }
 
 export interface ConsoleView {
@@ -384,6 +478,10 @@ export interface ConsoleView {
   polls: ConsolePoll[];
   /** flight only: every step with its role and status, no values/faults */
   checklist?: ChecklistItem[];
+  /** Range Safety only, and only in ascent: the terminate control */
+  terminateAvailable?: true;
+  /** static, present on every view of a sequence with an ascent */
+  ascentSec?: number;
   /** only when phase is "done" */
   debrief?: Debrief;
 }

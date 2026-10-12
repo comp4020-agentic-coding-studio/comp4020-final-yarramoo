@@ -11,7 +11,7 @@ import { callsignLink, page, type Html } from "../views/layout.ts";
 export const history = new Hono();
 
 const PAGE_SIZE = 50;
-const OUTCOME_LABEL: Record<string, string> = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT" };
+const OUTCOME_LABEL: Record<string, string> = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT", terminated: "TERMINATED", range_violation: "RANGE VIOLATION" };
 const pad = (n: number): string => String(n).padStart(2, "0");
 /** Milliseconds on the mission clock as T-01:48 / T+00:00. */
 export function fmtT(ms: number): string {
@@ -75,6 +75,7 @@ history.get("/missions/:code", (c) => {
   const pollLbl = (id: unknown): string => seq.polls.find((p) => p.id === id)?.label ?? String(id);
   const fault = (id: unknown) => seq.faults.find((f) => f.id === id);
   const faultLbl = (id: unknown): string => fault(id)?.label ?? String(id);
+  const anomalyLbl = (id: unknown): string => seq.anomalies?.find((a) => a.id === id)?.label ?? String(id);
   const goNo = (r: unknown): string => (r === "go" ? "GO" : "NO-GO");
   const showing = (s: unknown): string => String(s ?? "").toUpperCase();
   const lower1 = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
@@ -87,6 +88,9 @@ history.get("/missions/:code", (c) => {
       case "step_done": return `${who} completed: ${step(d["stepId"])}${d["late"] ? " (during a hold)" : ""}`;
       case "step_missed": return `${who} missed the window: ${step(d["stepId"])}${d["required"] ? "" : " (optional)"}`;
       case "fault_active": return `Caution on ${who}: ${faultLbl(d["faultId"])} (${d["real"] ? "real fault" : "glitch"})`;
+      case "liftoff": return "Liftoff: the vehicle is in ascent, no holds possible";
+      case "anomaly_active": return `Caution on ${who}: ${anomalyLbl(d["anomalyId"])} (${d["real"] ? "real anomaly" : "glitch"})`;
+      case "terminate": return `${who} terminated the flight${d["real"] ? " (a correct call: the anomaly was real)" : " (the vehicle was healthy)"}`;
       case "fault_resolved": return `${who} cleared: ${faultLbl(d["faultId"])}`;
       case "poll_opened": return `Flight Director opened the poll: ${pollLbl(d["pollId"])}${Number(d["round"]) > 1 ? ` (round ${d["round"]})` : ""}`;
       case "poll_report": {
@@ -101,6 +105,8 @@ history.get("/missions/:code", (c) => {
       case "window_closed": return `Launch window closed: ${String(d["reason"] ?? "the hold budget ran out")}`;
       case "outcome":
         if (d["kind"] === "pad_abort") return `Launch: PAD ABORT \u2014 engines shut down at ignition${Array.isArray(d["reasons"]) && d["reasons"].length ? ` (${(d["reasons"] as string[]).map(lower1).join("; ")})` : ""}`;
+        if (d["kind"] === "range_violation") return `Vehicle left the safety corridor before termination \u2014 RANGE VIOLATION${Array.isArray(d["reasons"]) && d["reasons"].length > 1 ? ` (${(d["reasons"] as string[]).slice(1).map(lower1).join("; ")})` : ""}`;
+        if (d["kind"] === "terminated") return `Flight terminated: TERMINATED${Array.isArray(d["reasons"]) && d["reasons"].length ? ` (${(d["reasons"] as string[]).map(lower1).join("; ")})` : ""}`;
         return `Launch: ${OUTCOME_LABEL[String(d["kind"])] ?? String(d["kind"])}${Array.isArray(d["reasons"]) && d["reasons"].length ? ` (${(d["reasons"] as string[]).map(lower1).join("; ")})` : ""}`;
       default: return `${who}: ${e.kind}`;
     }
@@ -113,10 +119,15 @@ history.get("/missions/:code", (c) => {
     const fixed = events.find((x) => x.kind === "fault_resolved" && x.data["faultId"] === id);
     return { label: faultLbl(id), role: e.role, real: !!e.data["real"], at: e.at_t, fixedAt: fixed?.at_t ?? null };
   });
+  const anomalyRows = events.filter((e) => e.kind === "anomaly_active").map((e) => {
+    const term = events.find((x) => x.kind === "terminate");
+    return { label: anomalyLbl(e.data["anomalyId"]), role: e.role, real: !!e.data["real"], at: e.at_t, terminatedAt: term?.at_t ?? null };
+  });
   const nCaution = reports.filter((e) => e.data["report"] === "go" && e.data["showing"] === "caution").length;
 
   const span = seq.countdownSec * 1000;
-  const pos = (t: number): number => Math.max(0, Math.min(100, ((t + span) / span) * 100));
+  const total = span + (seq.ascentSec ?? 0) * 1000; // the bar runs on to the end of the ascent when there is one
+  const pos = (t: number): number => Math.max(0, Math.min(100, ((t + span) / total) * 100));
 
   const body = html`<p><a href="/missions">&larr; All missions</a></p>
 <div class="mission-head">
@@ -140,13 +151,16 @@ ${reports.length === 0 ? html`<tr><td colspan="7">No polls were reported.</td></
 <h3>Faults</h3>
 <div class="scroll"><table class="record"><thead><tr><th>Fault</th><th>Console</th><th>Truth</th><th>Appeared</th><th>Resolved</th></tr></thead><tbody>
 ${faultRows.length === 0 ? html`<tr><td colspan="5">No faults appeared.</td></tr>` : faultRows.map((f) => html`<tr><td>${f.label}</td><td>${roleLabel(f.role)}</td><td>${f.real ? "REAL fault" : "Glitch"}</td><td>${fmtT(f.at)}</td><td>${f.fixedAt !== null ? fmtT(f.fixedAt) : "No"}</td></tr>`)}</tbody></table></div>
+${seq.anomalies && seq.anomalies.length > 0 ? html`<h3>Anomalies</h3>
+<div class="scroll"><table class="record"><thead><tr><th>Anomaly</th><th>Console</th><th>Truth</th><th>Appeared</th><th>Terminated</th></tr></thead><tbody>
+${anomalyRows.length === 0 ? html`<tr><td colspan="5">No anomaly appeared.</td></tr>` : anomalyRows.map((a) => html`<tr><td>${a.label}</td><td>${roleLabel(a.role)}</td><td>${a.real ? "REAL anomaly" : "Glitch"}</td><td>${fmtT(a.at)}</td><td>${a.terminatedAt !== null ? fmtT(a.terminatedAt) : "No"}</td></tr>`)}</tbody></table></div>` : ""}
 </section>
 
 <section aria-labelledby="h-time"><h2 id="h-time">Timeline</h2>
-<div class="tbar" role="img" aria-label="Events from ${fmtT(-span)} to T+00:00">
+<div class="tbar" role="img" aria-label="Events from ${fmtT(-span)} to ${fmtT(total - span)}">
   ${events.map((e) => html`<span class="tick k-${e.kind} r-${e.role ?? "none"}" style="left:${pos(e.at_t).toFixed(2)}%" title="${fmtT(e.at_t)} ${sentence(e)}"></span>`)}
 </div>
-<div class="tbar-axis"><span>${fmtT(-span)}</span><span>T+00:00</span></div>
+<div class="tbar-axis"><span>${fmtT(-span)}</span><span>${fmtT(total - span)}</span></div>
 <ol class="timeline">
 ${events.map((e) => html`<li class="ev k-${e.kind}"><span class="ev-t">${fmtT(e.at_t)}</span><span class="rtag r-${e.role ?? "none"}">${e.role ? roleLabel(e.role) : "System"}</span><span class="ev-s">${sentence(e)}</span></li>`)}
 </ol></section>`;

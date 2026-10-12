@@ -113,7 +113,7 @@ for (const verb of ["seat", "unseat"] as const) {
 /** Build an engine Action from an allowlist of fields; nothing from the client is passed through whole. */
 function buildAction(role: Role, body: Record<string, unknown>): Action | string {
   switch (body["type"]) {
-    case "start": case "hold": case "resume": case "scrub":
+    case "start": case "hold": case "resume": case "scrub": case "terminate":
       return { role, type: body["type"] };
     case "step": {
       const stepId = short(body["stepId"]);

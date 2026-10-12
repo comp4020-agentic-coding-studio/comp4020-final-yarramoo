@@ -1,5 +1,5 @@
 import { nextRandom } from "./rng.ts";
-import { ROLE_LABELS } from "./types.ts";
+import { GLITCH_OUT_SEC, ROLE_LABELS } from "./types.ts";
 import type {
   Action,
   ApplyResult,
@@ -39,6 +39,12 @@ function effectiveRate(seq: Sequence, s: State, valueId: string): number {
     if (f.effect && f.effect.value === valueId && fs.active && fs.real && !fs.resolved) {
       rate += f.effect.driftPerSec;
     }
+  }
+  for (const a of seq.anomalies ?? []) {
+    if (a.value !== valueId) continue;
+    const stage = s.anomalies?.[a.id]?.stage;
+    if (stage === "out") rate += a.driftPerSec;
+    else if (stage === "back") rate -= a.driftPerSec;
   }
   return rate;
 }
@@ -104,6 +110,12 @@ function consoleShowsCaution(seq: Sequence, s: State, role: Role): boolean {
     // a cross-check readout on this console that reads "abnormal" is evidence too
     if (f.crossCheck?.role === role && fs.active && fs.real && !fs.resolved) return true;
   }
+  for (const a of seq.anomalies ?? []) {
+    const st = s.anomalies?.[a.id];
+    if (!st?.active) continue;
+    if (seq.values[a.value]!.role === role) return true;
+    if (a.crossCheck?.role === role && st.real) return true;
+  }
   for (const [id, d] of Object.entries(seq.values)) {
     if (d.role === role && outsideNominal(seq, s, id)) return true;
   }
@@ -148,7 +160,7 @@ function stepUnlocked(seq: Sequence, s: State, step: StepDef): boolean {
 }
 
 function refresh(seq: Sequence, s: State): void {
-  if (s.phase === "lobby" || s.phase === "done") return;
+  if (s.phase === "lobby" || s.phase === "ascent" || s.phase === "done") return;
   for (const step of seq.steps) {
     const st = s.steps[step.id]!;
     if (st.status !== "locked" && st.status !== "ready") continue;
@@ -233,9 +245,106 @@ function evaluateT0(c: Ctx): void {
     emit(c, "scrub", undefined, { reason: reasons[0], cause: "criteria" });
     return finish(c, "scrub", reasons);
   }
-  finish(c, "success", [
-    "All required steps done, every poll closed with all seats go, no unresolved real fault, every value inside its limit",
-  ]);
+  const reason =
+    "All required steps done, every poll closed with all seats go, no unresolved real fault, every value inside its limit";
+  if (seq.ascentSec !== undefined) {
+    // Liftoff: the mission goes on to T+ascentSec (see Ascent in types.ts).
+    s.phase = "ascent";
+    emit(c, "liftoff", undefined, { reason });
+    return;
+  }
+  finish(c, "success", [reason]);
+}
+
+// ------------------------------------------------------------------- ascent
+
+const activeAnomalies = (seq: Sequence, s: State) => (seq.anomalies ?? []).filter((a) => s.anomalies?.[a.id]?.active);
+
+/**
+ * Ascent bookkeeping for the clock sitting at s.tMs: anomaly activations,
+ * glitch segment changes (rebased at that exact instant), the range violation
+ * and the end of the ascent, in that order. Idempotent.
+ */
+function settleAscent(c: Ctx): void {
+  const { seq, s } = c;
+  const seg = ms(GLITCH_OUT_SEC);
+  for (const a of seq.anomalies ?? []) {
+    const st = s.anomalies[a.id]!;
+    if (st.stage === "pending" && st.scheduledT !== null && s.tMs >= st.scheduledT) {
+      rebase(seq, s);
+      st.stage = "out";
+      st.active = true;
+      st.activeAt = s.tMs;
+      emit(c, "anomaly_active", seq.values[a.value]!.role, { anomalyId: a.id, real: st.real });
+    } else if (!st.real && st.stage === "out" && s.tMs >= st.activeAt! + seg) {
+      rebase(seq, s);
+      st.stage = "back";
+    }
+    if (!st.real && st.stage === "back" && s.tMs >= st.activeAt! + 2 * seg) {
+      rebase(seq, s);
+      st.stage = "over";
+    }
+  }
+  syncValues(seq, s);
+  for (const a of activeAnomalies(seq, s)) {
+    const st = s.anomalies[a.id]!;
+    if (!st.real) continue;
+    const d = seq.values[a.value]!;
+    const v = s.values[a.value]!;
+    if (v <= d.limit[0] || v >= d.limit[1]) {
+      return finish(c, "range_violation", [
+        "Vehicle left the safety corridor before termination",
+        `"${a.label}" was a real anomaly: ${d.label} reached ${v.toFixed(1)} ${d.unit}, limit ${d.limit[0]} to ${d.limit[1]} ${d.unit}`,
+      ]);
+    }
+  }
+  if (s.tMs >= ms(seq.ascentSec!)) {
+    const glitched = activeAnomalies(seq, s).some((a) => !s.anomalies[a.id]!.real);
+    finish(c, "success", [
+      `Reached T+${seq.ascentSec} s inside the safety corridor${glitched ? "; the anomaly was only a glitch and was rightly left alone" : ""}`,
+    ]);
+  }
+}
+
+/** Mission-clock ms at which a real, running anomaly's value reaches its limit, or Infinity. */
+function violationAt(seq: Sequence, s: State, valueId: string): number {
+  const d = seq.values[valueId]!;
+  const rate = effectiveRate(seq, s, valueId);
+  if (rate === 0) return Infinity;
+  const a = s.anchors[valueId]!;
+  const target = rate > 0 ? d.limit[1] : d.limit[0];
+  const reached = (e: number): boolean => {
+    const v = a.v + (rate * (e - a.e)) / 1000;
+    return rate > 0 ? v >= target : v <= target;
+  };
+  let e = Math.ceil(a.e + ((target - a.v) * 1000) / rate);
+  // float rounding: land on the first whole ms at which the value really is there
+  for (let i = 0; i < 4 && e - 1 > a.e && reached(e - 1); i++) e--;
+  for (let i = 0; i < 4 && !reached(e); i++) e++;
+  return s.tMs + (e - s.elapsedMs);
+}
+
+function doTerminate(c: Ctx): Fail | null {
+  const { seq, s } = c;
+  syncValues(seq, s);
+  const live = activeAnomalies(seq, s);
+  const real = live.find((a) => s.anomalies[a.id]!.real);
+  const at = `T+${Math.floor(s.tMs / 1000)} s`;
+  let reasons: string[];
+  if (real) {
+    const d = seq.values[real.value]!;
+    reasons = [
+      `Range Safety terminated the flight at ${at}: correct call, "${real.label}" was a real anomaly`,
+      `${d.label} read ${s.values[real.value]!.toFixed(1)} ${d.unit} and was heading for the limit ${d.limit[0]} to ${d.limit[1]} ${d.unit}`,
+    ];
+  } else if (live.length > 0) {
+    reasons = [`Range Safety destroyed a healthy vehicle at ${at}: "${live[0]!.label}" was only a glitch`];
+  } else {
+    reasons = [`Range Safety destroyed a healthy vehicle at ${at}: there was no anomaly`];
+  }
+  emit(c, "terminate", "range", { real: !!real, reason: reasons[0] });
+  finish(c, "terminated", reasons);
+  return null;
 }
 
 /**
@@ -274,6 +383,7 @@ function settle(c: Ctx): void {
   }
   if (holdReasons.length > 0 && s.phase === "count") enterHold(c, holdReasons.join("; "));
   if (s.phase === "count" && s.tMs >= 0) evaluateT0(c);
+  if (s.phase === "ascent") settleAscent(c);
   refresh(seq, s);
 }
 
@@ -281,7 +391,7 @@ function settle(c: Ctx): void {
 
 function nextBoundary(c: Ctx): number {
   const { seq, s } = c;
-  let next = 0; // T-0
+  let next = s.phase === "ascent" ? ms(seq.ascentSec!) : 0; // T-0, or the end of the ascent
   const consider = (t: number | null): void => {
     if (t !== null && t > s.tMs && t < next) next = t;
   };
@@ -297,6 +407,16 @@ function nextBoundary(c: Ctx): number {
     const p = s.polls[poll.id]!;
     if (p.status === "locked" || p.status === "ready" || p.status === "open") consider(ms(poll.window[1]));
   }
+  if (s.phase === "ascent") {
+    const seg = ms(GLITCH_OUT_SEC);
+    for (const a of seq.anomalies ?? []) {
+      const st = s.anomalies[a.id]!;
+      if (st.stage === "pending") consider(st.scheduledT);
+      else if (!st.real && st.stage === "out") consider(st.activeAt! + seg);
+      else if (!st.real && st.stage === "back") consider(st.activeAt! + 2 * seg);
+      else if (st.real && st.stage === "out") consider(violationAt(seq, s, a.value));
+    }
+  }
   return next;
 }
 
@@ -309,10 +429,10 @@ function closeWindow(c: Ctx): void {
 
 function runTo(c: Ctx, nowMs: number): void {
   const { seq, s } = c;
-  if (s.lastNowMs === null || (s.phase !== "count" && s.phase !== "hold") || nowMs <= s.lastNowMs) return;
+  if (s.lastNowMs === null || (s.phase !== "count" && s.phase !== "hold" && s.phase !== "ascent") || nowMs <= s.lastNowMs) return;
   if (typeof s.holdMs !== "number") s.holdMs = 0; // snapshot saved before the launch window existed
   let remaining = nowMs - s.lastNowMs;
-  while (remaining > 0 && (s.phase === "count" || s.phase === "hold")) {
+  while (remaining > 0 && (s.phase === "count" || s.phase === "hold" || s.phase === "ascent")) {
     if (s.phase === "hold") {
       // clock frozen, values keep drifting; the launch window runs out at the
       // budget, so the interval is split there
@@ -370,6 +490,7 @@ export function init(seq: Sequence, seed: number): State {
     frontIdx: {},
     faults: {},
     polls: {},
+    anomalies: {},
     outcome: null,
   };
   for (const step of seq.steps) s.steps[step.id] = { status: "locked" };
@@ -406,6 +527,22 @@ export function init(seq: Sequence, seed: number): State {
     s.frontIdx[id] = 0;
     for (let k = 1; k <= n; k++) s.fronts[id].push({ at: k * every, rate: lo + roll() * (hi - lo) });
   }
+  // Ascent anomalies: after everything else is rolled, so no other sequence's
+  // dice move. Three draws each, as for faults. scheduledT is T+ ms.
+  for (const a of seq.anomalies ?? []) {
+    const occurs = roll() < a.chance;
+    const u = roll();
+    const real = roll() < a.realChance;
+    const t1 = ms(a.window[0]);
+    const t2 = ms(a.window[1]);
+    s.anomalies[a.id] = {
+      scheduledT: occurs ? t1 + Math.floor(u * (t2 - t1 + 1)) : null,
+      real,
+      active: false,
+      stage: "pending",
+      activeAt: null,
+    };
+  }
   s.rng = rng;
   return s;
 }
@@ -428,6 +565,7 @@ function doStep(c: Ctx, role: Role, stepId: string): Fail | null {
   if (step.role !== role) {
     return `step "${step.label}" belongs to the ${ROLE_LABELS[step.role]} console, not ${ROLE_LABELS[role]}`;
   }
+  if (s.phase === "ascent") return "the vehicle has launched; the countdown tasks are over";
   if (s.phase !== "count" && s.phase !== "hold") return "the mission is not in progress";
   const st = s.steps[stepId]!;
   if (st.status === "done") return `step "${step.label}" is already done`;
@@ -467,6 +605,7 @@ function doPollOpen(c: Ctx, role: Role, pollId: string): Fail | null {
   const poll = seq.polls.find((x) => x.id === pollId);
   if (!poll) return `unknown poll "${pollId}"`;
   if (role !== "flight") return "only the Flight Director can open a poll";
+  if (s.phase === "ascent") return "the vehicle has launched; the polls are over";
   if (s.phase !== "count" && s.phase !== "hold") return "the mission is not in progress";
   const p = s.polls[pollId]!;
   if (p.status === "open") return `poll "${poll.label}" is already open`;
@@ -495,6 +634,7 @@ function doPollReport(c: Ctx, role: Role, pollId: string, report: unknown): Fail
   if (role === "flight") return "the Flight Director runs the poll and does not report to it";
   if (report !== "go" && report !== "nogo") return 'report must be "go" or "nogo"';
   const p = s.polls[pollId]!;
+  if (s.phase === "ascent") return "the vehicle has launched; the polls are over";
   if (s.phase !== "count" && s.phase !== "hold") return "the mission is not in progress";
   if (p.status !== "open") return `poll "${poll.label}" is not open (it is ${p.status})`;
   if (p.reports[role]) return `${ROLE_LABELS[role]} has already reported on "${poll.label}"`;
@@ -516,6 +656,7 @@ function doPollReport(c: Ctx, role: Role, pollId: string, report: unknown): Fail
 
 function doResume(c: Ctx): Fail | null {
   const { seq, s } = c;
+  if (s.phase === "ascent") return "the vehicle has launched; there is no hold to resume";
   if (s.phase !== "hold") return "the mission is not on hold";
   const blockers: string[] = [];
   for (const step of seq.steps) {
@@ -553,6 +694,7 @@ function applyAction(c: Ctx, action: Action, nowMs: number): Fail | null {
       return doPollReport(c, action.role, action.pollId, action.report);
     case "hold":
       if (action.role !== "flight") return "only the Flight Director can call a hold";
+      if (s.phase === "ascent") return "the vehicle has launched; holds are impossible in ascent";
       if (s.phase !== "count") return s.phase === "hold" ? "the mission is already on hold" : "the mission is not counting";
       enterHold(c, "Flight Director called a hold");
       return null;
@@ -561,6 +703,7 @@ function applyAction(c: Ctx, action: Action, nowMs: number): Fail | null {
       return doResume(c);
     case "scrub":
       if (action.role !== "flight") return "only the Flight Director can scrub";
+      if (s.phase === "ascent") return "the vehicle has launched; it can no longer be scrubbed (only Range Safety can terminate it)";
       if (s.phase !== "count" && s.phase !== "hold") return "the mission is not in progress";
       {
         const reason =
@@ -569,6 +712,10 @@ function applyAction(c: Ctx, action: Action, nowMs: number): Fail | null {
         finish(c, "scrub", [reason]);
       }
       return null;
+    case "terminate":
+      if (action.role !== "range") return "only Range Safety can terminate the flight";
+      if (s.phase !== "ascent") return "the vehicle has not launched; there is nothing to terminate";
+      return doTerminate(c);
     default:
       return `unknown action type "${String((action as { type?: unknown }).type)}"`;
   }

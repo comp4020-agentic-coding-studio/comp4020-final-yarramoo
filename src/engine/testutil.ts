@@ -13,6 +13,7 @@ export function loadSequence(id: string): Sequence {
 
 export const loadMvp = (): Sequence => loadSequence("mvp");
 export const loadKestrel2 = (): Sequence => loadSequence("kestrel2");
+export const loadKestrel3 = (): Sequence => loadSequence("kestrel3");
 
 /** True when any weather readout is outside its nominal band right now. */
 export function weatherAmber(state: State, seq: Sequence): boolean {
@@ -73,6 +74,7 @@ export interface BotOptions {
   canResume?: (run: Run) => boolean; // when set, flight resumes only while this is true
   repoll?: (run: Run, pollId: string) => boolean; // when set, a no-go poll is re-opened only while this is true
   holdWhen?: (run: Run) => boolean; // when set, flight calls a hold while counting whenever this is true
+  onAscent?: (run: Run) => void; // called after every tick while the vehicle is in ascent
 }
 
 /** A prompt crew: every ready step is done at once, polls opened and answered. */
@@ -84,6 +86,8 @@ export function runBot(run: Run, opts: BotOptions = {}): Run {
   for (let i = 0; i < 2000 && !isDone(run); i++) {
     if (opts.untilTMs !== undefined && run.state.tMs >= opts.untilTMs) break;
     advance(run, opts.stepMs ?? 1000);
+    if (isDone(run)) break;
+    if (run.state.phase === "ascent") opts.onAscent?.(run);
     if (isDone(run)) break;
     let progress = true;
     while (progress && !isDone(run)) {

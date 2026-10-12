@@ -101,7 +101,8 @@ export function applyOutcome(missionId: number, state: State, now: number): void
       for (const [role, r] of Object.entries(round)) if (r) reports.push({ role, report: r.report, showing: r.showing });
     }
   }
-  const c = consequences(state.outcome, reports);
+  const anomalyReal = Object.values(state.anomalies ?? {}).some((a) => a.active && a.real);
+  const c = consequences(state.outcome, reports, { anomalyReal });
   const row = db.prepare("SELECT rocket_id, pad_id FROM missions WHERE id = ?").get(missionId) as unknown as { rocket_id: number | null; pad_id: number | null };
   const before = getAgency();
   const { budget, note } = applyBudget(before.budget, c.budget);

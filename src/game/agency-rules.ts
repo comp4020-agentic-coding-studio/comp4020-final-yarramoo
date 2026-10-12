@@ -31,7 +31,12 @@ export const RULES: Record<Kind, { budget: number; reputation: number; rocket: n
   pad_abort: { budget: -100, reputation: -2, rocket: -40, rocketStatus: "repair", flight: false, pad: -10, label: "Pad abort" },
   explosion: { budget: -400, reputation: -15, rocket: 0, rocketStatus: "lost", flight: false, pad: -60, label: "Explosion" },
   scrub: { budget: -50, reputation: 0, rocket: 0, flight: false, pad: 0, label: "Scrub" },
+  // terminated: the reputation here is the "healthy vehicle destroyed" case; a real anomaly earns TERMINATED_REAL_REPUTATION instead
+  terminated: { budget: -300, reputation: -5, rocket: 0, rocketStatus: "lost", flight: false, pad: 0, label: "Healthy vehicle destroyed" },
+  range_violation: { budget: -500, reputation: -25, rocket: 0, rocketStatus: "lost", flight: false, pad: -10, label: "Range violation" },
 };
+export const TERMINATED_REAL_REPUTATION = 3;
+export const TERMINATED_REAL_REASON = "Range made the call";
 export const LOST_CONTACT_REASON = "Crew lost contact";
 export const LOST_CONTACT_REPUTATION = -3;
 export const GO_ON_CAUTION = -3;
@@ -42,10 +47,20 @@ export const COSTS = { padPerPoint: 10, rocketRepair: 200, rocketBuy: 500 };
 export const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n));
 const sign = (n: number): string => (n > 0 ? `+${n}` : String(n));
 
-export function consequences(outcome: Pick<Outcome, "kind" | "reasons">, reports: PollReportLite[]): Consequences {
+/** Facts about the finished mission that the outcome kind alone does not carry. */
+export interface Truth {
+  /** a real anomaly was active when the mission ended */
+  anomalyReal?: boolean;
+}
+
+export function consequences(outcome: Pick<Outcome, "kind" | "reasons">, reports: PollReportLite[], truth: Truth = {}): Consequences {
   const r = RULES[outcome.kind];
   const lines: Line[] = [{ budget: r.budget, reputation: r.reputation, reason: r.label }];
   let reputation = r.reputation;
+  if (outcome.kind === "terminated" && truth.anomalyReal) {
+    lines[0] = { budget: r.budget, reputation: TERMINATED_REAL_REPUTATION, reason: TERMINATED_REAL_REASON };
+    reputation = TERMINATED_REAL_REPUTATION;
+  }
   if (outcome.kind === "scrub" && outcome.reasons.includes(LOST_CONTACT_REASON)) {
     lines[0] = { budget: r.budget, reputation: LOST_CONTACT_REPUTATION, reason: "Scrub: the crew lost contact" };
     reputation = LOST_CONTACT_REPUTATION;

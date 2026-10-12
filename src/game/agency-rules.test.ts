@@ -23,6 +23,22 @@ describe("agency rules", () => {
     const c = consequences(out("scrub", ["Crew lost contact"]), []);
     expect([c.budget, c.reputation]).toEqual([-50, -3]);
   });
+  it("terminating a real anomaly is the range's call: budget -300, reputation +3, rocket lost", () => {
+    const c = consequences(out("terminated"), [], { anomalyReal: true });
+    expect([c.budget, c.reputation, c.rocket.status, c.rocket.flight, c.pad.conditionDelta]).toEqual([-300, 3, "lost", false, 0]);
+    expect(c.lines[0]!.reason).toBe("Range made the call");
+  });
+  it("terminating a healthy vehicle costs 300 and 5 reputation; so does terminating with no truth given", () => {
+    for (const truth of [{ anomalyReal: false }, undefined]) {
+      const c = consequences(out("terminated"), [], truth);
+      expect([c.budget, c.reputation, c.rocket.status]).toEqual([-300, -5, "lost"]);
+      expect(c.lines[0]!.reason).toBe("Healthy vehicle destroyed");
+    }
+  });
+  it("a range violation loses the rocket, 500 credits, 25 reputation and 10 pad points", () => {
+    const c = consequences(out("range_violation"), [], { anomalyReal: true });
+    expect([c.budget, c.reputation, c.rocket.status, c.pad.conditionDelta]).toEqual([-500, -25, "lost", -10]);
+  });
   it("GO on a caution costs reputation even when the launch succeeds; speaking up earns it", () => {
     const c = consequences(out("success"), [go("caution"), go("nominal"), nogo("caution"), nogo("nominal")]);
     expect(c.reputation).toBe(5 - 3 + 2);
