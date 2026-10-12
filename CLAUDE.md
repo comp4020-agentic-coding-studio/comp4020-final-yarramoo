@@ -132,6 +132,13 @@ broke once or would break quietly.
 - **The spec assumes a fresh, launchable agency.** CI gives it a throwaway
   `/data`. Locally, run the app with `DATA_DIR=$(mktemp -d)`; never point
   `pnpm check` at production, since the tests fly and scrub real missions.
+- **The 3D scene sees only what everyone may see.** `public/scene/` gets the
+  public lobby message and my own roles through `mc:state`, never a console
+  view. Other panels are silhouettes, the rocket flies the nominal arc
+  whatever the anomaly, and gestures are coarse (a step press is a press). A
+  fix step can only be pressed while its fault is active, so figures fidget
+  at random to drown that signal; don't remove the fidget without replacing
+  it. `spec/presence.test.ts` scans gesture messages for private ids.
 - **Kill the local app by port** (`lsof -ti:PORT | xargs kill`), never with
   `pkill -f src/server.ts`, which kills every other local server too.
 - **`agent-browser` misclicks a button that is only partly on screen.** It
