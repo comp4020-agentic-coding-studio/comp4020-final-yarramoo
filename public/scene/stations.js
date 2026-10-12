@@ -9,6 +9,7 @@
 import * as THREE from "three";
 import { Batch, litMaterial } from "./builder.js";
 import { PALETTE as P, ROLE_COLORS } from "./palette.js";
+import { buildFigure, FIGURE_BACK, FIGURE_LIFT, FIGURE_SCALE } from "./figures.js";
 
 export const RING_RADIUS = 25;
 export const EYE_HEIGHT = 1.3;
@@ -21,30 +22,10 @@ export function stationAngles(n) {
 
 const frame = (theta) => new THREE.Matrix4().makeRotationY(theta).setPosition(RING_RADIUS * Math.sin(theta), 0, RING_RADIUS * Math.cos(theta));
 
-function suit(color) {
-  return new THREE.Color(color).lerp(new THREE.Color("#2a3140"), 0.45).getStyle();
-}
-
-function figureGeometry(role) {
-  const b = new Batch();
-  const c = suit(ROLE_COLORS[role] || "#888888");
-  for (const s of [-1, 1]) {
-    b.box(0.2, 0.17, 0.52, { x: s * 0.15, y: 0.56, z: -0.12 }, c); // thigh
-    b.box(0.17, 0.5, 0.17, { x: s * 0.15, y: 0.3, z: -0.4 }, c); // shin
-    b.box(0.2, 0.09, 0.3, { x: s * 0.15, y: 0.05, z: -0.48 }, P.rocketBlack); // boot
-    b.box(0.12, 0.12, 0.5, { x: s * 0.31, y: 0.98, z: -0.28, rx: -0.6 }, c); // arm to the desk
-  }
-  b.box(0.5, 0.62, 0.3, { y: 0.9, z: 0.1 }, c); // torso
-  b.box(0.52, 0.12, 0.32, { y: 1.03, z: 0.1 }, ROLE_COLORS[role] || "#888888"); // role-colour chest band
-  b.ico(0.19, 1, { y: 1.38, z: 0.06 }, P.skin); // helmet
-  b.box(0.22, 0.09, 0.08, { y: 1.38, z: -0.1 }, P.screen); // visor
-  const g = b.geometry();
-  return { geo: g, triangles: b.triangles };
-}
-
 /**
- * Builds the ring. Returns { group, angles, seatPose(role), setSeats(occupied, hideRole), dispose }.
- * `occupied` maps role -> callsign|null (public lobby data); a figure is drawn only for a held seat.
+ * Builds the ring. Returns { group, angles, setSeats(occupied, hideRole, present), gesture, look, tick, dispose }.
+ * `occupied` maps role -> callsign|null and `present` role -> boolean (public lobby data); a figure is
+ * drawn only for a held seat, upright when its holder is connected and slumped and faint when not.
  */
 export function buildStations(roles) {
   const angles = stationAngles(roles.length);
@@ -52,7 +33,6 @@ export function buildStations(roles) {
   const mat = litMaterial();
   const group = new THREE.Group();
   const figures = {};
-  const disposables = [];
   let triangles = 0;
 
   // The ring road the stations sit on.
@@ -69,11 +49,12 @@ export function buildStations(roles) {
     b.box(2.8, 0.14, 0.04, { y: 0.38, z: -0.98 }, color); // role stripe
     b.box(2.5, 0.72, 0.07, { y: 0.78, z: -1.9, rx: -0.85 }, P.bezel);
     b.box(2.25, 0.54, 0.05, { y: 0.8, z: -1.86, rx: -0.85 }, P.screen);
-    // chair
-    b.cyl(0.33, 0.33, 0.05, 8, { y: 0.06 }, P.steelDark);
-    b.cyl(0.05, 0.05, 0.4, 6, { y: 0.25 }, P.steelDark);
-    b.box(0.58, 0.09, 0.55, { y: 0.46, z: 0.02 }, P.bezel);
-    b.box(0.58, 0.7, 0.08, { y: 0.84, z: 0.3 }, P.bezel);
+    // chair, sized to the figure: the seat top meets the underside of its thighs
+    const seatTop = 0.47 * FIGURE_SCALE + FIGURE_LIFT, backZ = 0.26 * FIGURE_SCALE + FIGURE_BACK + 0.12;
+    b.cyl(0.4, 0.4, 0.05, 8, { y: 0.06 }, P.steelDark);
+    b.cyl(0.06, 0.06, seatTop, 6, { y: seatTop / 2 }, P.steelDark);
+    b.box(0.46 * FIGURE_SCALE, 0.1, 0.5 * FIGURE_SCALE, { y: seatTop - 0.05, z: FIGURE_BACK - 0.02 }, P.bezel);
+    b.box(0.46 * FIGURE_SCALE, 0.7 * FIGURE_SCALE, 0.09, { y: seatTop + 0.35 * FIGURE_SCALE, z: backZ }, P.bezel);
     // flag post to the side, tall enough to be seen from across the ring
     b.cyl(0.05, 0.06, 3.4, 6, { x: 2.6, y: 1.7, z: -2.4 }, P.steelDark);
     b.box(0.95, 0.55, 0.05, { x: 3.1, y: 3.0, z: -2.4 }, color);
@@ -84,17 +65,13 @@ export function buildStations(roles) {
   staticMesh.frustumCulled = false;
   group.add(staticMesh);
 
-  // Seated figures: one small mesh per seat, shown only when someone holds it.
+  // Crew figures: one per seat, shown only when someone holds it.
   roles.forEach((role, i) => {
-    const { geo: fg, triangles: t } = figureGeometry(role);
-    triangles += t;
-    const mesh = new THREE.Mesh(fg, mat);
-    mesh.visible = false;
-    mesh.frustumCulled = false;
-    mesh.applyMatrix4(frame(angles[i]));
-    group.add(mesh);
-    figures[role] = mesh;
-    disposables.push(fg);
+    const f = buildFigure(role, frame(angles[i]));
+    triangles += f.triangles;
+    f.group.visible = false;
+    group.add(f.group);
+    figures[role] = f;
   });
 
   return {
@@ -104,11 +81,31 @@ export function buildStations(roles) {
     figureCount: roles.length,
     theta: (role) => angles[roles.indexOf(role)],
     hasRole: (role) => roles.includes(role),
-    setSeats(occupied, hideRole) {
+    setSeats(occupied, hideRole, present) {
       let shown = 0;
-      for (const role of roles) { const v = !!occupied[role] && role !== hideRole; figures[role].visible = v; if (v) shown++; }
+      for (const role of roles) {
+        const f = figures[role], name = occupied[role];
+        const v = !!name && role !== hideRole;
+        f.group.visible = v;
+        if (name) f.setCallsign(name);
+        f.setPresent(!present || present[role] !== false); // no presence data: assume here
+        if (v) shown++;
+      }
       return shown;
     },
-    dispose() { geo.dispose(); mat.dispose(); for (const g of disposables) g.dispose(); },
+    gesture(role, kind) { if (figures[role] && figures[role].group.visible) figures[role].gesture(kind); },
+    look(heads) { for (const [role, h] of Object.entries(heads || {})) if (figures[role] && Array.isArray(h)) figures[role].setHead(h[0], h[1]); },
+    /** Advance every visible figure; true while any is still moving. */
+    tick(dt, now, camera) {
+      let moving = false;
+      for (const role of roles) if (figures[role].group.visible && figures[role].tick(dt, now, camera)) moving = true;
+      return moving;
+    },
+    debug() {
+      const out = {};
+      for (const role of roles) out[role] = { visible: figures[role].group.visible, ...figures[role].debug() };
+      return out;
+    },
+    dispose() { geo.dispose(); mat.dispose(); for (const f of Object.values(figures)) f.dispose(); },
   };
 }

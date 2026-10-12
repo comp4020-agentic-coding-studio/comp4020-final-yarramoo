@@ -107,9 +107,13 @@ describe("a two-player mission", () => {
       const text = JSON.stringify(m);
       if (m.type === "views") {
         expect(Object.keys(m.views)).toEqual(["propulsion"]);
+      } else if (m.type === "gesture") {
+        expect(Object.keys(m).sort()).toEqual(["at", "kind", "role", "type"]); // public and coarse; presence.test.ts goes deeper
+      } else if (m.type === "look") {
+        expect(Object.keys(m).sort()).toEqual(["heads", "type"]);
       } else {
         expect(m.type).toBe("lobby");
-        expect(Object.keys(m).sort()).toEqual(["outcome", "phase", "seats", "serverNow", "tMs", "type"]);
+        expect(Object.keys(m).sort()).toEqual(["outcome", "phase", "present", "seats", "serverNow", "tMs", "type"]);
       }
       for (const f of forbidden) expect(text, `leaked "${f}"`).not.toContain(f);
       const keys = allKeys(m);

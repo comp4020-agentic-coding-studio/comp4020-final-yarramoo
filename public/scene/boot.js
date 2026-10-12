@@ -5,6 +5,9 @@
 //   mc:seat   { activeRole }                              (tab changed)
 //   mc:layout { right, bottom }                           (px of the canvas the overlay covers)
 //   mc:view   { mode: "3d" | "2d" }
+//   mc:gesture { type, role, kind, at }                   (another seat acted: kind only, never what)
+//   mc:look    { type, heads: { role: [yaw, pitch] } }    (where seats are looking)
+// and the scene emits mc:mylook { yaw, pitch } for console.js to throttle and post.
 // Console views are never published, so the scene cannot read them.
 const root = document.getElementById("mission");
 const container = document.getElementById("scene");
@@ -28,6 +31,7 @@ if (root && container) {
       if (root.dataset.view !== "3d") return; // switched to 2D while loading
       handle = mountScene(container, { sequenceId: root.dataset.sequence, roles, initial: last });
       handle.setInsets(...insets());
+      if (window.__mc && window.__mc.heads) handle.looks(window.__mc.heads); // heads received before the scene existed
     } catch (e) {
       console.error("3D scene unavailable, using the 2D view", e);
       window.dispatchEvent(new CustomEvent("mc:scene-error"));
@@ -47,6 +51,8 @@ if (root && container) {
     last = { ...last, activeRole: e.detail.activeRole };
     if (handle) handle.update(last);
   });
+  window.addEventListener("mc:gesture", (e) => { if (handle) handle.gesture(e.detail.role, e.detail.kind); });
+  window.addEventListener("mc:look", (e) => { if (handle) handle.looks(e.detail.heads); });
   window.addEventListener("mc:layout", (e) => { if (handle) handle.setInsets(e.detail.right, e.detail.bottom); });
   window.addEventListener("mc:view", (e) => (e.detail.mode === "3d" ? mount() : unmount()));
 

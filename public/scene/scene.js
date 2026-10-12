@@ -52,9 +52,9 @@ export function mountScene(container, opts) {
 
   const rocket = buildRocket(opts.sequenceId);
   const stations = buildStations(roles);
-  // Lamp masts go between stations (and on the empty north side), never in front of a seat.
-  const mastThetas = stations.angles.slice(1).map((a, i) => (a + stations.angles[i]) / 2);
-  mastThetas.push(Math.PI);
+  // Lamp masts stand on the empty north side only: a mast between two stations
+  // sits right on the sight line from one to the other and hides that figure.
+  const mastThetas = roles.length >= 5 ? [Math.PI] : [Math.PI - 0.45, Math.PI, Math.PI + 0.45];
   const pad = buildPad({ rocketHeight: rocket.height, mastThetas });
   rocket.group.position.y = MOUNT_TOP;
   scene.add(pad.group, rocket.group, stations.group);
@@ -67,6 +67,7 @@ export function mountScene(container, opts) {
   // Seat changes tween along the ring so the camera never cuts through the pad.
   let rig = { theta: 0, radius: SPECTATOR.radius, height: SPECTATOR.height };
   let tween = null;
+  let sentLook = null;
   let seatRole = undefined; // undefined = not placed yet; null = spectator
 
   const homePitch = (r) => Math.max(-0.2, Math.min(0.6, Math.atan2(rocket.height * (camera.aspect < 0.9 ? 0.62 : 0.48) - r.height, r.radius)));
@@ -85,6 +86,7 @@ export function mountScene(container, opts) {
   }
 
   function goTo(role, instant) {
+    sentLook = null; // a new seat: say where I am looking from it
     const to = rigFor(role);
     const pitch = homePitch(to);
     if (instant) {
@@ -148,14 +150,37 @@ export function mountScene(container, opts) {
     const seats = (lobby && lobby.seats) || {};
     const ph = (lobby && lobby.phase) || "lobby";
     const oc = (lobby && lobby.outcome && lobby.outcome.kind) || null;
-    const key = JSON.stringify([ph, oc, seats, wanted]);
+    const present = (lobby && lobby.present) || null;
+    const key = JSON.stringify([ph, oc, seats, wanted, present]);
     if (key === lastKey) return; // lobby messages repeat; nothing visible changed
     lastKey = key;
     if (ph !== phase || oc !== outcomeKind) { phase = ph; outcomeKind = oc; applyPhase(); }
     if (seatRole === undefined) { seatRole = wanted; goTo(wanted, true); }
     else if (wanted !== seatRole) { seatRole = wanted; goTo(wanted, false); }
-    dbg.figures = stations.setSeats(seats, seatRole);
+    dbg.figures = stations.setSeats(seats, seatRole, present);
     invalidate();
+  }
+
+  // Other players' public gestures and head directions (mc:gesture, mc:look).
+  // A gesture on my own seat is ignored: that figure is not drawn.
+  function gesture(role, kind) {
+    if (disposed || role === seatRole) return;
+    stations.gesture(role, kind);
+    invalidate();
+  }
+  function looks(heads) {
+    if (disposed) return;
+    stations.look(heads);
+    invalidate();
+  }
+  // My own head direction goes out as mc:mylook (console.js throttles and posts it).
+  // yaw is relative to facing the pad, positive turning left; pitch positive looks up.
+  function emitMyLook() {
+    if (!seatRole) return;
+    const y = look.yaw, p = look.pitch;
+    if (sentLook && Math.abs(y - sentLook[0]) < 0.004 && Math.abs(p - sentLook[1]) < 0.004) return;
+    sentLook = [y, p];
+    window.dispatchEvent(new CustomEvent("mc:mylook", { detail: { yaw: y, pitch: p } }));
   }
 
   // ------------------------------------------------- sizing and view offset
@@ -196,6 +221,8 @@ export function mountScene(container, opts) {
   const dbg = {
     fps: 0, figures: 0, drawCalls: 0, triangles: 0, geometries: 0, frames: 0,
     phase, seat: null, sequenceId: opts.sequenceId, roles: roles.slice(),
+    figureState: () => stations.debug(),
+    gesture: (role, kind) => gesture(role, kind),
     camera: { theta: 0, yaw: 0, pitch: 0, fov: 60 },
     bench(ms = 2000) {
       return new Promise((resolve) => {
@@ -214,6 +241,8 @@ export function mountScene(container, opts) {
     lastT = now;
     const moving = look.step(dt) || stepTween(now);
     placeCamera();
+    emitMyLook();
+    const animating = stations.tick(dt, now, camera);
     renderer.render(scene, camera);
     // Debug figures: fps only means something while frames are continuous.
     frames.push(now);
@@ -223,7 +252,7 @@ export function mountScene(container, opts) {
     dbg.drawCalls = info.render.calls; dbg.triangles = info.render.triangles; dbg.geometries = info.memory.geometries;
     dbg.frames++; dbg.phase = phase; dbg.seat = seatRole;
     dbg.camera = { theta: +rig.theta.toFixed(3), yaw: +look.yaw.toFixed(3), pitch: +look.pitch.toFixed(3), fov: camera.fov };
-    if (moving || now < benching) invalidate(); else lastT = 0;
+    if (moving || animating || now < benching) invalidate(); else lastT = 0;
   }
 
   const onVis = () => { if (!document.hidden) { lastT = 0; invalidate(); } else if (raf) { cancelAnimationFrame(raf); raf = 0; } };
@@ -241,6 +270,8 @@ export function mountScene(container, opts) {
 
   return {
     update,
+    gesture,
+    looks,
     setInsets,
     invalidate,
     dispose() {

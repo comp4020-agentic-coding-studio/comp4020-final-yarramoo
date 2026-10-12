@@ -7,6 +7,7 @@ import { view } from "../engine/view.ts";
 import { applyOutcome, claimForStart, publishAgency } from "./agency.ts";
 import { rebuild, type LoggedAction } from "./replay.ts";
 import { getSequence } from "./sequences.ts";
+import { clearMission, currentHeads, gestureKind, presentRoles, setSinks, streamOpened } from "./presence.ts";
 import { deleteStaleLobbies, getMission, seatsOf, type MissionRow, type Seats } from "./store.ts";
 
 // Live missions: in memory, ticked every 250 ms, persisted on every accepted
@@ -46,13 +47,15 @@ export type LobbyMessage = {
   phase: Phase;
   tMs: number;
   seats: Record<string, string | null>;
+  /** Is the crew member holding each seat connected? Public: it says who is at the pad, nothing about their console. */
+  present: Record<string, boolean>;
   outcome: Outcome | null;
 };
 
-function lobbyMessage(seq: Sequence, state: State, seats: Seats, serverNow: number): LobbyMessage {
+function lobbyMessage(code: string, seq: Sequence, state: State, seats: Seats, serverNow: number): LobbyMessage {
   const out: Record<string, string | null> = {};
   for (const r of seq.roles) out[r] = seats[r] ?? null;
-  return { type: "lobby", serverNow, phase: state.phase, tMs: state.tMs, seats: out, outcome: state.outcome };
+  return { type: "lobby", serverNow, phase: state.phase, tMs: state.tMs, seats: out, present: presentRoles(code, seq.roles, seats), outcome: state.outcome };
 }
 
 function publishState(code: string, seq: Sequence, state: State, seats: Seats): void {
@@ -61,7 +64,7 @@ function publishState(code: string, seq: Sequence, state: State, seats: Seats): 
     const topic = roleTopic(code, role);
     if (hasSubscribers(topic)) publish(topic, { type: "view", serverNow, role, view: view(seq, state, role) });
   }
-  if (hasSubscribers(lobbyTopic(code))) publish(lobbyTopic(code), lobbyMessage(seq, state, seats, serverNow));
+  if (hasSubscribers(lobbyTopic(code))) publish(lobbyTopic(code), lobbyMessage(code, seq, state, seats, serverNow));
 }
 
 /** Seat change in a lobby: tell everyone the new seats, then tell them to reconnect. */
@@ -70,15 +73,36 @@ export function publishSeatChange(code: string): void {
   if (!m) return;
   const seq = getSequence(m.sequence_id);
   const state = JSON.parse(m.state_json) as State;
-  publish(lobbyTopic(code), lobbyMessage(seq, state, seatsOf(m.id), Date.now()));
+  publish(lobbyTopic(code), lobbyMessage(code, seq, state, seatsOf(m.id), Date.now()));
   publish(lobbyTopic(code), { type: "reseat" });
+}
+
+/** A fresh lobby message for a mission, live or not (presence changed). */
+function publishLobby(code: string): void {
+  if (!hasSubscribers(lobbyTopic(code))) return;
+  const room = live.get(code);
+  if (room) return void publish(lobbyTopic(code), lobbyMessage(code, room.seq, room.state, room.seats, Date.now()));
+  const m = getMission(code);
+  if (!m) return;
+  publish(lobbyTopic(code), lobbyMessage(code, getSequence(m.sequence_id), JSON.parse(m.state_json) as State, seatsOf(m.id), Date.now()));
+}
+
+setSinks({
+  presence: publishLobby,
+  looks: (code, heads) => publish(lobbyTopic(code), { type: "look", heads }),
+});
+
+/** After an ACCEPTED action: tell everyone THAT this seat acted, not what it did (see presence.ts). */
+export function publishGesture(code: string, action: Action): void {
+  const kind = gestureKind(action);
+  if (kind) publish(lobbyTopic(code), { type: "gesture", role: action.role, kind, at: Date.now() });
 }
 
 /** What a newly connected stream gets first: the lobby message and the views for the roles it holds. */
 export function snapshot(
   code: string,
   roles: Role[],
-): { lobby: LobbyMessage; views: Record<string, ConsoleView> } | null {
+): { lobby: LobbyMessage; views: Record<string, ConsoleView>; heads: Record<string, [number, number]> } | null {
   const room = live.get(code);
   let seq: Sequence, state: State, seats: Seats;
   if (room) {
@@ -93,15 +117,17 @@ export function snapshot(
   }
   const views: Record<string, ConsoleView> = {};
   for (const r of roles) if (seq.roles.includes(r)) views[r] = view(seq, state, r);
-  return { lobby: lobbyMessage(seq, state, seats, Date.now()), views };
+  return { lobby: lobbyMessage(code, seq, state, seats, Date.now()), views, heads: currentHeads(code) };
 }
 
-/** Count an open stream against a mission; returns the disconnect function. */
-export function attach(code: string): () => void {
+/** Count an open stream against a mission (and mark its crew member present); returns the disconnect function. */
+export function attach(code: string, callsign: string | null = null): () => void {
   streamCounts.set(code, (streamCounts.get(code) ?? 0) + 1);
   const room = live.get(code);
   if (room) room.lastConsoleAt = Date.now();
+  const closePresence = streamOpened(code, callsign);
   return () => {
+    closePresence();
     const n = (streamCounts.get(code) ?? 1) - 1;
     if (n <= 0) streamCounts.delete(code);
     else streamCounts.set(code, n);
@@ -159,7 +185,10 @@ function commit(
   room.nextEventSeq = eventSeq;
   room.state = state;
   room.lastPersistAt = now;
-  if (state.phase === "done") live.delete(room.code);
+  if (state.phase === "done") {
+    live.delete(room.code);
+    clearMission(room.code);
+  }
   if (agencyChanged) publishAgency();
 }
 

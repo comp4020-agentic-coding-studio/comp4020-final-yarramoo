@@ -360,6 +360,37 @@
     hp.textContent = lobby.phase === "hold" ? "HOLD" : lobby.phase.toUpperCase();
   };
 
+  // ------------------------------------------------- my head direction
+  // The scene emits mc:mylook as I look around in 3D. Send it for my active seat
+  // at most 4 Hz and only when it moved by more than 0.02 rad, with a trailing
+  // send once motion stops. Never from the 2D view (the scene is not mounted
+  // there, and this checks anyway). Failures are ignored: it is only a courtesy.
+  const look = { want: null, sent: null, at: 0, timer: 0 };
+  const moved = (a, b) => {
+    if (!a || !b) return true;
+    const dy = Math.atan2(Math.sin(a.yaw - b.yaw), Math.cos(a.yaw - b.yaw));
+    return Math.abs(dy) > 0.02 || Math.abs(a.pitch - b.pitch) > 0.02;
+  };
+  const sendLook = () => {
+    look.timer = 0;
+    const want = look.want;
+    if (!want || !moved(want, look.sent) || root.dataset.view !== "3d" || !activeTab || document.hidden) return;
+    if (!lobby || lobby.phase === "done") return;
+    look.sent = want;
+    look.at = performance.now();
+    const body = new URLSearchParams({ _csrf: csrf(), role: activeTab, yaw: String(want.yaw), pitch: String(want.pitch) });
+    fetch(`/m/${code}/look`, { method: "POST", body }).catch(() => {});
+  };
+  window.addEventListener("mc:mylook", (e) => {
+    const d = e.detail;
+    if (!d || !Number.isFinite(d.yaw) || !Number.isFinite(d.pitch)) return;
+    look.want = { yaw: d.yaw, pitch: d.pitch };
+    if (look.timer || myRoles.length === 0) return;
+    look.timer = setTimeout(sendLook, Math.max(0, 250 - (performance.now() - look.at)));
+  });
+  // A new seat is a new body: say where I am looking from it.
+  window.addEventListener("mc:seat", () => { look.sent = null; });
+
   // -------------------------------------------------------------- stream
   let source = null;
   let retry = 500;
@@ -375,6 +406,12 @@
       status.hidden = true;
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
+      if (m.type === "gesture" || m.type === "look") {
+        // Public and coarse (see src/game/presence.ts): handed to the scene as it is.
+        if (m.type === "look") mc.heads = { ...(mc.heads || {}), ...m.heads };
+        window.dispatchEvent(new CustomEvent(m.type === "look" ? "mc:look" : "mc:gesture", { detail: m }));
+        return;
+      }
       if (m.type === "lobby") {
         lobby = m;
         setClock(m.phase, m.tMs);

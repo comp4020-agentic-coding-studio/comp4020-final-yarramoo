@@ -5,7 +5,8 @@ import { streamSSE } from "hono/streaming";
 import { subscribe } from "../bus.ts";
 import { currentCrew, type Crew } from "../crew.ts";
 import { previewStart } from "../game/agency.ts";
-import { act, attach, lobbyTopic, publishSeatChange, roleTopic, snapshot, startMission } from "../game/rooms.ts";
+import { act, attach, lobbyTopic, publishGesture, publishSeatChange, roleTopic, snapshot, startMission } from "../game/rooms.ts";
+import { cleanHead, setHead } from "../game/presence.ts";
 import { DEFAULT_SEQUENCE, getSequence, hasSequence } from "../game/sequences.ts";
 import { claimSeat, createMission, getMission, holds, releaseSeat, rolesHeld, seatsOf } from "../game/store.ts";
 import { ROLES, ROLE_LABELS, type Action, type ConsoleView, type Role } from "../engine/types.ts";
@@ -172,7 +173,37 @@ mission.post(
     const action = buildAction(role, body);
     if (typeof action === "string") return c.json({ ok: false, error: action });
     const result = action.type === "start" ? startMission(m, crew.id) : act(code, crew.id, action);
+    if (result.ok) publishGesture(code, action); // only accepted actions; the gesture carries the type, never an id
     return c.json(result);
+  },
+);
+
+// Where a seat is looking, for the other players' view of its figure. Public,
+// ephemeral, held in memory only, and published to the lobby topic at most 5 Hz
+// per mission. 8 a second per crew member: a client sends at most 4.
+mission.post(
+  "/m/:code/look",
+  rateLimit({
+    limit: 8,
+    windowMs: 1000,
+    key: perCrewOrIp,
+    reject: (c, secs) => c.json({ ok: false, error: `too many look updates, try again in ${secs} s` }, 429),
+  }),
+  async (c) => {
+    const code = c.req.param("code").toUpperCase();
+    const m = getMission(code);
+    if (!m) return c.json({ ok: false, error: "no such mission" }, 404);
+    const crew = currentCrew(c);
+    const body = (await c.req.parseBody()) as Record<string, unknown>;
+    const role = body["role"];
+    if (!crew || !isRole(role) || !holds(m.id, crew.id, role)) {
+      return c.json({ ok: false, error: "you do not hold that seat" }, 403);
+    }
+    const head = cleanHead(body["yaw"], body["pitch"]);
+    if (!head) return c.json({ ok: false, error: "yaw and pitch must be finite numbers" }, 400);
+    if (m.status === "done") return c.json({ ok: false, error: "the mission is over" }, 409);
+    setHead(code, role, head);
+    return c.json({ ok: true });
   },
 );
 
@@ -206,12 +237,13 @@ mission.get("/m/:code/stream", (c) => {
         }),
       ),
     ];
-    const detach = attach(code);
+    const detach = attach(code, crew?.callsign ?? null);
     const done = new Promise<void>((resolve) => stream.onAbort(resolve));
     const snap = snapshot(code, roles);
     if (snap) {
       send(snap.lobby);
       if (roles.length > 0) { Object.assign(latest, snap.views); flush(); }
+      if (Object.keys(snap.heads).length > 0) send({ type: "look", heads: snap.heads });
     }
     const beat = setInterval(() => { stream.write(": hb\n\n").catch(() => {}); }, 25_000);
     await done;
