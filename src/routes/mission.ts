@@ -8,6 +8,7 @@ import { act, attach, lobbyTopic, publishSeatChange, roleTopic, snapshot, startM
 import { getSequence } from "../game/sequences.ts";
 import { claimSeat, createMission, getMission, holds, releaseSeat, rolesHeld, seatsOf } from "../game/store.ts";
 import { ROLES, ROLE_LABELS, type Action, type ConsoleView, type Role } from "../engine/types.ts";
+import { csrfToken } from "../auth.ts";
 import { csrfField, page } from "../views/layout.ts";
 import { callsignForm } from "./home.ts";
 
@@ -33,29 +34,32 @@ function renderMission(c: Context, code: string, crew: Crew | null, opts: { erro
     title: `Mission ${m.code}`,
     status: opts.status ?? 200,
     body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}">
-<h1>Mission <span id="mission-code">${m.code}</span> <span class="muted">${seq.name}</span></h1>
+<div class="mission-head">
+  <p class="eyebrow">${seq.name}</p>
+  <h1>Mission <span id="mission-code" class="code">${m.code}</span></h1>
+  ${lobby ? html`<p class="share">Share this code or link: <button type="button" id="copy-link" class="secondary">Copy link</button></p>` : ""}
+</div>
 <p id="error" class="error" role="alert">${opts.error ?? ""}</p>
+<p id="conn" class="conn" hidden>reconnecting…</p>
+${crew ? html`<input type="hidden" name="_csrf" value="${csrfToken(c)}">` : ""}
 ${crew ? "" : html`<p>Take a callsign to join this mission.</p>${callsignForm(c, `/m/${m.code}`)}`}
-<section id="lobby" aria-label="Crew">
-  <p>Phase <span id="phase">${m.status}</span> <span id="clock"></span> <span id="outcome"></span></p>
-  <ul id="seats">${seq.roles.map((r) => html`<li data-role="${r}"><span class="role">${ROLE_LABELS[r]}</span>: <span class="holder">${seats[r] ?? "open"}</span>
+<section id="lobby" class="panel" aria-label="Crew">
+  <h2>Crew</h2>
+  <p class="muted">Phase <span id="phase">${m.status}</span></p>
+  <ul id="seats" class="seats">${seq.roles.map((r) => html`<li data-role="${r}"><span class="role">${ROLE_LABELS[r]}</span><span class="holder">${seats[r] ?? "open"}</span>
     ${lobby && crew && !seats[r] ? html`<form class="inline" method="post" action="/m/${m.code}/seat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit">Take seat</button></form>` : ""}
-    ${lobby && mine.includes(r) ? html`<form class="inline" method="post" action="/m/${m.code}/unseat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit">Leave seat</button></form>` : ""}</li>`)}</ul>
+    ${lobby && mine.includes(r) ? html`<form class="inline" method="post" action="/m/${m.code}/unseat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit" class="secondary">Leave seat</button></form>` : ""}</li>`)}</ul>
+  ${lobby ? html`<p id="fill-note" class="muted">Every seat must be filled before the count can start. One person may take several seats. The Flight Director starts the count.</p>` : ""}
   ${lobby && mine.includes("flight")
-    ? html`<form id="start-form" data-action method="post" action="/m/${m.code}/act">${csrfField(c)}<input type="hidden" name="role" value="flight"><input type="hidden" name="type" value="start"><button type="submit">Start the count</button></form>`
+    ? html`<form id="start-form" data-action method="post" action="/m/${m.code}/act">${csrfField(c)}<input type="hidden" name="role" value="flight"><input type="hidden" name="type" value="start"><button type="submit" class="big go-btn">Start the count</button></form>`
     : ""}
 </section>
-${mine.map((r) => html`<section id="console-${r}" class="console" data-role="${r}" aria-label="${ROLE_LABELS[r]} console">
-  <h2>${ROLE_LABELS[r]}</h2>
-  <pre class="view"></pre>
-  <form data-action method="post" action="/m/${m.code}/act">${csrfField(c)}<input type="hidden" name="role" value="${r}">
-    <select name="type"><option>step</option><option>hold</option><option>resume</option><option>scrub</option><option>poll_open</option><option>poll_report</option></select>
-    <input name="stepId" placeholder="stepId"><input name="pollId" placeholder="pollId">
-    <select name="report"><option>go</option><option>nogo</option></select>
-    <button type="submit">Send</button></form>
-</section>`)}
+<p id="observer-note" class="muted" hidden>You are watching without a seat. Every console is private to the person at it.</p>
+<div id="tabs" class="tabs" role="group" aria-label="Consoles" hidden></div>
+<div id="consoles" class="consoles" hidden></div>
+<section id="outcome-panel" class="outcome" hidden aria-live="polite"></section>
 </div>
-<script src="/public/mission.js" defer></script>`,
+<script src="/public/console.js" defer></script>`,
   });
 }
 

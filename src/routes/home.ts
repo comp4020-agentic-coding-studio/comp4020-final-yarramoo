@@ -26,22 +26,24 @@ home.get("/", (c) => {
   if (!crew) {
     return page(c, {
       title: "Mission Control",
-      body: html`<h1>Mission Control</h1><p>A cooperative launch countdown. Each player sits at one console.</p>${callsignForm(c, "/")}`,
+      body: html`<h1>Mission Control</h1><p class="lead">A cooperative launch countdown. Each player sits at one console and sees only that console.</p>${callsignForm(c, "/")}`,
     });
   }
   const mine = openMissionsFor(crew.id);
   return page(c, {
     title: "Mission Control",
     body: html`<h1>Mission Control</h1>
-<p>Callsign <strong id="who">${crew.callsign}</strong>.</p>
-<form id="new-mission" method="post" action="/missions">${csrfField(c)}<button type="submit">Start a new mission</button></form>
+<p>Callsign <strong id="who">${crew.callsign}</strong></p>
+<p class="howto">How to play: each console sees only its own panel, so talk to each other, by voice call or in the same room. The Flight Director polls the crew before launch. You can report GO while your console shows a fault; the record will show it.</p>
+<div class="home-actions">
+<form id="new-mission" method="post" action="/missions">${csrfField(c)}<button type="submit" class="big go-btn">Start a mission</button></form>
 <form id="join-mission" method="get" action="/join" class="stack">
-  <label for="join-code">Join with a mission code</label>
+  <label for="join-code">Join by code</label>
   <input id="join-code" name="code" maxlength="5" required autocomplete="off" autocapitalize="characters">
   <button type="submit">Join</button>
-</form>
+</form></div>
 ${mine.length > 0
-  ? html`<h2>Your open missions</h2><ul id="my-missions">${mine.map((m) => html`<li data-code="${m.code}" data-status="${m.status}"><a href="/m/${m.code}">${m.code}</a> (${m.status})</li>`)}</ul>`
+  ? html`<h2>Your open missions</h2><ul id="my-missions" class="missions">${mine.map((m) => html`<li data-code="${m.code}" data-status="${m.status}"><a href="/m/${m.code}"><span class="code">${m.code}</span> ${m.status}</a></li>`)}</ul>`
   : ""}`,
   });
 });

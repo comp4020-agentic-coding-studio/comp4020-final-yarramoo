@@ -24,8 +24,9 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
 <html lang="en-AU">
 <head>
 <meta charset="utf-8">
+<meta name="theme-color" content="#0b0e14">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${opts.title} · Mission Control</title>
+<title>${opts.title === "Mission Control" ? opts.title : `${opts.title} · Mission Control`}</title>
 <link rel="stylesheet" href="/public/style.css">
 </head>
 <body data-page="${seg}">
