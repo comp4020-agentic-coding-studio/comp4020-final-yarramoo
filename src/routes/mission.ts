@@ -11,7 +11,7 @@ import { claimSeat, createMission, getMission, holds, releaseSeat, rolesHeld, se
 import { ROLES, ROLE_LABELS, type Action, type ConsoleView, type Role } from "../engine/types.ts";
 import { csrfToken } from "../auth.ts";
 import { clientIp, rateLimit } from "../ratelimit.ts";
-import { csrfField, page } from "../views/layout.ts";
+import { callsignLink, csrfField, page } from "../views/layout.ts";
 import { callsignForm, tooManyPage } from "./home.ts";
 
 export const mission = new Hono();
@@ -74,7 +74,7 @@ ${crew ? "" : html`<p>Take a callsign to join this mission.</p>${callsignForm(c,
   <p class="muted">Phase <span id="phase">${m.status}</span></p>
   <p id="hardware" class="muted">Rocket <strong id="rocket-name">${prep.rocket?.name ?? "none"}</strong> · Pad <strong id="pad-name">${prep.pad ? `${prep.pad.name} (${prep.pad.condition}%)` : "none"}</strong> · <a href="/agency">Agency</a></p>
   ${lobby && prep.blocked ? html`<p id="start-blocked" class="blocked">Cannot start: ${prep.blocked}</p>` : ""}
-  <ul id="seats" class="seats">${seq.roles.map((r) => html`<li data-role="${r}"><span class="role">${ROLE_LABELS[r]}</span><span class="holder">${seats[r] ?? "open"}</span>
+  <ul id="seats" class="seats">${seq.roles.map((r) => html`<li data-role="${r}"><span class="role">${ROLE_LABELS[r]}</span><span class="holder">${seats[r] ? callsignLink(seats[r]!) : "open"}</span>
     ${lobby && crew && !seats[r] ? html`<form class="inline" method="post" action="/m/${m.code}/seat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit">Take seat</button></form>` : ""}
     ${lobby && mine.includes(r) ? html`<form class="inline" method="post" action="/m/${m.code}/unseat">${csrfField(c)}<input type="hidden" name="role" value="${r}"><button type="submit" class="secondary">Leave seat</button></form>` : ""}</li>`)}</ul>
   ${lobby ? html`<p id="fill-note" class="muted">Every seat must be filled before the count can start. One person may take several seats. The Flight Director starts the count.</p>` : ""}

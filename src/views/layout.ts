@@ -11,6 +11,11 @@ export function csrfField(c: Context): Html {
   return html`<input type="hidden" name="_csrf" value="${csrfToken(c)}">`;
 }
 
+/** A callsign as a link to its crew profile. */
+export function callsignLink(callsign: string): Html {
+  return html`<a class="callsign" href="/crew/${callsign}">${callsign}</a>`;
+}
+
 /** Standard page shell. Returns a Response. */
 export function page(c: Context, opts: { title: string; body: Html; status?: 200 | 400 | 403 | 404 | 409 | 422 | 500 }): Response | Promise<Response> {
   const path = c.req.path;
@@ -32,7 +37,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
 <body data-page="${seg}">
 <header class="site">
   <a class="brand" href="/">Mission Control</a>
-  <nav aria-label="Main">${link("/", "Home")} ${link("/missions", "Missions")} ${link("/agency", "Agency")} ${link("/readme/", "README")}${crew ? html` <span class="callsign" id="callsign" data-callsign="${crew.callsign}">${crew.callsign}</span>` : ""}</nav>
+  <nav aria-label="Main">${link("/", "Home")} ${link("/missions", "Missions")} ${link("/crew", "Crew")} ${link("/agency", "Agency")} ${link("/readme/", "README")}${crew ? html` <a class="callsign" id="callsign" data-callsign="${crew.callsign}" href="/crew/${crew.callsign}">${crew.callsign}</a>` : ""}</nav>
 </header>
 <main>${opts.body}</main>
 </body>

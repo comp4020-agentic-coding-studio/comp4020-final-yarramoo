@@ -244,7 +244,11 @@
     for (const li of document.querySelectorAll("#seats li[data-role]")) {
       const holder = lobby.seats[li.dataset.role];
       const h = li.querySelector(".holder");
-      h.textContent = holder || "open";
+      if (holder) {
+        let a = h.querySelector("a");
+        if (!a) { h.textContent = ""; a = document.createElement("a"); a.className = "callsign"; h.append(a); }
+        if (a.textContent !== holder) { a.textContent = holder; a.href = "/crew/" + encodeURIComponent(holder); }
+      } else h.textContent = "open";
       li.classList.toggle("taken", !!holder);
       if (lobby.phase === "lobby") seatForms(li, holder);
     }

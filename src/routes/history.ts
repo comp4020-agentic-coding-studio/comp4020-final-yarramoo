@@ -6,7 +6,7 @@ import { ledgerTable } from "./agency.ts";
 import { getSequence } from "../game/sequences.ts";
 import { countDone, doneMissions, eventsOf, getMission, goOnCautionCounts, liveMissions, seatsOf, seatsOfMany, type EventRow, type MissionRow, type Seats } from "../game/store.ts";
 import { ROLES, ROLE_LABELS, type Role } from "../engine/types.ts";
-import { page, type Html } from "../views/layout.ts";
+import { callsignLink, page, type Html } from "../views/layout.ts";
 
 export const history = new Hono();
 
@@ -27,7 +27,7 @@ function outcomeOf(m: MissionRow): { kind: string; reasons: string[]; atT: numbe
 }
 
 const crewList = (seats: Seats): Html =>
-  html`<ul class="crew-list">${ROLES.map((r) => (seats[r] ? html`<li><span class="muted">${ROLE_LABELS[r]}</span> <span class="callsign">${seats[r]}</span></li>` : ""))}</ul>`;
+  html`<ul class="crew-list">${ROLES.map((r) => (seats[r] ? html`<li><span class="muted">${ROLE_LABELS[r]}</span> ${callsignLink(seats[r]!)}</li>` : ""))}</ul>`;
 
 history.get("/missions", (c) => {
   const pageNo = Math.min(1_000_000, Math.max(1, Math.floor(Number(c.req.query("page"))) || 1)); // a huge OFFSET makes SQLite throw
@@ -135,7 +135,7 @@ history.get("/missions/:code", (c) => {
 <div class="scroll"><table class="record"><thead><tr><th>Poll</th><th>Seat</th><th>Crew</th><th>Reported</th><th>Console showed</th><th>At</th><th></th></tr></thead><tbody>
 ${reports.length === 0 ? html`<tr><td colspan="7">No polls were reported.</td></tr>` : reports.map((e) => {
   const bad = e.data["report"] === "go" && e.data["showing"] === "caution";
-  return html`<tr class="${bad ? "bad" : ""}"><td>${pollLbl(e.data["pollId"])}</td><td>${roleLabel(e.role)}</td><td>${(e.role && seats[e.role]) || ""}</td><td>${goNo(e.data["report"])}</td><td>${showing(e.data["showing"])}</td><td>${fmtT(e.at_t)}</td><td>${bad ? "GO on CAUTION" : ""}</td></tr>`;
+  return html`<tr class="${bad ? "bad" : ""}"><td>${pollLbl(e.data["pollId"])}</td><td>${roleLabel(e.role)}</td><td>${e.role && seats[e.role] ? callsignLink(seats[e.role]!) : ""}</td><td>${goNo(e.data["report"])}</td><td>${showing(e.data["showing"])}</td><td>${fmtT(e.at_t)}</td><td>${bad ? "GO on CAUTION" : ""}</td></tr>`;
 })}</tbody></table></div>
 <h3>Faults</h3>
 <div class="scroll"><table class="record"><thead><tr><th>Fault</th><th>Console</th><th>Truth</th><th>Appeared</th><th>Resolved</th></tr></thead><tbody>

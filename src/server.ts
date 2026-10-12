@@ -8,6 +8,7 @@ import { csrfGuard } from "./auth.ts";
 import { flushRooms, startRooms } from "./game/rooms.ts";
 import { agency } from "./routes/agency.ts";
 import { mission } from "./routes/mission.ts";
+import { crewPages } from "./routes/crew-pages.ts";
 import { history } from "./routes/history.ts";
 import { home } from "./routes/home.ts";
 import { readme } from "./routes/readme.ts";
@@ -32,6 +33,7 @@ app.use("*", csrfGuard);
 app.route("/", home);
 app.route("/", mission);
 app.route("/", history);
+app.route("/", crewPages);
 app.route("/", agency);
 app.route("/", readme);
 

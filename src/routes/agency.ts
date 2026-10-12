@@ -5,7 +5,7 @@ import { subscribe } from "../bus.ts";
 import { currentCrew } from "../crew.ts";
 import { COSTS, padRepairCost } from "../game/agency-rules.ts";
 import { AGENCY_TOPIC, APPROPRIATION_REPUTATION, appropriationNeeded, buyRocket, emergencyAppropriation, getAgency, getPads, getRockets, latestLedger, repairPad, repairRocket, type LedgerRow, type SpendResult } from "../game/agency.ts";
-import { csrfField, page, type Html } from "../views/layout.ts";
+import { callsignLink, csrfField, page, type Html } from "../views/layout.ts";
 
 export const agency = new Hono();
 
@@ -19,7 +19,7 @@ export const bar = (pct: number): Html =>
 export function ledgerTable(rows: LedgerRow[], opts: { showMission?: boolean } = {}): Html {
   const showMission = opts.showMission ?? true;
   return html`<div class="scroll"><table class="record ledger"><thead><tr><th>Time (UTC)</th>${showMission ? html`<th>Mission</th>` : ""}<th>Crew</th><th>Budget</th><th>Reputation</th><th>Reason</th></tr></thead><tbody>
-${rows.length === 0 ? html`<tr><td colspan="6">Nothing yet.</td></tr>` : rows.map((l) => html`<tr><td>${fmtAt(l.at)}</td>${showMission ? html`<td>${l.code ? html`<a class="code" href="/missions/${l.code}">${l.code}</a>` : ""}</td>` : ""}<td>${l.callsign ?? ""}</td><td class="${l.budget_delta < 0 ? "neg" : l.budget_delta > 0 ? "pos" : ""}">${l.budget_delta === 0 ? "" : signed(l.budget_delta)}</td><td class="${l.reputation_delta < 0 ? "neg" : l.reputation_delta > 0 ? "pos" : ""}">${l.reputation_delta === 0 ? "" : signed(l.reputation_delta)}</td><td>${l.reason}</td></tr>`)}</tbody></table></div>`;
+${rows.length === 0 ? html`<tr><td colspan="6">Nothing yet.</td></tr>` : rows.map((l) => html`<tr><td>${fmtAt(l.at)}</td>${showMission ? html`<td>${l.code ? html`<a class="code" href="/missions/${l.code}">${l.code}</a>` : ""}</td>` : ""}<td>${l.callsign ? callsignLink(l.callsign) : ""}</td><td class="${l.budget_delta < 0 ? "neg" : l.budget_delta > 0 ? "pos" : ""}">${l.budget_delta === 0 ? "" : signed(l.budget_delta)}</td><td class="${l.reputation_delta < 0 ? "neg" : l.reputation_delta > 0 ? "pos" : ""}">${l.reputation_delta === 0 ? "" : signed(l.reputation_delta)}</td><td>${l.reason}</td></tr>`)}</tbody></table></div>`;
 }
 
 agency.get("/agency", (c) => {
