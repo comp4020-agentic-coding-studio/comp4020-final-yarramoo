@@ -161,3 +161,6 @@ table.record td:not(:first-child) { white-space:nowrap; }
 .rtag { grid-column:2; justify-self:start; font:.7rem var(--mono); text-transform:uppercase; letter-spacing:.08em; padding:.05rem .5rem; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
 .rtag.r-flight { color:var(--blue); border-color:var(--blue); } .rtag.r-propulsion { color:var(--green); border-color:var(--green); } .rtag.r-ground { color:var(--amber); border-color:var(--amber); }
 .ev.k-fault_active .ev-s { color:var(--amber); } .ev.k-hold .ev-s, .ev.k-outcome .ev-s { font-weight:700; }
+.outcome.pad_abort { border-color:var(--amber); } .outcome.pad_abort h2 { color:var(--amber); }
+.verdict.pad_abort { color:var(--amber); border-color:var(--amber); }
+.tbar .tick.k-window_closed { top:0; bottom:0; background:var(--amber); }

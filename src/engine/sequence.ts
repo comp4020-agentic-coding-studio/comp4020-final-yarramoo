@@ -82,6 +82,9 @@ export function parseSequence(raw: unknown): Sequence {
     fail("countdownSec", "expected a positive whole number of seconds");
   }
 
+  const holdBudgetSec = num(o.holdBudgetSec, "holdBudgetSec");
+  if (holdBudgetSec <= 0) fail("holdBudgetSec", "expected a positive number of seconds");
+
   const rolesRaw = arr(o.roles, "roles");
   const roles: Role[] = [];
   rolesRaw.forEach((r, i) => {
@@ -206,7 +209,9 @@ export function parseSequence(raw: unknown): Sequence {
       window: pair(f.window, `${p}.window`),
       chance: num(f.chance, `${p}.chance`),
       realChance: num(f.realChance, `${p}.realChance`),
+      severity: f.severity as FaultDef["severity"],
     };
+    if (f.severity !== "abort" && f.severity !== "explode") fail(`${p}.severity`, 'expected "abort" or "explode"');
     if (def.role === "flight") fail(`${p}.role`, "flight has no console faults");
     if (def.window[0] > def.window[1]) fail(`${p}.window`, "t1 must not be after t2");
     if (def.window[0] < -countdownSec) fail(`${p}.window[0]`, "before the countdown starts");
@@ -241,5 +246,5 @@ export function parseSequence(raw: unknown): Sequence {
     return def;
   });
 
-  return { id, name, countdownSec, roles, values, steps, polls, faults };
+  return { id, name, countdownSec, holdBudgetSec, roles, values, steps, polls, faults };
 }

@@ -98,6 +98,7 @@ export function view(seq: Sequence, state: State, role: Role): ConsoleView {
     phase: state.phase,
     tMs: state.tMs,
     holds: state.holds,
+    holdLeftMs: Math.max(0, seq.holdBudgetSec * 1000 - (state.holdMs ?? 0)),
     outcome: state.outcome ? { ...state.outcome, reasons: [...state.outcome.reasons] } : null,
     steps,
     values,

@@ -4,6 +4,7 @@ import type {
   Action,
   ApplyResult,
   EngineEvent,
+  Outcome,
   Role,
   Sequence,
   State,
@@ -70,6 +71,8 @@ function consoleShowsCaution(seq: Sequence, s: State, role: Role): boolean {
   for (const f of seq.faults) {
     const fs = s.faults[f.id]!;
     if (f.role === role && fs.active && !fs.resolved) return true;
+    // a cross-check readout on this console that reads "abnormal" is evidence too
+    if (f.crossCheck?.role === role && fs.active && fs.real && !fs.resolved) return true;
   }
   for (const [id, d] of Object.entries(seq.values)) {
     if (d.role === role && outsideNominal(seq, s, id)) return true;
@@ -139,7 +142,7 @@ function enterHold(c: Ctx, reason: string): void {
   emit(c, "hold", undefined, { reason });
 }
 
-function finish(c: Ctx, kind: "success" | "explosion" | "scrub", reasons: string[]): void {
+function finish(c: Ctx, kind: Outcome["kind"], reasons: string[]): void {
   c.s.phase = "done";
   c.s.outcome = { kind, reasons, atT: c.s.tMs };
   emit(c, "outcome", undefined, { kind, reasons });
@@ -149,21 +152,25 @@ function evaluateT0(c: Ctx): void {
   const { seq, s } = c;
   syncValues(seq, s);
   const blast: string[] = [];
+  const abort: string[] = [];
   for (const f of seq.faults) {
     const fs = s.faults[f.id]!;
     if (fs.active && fs.real && !fs.resolved) {
-      blast.push(`${ROLE_LABELS[f.role]}: "${f.label}" was a real fault and was never resolved`);
+      const why = `${ROLE_LABELS[f.role]}: "${f.label}" was a real fault and was never resolved`;
+      (f.severity === "explode" ? blast : abort).push(why);
     }
   }
   for (const [id, d] of Object.entries(seq.values)) {
     const v = s.values[id]!;
+    const at = `${ROLE_LABELS[d.role]}: ${d.label} read ${v.toFixed(1)} ${d.unit} at T-0`;
     if (v < d.limit[0] || v > d.limit[1]) {
-      blast.push(
-        `${ROLE_LABELS[d.role]}: ${d.label} read ${v.toFixed(1)} ${d.unit} at T-0, outside the limit ${d.limit[0]} to ${d.limit[1]}`,
-      );
+      blast.push(`${at}, outside the limit ${d.limit[0]} to ${d.limit[1]}`);
+    } else if (outsideNominal(seq, s, id)) {
+      abort.push(`${at}, outside nominal ${d.nominal[0]} to ${d.nominal[1]}`);
     }
   }
   if (blast.length > 0) return finish(c, "explosion", blast);
+  if (abort.length > 0) return finish(c, "pad_abort", abort);
 
   const unmet: string[] = [];
   for (const step of seq.steps) {
@@ -249,15 +256,29 @@ function nextBoundary(c: Ctx): number {
   return next;
 }
 
+function closeWindow(c: Ctx): void {
+  const n = c.s.holds;
+  const reason = `Launch window closed after ${n} ${n === 1 ? "hold" : "holds"}`;
+  emit(c, "window_closed", undefined, { reason, holds: n });
+  finish(c, "scrub", [reason]);
+}
+
 function runTo(c: Ctx, nowMs: number): void {
   const { seq, s } = c;
   if (s.lastNowMs === null || (s.phase !== "count" && s.phase !== "hold") || nowMs <= s.lastNowMs) return;
+  if (typeof s.holdMs !== "number") s.holdMs = 0; // snapshot saved before the launch window existed
   let remaining = nowMs - s.lastNowMs;
   while (remaining > 0 && (s.phase === "count" || s.phase === "hold")) {
     if (s.phase === "hold") {
-      s.elapsedMs += remaining; // clock frozen, values keep drifting
-      remaining = 0;
-      break;
+      // clock frozen, values keep drifting; the launch window runs out at the
+      // budget, so the interval is split there
+      const dt = Math.min(remaining, Math.max(0, ms(seq.holdBudgetSec) - s.holdMs));
+      s.elapsedMs += dt;
+      s.holdMs += dt;
+      remaining -= dt;
+      syncValues(seq, s);
+      if (s.holdMs >= ms(seq.holdBudgetSec)) closeWindow(c);
+      continue;
     }
     const step = Math.max(1, Math.min(remaining, nextBoundary(c) - s.tMs));
     s.tMs += step;
@@ -296,6 +317,7 @@ export function init(seq: Sequence, seed: number): State {
     lastNowMs: null,
     elapsedMs: 0,
     holds: 0,
+    holdMs: 0,
     steps: {},
     values: {},
     drift: {},
@@ -483,8 +505,12 @@ function applyAction(c: Ctx, action: Action, nowMs: number): Fail | null {
     case "scrub":
       if (action.role !== "flight") return "only the Flight Director can scrub";
       if (s.phase !== "count" && s.phase !== "hold") return "the mission is not in progress";
-      emit(c, "scrub", "flight");
-      finish(c, "scrub", ["Scrubbed by the Flight Director"]);
+      {
+        const reason =
+          typeof action.reason === "string" && action.reason.trim() ? action.reason : "Scrubbed by the Flight Director";
+        emit(c, "scrub", "flight", { reason });
+        finish(c, "scrub", [reason]);
+      }
       return null;
     default:
       return `unknown action type "${String((action as { type?: unknown }).type)}"`;

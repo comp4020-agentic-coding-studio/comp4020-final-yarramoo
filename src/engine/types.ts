@@ -37,7 +37,8 @@
  * (fault_active.data.real) so they must NOT be broadcast to clients; clients
  * get view(). Kinds: start, step_done, step_missed, fault_active,
  * fault_resolved, poll_opened, poll_report, poll_closed, poll_missed, hold,
- * resume, scrub, outcome. `data.reason` on hold/outcome is human-readable.
+ * resume, scrub, window_closed, outcome. `data.reason` on hold/scrub/
+ * window_closed/outcome is human-readable.
  *
  * Differences from the planning brief (all additive or clarifying):
  *  - State gains `elapsedMs` (real running time, includes holds) and `anchors`
@@ -60,12 +61,32 @@
  *    (real vs glitch, reported vs showing); before that it never does.
  *  - ApplyResult failures carry state/events (see Results).
  *
- * T-0 (clock reaches 0 while counting). Explosion if any active unresolved
- * REAL fault, or any value outside its `limit`. Otherwise success if every
- * required step is done and every poll closed with all "go". Otherwise the
- * launch does not happen: automatic hold with the clock set back to T-1 s
- * (tMs = -1000). Resuming runs the clock into T-0 again and re-evaluates, so
- * the crew can fix things late; values keep drifting while they do.
+ * T-0 (clock reaches 0 while counting): the outcome ladder. Worst first:
+ *   1. explosion: any value outside its `limit`, or an active unresolved REAL
+ *      fault whose severity is "explode".
+ *   2. pad_abort: an active unresolved REAL fault with severity "abort", or any
+ *      value outside `nominal` (but inside `limit`). Engines shut down at
+ *      ignition; the rocket survives and needs repair.
+ *   3. otherwise, if a required step is undone or a poll is not closed all-go,
+ *      the launch does not happen: automatic hold with the clock set back to
+ *      T-1 s (tMs = -1000). Resuming runs the clock into T-0 again and
+ *      re-evaluates, so the crew can fix things late; values keep drifting.
+ *   4. otherwise success.
+ * Outcome kinds: "success" | "scrub" | "pad_abort" | "explosion". A scrub comes
+ * from the Flight Director (action.reason, default "Scrubbed by the Flight
+ * Director"; the HTTP layer never forwards a client reason), from the server
+ * (crew lost contact) or from the launch window closing.
+ *
+ * Launch window. `Sequence.holdBudgetSec` is the total time the mission may
+ * spend on hold. State.holdMs accumulates real time in the hold phase (the
+ * clock is frozen, values drift). When it reaches the budget the interval is
+ * split at that instant and the mission ends: events `window_closed` then
+ * `outcome` (scrub, "Launch window closed after N holds").
+ *
+ * A seat's `showing` on a poll report is "caution" if its console had an active
+ * unresolved fault, a value outside nominal, or a cross-check readout reading
+ * "abnormal" at report time (a seat holding evidence about another seat's real
+ * fault was shown it).
  *
  * Granularity independence. With no actions between them, tick(tick(s,a),b)
  * deep-equals tick(s,b). The interval is split at fault activations, step and
@@ -134,12 +155,16 @@ export interface FaultDef {
   effect?: { value: string; driftPerSec: number };
   crossCheck?: { role: Role; label: string };
   fixStep?: string;
+  /** what a REAL fault left unresolved does at T-0: pad abort or explosion */
+  severity: "abort" | "explode";
 }
 
 export interface Sequence {
   id: string;
   name: string;
   countdownSec: number;
+  /** total seconds the mission may spend in hold before the launch window closes */
+  holdBudgetSec: number;
   roles: Role[];
   values: Record<string, ValueDef>;
   steps: StepDef[];
@@ -163,7 +188,7 @@ export interface PollReport {
 export type PollReports = Partial<Record<Role, PollReport>>;
 
 export interface Outcome {
-  kind: "success" | "explosion" | "scrub";
+  kind: "success" | "scrub" | "pad_abort" | "explosion";
   reasons: string[];
   atT: number;
 }
@@ -181,6 +206,8 @@ export interface State {
   /** real ms since start, running through holds too; drives value drift */
   elapsedMs: number;
   holds: number;
+  /** total real ms spent in hold; the launch window closes at holdBudgetSec */
+  holdMs: number;
   steps: Record<string, { status: StepStatus; atT?: number }>;
   values: Record<string, number>;
   /** base drift rate per value (units/s), before active fault effects */
@@ -211,7 +238,7 @@ export type Action = { role: Role } & (
   | { type: "step"; stepId: string }
   | { type: "hold" }
   | { type: "resume" }
-  | { type: "scrub" }
+  | { type: "scrub"; reason?: string }
   | { type: "poll_open"; pollId: string }
   | { type: "poll_report"; pollId: string; report: Report }
 );
@@ -302,6 +329,8 @@ export interface ConsoleView {
   phase: Phase;
   tMs: number;
   holds: number;
+  /** hold time left before the launch window closes */
+  holdLeftMs: number;
   outcome: Outcome | null;
   steps: ConsoleStep[];
   values: ConsoleValue[];

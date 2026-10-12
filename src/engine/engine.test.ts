@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { nextRandom } from "./rng.ts";
 import { apply, init, tick } from "./engine.ts";
 import { parseSequence } from "./sequence.ts";
-import { act, advance, advanceToT, begin, findSeed, loadMvp, runBot } from "./testutil.ts";
-import type { Role, State } from "./types.ts";
+import { act, advance, advanceToT, begin, findSeed, loadMvp, runBot, view } from "./testutil.ts";
+import type { Role, Sequence, State } from "./types.ts";
 
 const seq = loadMvp();
 
@@ -315,8 +315,32 @@ describe("polls", () => {
     const p = run.state.polls.poll_1!;
     expect(p.status).toBe("closed");
     expect(p.reports.propulsion).toMatchObject({ report: "go", showing: "caution" });
-    expect(p.reports.ground).toMatchObject({ report: "go", showing: "nominal" });
+    // Ground is the cross-check console for the real vent fault: its readout
+    // reads abnormal, so Ground had evidence too
+    expect(p.reports.ground).toMatchObject({ report: "go", showing: "caution" });
     expect(run.state.phase).toBe("count");
+  });
+
+  it("showing is caution when only a cross-check reads abnormal, nominal for a glitch or once fixed", () => {
+    const run = toPoll1(REAL_VENT_ONLY);
+    const g = view(seq, run.state, "ground");
+    expect(g.cautions).toEqual([]);
+    expect(g.values.every((v) => !v.caution)).toBe(true);
+    expect(g.crossChecks[0]).toMatchObject({ reading: "abnormal" });
+    act(run, { role: "flight", type: "poll_open", pollId: "poll_1" });
+    act(run, { role: "ground", type: "poll_report", pollId: "poll_1", report: "go" });
+    expect(run.state.polls.poll_1!.reports.ground!.showing).toBe("caution");
+
+    const glitch = toPoll1(GLITCH_VENT_ONLY);
+    act(glitch, { role: "flight", type: "poll_open", pollId: "poll_1" });
+    act(glitch, { role: "ground", type: "poll_report", pollId: "poll_1", report: "go" });
+    expect(glitch.state.polls.poll_1!.reports.ground!.showing).toBe("nominal");
+
+    const fixed = runBot(begin(seq, REAL_VENT_ONLY), { untilTMs: -111_000 });
+    advanceToT(fixed, -109);
+    act(fixed, { role: "flight", type: "poll_open", pollId: "poll_1" });
+    act(fixed, { role: "ground", type: "poll_report", pollId: "poll_1", report: "go" });
+    expect(fixed.state.polls.poll_1!.reports.ground!.showing).toBe("nominal");
   });
 
   it("a console that has fixed its fault shows nominal", () => {
@@ -453,5 +477,175 @@ describe("T-0", () => {
     expect(act(run, { role: "flight", type: "resume" }).ok).toBe(true);
     advance(run, 2000);
     expect(run.state.outcome!.kind).toBe("success");
+  });
+});
+
+// ---------------------------------------------------------------- the ladder
+
+/** mvp with its fault effects removed, so only severity and values decide. */
+function variant(mutate: (raw: any) => void): Sequence {
+  const raw = structuredClone(seq) as any;
+  mutate(raw);
+  return parseSequence(raw);
+}
+const quiet = (r: any) => r.faults.forEach((f: any) => delete f.effect);
+const REAL_BUS_ONLY = findSeed(seq, (s) => bus(s).scheduledT !== null && bus(s).real && vent(s).scheduledT === null);
+
+describe("outcome ladder", () => {
+  it("an unresolved real fault of severity abort is a pad abort, not an explosion", () => {
+    const q = variant(quiet);
+    expect(q.faults.find((f) => f.id === "bus_sag")!.severity).toBe("abort");
+    const run = runBot(begin(q, REAL_BUS_ONLY), { fix: false });
+    expect(run.state.outcome).toMatchObject({ kind: "pad_abort", atT: 0 });
+    expect(run.state.outcome!.reasons.join(" ")).toContain("Pad bus B voltage sag");
+    expect(run.events.at(-1)).toMatchObject({ kind: "outcome", data: { kind: "pad_abort" } });
+  });
+
+  it("an unresolved real fault of severity explode is an explosion", () => {
+    const q = variant((r) => {
+      quiet(r);
+      r.faults[0].severity = "explode";
+    });
+    expect(runBot(begin(q, REAL_VENT_ONLY), { fix: false }).state.outcome!.kind).toBe("explosion");
+  });
+
+  it("swapping the severities swaps the outcomes", () => {
+    const q = variant((r) => {
+      quiet(r);
+      r.faults[0].severity = "abort";
+      r.faults[1].severity = "explode";
+    });
+    expect(runBot(begin(q, REAL_VENT_ONLY), { fix: false }).state.outcome!.kind).toBe("pad_abort");
+    expect(runBot(begin(q, REAL_BUS_ONLY), { fix: false }).state.outcome!.kind).toBe("explosion");
+  });
+
+  it("a glitch left alone or a real fault that was fixed does not abort", () => {
+    const q = variant(quiet);
+    expect(runBot(begin(q, GLITCH_VENT_ONLY), { fix: false }).state.outcome!.kind).toBe("success");
+    expect(runBot(begin(q, REAL_BUS_ONLY)).state.outcome!.kind).toBe("success");
+  });
+
+  it("a value in the caution band at T-0 is a pad abort", () => {
+    const q = variant((r) => {
+      quiet(r);
+      r.steps.find((s: any) => s.id === "tank_pressurise").effects[0].set = 285; // nominal 230-270, limit 335
+    });
+    const run = runBot(begin(q, NO_FAULTS));
+    expect(run.state.outcome).toMatchObject({ kind: "pad_abort" });
+    expect(run.state.outcome!.reasons.join(" ")).toContain("Propellant tank pressure");
+    expect(run.state.outcome!.reasons.join(" ")).toContain("outside nominal");
+  });
+
+  it("a value beyond its limit is an explosion even beside a caution-band value", () => {
+    const q = variant((r) => {
+      quiet(r);
+      r.steps.find((s: any) => s.id === "tank_pressurise").effects[0].set = 340;
+      r.steps.find((s: any) => s.id === "bus_transfer").effects[0].set = 25.5; // caution band
+    });
+    const run = runBot(begin(q, NO_FAULTS));
+    expect(run.state.outcome!.kind).toBe("explosion");
+    expect(run.state.outcome!.reasons.join(" ")).not.toContain("Pad power bus B");
+  });
+
+  it("a pad abort beats the automatic hold for unmet requirements", () => {
+    const q = variant((r) => {
+      quiet(r);
+      r.steps.find((s: any) => s.id === "tank_pressurise").effects[0].set = 285;
+      r.steps.push({ id: "late_check", role: "ground", label: "Final safing check", after: [], required: true });
+    });
+    const run = runBot(begin(q, NO_FAULTS), { untilTMs: -2000, skip: ["late_check"] });
+    advance(run, 5000);
+    expect(run.state.outcome!.kind).toBe("pad_abort");
+    expect(run.state.holds).toBe(0); // the abort came before the unmet-requirements hold
+  });
+});
+
+describe("launch window", () => {
+  function held(budgetSec: number, holdAtSec = -200) {
+    const s2 = variant((r) => (r.holdBudgetSec = budgetSec));
+    const run = begin(s2, NO_FAULTS);
+    advanceToT(run, holdAtSec);
+    expect(act(run, { role: "flight", type: "hold" }).ok).toBe(true);
+    return run;
+  }
+
+  it("a hold within the budget is safe; one past it scrubs with window_closed then outcome", () => {
+    const run = held(120);
+    advance(run, 119_000);
+    expect(run.state.phase).toBe("hold");
+    expect(run.state.holdMs).toBe(119_000);
+    advance(run, 1000);
+    expect(run.state.phase).toBe("done");
+    expect(run.state.outcome).toMatchObject({ kind: "scrub", reasons: ["Launch window closed after 1 hold"] });
+    expect(run.state.tMs).toBe(-200_000);
+    expect(run.events.slice(-2).map((e) => e.kind)).toEqual(["window_closed", "outcome"]);
+  });
+
+  it("budget is the total across holds, and the reason counts them", () => {
+    const run = held(120);
+    advance(run, 70_000);
+    expect(act(run, { role: "flight", type: "resume" }).ok).toBe(true);
+    advance(run, 5000);
+    expect(act(run, { role: "flight", type: "hold" }).ok).toBe(true);
+    advance(run, 49_000);
+    expect(run.state.phase).toBe("hold");
+    advance(run, 1500);
+    expect(run.state.outcome!.reasons).toEqual(["Launch window closed after 2 holds"]);
+  });
+
+  it("is granularity independent: chunked ticks equal one tick, and lastNowMs stops at the close", () => {
+    const run = held(120);
+    const s2 = variant((r) => (r.holdBudgetSec = 120));
+    const d2 = tick(s2, run.state, run.now + 300_000);
+    expect(d2.state.outcome!.kind).toBe("scrub");
+    for (const chunk of [333, 1000, 7777, 61_000]) {
+      let s = run.state;
+      const events: unknown[] = [];
+      for (let t = run.now + chunk; ; t += chunk) {
+        const r = tick(s2, s, Math.min(t, run.now + 300_000));
+        s = r.state;
+        events.push(...r.events);
+        if (t >= run.now + 300_000) break;
+      }
+      expect(s).toEqual(d2.state);
+      expect(events).toEqual(d2.events);
+    }
+    expect(d2.state.lastNowMs).toBe(run.now + 120_000);
+  });
+
+  it("T-0 holds for unmet requirements spend the budget too", () => {
+    const raw = structuredClone(seq) as any;
+    raw.holdBudgetSec = 10;
+    raw.steps.push({ id: "late_check", role: "ground", label: "Final safing check", after: [], required: true });
+    const s2 = parseSequence(raw);
+    const run = runBot(begin(s2, NO_FAULTS), { untilTMs: -2000, skip: ["late_check"], resume: false });
+    advance(run, 3000); // through T-0 into the automatic hold
+    expect(run.state.phase).toBe("hold");
+    advance(run, 20_000);
+    expect(run.state.outcome).toMatchObject({ kind: "scrub" });
+    expect(run.state.outcome!.reasons[0]).toContain("Launch window closed after");
+  });
+
+  it("the validator requires holdBudgetSec and a fault severity", () => {
+    const base = structuredClone(seq) as any;
+    delete base.holdBudgetSec;
+    expect(() => parseSequence(base)).toThrow(/holdBudgetSec/);
+    const b2 = structuredClone(seq) as any;
+    delete b2.faults[0].severity;
+    expect(() => parseSequence(b2)).toThrow(/faults\[0\]\.severity/);
+  });
+});
+
+describe("scrub reason", () => {
+  it("defaults to the Flight Director, and carries a given reason", () => {
+    const a = begin(seq, NO_FAULTS);
+    advance(a, 5000);
+    act(a, { role: "flight", type: "scrub" });
+    expect(a.state.outcome!.reasons).toEqual(["Scrubbed by the Flight Director"]);
+    const b = begin(seq, NO_FAULTS);
+    advance(b, 5000);
+    act(b, { role: "flight", type: "scrub", reason: "Crew lost contact" });
+    expect(b.state.outcome).toMatchObject({ kind: "scrub", reasons: ["Crew lost contact"] });
+    expect(b.events.find((e) => e.kind === "scrub")!.data?.reason).toBe("Crew lost contact");
   });
 });

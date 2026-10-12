@@ -9,7 +9,7 @@ import { page, type Html } from "../views/layout.ts";
 export const history = new Hono();
 
 const PAGE_SIZE = 50;
-const OUTCOME_LABEL: Record<string, string> = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED" };
+const OUTCOME_LABEL: Record<string, string> = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT" };
 const pad = (n: number): string => String(n).padStart(2, "0");
 /** Milliseconds on the mission clock as T-01:48 / T+00:00. */
 export function fmtT(ms: number): string {
@@ -95,8 +95,11 @@ history.get("/missions/:code", (c) => {
       case "poll_missed": return `Poll window passed unclosed: ${pollLbl(d["pollId"])}`;
       case "hold": return `Automatic hold: ${String(d["reason"] ?? "")}`.replace(/: $/, "");
       case "resume": return "Flight Director resumed the count";
-      case "scrub": return "Flight Director scrubbed the mission";
-      case "outcome": return `Launch: ${OUTCOME_LABEL[String(d["kind"])] ?? String(d["kind"])}${Array.isArray(d["reasons"]) && d["reasons"].length ? ` (${(d["reasons"] as string[]).map(lower1).join("; ")})` : ""}`;
+      case "scrub": return d["reason"] && d["reason"] !== "Scrubbed by the Flight Director" ? `Mission scrubbed: ${String(d["reason"])}` : "Flight Director scrubbed the mission";
+      case "window_closed": return `Launch window closed: ${String(d["reason"] ?? "the hold budget ran out")}`;
+      case "outcome":
+        if (d["kind"] === "pad_abort") return `Launch: PAD ABORT \u2014 engines shut down at ignition${Array.isArray(d["reasons"]) && d["reasons"].length ? ` (${(d["reasons"] as string[]).map(lower1).join("; ")})` : ""}`;
+        return `Launch: ${OUTCOME_LABEL[String(d["kind"])] ?? String(d["kind"])}${Array.isArray(d["reasons"]) && d["reasons"].length ? ` (${(d["reasons"] as string[]).map(lower1).join("; ")})` : ""}`;
       default: return `${who}: ${e.kind}`;
     }
   };

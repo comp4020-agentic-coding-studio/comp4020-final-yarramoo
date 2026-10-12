@@ -2,6 +2,7 @@
   "id": "mvp",
   "name": "Kestrel-1 suborbital",
   "countdownSec": 240,
+  "holdBudgetSec": 120,
   "roles": ["flight", "propulsion", "ground"],
   "values": {
     "tank_pressure": {
@@ -53,6 +54,7 @@
       "window": [-170, -110],
       "chance": 0.8,
       "realChance": 0.6,
+      "severity": "explode",
       "effect": { "value": "tank_pressure", "driftPerSec": 0.9 },
       "crossCheck": { "role": "ground", "label": "Vent line temperature" },
       "fixStep": "fix_vent"
@@ -64,7 +66,8 @@
       "window": [-150, -100],
       "chance": 0.5,
       "realChance": 0.5,
-      "effect": { "value": "bus_voltage", "driftPerSec": -0.05 },
+      "severity": "abort",
+      "effect": { "value": "bus_voltage", "driftPerSec": -0.02 },
       "crossCheck": { "role": "propulsion", "label": "Umbilical bus ammeter" },
       "fixStep": "fix_bus"
     }

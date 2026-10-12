@@ -257,7 +257,7 @@ function loopOnce(): void {
       if ((streamCounts.get(room.code) ?? 0) > 0) room.lastConsoleAt = now;
       else if (now - room.lastConsoleAt > ABANDON_AFTER_MS) {
         console.log(`mission ${room.code}: crew lost contact, scrubbing`);
-        applyTo(room, { role: "flight", type: "scrub" }, null);
+        applyTo(room, { role: "flight", type: "scrub", reason: "Crew lost contact" }, null);
       }
     } catch (e) {
       console.error(`tick failed for ${room.code}`, e);

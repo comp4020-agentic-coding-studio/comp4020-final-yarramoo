@@ -104,7 +104,7 @@
     // telemetry slot and never replaces a button mid-press. The clock text is
     // left empty here; drawClock fills every `.countdown`.
     return [
-      `<div class="console-head"><h2>${esc(ROLE_LABELS[role])}</h2><span class="mini-clock countdown"></span>${badge(v.phase)}<span class="holds">Holds ${v.holds}</span></div>`,
+      `<div class="console-head"><h2>${esc(ROLE_LABELS[role])}</h2><span class="mini-clock countdown"></span>${badge(v.phase)}<span class="holds">Holds ${v.holds} · window ${Math.ceil(v.holdLeftMs / 1000)}s of hold left</span></div>`,
       cautions ? `<ul class="cautions">${cautions}</ul>` : "",
       values ? `<section class="panel"><h3>Telemetry</h3>${values}</section>` : "",
       checks ? `<section class="panel"><h3>Cross-checks</h3><ul class="checks">${checks}</ul></section>` : "",
@@ -137,7 +137,7 @@
     const out = (vs.find((v) => v.outcome) || {}).outcome || (lobby && lobby.outcome);
     const debrief = (vs.find((v) => v.debrief) || {}).debrief;
     if (!out) { outcomePanel.hidden = true; return; }
-    const title = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED" }[out.kind] || out.kind.toUpperCase();
+    const title = { success: "SUCCESS", explosion: "EXPLOSION", scrub: "SCRUBBED", pad_abort: "PAD ABORT" }[out.kind] || out.kind.toUpperCase();
     outcomePanel.hidden = false;
     outcomePanel.className = `outcome ${esc(out.kind)}`;
     outcomePanel.innerHTML = `<h2>${esc(title)}</h2><p class="countdown-final">${fmt(out.atT)}</p><ul>${out.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
