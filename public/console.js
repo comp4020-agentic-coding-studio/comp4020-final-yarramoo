@@ -141,7 +141,7 @@
     outcomePanel.hidden = false;
     outcomePanel.className = `outcome ${esc(out.kind)}`;
     outcomePanel.innerHTML = `<h2>${esc(title)}</h2><p class="countdown-final">${fmt(out.atT)}</p><ul>${out.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
-      ${debrief ? debriefHtml(debrief) : '<p class="muted">The full debrief is shown to the crew.</p>'}<p><a class="btnlink" href="/">Back to the hub</a></p>`;
+      ${debrief ? debriefHtml(debrief) : '<p class="muted">The full debrief is shown to the crew.</p>'}<p><a class="btnlink" href="/missions/${esc(code)}">Full replay</a> <a class="btnlink" href="/">Back to the hub</a></p>`;
   };
 
   const renderConsoles = () => {
@@ -189,6 +189,30 @@
     for (const c of consoles.children) c.classList.toggle("inactive", c.dataset.role !== r);
   });
 
+  // Take/Leave buttons are drawn here from the lobby message, so a seat change
+  // by someone else never needs a page reload. They stay ordinary POST forms.
+  const seatForms = (li, holder) => {
+    const me = (root.dataset.callsign || "").toLowerCase();
+    const role = li.dataset.role;
+    const kind = !me ? "" : !holder ? "seat" : holder.toLowerCase() === me ? "unseat" : "";
+    if (li.dataset.form === kind) return;
+    li.dataset.form = kind;
+    for (const f of li.querySelectorAll("form.inline")) f.remove();
+    if (!kind) return;
+    const f = document.createElement("form");
+    f.className = "inline"; f.method = "post"; f.action = `/m/${code}/${kind}`;
+    for (const [k, v] of [["_csrf", csrf()], ["role", role]]) {
+      const i = document.createElement("input");
+      i.type = "hidden"; i.name = k; i.value = v;
+      f.appendChild(i);
+    }
+    const b = document.createElement("button");
+    b.type = "submit"; b.textContent = kind === "seat" ? "Take seat" : "Leave seat";
+    if (kind === "unseat") b.className = "secondary";
+    f.appendChild(b);
+    li.appendChild(f);
+  };
+
   const renderLobby = () => {
     if (!lobby) return;
     for (const li of document.querySelectorAll("#seats li[data-role]")) {
@@ -196,6 +220,7 @@
       const h = li.querySelector(".holder");
       h.textContent = holder || "open";
       li.classList.toggle("taken", !!holder);
+      if (lobby.phase === "lobby") seatForms(li, holder);
     }
     const full = ROLES.every((r) => lobby.seats[r]);
     const start = document.querySelector("#start-form button");
@@ -232,8 +257,7 @@
         if (any) setClock(any.phase, any.tMs);
         renderConsoles();
       } else if (m.type === "reseat") {
-        if (root.dataset.status === "lobby") location.reload();
-        else connect();
+        connect();
       }
       drawClock();
     };

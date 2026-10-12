@@ -32,7 +32,7 @@ export function page(c: Context, opts: { title: string; body: Html; status?: 200
 <body data-page="${seg}">
 <header class="site">
   <a class="brand" href="/">Mission Control</a>
-  <nav aria-label="Main">${link("/", "Home")} ${link("/readme/", "README")}${crew ? html` <span class="callsign" id="callsign" data-callsign="${crew.callsign}">${crew.callsign}</span>` : ""}</nav>
+  <nav aria-label="Main">${link("/", "Home")} ${link("/missions", "Missions")} ${link("/readme/", "README")}${crew ? html` <span class="callsign" id="callsign" data-callsign="${crew.callsign}">${crew.callsign}</span>` : ""}</nav>
 </header>
 <main>${opts.body}</main>
 </body>

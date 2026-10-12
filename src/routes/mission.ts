@@ -33,7 +33,7 @@ function renderMission(c: Context, code: string, crew: Crew | null, opts: { erro
   return page(c, {
     title: `Mission ${m.code}`,
     status: opts.status ?? 200,
-    body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}">
+    body: html`<div id="mission" data-code="${m.code}" data-status="${m.status}" data-roles="${mine.join(" ")}" data-callsign="${crew?.callsign ?? ""}">
 <div class="mission-head">
   <p class="eyebrow">${seq.name}</p>
   <h1>Mission <span id="mission-code" class="code">${m.code}</span></h1>

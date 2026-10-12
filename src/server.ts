@@ -6,6 +6,7 @@ import "./db/index.ts";
 import { csrfGuard } from "./auth.ts";
 import { flushRooms, startRooms } from "./game/rooms.ts";
 import { mission } from "./routes/mission.ts";
+import { history } from "./routes/history.ts";
 import { home } from "./routes/home.ts";
 import { readme } from "./routes/readme.ts";
 import { page } from "./views/layout.ts";
@@ -20,6 +21,7 @@ app.use("*", csrfGuard);
 // Route modules mount here; later slices add theirs below.
 app.route("/", home);
 app.route("/", mission);
+app.route("/", history);
 app.route("/", readme);
 
 app.notFound((c) => page(c, { title: "Not found", body: html`<h1>Not found</h1>`, status: 404 }));

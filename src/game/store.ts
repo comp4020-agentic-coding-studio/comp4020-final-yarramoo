@@ -109,3 +109,64 @@ export function openMissionsFor(crewId: number): { code: string; status: string 
 }
 
 export { tx };
+
+// ---------------------------------------------------------------- history (read only)
+
+export interface EventRow {
+  seq: number;
+  at_t: number;
+  kind: string;
+  role: Role | null;
+  data: Record<string, unknown>;
+}
+
+/** Every event of a mission in order. Callers must only use this for done missions: events carry fault truth. */
+export function eventsOf(missionId: number): EventRow[] {
+  const rows = db
+    .prepare("SELECT seq, at_t, kind, role, data_json FROM mission_events WHERE mission_id = ? ORDER BY seq")
+    .all(missionId) as unknown as { seq: number; at_t: number; kind: string; role: Role | null; data_json: string | null }[];
+  return rows.map((r) => ({ seq: r.seq, at_t: r.at_t, kind: r.kind, role: r.role, data: r.data_json ? JSON.parse(r.data_json) : {} }));
+}
+
+/** Seats of many missions at once. */
+export function seatsOfMany(ids: number[]): Map<number, Seats> {
+  const out = new Map<number, Seats>();
+  if (ids.length === 0) return out;
+  const rows = db
+    .prepare(`SELECT s.mission_id, s.role, c.callsign FROM seats s JOIN crew c ON c.id = s.crew_id WHERE s.mission_id IN (${ids.map(() => "?").join(",")})`)
+    .all(...ids) as unknown as { mission_id: number; role: Role; callsign: string }[];
+  for (const r of rows) {
+    const s = out.get(r.mission_id) ?? {};
+    s[r.role] = r.callsign;
+    out.set(r.mission_id, s);
+  }
+  return out;
+}
+
+export function liveMissions(): MissionRow[] {
+  return db.prepare("SELECT * FROM missions WHERE status = 'live' ORDER BY started_at DESC").all() as unknown as MissionRow[];
+}
+
+export function doneMissions(limit: number, offset: number): MissionRow[] {
+  return db
+    .prepare("SELECT * FROM missions WHERE status = 'done' ORDER BY COALESCE(ended_at, created_at) DESC, id DESC LIMIT ? OFFSET ?")
+    .all(limit, offset) as unknown as MissionRow[];
+}
+
+export function countDone(): number {
+  return Number((db.prepare("SELECT COUNT(*) AS n FROM missions WHERE status = 'done'").get() as unknown as { n: number }).n);
+}
+
+/** Per mission: poll reports where GO was said while that seat's console showed caution. */
+export function goOnCautionCounts(ids: number[]): Map<number, number> {
+  const out = new Map<number, number>();
+  if (ids.length === 0) return out;
+  const rows = db
+    .prepare(`SELECT mission_id, data_json FROM mission_events WHERE kind = 'poll_report' AND mission_id IN (${ids.map(() => "?").join(",")})`)
+    .all(...ids) as unknown as { mission_id: number; data_json: string | null }[];
+  for (const r of rows) {
+    const d = r.data_json ? JSON.parse(r.data_json) : {};
+    if (d.report === "go" && d.showing === "caution") out.set(r.mission_id, (out.get(r.mission_id) ?? 0) + 1);
+  }
+  return out;
+}

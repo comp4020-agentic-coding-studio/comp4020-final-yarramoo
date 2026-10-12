@@ -136,3 +136,28 @@ th, td { text-align:left; padding:.45rem .6rem; border-bottom:1px solid var(--li
 th { font:.75rem var(--mono); text-transform:uppercase; color:var(--muted); }
 tr.bad { background:rgba(255,77,90,.16); } tr.bad td:last-child { color:var(--red); font-weight:700; }
 .btnlink { display:inline-block; padding:.7rem 1rem; border:1px solid var(--line); border-radius:6px; text-decoration:none; }
+
+/* history and replay */
+.mission-list { list-style:none; padding:0; margin:0 0 1rem; display:grid; gap:.75rem; }
+.mission-list .panel { margin:0; }
+.mission-list p { margin:.25rem 0; }
+.crew-list { list-style:none; padding:0; margin:.25rem 0; display:flex; flex-wrap:wrap; gap:.25rem 1rem; }
+.verdict { font:700 .85rem var(--mono); letter-spacing:.08em; padding:.15rem .6rem; border-radius:4px; border:2px solid var(--line); margin-left:.5rem; }
+.verdict.success { color:var(--green); border-color:var(--green); } .verdict.explosion { color:var(--red); border-color:var(--red); } .verdict.scrub { color:var(--amber); border-color:var(--amber); }
+.caution-count { color:var(--amber); font-family:var(--mono); }
+.pager { display:flex; gap:1rem; align-items:center; }
+table.record td:first-child { overflow-wrap:anywhere; }
+table.record td:not(:first-child) { white-space:nowrap; }
+.tbar { position:relative; height:34px; margin:.5rem 0 0; background:#06080c; border:1px solid var(--line); border-radius:4px; }
+.tbar .tick { position:absolute; top:6px; bottom:6px; width:4px; margin-left:-2px; border-radius:2px; background:var(--muted); }
+.tbar .tick.r-flight { background:var(--blue); } .tbar .tick.r-propulsion { background:var(--green); } .tbar .tick.r-ground { background:var(--amber); }
+.tbar .tick.k-fault_active { top:0; bottom:0; background:var(--red); } .tbar .tick.k-hold { top:0; bottom:0; background:var(--amber); width:6px; }
+.tbar .tick.k-outcome, .tbar .tick.k-scrub { top:0; bottom:0; background:var(--fg); }
+.tbar-axis { display:flex; justify-content:space-between; font:.75rem var(--mono); color:var(--muted); margin:.2rem 0 1rem; }
+.timeline { list-style:none; padding:0; margin:0; border-left:2px solid var(--line); }
+.ev { display:grid; grid-template-columns:5rem 1fr; gap:.1rem .75rem; padding:.5rem 0 .5rem .75rem; border-bottom:1px solid var(--line); }
+.ev-t { font:700 .9rem var(--mono); color:var(--muted); grid-row:span 2; }
+.ev-s { grid-column:2; overflow-wrap:anywhere; }
+.rtag { grid-column:2; justify-self:start; font:.7rem var(--mono); text-transform:uppercase; letter-spacing:.08em; padding:.05rem .5rem; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+.rtag.r-flight { color:var(--blue); border-color:var(--blue); } .rtag.r-propulsion { color:var(--green); border-color:var(--green); } .rtag.r-ground { color:var(--amber); border-color:var(--amber); }
+.ev.k-fault_active .ev-s { color:var(--amber); } .ev.k-hold .ev-s, .ev.k-outcome .ev-s { font-weight:700; }
