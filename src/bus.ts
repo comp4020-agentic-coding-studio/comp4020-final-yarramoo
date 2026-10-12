@@ -1,16 +1,13 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { currentSession } from "./auth.ts";
-import { CATEGORIES } from "./categories.ts";
-import { REGIONS } from "./regions.ts";
 
 export type BusEvent = { type: string; html?: string; data?: unknown };
 type Fn = (e: BusEvent) => void;
 
-// Topics: `project:<id>`, `question:<id>`, `user:<id>`, `lobby:<category>:<region>`, `feed`, `activity`. Every event goes out as an
+// Topics: `mission:<code>:<role>`. Every event goes out as an
 // unnamed SSE message with its `type` in the JSON payload, so the client needs
 // no list of event names and a new type can never be silently dropped.
-const LOBBY_TOPIC = new RegExp(`^lobby:(?:${CATEGORIES.filter((c) => c.teamSize).map((c) => c.slug).join("|")}):(?:${REGIONS.map((r) => r.slug).join("|")})$`);
+const TOPIC = /^mission:[A-Z0-9]{4,8}:[a-z]+$/;
 const subs = new Map<string, Set<Fn>>();
 
 export function publish(topic: string, event: BusEvent): void {
@@ -32,9 +29,8 @@ export function subscribe(topic: string, fn: Fn): () => void {
 export const busRoutes = new Hono();
 
 busRoutes.get("/events", (c) => {
-  const s = currentSession(c);
   const topics = [...new Set(c.req.queries("topic") ?? [])]
-    .filter((t) => t === "feed" || t === "activity" || /^project:\d+$/.test(t) || /^question:\d+$/.test(t) || LOBBY_TOPIC.test(t) || (s && t === `user:${s.user_id}`))
+    .filter((t) => TOPIC.test(t))
     .slice(0, 20);
   return streamSSE(c, async (stream) => {
     const unsubs = topics.map((t) =>

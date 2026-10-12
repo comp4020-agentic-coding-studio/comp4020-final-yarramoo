@@ -9,8 +9,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 COPY src ./src
 COPY public ./public
-COPY data ./data
-COPY README.md PHILOSOPHY.md SAFETY.md ./
+COPY README.md ./
 ENV DATA_DIR=/data
 ENV NODE_ENV=production
 CMD ["node", "src/server.ts"]
