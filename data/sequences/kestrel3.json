@@ -28,11 +28,11 @@
       "role": "weather",
       "label": "Cloud base",
       "unit": "ft",
-      "start": 3600,
+      "start": 7000,
       "driftPerSec": 0,
       "nominal": [4000, 30000],
       "limit": [1000, 40000],
-      "fronts": {"everySec": 40, "driftPerSec": [-5, 30]},
+      "fronts": {"everySec": 25, "driftPerSec": [-35, 55]},
       "atT0": "scrub"
     },
     "shear": {
@@ -43,18 +43,18 @@
       "driftPerSec": 0,
       "nominal": [0, 20],
       "limit": [-10, 40],
-      "fronts": {"everySec": 40, "driftPerSec": [-0.1, 0.1]},
+      "fronts": {"everySec": 25, "driftPerSec": [-0.13, 0.13]},
       "atT0": "scrub"
     },
     "lightning": {
       "role": "weather",
       "label": "Nearest lightning",
       "unit": "km",
-      "start": 21,
+      "start": 50,
       "driftPerSec": 0,
       "nominal": [25, 200],
       "limit": [5, 300],
-      "fronts": {"everySec": 40, "driftPerSec": [-0.1, 0.4]},
+      "fronts": {"everySec": 25, "driftPerSec": [-0.4, 0.75]},
       "atT0": "scrub"
     },
     "hazard_area": {

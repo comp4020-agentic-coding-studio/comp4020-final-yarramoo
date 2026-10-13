@@ -95,6 +95,21 @@ describe("weather fronts: the pre-rolled schedule", () => {
   });
 });
 
+describe("weather starts calm", () => {
+  it("every weather value of every shipped sequence starts inside nominal, with room to spare", () => {
+    for (const id of ["mvp", "kestrel2", "kestrel3"]) {
+      const seq = loadSequence(id);
+      for (const [vid, d] of Object.entries(seq.values)) {
+        if (d.role !== "weather") continue;
+        const span = d.nominal[1] - d.nominal[0];
+        expect(d.start, `${id}.${vid}`).toBeGreaterThan(d.nominal[0] + 0.05 * Math.min(span, d.nominal[0] * 10 + 1));
+        expect(d.start, `${id}.${vid}`).toBeLessThan(d.nominal[1]);
+      }
+      for (const seed of [1, 2, 3]) expect(weatherAmber(begin(seq, seed).state, seq), `${id} seed ${seed}`).toBe(false);
+    }
+  });
+});
+
 describe("weather fronts: drift", () => {
   it("changes the rate at each front (the value is piecewise linear in elapsed time)", () => {
     const run = begin(k2, 5);
@@ -107,13 +122,13 @@ describe("weather fronts: drift", () => {
       return run.state.values.ceiling!;
     };
     const v0 = at(0);
-    expect(v0).toBe(3600);
-    expect(at(30)).toBe(3600); // rate 0 before the first front at 40 s
-    const v40 = at(40);
-    const v80 = at(80);
-    expect(v40).toBe(3600);
-    expect(v80).toBeCloseTo(3600 + sched[0]!.rate * 40, 6);
-    expect(at(120)).toBeCloseTo(3600 + sched[0]!.rate * 40 + sched[1]!.rate * 40, 6);
+    expect(v0).toBe(7000);
+    expect(at(20)).toBe(7000); // rate 0 before the first front at 25 s
+    const v40 = at(25);
+    const v80 = at(50);
+    expect(v40).toBe(7000);
+    expect(v80).toBeCloseTo(7000 + sched[0]!.rate * 25, 6);
+    expect(at(75)).toBeCloseTo(7000 + sched[0]!.rate * 25 + sched[1]!.rate * 25, 6);
     expect(run.state.frontIdx.ceiling).toBe(3);
   });
 
@@ -121,7 +136,7 @@ describe("weather fronts: drift", () => {
     const s0 = begin(k2, 21).state;
     const t1 = 10_000 + 250_000;
     const direct = tick(k2, s0, t1);
-    expect(direct.state.frontIdx.ceiling).toBe(6);
+    expect(direct.state.frontIdx.ceiling).toBe(9);
     let rng = 5;
     const rnd = () => {
       const r = nextRandom(rng);
@@ -192,14 +207,14 @@ describe("weather fronts: drift", () => {
     expect(held.state.phase).toBe("hold");
     expect(held.state.tMs).toBe(-300_000);
     expect(held.state.elapsedMs).toBe(130_000);
-    expect(held.state.frontIdx).toEqual({ ceiling: 3, shear: 3, lightning: 3 });
+    expect(held.state.frontIdx).toEqual({ ceiling: 5, shear: 5, lightning: 5 });
     for (const id of WEATHER) expect(held.state.values[id]).toBe(counting.state.values[id]);
     expect(WEATHER.some((id) => held.state.values[id] !== k2.values[id]!.start)).toBe(true);
     // and it keeps going after the resume: the schedule is on elapsed time, not the mission clock
     expect(act(held, { role: "flight", type: "resume" }).ok).toBe(true);
     advance(held, 60_000);
     expect(held.state.elapsedMs).toBe(190_000);
-    expect(held.state.frontIdx.ceiling).toBe(4);
+    expect(held.state.frontIdx.ceiling).toBe(7);
   });
 
   it("past the last front the final rate persists", () => {
