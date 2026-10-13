@@ -44,6 +44,12 @@ pub fn size(s: &Sim) -> usize {
 }
 
 pub fn restore(b: &[u8]) -> Result<Sim, ()> {
+    restore_with(b, None)
+}
+
+/// Restore, starting from `base` when it is the same (seed, kind) world and regenerating otherwise. The
+/// result is identical either way. A game-world result carries a base (the one used, or a fresh one).
+pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()> {
     if b.len() < HEADER + 8 || &b[0..4] != MAGIC {
         return Err(());
     }
@@ -59,7 +65,7 @@ pub fn restore(b: &[u8]) -> Result<Sim, ()> {
     let kind = b[46];
     let tick = u32_at(47);
     let (w, h) = (u16_at(51) as usize, u16_at(53) as usize);
-    let mut s = Sim::new(seed, kind).ok_or(())?;
+    let mut s = Sim::new_with_base(seed, kind, base).ok_or(())?;
     if s.grid.w != w || s.grid.h != h {
         return Err(());
     }

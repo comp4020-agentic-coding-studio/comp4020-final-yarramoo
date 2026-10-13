@@ -123,13 +123,24 @@ pub extern "C" fn snapshot_write(out_ptr: u32) -> u32 {
 pub extern "C" fn restore(ptr: u32, len: u32) -> i32 {
     // SAFETY: caller guarantees the range is valid linear memory.
     let b = unsafe { slice(ptr, len) };
-    match snapshot::restore(b) {
-        Ok(s) => {
+    // SAFETY: see `with`.
+    let old = unsafe { (*G.0.get()).take() };
+    let prev = old.as_ref().and_then(|o| o.base.as_ref());
+    match snapshot::restore_with(b, prev) {
+        Ok(mut s) => {
+            // Keep at most one base: the one just generated, else the one that matched (moved, not copied).
+            if s.base.is_none() {
+                s.base = old.and_then(|mut o| o.base.take()).filter(|b| b.seed == s.seed && b.world_kind == s.world_kind);
+            }
             // SAFETY: see `with`.
             unsafe { *G.0.get() = Some(s) };
             0
         }
-        Err(()) => -1,
+        Err(()) => {
+            // SAFETY: see `with`.
+            unsafe { *G.0.get() = old };
+            -1
+        }
     }
 }
 

@@ -16,6 +16,16 @@ const FLOOR_ROWS: usize = 16;
 const WALL_COLS: usize = 16;
 pub const MAX_PAINT_RADIUS: i32 = 32;
 
+/// The pristine generated world for one (seed, kind): derived data, not state. It is never hashed or
+/// snapshotted, so a hit and a miss give identical results (D-088). Game worlds only; one per instance.
+pub struct Base {
+    pub seed: u64,
+    pub world_kind: u8,
+    pub mat: Vec<u8>,
+    pub aux: Vec<u8>,
+    pub pickups: Vec<Pickup>,
+}
+
 pub struct Sim {
     pub seed: u64,
     pub world_kind: u8,
@@ -30,20 +40,32 @@ pub struct Sim {
     pub projectiles: Vec<Projectile>,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
+    /// Cache of the generated world, so `restore` need not regenerate it. Not state.
+    pub base: Option<Base>,
 }
 
 impl Sim {
     /// Generate a world, tick = 0. Returns None for an unknown `world_kind`.
     pub fn new(seed: u64, world_kind: u8) -> Option<Sim> {
+        Self::new_with_base(seed, world_kind, None)
+    }
+
+    /// As `new`, but a game world whose (seed, kind) matches `base` is copied from it instead of generated.
+    pub fn new_with_base(seed: u64, world_kind: u8, base: Option<&Base>) -> Option<Sim> {
         let (w, h) = match world_kind {
             0 => (SANDBOX_W, SANDBOX_H),
             1 => (GAME_W, GAME_H),
             _ => return None,
         };
         let mut grid = Grid::new(w, h);
+        if let Some(b) = base.filter(|b| b.seed == seed && b.world_kind == world_kind && b.mat.len() == w * h && b.aux.len() == w * h) {
+            grid.mat.copy_from_slice(&b.mat);
+            grid.aux.copy_from_slice(&b.aux);
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: b.pickups.clone(), projectiles: Vec::new(), events: Vec::new(), base: None });
+        }
         if world_kind == 1 {
             let spots = crate::gen::generate(&mut grid, seed);
-            let pickups = spots
+            let pickups: Vec<Pickup> = spots
                 .iter()
                 .enumerate()
                 .map(|(i, sp)| {
@@ -53,7 +75,8 @@ impl Sim {
                     Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
                 })
                 .collect();
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), events: Vec::new() });
+            let base = Base { seed, world_kind, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone() };
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), events: Vec::new(), base: Some(base) });
         }
         for y in 0..h {
             for x in 0..w {
@@ -62,7 +85,7 @@ impl Sim {
                 }
             }
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), events: Vec::new() })
+        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), events: Vec::new(), base: None })
     }
 
     /// 0 on success, negative if malformed (input is then dropped).
