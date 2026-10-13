@@ -27,6 +27,13 @@ it("serves /readme/ and redirects /readme", async () => {
   expect(res.headers.get("location")).toBe("/readme/");
 });
 
+it("survives a malformed URL escape and keeps serving", async () => {
+  const bad = await fetch(new URL("/%", baseUrl));
+  expect(bad.status).toBe(400);
+  const after = await fetch(new URL("/", baseUrl));
+  expect(after.status).toBe(200);
+});
+
 it("serves sim.wasm as application/wasm", async () => {
   const res = await fetch(new URL("sim.wasm", baseUrl));
   expect(res.status).toBe(200);
