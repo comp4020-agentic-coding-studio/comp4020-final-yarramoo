@@ -86,6 +86,19 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       small to judge how they read. Worth a zoom control or larger sprites, and
       a human eye on whether the walk reads as walking.
 
+### Gate G2: decision needed (see `docs/research/g2-results.md`)
+
+- N1 PASSED: 3 browsers, 10 minutes, 20-150 ms jitter, one CPU slowed 4x,
+  608 hash checks with zero mismatches, all live at the end (`5619477`).
+- [ ] P1 FAILED: worst case p95 9.0 ms native (budget 8), 36 ms at 4x. The
+      cost is moving water, not a sleep bug: a spreading flood really moves
+      every tick, about 0.11 ms per awake chunk. Plan 12.3's remedy 2 (liquids
+      update every other tick) is the lever, but it changes how fast water
+      flows for everyone, so it's a gameplay call, not an optimisation.
+      Options: (a) liquids every other tick; (b) accept it, since P1's flood is
+      bigger than the Water spell can make and fire alone is 1.3 ms; (c) cap
+      the active region per player. Decide before M5 adds lava floods.
+
 ## Crit 10: fly by instruments (by Tue 20 Oct)
 
 - [ ] Structured server logs: joins, leaves, desyncs, snapshots, rejects.
