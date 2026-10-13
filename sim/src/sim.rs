@@ -63,6 +63,7 @@ impl Sim {
         for i in inputs {
             self.apply(i);
         }
+        self.refresh_active();
         self.grid.step_cells(self.seed, self.tick);
         #[cfg(feature = "canary")]
         {
@@ -77,6 +78,17 @@ impl Sim {
         }
         self.tick = self.tick.wrapping_add(1);
         self.tick
+    }
+
+    /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks near active players; there are no
+    /// players until M4, so for now an empty list means everything is active (D-053, temporary).
+    fn refresh_active(&mut self) {
+        let centres: Vec<(i32, i32)> = Vec::new(); // M4: official positions of active players
+        if self.world_kind == 0 || centres.is_empty() {
+            self.grid.set_all_active();
+        } else {
+            self.grid.set_active_around(&centres);
+        }
     }
 
     fn apply(&mut self, i: Input) {

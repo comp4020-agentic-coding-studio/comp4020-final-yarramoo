@@ -6,6 +6,9 @@ use crate::rng::*;
 
 pub const CHUNK: usize = 64;
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
+/// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
+pub const ACTIVE_W: i32 = 576;
+pub const ACTIVE_H: i32 = 320;
 
 pub struct Grid {
     pub w: usize,
@@ -19,8 +22,18 @@ pub struct Grid {
     pub dirty_since_hash: Vec<bool>,
     pub hash_cache: Vec<u64>,
     pub pristine: Vec<bool>,
-    /// Test hook (D7). Sleeping is not implemented yet; all chunks are always active.
+    /// Sleeping on/off (D7 test hook; on for real play). Invisible by design: see `step_cells`.
     pub sleep_enabled: bool,
+    /// Scratch, not state: false means the chunk was quiet and has no volatile material, so it is
+    /// skipped. Every touched cell sets its own chunk and any neighbour within 1 cell of the shared
+    /// edge. Cleared just before a chunk runs, so a quiet run lets it sleep.
+    pub awake: Vec<bool>,
+    /// Scratch, not state: the semantic active set (plan 6.5). Inactive chunks are frozen.
+    pub active: Vec<bool>,
+    /// Scratch: set by `update_cell` when it sees a volatile material in the chunk being run.
+    vol_seen: bool,
+    /// Telemetry only: chunks actually run in the last `step_cells`.
+    pub ran_chunks: u32,
     /// Scratch, not state: explosions queued during this tick's cell pass (plan 6.2 step 4).
     /// Primed Gunpowder lives in the grid (`aux == 1`), so leftovers beyond the cap are not lost.
     pending: Vec<(u32, u32)>,
@@ -44,7 +57,11 @@ impl Grid {
             dirty_since_hash: vec![true; cw * ch],
             hash_cache: vec![0; cw * ch],
             pristine: vec![true; cw * ch],
-            sleep_enabled: false,
+            sleep_enabled: true,
+            awake: vec![true; cw * ch],
+            active: vec![true; cw * ch],
+            vol_seen: false,
+            ran_chunks: 0,
             pending: Vec::new(),
         }
     }
@@ -59,14 +76,60 @@ impl Grid {
 
     /// Record that the cell at flat index `i` changed.
     pub fn touch(&mut self, i: usize) {
-        let c = self.chunk_of(i % self.w, i / self.w);
+        let (x, y) = (i % self.w, i / self.w);
+        let c = self.chunk_of(x, y);
         self.dirty_since_hash[c] = true;
         self.pristine[c] = false;
+        self.awake[c] = true;
+        // Wake the neighbours whose cells can see this one (distance 1, corners included).
+        let (lx, ly) = (x % CHUNK, y % CHUNK);
+        let (cx, cy) = (c % self.cw, c / self.cw);
+        let xs = [(lx == 0 && cx > 0, -1isize), (lx == CHUNK - 1 && cx + 1 < self.cw, 1)];
+        let ys = [(ly == 0 && cy > 0, -1isize), (ly == CHUNK - 1 && cy + 1 < self.ch, 1)];
+        for &(okx, dx) in &xs {
+            if okx {
+                self.awake[(c as isize + dx) as usize] = true;
+            }
+        }
+        for &(oky, dy) in &ys {
+            if !oky {
+                continue;
+            }
+            let row = (c as isize + dy * self.cw as isize) as usize;
+            self.awake[row] = true;
+            for &(okx, dx) in &xs {
+                if okx {
+                    self.awake[(row as isize + dx) as usize] = true;
+                }
+            }
+        }
     }
 
     pub fn mark_chunk(&mut self, c: usize) {
         self.dirty_since_hash[c] = true;
         self.pristine[c] = false;
+        self.awake[c] = true;
+    }
+
+    /// Wake every chunk (after the sleep switch is turned on, or a restore).
+    pub fn wake_all(&mut self) {
+        self.awake.fill(true);
+    }
+
+    /// Set the active set from the centres (cell coordinates) of active players: a chunk is active
+    /// if it intersects the 576 x 320 rectangle around any centre. An empty list means nothing is
+    /// active; callers decide what an empty player list means for their world kind.
+    pub fn set_active_around(&mut self, centres: &[(i32, i32)]) {
+        let (hw, hh) = (ACTIVE_W / 2, ACTIVE_H / 2);
+        for c in 0..self.chunk_count() {
+            let (x0, y0) = ((c % self.cw * CHUNK) as i32, (c / self.cw * CHUNK) as i32);
+            let (x1, y1) = (x0 + CHUNK as i32, y0 + CHUNK as i32);
+            self.active[c] = centres.iter().any(|&(px, py)| x0 < px + hw && x1 > px - hw && y0 < py + hh && y1 > py - hh);
+        }
+    }
+
+    pub fn set_all_active(&mut self) {
+        self.active.fill(true);
     }
 
     pub fn set(&mut self, i: usize, m: u8, a: u8) {
@@ -89,14 +152,33 @@ impl Grid {
         self.moved.fill(0);
         self.pending.clear();
         let odd = tick & 1 == 1;
+        self.ran_chunks = 0;
         for cy in (0..self.ch).rev() {
             for ci in 0..self.cw {
                 let cx = if odd { self.cw - 1 - ci } else { ci };
+                let c = cy * self.cw + cx;
+                if !self.active[c] {
+                    // Frozen, but awake so it runs on its first active tick.
+                    self.awake[c] = true;
+                    continue;
+                }
+                if self.sleep_enabled {
+                    if !self.awake[c] {
+                        continue;
+                    }
+                    // Quiet unless this run changes a cell here or meets a volatile material.
+                    self.awake[c] = false;
+                    self.vol_seen = false;
+                }
+                self.ran_chunks += 1;
                 for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
                     for xi in 0..CHUNK {
                         let x = cx * CHUNK + if odd { CHUNK - 1 - xi } else { xi };
                         self.update_cell(x, y, seed, tick);
                     }
+                }
+                if self.vol_seen {
+                    self.awake[c] = true;
                 }
             }
         }
@@ -106,9 +188,21 @@ impl Grid {
     fn update_cell(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         let i = y * self.w + x;
         if self.moved[i] != 0 {
+            // Changed this tick by something that ran earlier, and skipped here: look again next tick.
+            self.vol_seen = true;
             return;
         }
-        match self.mat[i] {
+        let m = self.mat[i];
+        // Volatile: acts on chance, a timer or a counter even when nothing around it changes, so the
+        // chunk may not sleep (plan 6.4). Lava also ignites neighbours by chance. A resting powder or
+        // liquid is not volatile: with an unchanged neighbourhood it provably does nothing.
+        if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA)
+            || (m == STEM && self.aux[i] != 0)
+            || (m == GUNPOWDER && self.aux[i] == 1)
+        {
+            self.vol_seen = true;
+        }
+        match m {
             SAND => {
                 self.powder_move(x, y, seed, tick, SALT_SAND_DIAG);
             }

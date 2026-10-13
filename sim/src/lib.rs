@@ -166,5 +166,9 @@ pub extern "C" fn entities(_out_ptr: u32, _max: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn set_sleep_enabled(on: u32) {
-    with(|s| s.grid.sleep_enabled = on != 0);
+    with(|s| {
+        s.grid.sleep_enabled = on != 0;
+        // Turning sleep on starts from a fully awake world, as after a restore.
+        s.grid.wake_all();
+    });
 }
