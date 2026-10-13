@@ -305,6 +305,7 @@ function frame(now: number) {
       stepP50: q(0.5),
       stepP95: q(0.95),
       ranChunks,
+      uploadCells: renderer?.lastUploadCells ?? 0,
     });
     postStatus();
     statSteps = 0;

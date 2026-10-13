@@ -293,7 +293,7 @@ function renderInfo() {
   }
   info.textContent = `${status}${lastStats && n.state === "live" ? ` · tick ${lastStats.tick}` : ""}${
     lastStats && localKind !== null
-      ? ` · step p50 ${lastStats.stepP50.toFixed(2)} p95 ${lastStats.stepP95.toFixed(2)} ms · ${lastStats.ranChunks} chunks`
+      ? ` · step p50 ${lastStats.stepP50.toFixed(2)} p95 ${lastStats.stepP95.toFixed(2)} ms · ${lastStats.ranChunks} chunks · ${Math.round(lastStats.uploadCells / 1000)}k cells uploaded`
       : ""
   }`;
   (window as unknown as { __stats: unknown }).__stats = lastStats;

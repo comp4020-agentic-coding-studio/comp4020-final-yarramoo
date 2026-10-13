@@ -26,7 +26,7 @@ export type FromWorker =
   | { type: "render-failed"; error: string }
   | { type: "world"; width: number; height: number; kind: number }
   | { type: "frame"; mat: Uint8Array; aux: Uint8Array; tick: number }
-  | { type: "stats"; tick: number; stepsPerSec: number; buffered: number; stepP50: number; stepP95: number; ranChunks: number }
+  | { type: "stats"; tick: number; stepsPerSec: number; buffered: number; stepP50: number; stepP95: number; ranChunks: number; uploadCells: number }
   | {
       type: "net";
       state: NetState;

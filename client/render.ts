@@ -162,16 +162,37 @@ export class Renderer {
     this.canvas.height = h;
   }
 
-  /** Upload both grids and draw the camera's window. */
+  /** Cells uploaded by the last `draw` (both planes count once): lets the browser checks see the saving. */
+  lastUploadCells = 0;
+
+  /**
+   * Upload the part of both grids the camera can see (plus a 2-cell margin), then draw it. A game
+   * world is 3 MB per plane, so uploading only the window is the difference between about 2 and 0.13
+   * megabytes a frame. Everything outside the window is stale on the GPU, which is fine: it is never
+   * sampled until the camera moves there, and the next frame uploads it.
+   */
   draw(mat: Uint8Array, aux: Uint8Array, seconds: number, cam: Camera = this.cam) {
     if (!this.ww) return;
     const gl = this.gl;
+    const x0 = Math.max(0, Math.floor(cam.x) - 2);
+    const y0 = Math.max(0, Math.floor(cam.y) - 2);
+    const x1 = Math.min(this.ww, Math.ceil(cam.x + cam.vw) + 2);
+    const y1 = Math.min(this.wh, Math.ceil(cam.y + cam.vh) + 2);
+    const w = x1 - x0;
+    const h = y1 - y0;
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, this.ww);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.matTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.ww, this.wh, gl.RED_INTEGER, gl.UNSIGNED_BYTE, mat);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, mat);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.auxTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.ww, this.wh, gl.RED_INTEGER, gl.UNSIGNED_BYTE, aux);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, aux);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    this.lastUploadCells = w * h;
     this.present(seconds, cam);
   }
 
