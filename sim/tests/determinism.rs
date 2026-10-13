@@ -135,3 +135,25 @@ fn snapshot_size_matches_write_and_restore_rejects_crafted_counts() {
         assert!(sim::snapshot::restore(&bad).is_err(), "count {n} accepted");
     }
 }
+
+
+/// The reported bug (D-081, D-082): a heap of lava painted against the sandbox's right wall settled into
+/// chunk-edge steps for minutes. Measured on the real path (`Sim::step`, the 512 x 512 sandbox, the
+/// strokes used to reproduce it in the browser). Before dispersion the surface still spanned 46 rows at
+/// tick 16000; now it is flat.
+#[test]
+fn lava_heap_levels_in_the_sandbox() {
+    let mut s = sim::sim::Sim::new(1, 0).unwrap();
+    for y in (120..=470).step_by(25) {
+        s.push_input(&encode_paint(1, 14, 420, y, 490, y, 16));
+    }
+    for _ in 0..16_000 {
+        s.step();
+    }
+    let w = s.grid.w;
+    let tops: Vec<usize> = (16..w - 16)
+        .filter_map(|x| (0..s.grid.h).find(|&y| s.grid.mat[y * w + x] == 14))
+        .collect();
+    let spread = tops.iter().max().unwrap() - tops.iter().min().unwrap();
+    assert!(spread <= 2, "lava surface still spans {spread} rows at tick 16000");
+}
