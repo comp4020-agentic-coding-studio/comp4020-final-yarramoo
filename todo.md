@@ -59,8 +59,10 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ## M4: avatars and the first spells (plan 6.6, 6.7, 8)
 
-- [ ] Player entities, `Pos` inputs with `life`, avatar controller (walk,
-      jump, levitate with limited energy), collision against the grid.
+- [x] Slice M4a: player and pickup entities, active set from players,
+      identity, two worlds, off-thread verify, Pos validation, avatar
+      controller and figures (`74ca003`, `796636e`, `43a1cab`, `cc746dc`;
+      D-062 to D-067). Next: slice 4b, spells.
 - [ ] Character animation: idle, walk, jump, levitate, cast and hit poses,
       facing left and right. Small pixel sprites, drawn by the renderer only;
       animation is cosmetic and never enters the sim.
