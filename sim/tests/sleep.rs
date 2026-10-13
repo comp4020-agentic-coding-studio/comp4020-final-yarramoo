@@ -76,7 +76,15 @@ fn d7_sandbox_hash_every_tick() {
 /// gunpowder settle (most chunks go quiet) while trees, caves and pools keep some chunks busy.
 #[test]
 fn d7_game_world_sleep_is_invisible() {
-    same(1, 5, 600, 30, &Vec::new());
+    // With no active player the world is frozen (plan 6.5), so a player's Join + Pos activates the
+    // region around the first entrance shaft, where generated water, lava and sand settle.
+    use sim::input::{encode_join, encode_pos};
+    let mut script: Script = vec![(1, encode_join(1)), (1, encode_pos(1, 0, 780 * 16, 300 * 16, 0))];
+    // Keep standing there; the Pos input each 100 ticks also exercises repeated inputs.
+    for t in (100..600).step_by(100) {
+        script.push((t, encode_pos(1, 0, 780 * 16, 300 * 16, 0)));
+    }
+    same(1, 5, 600, 30, &script);
 }
 
 /// Game worlds ignore Paint today, so build a disturbed game world directly on the grid: two runs of
@@ -91,6 +99,11 @@ fn d7_game_world_disturbed_after_quiet() {
             let w = s.grid.w;
             let mut out = Vec::new();
             for t in 1..=900u32 {
+                if t == 1 {
+                    // A player standing at the disturbance keeps its region active.
+                    s.push_input(&sim::input::encode_join(1));
+                    s.push_input(&sim::input::encode_pos(1, 0, (x as i32) * 16, (y as i32) * 16, 0));
+                }
                 if t == 300 {
                     // Water and fire dropped into settled ground and cave air, straddling a chunk edge.
                     for k in 0..6 {
@@ -114,9 +127,11 @@ fn d7_game_world_disturbed_after_quiet() {
 fn sleeping_actually_skips_work() {
     let mut s = Sim::new(5, 1).unwrap();
     let all = s.grid.chunk_count() as u32;
+    s.push_input(&sim::input::encode_join(1));
+    s.push_input(&sim::input::encode_pos(1, 0, 780 * 16, 300 * 16, 0));
     for _ in 0..1500 {
         s.step();
     }
     s.step();
-    assert!(s.grid.ran_chunks < all / 2, "{} of {} chunks still ran", s.grid.ran_chunks, all);
+    assert!(s.grid.ran_chunks < all / 8, "{} of {} chunks still ran", s.grid.ran_chunks, all);
 }

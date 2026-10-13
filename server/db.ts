@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const SNAPSHOTS_KEPT = 5;
-export const SNAPSHOT_FORMAT_VERSION = 1;
+export const SNAPSHOT_FORMAT_VERSION = 2;
 
 /** Applied in order; PRAGMA user_version is the number applied. Append only, never edit. */
 const MIGRATIONS: string[] = [

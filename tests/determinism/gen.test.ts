@@ -18,12 +18,12 @@ describe("D8 generation", () => {
     expect(compare({ hashes: native, finalChunkHashes: [] }, { hashes: w, finalChunkHashes: [] }, ["native", "wasm"])).toBeNull();
   });
 
-  it("a restored snapshot regenerates pristine chunks: tick 0 is header-sized and round-trips", () => {
+  it("a restored snapshot regenerates pristine chunks: tick 0 is header-and-pickups-sized and round-trips", () => {
     const a = loadSim(wasm);
     a.init(77n, 1);
     const h0 = a.stateHash();
     const snap0 = a.snapshot();
-    expect(snap0.length).toBeLessThan(100); // no chunk changed yet
+    expect(snap0.length).toBeLessThan(2048); // no chunk changed yet: header plus the ~65 pickups
     const b = loadSim(wasm);
     b.restore(snap0);
     expect(b.stateHash()).toBe(h0);

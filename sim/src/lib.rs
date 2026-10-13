@@ -2,6 +2,7 @@
 #![deny(clippy::float_arithmetic)]
 #![allow(clippy::result_unit_err)]
 
+pub mod entities;
 pub mod gen;
 pub mod grid;
 pub mod hash;
@@ -11,6 +12,7 @@ pub mod rng;
 pub mod script;
 pub mod sim;
 pub mod snapshot;
+pub mod tuning;
 
 use core::cell::UnsafeCell;
 use sim::Sim;
@@ -155,13 +157,27 @@ pub extern "C" fn dirty_rects(_out_ptr: u32, _max: u32) -> u32 {
 }
 
 #[no_mangle]
-pub extern "C" fn events(_out_ptr: u32, _max: u32) -> u32 {
-    0
+pub extern "C" fn events(out_ptr: u32, max: u32) -> u32 {
+    with(|s| {
+        let n = s.events.len().min(max as usize);
+        // SAFETY: caller provides `max` records of EVENT_BYTES.
+        let o = unsafe { out_slice(out_ptr, n * entities::EVENT_BYTES) };
+        for (i, e) in s.events.iter().take(n).enumerate() {
+            e.write(&mut o[i * entities::EVENT_BYTES..(i + 1) * entities::EVENT_BYTES]);
+        }
+        n as u32
+    })
+    .unwrap_or(0)
 }
 
 #[no_mangle]
-pub extern "C" fn entities(_out_ptr: u32, _max: u32) -> u32 {
-    0
+pub extern "C" fn entities(out_ptr: u32, max: u32) -> u32 {
+    with(|s| {
+        // SAFETY: caller provides `max` records of ENTITY_BYTES.
+        let o = unsafe { out_slice(out_ptr, max as usize * entities::ENTITY_BYTES) };
+        entities::write_view(&s.players, &s.pickups, s.tick, o, max as usize) as u32
+    })
+    .unwrap_or(0)
 }
 
 #[no_mangle]

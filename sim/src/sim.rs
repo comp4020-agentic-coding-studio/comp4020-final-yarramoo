@@ -1,9 +1,12 @@
 //! The simulation instance: grid + tick + queued inputs.
 
+use crate::entities::{self, Event, Pickup, Player, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
 use crate::materials::*;
+use crate::rng::{rng, SALT_PICKUP_SPELL, SALT_SPAWN_X};
+use crate::tuning::*;
 
 pub const SANDBOX_W: usize = 512;
 pub const SANDBOX_H: usize = 512;
@@ -19,9 +22,12 @@ pub struct Sim {
     pub tick: u32,
     pub grid: Grid,
     queue: Vec<Input>,
-    /// Floor positions for pickups (game worlds). Not state: regenerated from the seed, never hashed
-    /// or snapshotted. M4 places pickup entities here.
-    pub spots: Vec<crate::gen::PickupSpot>,
+    /// Player entities, sorted by id (game worlds only; the sandbox has none). State: hashed and snapshotted.
+    pub players: Vec<Player>,
+    /// Pickups created by generation, in id order (game worlds only). State.
+    pub pickups: Vec<Pickup>,
+    /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
+    pub events: Vec<Event>,
 }
 
 impl Sim {
@@ -35,7 +41,17 @@ impl Sim {
         let mut grid = Grid::new(w, h);
         if world_kind == 1 {
             let spots = crate::gen::generate(&mut grid, seed);
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), spots });
+            let pickups = spots
+                .iter()
+                .enumerate()
+                .map(|(i, sp)| {
+                    // Shallow spots give Water or Rose seed, deep spots Fire bolt or Bomb (plan 6.7).
+                    let pick = (rng(seed, 0, i as u32, 0, SALT_PICKUP_SPELL) & 1) as u8;
+                    let spell = 2 + 2 * sp.band + pick;
+                    Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
+                })
+                .collect();
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, events: Vec::new() });
         }
         for y in 0..h {
             for x in 0..w {
@@ -44,7 +60,7 @@ impl Sim {
                 }
             }
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), spots: Vec::new() })
+        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), events: Vec::new() })
     }
 
     /// 0 on success, negative if malformed (input is then dropped).
@@ -59,10 +75,12 @@ impl Sim {
     }
 
     pub fn step(&mut self) -> u32 {
+        self.events.clear();
         let inputs = core::mem::take(&mut self.queue);
         for i in inputs {
             self.apply(i);
         }
+        self.update_entities();
         self.refresh_active();
         self.grid.step_cells(self.seed, self.tick);
         #[cfg(feature = "canary")]
@@ -80,15 +98,22 @@ impl Sim {
         self.tick
     }
 
-    /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks near active players; there are no
-    /// players until M4, so for now an empty list means everything is active (D-053, temporary).
+    /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks that intersect the 576 x 320
+    /// rectangle around an ACTIVE player's official position; with no active player nothing updates
+    /// (the world is frozen). The centres come from entity state, which is hashed and snapshotted, so
+    /// every client agrees on the set.
     fn refresh_active(&mut self) {
-        let centres: Vec<(i32, i32)> = Vec::new(); // M4: official positions of active players
-        if self.world_kind == 0 || centres.is_empty() {
+        if self.world_kind == 0 {
             self.grid.set_all_active();
-        } else {
-            self.grid.set_active_around(&centres);
+            return;
         }
+        let centres: Vec<(i32, i32)> =
+            self.players.iter().filter(|p| p.active).map(|p| (p.x >> POS_SHIFT, p.y >> POS_SHIFT)).collect();
+        self.grid.set_active_around(&centres);
+    }
+
+    fn player_index(&self, id: u32) -> Result<usize, usize> {
+        self.players.binary_search_by_key(&id, |p| p.id)
     }
 
     fn apply(&mut self, i: Input) {
@@ -98,8 +123,95 @@ impl Sim {
                     self.paint(mat, x0 as i32, y0 as i32, x1 as i32, y1 as i32, radius as i32);
                 }
             }
-            // Entities arrive in a later milestone; accepted and ignored for now.
-            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } => {}
+            // Players live in game worlds only: a sandbox visitor has no entity to grow without bound.
+            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } if self.world_kind == 0 => {}
+            Input::Join { player } => self.join(player),
+            Input::Leave { player } => {
+                if let Ok(k) = self.player_index(player) {
+                    self.players[k].active = false;
+                }
+            }
+            Input::Pos { player, life, x, y, facing } => {
+                if let Ok(k) = self.player_index(player) {
+                    let p = &mut self.players[k];
+                    // A stale `life` is ignored, so a dead avatar's old position cannot override a respawn.
+                    // An inactive player is ignored too. Clamped to the world: the work stays bounded.
+                    if p.active && p.life == life {
+                        p.x = x.clamp(0, (self.grid.w as i32 - 1) * POS_ONE);
+                        p.y = y.clamp(0, (self.grid.h as i32 - 1) * POS_ONE);
+                        p.facing = facing & 1;
+                    }
+                }
+            }
+            // Spells arrive in slice 4b.
+            Input::Cast { .. } => {}
+        }
+    }
+
+    fn join(&mut self, id: u32) {
+        if id == 0 {
+            return;
+        }
+        let k = match self.player_index(id) {
+            Ok(k) => k,
+            Err(at) => {
+                if self.players.len() >= MAX_PLAYERS {
+                    return;
+                }
+                let (x, y) = self.spawn_point(id);
+                self.players.insert(at, Player::new(id, x, y));
+                at
+            }
+        };
+        let p = &mut self.players[k];
+        p.active = true;
+        let ev = Event { kind: EV_SPAWN, player: id, a: p.x, b: p.y, c: i32::from(p.life) };
+        self.events.push(ev);
+    }
+
+    /// Centre of the surface plus an rng offset: the first column from a few candidates whose hitbox
+    /// has clear air above solid ground (trees and overhangs are skipped). Pure function of state.
+    fn spawn_point(&self, id: u32) -> (i32, i32) {
+        let g = &self.grid;
+        let (w, h) = (g.w as i32, g.h as i32);
+        let first = (rng(self.seed, self.tick, id, 0, SALT_SPAWN_X) % (2 * SPAWN_JITTER + 1)) as i32 - SPAWN_JITTER as i32;
+        let mut best = (w / 2 * POS_ONE + POS_ONE / 2, (h / 2) * POS_ONE);
+        for k in 0..16 {
+            let col = (w / 2 + first + 7 * k).clamp(3, w - 4);
+            let Some(ground) = (0..h).find(|&y| matches!(g.mat[(y * w + col) as usize], DIRT | ROCK | SAND | BEDROCK)) else {
+                continue;
+            };
+            let clear = ground >= HITBOX_H
+                && (col - 2..=col + 2).all(|x| (ground - HITBOX_H..ground).all(|y| g.mat[(y * w + x) as usize] == EMPTY));
+            best = (col * POS_ONE + POS_ONE / 2, ground * POS_ONE);
+            if clear {
+                break;
+            }
+        }
+        best
+    }
+
+    /// Plan 6.2 step 2: pickups (players move only through Pos inputs). Players by id, pickups by id,
+    /// so two players on one pickup resolve to the lower id.
+    fn update_entities(&mut self) {
+        if self.pickups.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        for p in self.players.iter_mut().filter(|p| p.active) {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            for k in self.pickups.iter_mut() {
+                let (kx, ky) = (i32::from(k.x), i32::from(k.y));
+                if tick < k.respawn_at || kx < x0 || kx > x1 || ky < y0 || ky > y1 {
+                    continue;
+                }
+                let c = &mut p.charges[k.spell as usize];
+                if *c != INFINITE {
+                    *c = c.saturating_add(k.charges).min(INFINITE - 1);
+                }
+                k.respawn_at = tick.wrapping_add(PICKUP_RESPAWN);
+                self.events.push(Event { kind: EV_PICKUP, player: p.id, a: i32::from(k.id), b: i32::from(k.spell), c: i32::from(k.charges) });
+            }
         }
     }
 
@@ -137,8 +249,12 @@ impl Sim {
         }
     }
 
+    /// Canonical entity bytes (plan 6.10): players by id, then pickups. In the state hash and snapshots.
     pub fn entity_bytes(&self) -> Vec<u8> {
-        Vec::new()
+        if self.world_kind == 0 {
+            return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
+        }
+        entities::encode(&self.players, &self.pickups)
     }
 
     pub fn state_hash(&mut self) -> u64 {

@@ -149,8 +149,7 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
 }
 
 /// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.
-/// Not simulation state: it is regenerated from the seed (and the pristine world) in `init` and
-/// `restore`, and nothing reads it until entities exist.
+/// `Sim::new` turns each spot into a pickup entity (state); the spot itself is not kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PickupSpot {
     pub x: u16,
@@ -923,16 +922,17 @@ mod tests {
     fn pickup_spots_are_on_floors_in_their_band() {
         let s = Sim::new(2, 1).unwrap();
         let g = &s.grid;
-        let shallow = s.spots.iter().filter(|p| p.band == 0).count();
-        let deep = s.spots.iter().filter(|p| p.band == 1).count();
+        let band = |p: &crate::entities::Pickup| u8::from(p.spell >= 4);
+        let shallow = s.pickups.iter().filter(|p| band(p) == 0).count();
+        let deep = s.pickups.iter().filter(|p| band(p) == 1).count();
         assert!(shallow >= 30 && deep >= 18, "{shallow} shallow, {deep} deep");
-        for p in &s.spots {
+        for p in &s.pickups {
             let (x, y) = (p.x as usize, p.y as usize);
             assert_eq!(g.mat[y * g.w + x], EMPTY);
             assert!(solid_ground(g.mat[(y + 1) * g.w + x]));
-            assert_eq!(p.band == 1, y >= DEEP_TOP as usize);
+            assert_eq!(band(p) == 1, y >= DEEP_TOP as usize);
         }
-        assert_eq!(s.spots, Sim::new(2, 1).unwrap().spots);
+        assert_eq!(s.pickups, Sim::new(2, 1).unwrap().pickups);
     }
 
     #[test]

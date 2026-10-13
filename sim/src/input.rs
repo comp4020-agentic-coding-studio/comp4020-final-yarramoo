@@ -80,6 +80,29 @@ pub fn encode_paint(player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, ra
     v
 }
 
+pub fn encode_join(player: u32) -> Vec<u8> {
+    let mut v = vec![1];
+    v.extend_from_slice(&player.to_le_bytes());
+    v
+}
+
+pub fn encode_leave(player: u32) -> Vec<u8> {
+    let mut v = encode_join(player);
+    v[0] = 2;
+    v
+}
+
+/// `x`, `y` in 1/16 cell.
+pub fn encode_pos(player: u32, life: u16, x: i32, y: i32, facing: u8) -> Vec<u8> {
+    let mut v = vec![3];
+    v.extend_from_slice(&player.to_le_bytes());
+    v.extend_from_slice(&life.to_le_bytes());
+    v.extend_from_slice(&x.to_le_bytes());
+    v.extend_from_slice(&y.to_le_bytes());
+    v.push(facing);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

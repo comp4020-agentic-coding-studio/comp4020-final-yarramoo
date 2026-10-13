@@ -7,8 +7,8 @@ use crate::rng::*;
 pub const CHUNK: usize = 64;
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
 /// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
-pub const ACTIVE_W: i32 = 576;
-pub const ACTIVE_H: i32 = 320;
+pub const ACTIVE_W: i32 = crate::tuning::ACTIVE_W;
+pub const ACTIVE_H: i32 = crate::tuning::ACTIVE_H;
 
 pub struct Grid {
     pub w: usize,

@@ -4,7 +4,8 @@ use crate::grid::{CHUNK, CHUNK_AREA};
 use crate::sim::Sim;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
-pub const FORMAT_VERSION: u16 = 1;
+/// v2 adds entities. v1 (the sandbox snapshots already stored) has an empty entity section and still restores.
+pub const FORMAT_VERSION: u16 = 2;
 const HEADER: usize = 4 + 2 + 32 + 8 + 1 + 4 + 2 + 2;
 
 pub fn write(s: &Sim) -> Vec<u8> {
@@ -17,7 +18,7 @@ pub fn write(s: &Sim) -> Vec<u8> {
     v.extend_from_slice(&s.tick.to_le_bytes());
     v.extend_from_slice(&(s.grid.w as u16).to_le_bytes());
     v.extend_from_slice(&(s.grid.h as u16).to_le_bytes());
-    // Entity section: byte length, then the bytes. Restore refuses a non-empty one until entities exist.
+    // Entity section: byte length, then the canonical entity bytes (see `entities::encode`).
     let e = s.entity_bytes();
     v.extend_from_slice(&(e.len() as u32).to_le_bytes());
     v.extend_from_slice(&e);
@@ -48,7 +49,8 @@ pub fn restore(b: &[u8]) -> Result<Sim, ()> {
     }
     let u16_at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
     let u32_at = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
-    if u16_at(4) != FORMAT_VERSION {
+    let version = u16_at(4);
+    if version != FORMAT_VERSION && version != 1 {
         return Err(());
     }
     let mut sd = [0u8; 8];
@@ -62,10 +64,18 @@ pub fn restore(b: &[u8]) -> Result<Sim, ()> {
         return Err(());
     }
     let mut o = HEADER;
-    if u32_at(o) != 0 {
-        return Err(()); // entities not supported yet
-    }
+    let elen = u32_at(o) as usize;
     o += 4;
+    // The length must fit inside the buffer with room for the chunk count (checked without overflow).
+    let eend = o.checked_add(elen).filter(|&e| e.checked_add(4).is_some_and(|x| x <= b.len())).ok_or(())?;
+    if version == 1 || kind == 0 {
+        if elen != 0 {
+            return Err(()); // v1 and sandbox snapshots have no entities
+        }
+    } else {
+        s.players = crate::entities::decode(&b[o..eend], &mut s.pickups)?;
+    }
+    o = eend;
     let n = u32_at(o) as usize;
     o += 4;
     let rec = 2 + 2 * CHUNK_AREA;
