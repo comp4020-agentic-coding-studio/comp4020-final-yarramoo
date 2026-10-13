@@ -26,21 +26,21 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 ## M3: big world (plan 6.5, 6.9)
 
 - [x] Research notes: `docs/research/noita-caves.md`.
-- [ ] Look at how Noita builds its caves before writing the generator. Its
+- [x] Look at how Noita builds its caves before writing the generator. Its
       world is stitched from herringbone Wang tiles with hand-made pixel
       scenes dropped in; screenshots and the GDC talk on its tech show the
       look (wide connected caverns, layered biomes, pockets of liquid). Pick
       what fits an integer-only, deterministic generator and record it in
       `docs/DECISIONS.md`.
-- [ ] 2048 × 1536 game world: surface heightmap, shallow and deep bands,
+- [x] 2048 × 1536 game world (`f1529db`..`7eb0455`, tuned in the last M3 commit): surface heightmap, shallow and deep bands,
       3–5 cave entrances, water and lava pools, gunpowder pockets, pickup
       spots.
-- [ ] Active-chunk rule and chunk sleeping; D7 (sleeping is invisible).
-- [ ] D8: generation identical across Node and the three browsers;
+- [x] Active-chunk rule and chunk sleeping (`3f68c14`); D7 (`a104231`, `ab07e1a`). The active rule is all-chunks until M4 has players (D-053).
+- [x] D8 (`3cff05c`): generation identical across Node and the three browsers;
       regenerated pristine chunks equal stored ones.
-- [ ] Pristine-chunk snapshots, so a big world's snapshot stays small.
-- [ ] Camera and scrolling; free-camera mode to explore.
-- [ ] Performance baseline: step time for the full world, before P1.
+- [x] Pristine-chunk snapshots: already in the snapshot format; restore regenerates then overwrites (checked by D8: a tick-0 snapshot is under 100 bytes).
+- [x] Camera and scrolling; free-camera mode (`02eff5a`, `5ba65b6`); `?world=game` with `pnpm dev:client`.
+- [x] Performance baseline: see the M3 report: native p95 3.9 ms at rest with sleeping, 14.0 ms without; Chromium p95 7.3 and 18.5 ms.
 
 ## Plants
 

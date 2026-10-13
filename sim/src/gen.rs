@@ -3,7 +3,7 @@
 //! Integer-only (clippy denies floats), no recursion, no `HashMap`. Every random draw is
 //! `rng(seed, 0, x, y, SALT_GEN_*)` with a salt per use. The generator writes straight into the grid
 //! without touching chunk metadata, so every chunk starts pristine.
-#![allow(clippy::manual_is_multiple_of, clippy::needless_range_loop)]
+#![allow(clippy::manual_is_multiple_of, clippy::needless_range_loop, clippy::too_many_arguments)]
 
 use crate::grid::Grid;
 use crate::materials::*;
@@ -77,7 +77,7 @@ pub struct Params {
     pub thr_deep: i32,
 }
 
-pub const PARAMS: Params = Params { thr_shallow: 1500, thr_deep: 1700 };
+pub const PARAMS: Params = Params { thr_shallow: 1250, thr_deep: 1500 };
 
 /// Surface height per column: three octaves of 1D value noise around `SURFACE_Y`.
 fn surface_heights(seed: u64, w: i32, h: i32) -> Vec<i32> {
@@ -137,13 +137,13 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     carve_noise_caves(g, seed, &surf);
     let mut path = Vec::new();
     carve_worms(g, seed, &surf, &mut path);
-    connect_and_prune(g, &path);
+    connect_and_prune(g, seed, &path);
     line_entrances_with_dirt(g, seed, &surf);
-    let mut lava_at: Vec<(i32, i32)> = Vec::new();
+    let mut sc = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
     place_sand(g, seed);
-    place_lava(g, seed, &mut lava_at);
+    place_lava(g, seed, &mut sc);
     place_gunpowder(g, seed);
-    place_water(g, seed);
+    place_water(g, seed, &mut sc);
     place_trees(g, seed, &surf);
     pick_spots(g, seed)
 }
@@ -242,7 +242,7 @@ fn near_material(g: &Grid, cx: i32, cy: i32, rx: i32, ry: i32, m: u8) -> bool {
 fn place_gunpowder(g: &mut Grid, seed: u64) {
     let mut placed = 0;
     for k in 0..400u32 {
-        if placed == 30 {
+        if placed == 45 {
             break;
         }
         let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_GP_X) % 1930) as i32;
@@ -257,100 +257,137 @@ fn place_gunpowder(g: &mut Grid, seed: u64) {
     }
 }
 
-/// Fill a basin upward from the floor under column `x`: each row is the Empty span around `x`,
-/// bounded by solid on both sides and supported everywhere underneath. Stops at a leaking row or at
-/// `max_depth`. Returns the (floor row, rows filled); fewer than `min_depth` rows is undone.
-fn fill_basin(g: &mut Grid, x: i32, yf: i32, max_depth: i32, min_depth: i32, mat: u8) -> bool {
-    let w = g.w as i32;
-    let mut rows: Vec<(i32, i32, i32)> = Vec::new();
-    for d in 0..max_depth {
-        let y = yf - d;
-        if y < 1 || g.mat[(y * w + x) as usize] != EMPTY {
+/// Level fill: every Empty cell connected to (x, yf) at or below row `ly`, up to `cap` cells.
+/// By construction the region is closed below the level (any Empty neighbour is in it), so a liquid
+/// filling it has a flat top at `ly` and nowhere to fall. Returns false if it exceeds `cap`.
+fn level_flood(g: &Grid, mark: &mut [u8], stack: &mut Vec<u32>, region: &mut Vec<u32>, x: i32, yf: i32, ly: i32, cap: usize) -> bool {
+    let (w, h) = (g.w, g.h);
+    region.clear();
+    stack.clear();
+    let start = yf as usize * w + x as usize;
+    mark[start] = 1;
+    stack.push(start as u32);
+    let mut ok = true;
+    while let Some(c) = stack.pop() {
+        let i = c as usize;
+        region.push(c);
+        if region.len() > cap {
+            ok = false;
             break;
         }
-        let (mut l, mut r) = (x, x);
-        while l > x - 40 && g.mat[(y * w + l - 1) as usize] == EMPTY {
-            l -= 1;
-        }
-        while r < x + 40 && g.mat[(y * w + r + 1) as usize] == EMPTY {
-            r += 1;
-        }
-        // Both ends must be solid ground, not a cap hit by the width limit.
-        if g.mat[(y * w + l - 1) as usize] == EMPTY || g.mat[(y * w + r + 1) as usize] == EMPTY {
-            break;
-        }
-        let supported = (l..=r).all(|cx| {
-            let b = g.mat[((y + 1) * w + cx) as usize];
-            solid_ground(b) || b == mat
-        });
-        if !supported {
-            break;
-        }
-        for cx in l..=r {
-            g.mat[(y * w + cx) as usize] = mat;
-        }
-        rows.push((y, l, r));
-    }
-    if (rows.len() as i32) < min_depth {
-        for &(y, l, r) in &rows {
-            for cx in l..=r {
-                g.mat[(y * w + cx) as usize] = EMPTY;
+        let (cx, cy) = (i % w, i / w);
+        let mut visit = |j: usize| {
+            if g.mat[j] == EMPTY && mark[j] == 0 {
+                mark[j] = 1;
+                stack.push(j as u32);
             }
+        };
+        if cx > 0 {
+            visit(i - 1);
         }
-        return false;
+        if cx + 1 < w {
+            visit(i + 1);
+        }
+        if cy > 0 && (cy - 1) as i32 >= ly {
+            visit(i - w);
+        }
+        if cy + 1 < h {
+            visit(i + w);
+        }
     }
-    true
+    // Everything marked (region plus anything still on the stack) must be unmarked again.
+    for &c in region.iter().chain(stack.iter()) {
+        mark[c as usize] = 0;
+    }
+    ok
 }
 
-fn place_water(g: &mut Grid, seed: u64) {
+struct PoolScratch {
+    mark: Vec<u8>,
+    stack: Vec<u32>,
+    region: Vec<u32>,
+}
+
+/// Try a pool of up to `max_depth` rows resting on the floor at (x, yf): the deepest level whose basin
+/// stays under `cap` cells. `foe` is a liquid that must not touch it.
+fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i32), cap: usize, mat: u8, foe: u8) -> bool {
+    let w = g.w;
+    // Deepest first; a basin that overflows `cap` at one level may fit at a shallower one.
+    for d in (depths.0..=depths.1).rev() {
+        let ly = yf - d + 1;
+        if ly < 1 || !level_flood(g, &mut sc.mark, &mut sc.stack, &mut sc.region, x, yf, ly, cap) {
+            continue;
+        }
+        // A pool is a pond in a basin, not a river along a tunnel: bound its width, and keep it in its band.
+        let (mut lo, mut hi, mut lowest) = (usize::MAX, 0usize, 0usize);
+        for &c in &sc.region {
+            let (cx, cy) = (c as usize % w, c as usize / w);
+            lo = lo.min(cx);
+            hi = hi.max(cx);
+            lowest = lowest.max(cy);
+        }
+        if hi - lo > 70 || (mat == WATER && lowest >= DEEP_TOP as usize - 4) {
+            continue;
+        }
+        let touches = sc.region.iter().any(|&c| {
+            let i = c as usize;
+            [i - 1, i + 1, i - w, i + w].iter().any(|&j| g.mat[j] == foe)
+        });
+        if touches {
+            return false;
+        }
+        for &c in &sc.region {
+            g.mat[c as usize] = mat;
+        }
+        return true;
+    }
+    false
+}
+
+fn place_water(g: &mut Grid, seed: u64, sc: &mut PoolScratch) {
     let mut placed = 0;
-    for k in 0..400u32 {
-        if placed == 26 {
+    for k in 0..1500u32 {
+        if placed == 90 {
             break;
         }
         let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_WATER_X) % 1960) as i32;
         let y = SHALLOW_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_WATER_Y) % 480) as i32;
-        let depth = 4 + (rng(seed, 0, k, 0, SALT_GEN_WATER_D) % 11) as i32;
+        let depth = 5 + (rng(seed, 0, k, 0, SALT_GEN_WATER_D) % 10) as i32;
         let Some(yf) = find_floor(g, x, y, 120) else { continue };
-        if yf >= DEEP_TOP - 12 || g.mat[(yf * g.w as i32 + x) as usize] != EMPTY {
+        if yf >= DEEP_TOP - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
             continue;
         }
-        if fill_basin(g, x, yf, depth, 3, WATER) {
+        if try_pool(g, sc, x, yf, (3, depth), 900, WATER, LAVA) {
             placed += 1;
         }
     }
 }
 
-fn place_lava(g: &mut Grid, seed: u64, at: &mut Vec<(i32, i32)>) {
+fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch) {
     let w = g.w as i32;
     let mut placed = 0;
-    for k in 0..500u32 {
-        if placed == 16 {
+    for k in 0..1500u32 {
+        if placed == 40 {
             break;
         }
         let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_X) % 1960) as i32;
         let y = DEEP_TOP + 60 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_Y) % 520) as i32;
-        let depth = 6 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_D) % 15) as i32;
+        let depth = 8 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_D) % 13) as i32;
         let Some(yf) = find_floor(g, x, y, 160) else { continue };
         if yf < DEEP_TOP + 30 || g.mat[(yf * w + x) as usize] != EMPTY {
             continue;
         }
-        if fill_basin(g, x, yf, depth, 4, LAVA) {
+        if try_pool(g, sc, x, yf, (4, depth), 1800, LAVA, WATER) {
             // A 2-cell Rock lining under the pool, so it cannot meet other liquids from below.
-            let mut cx = x;
-            while g.mat[(yf * w + cx - 1) as usize] == LAVA {
-                cx -= 1;
-            }
-            while g.mat[(yf * w + cx) as usize] == LAVA {
+            for &c in &sc.region {
+                let i = c as usize;
                 for dy in 1..=2 {
-                    let i = ((yf + dy) * w + cx) as usize;
-                    if matches!(g.mat[i], DIRT | SAND) {
-                        g.mat[i] = ROCK;
+                    let j = i + dy * g.w;
+                    if matches!(g.mat[j], DIRT | SAND) {
+                        g.mat[j] = ROCK;
                     }
                 }
-                cx += 1;
             }
-            at.push((x, yf));
             placed += 1;
         }
     }
@@ -567,14 +604,16 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
             wm.r = (wm.r + (rn(SALT_GEN_WORM_R) % 3) as i32 - 1).clamp(wm.r_min, wm.r_max);
         }
         if let Some((dir, base)) = wm.horiz {
-            let r = rn(SALT_GEN_HWORM) % 8;
-            let pull = (base - wm.y).signum();
-            wm.y += match r {
-                0 | 1 => 1,
-                2 | 3 => -1,
-                4 => pull,
-                _ => 0,
-            };
+            if st % 30 == 0 {
+                wm.drift = (rn(SALT_GEN_HWORM) % 3) as i32 - 1;
+            }
+            // Wander freely, but turn back toward the base row once 45 or more cells off it.
+            if (wm.y - base).abs() > 45 {
+                wm.drift = (base - wm.y).signum();
+            }
+            if st % 3 == 0 {
+                wm.y += wm.drift;
+            }
             wm.x += dir * (1 + (rn(SALT_GEN_WORM_DX) % 2) as i32);
         } else {
             if st % 24 == 0 {
@@ -590,7 +629,7 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
             if wm.y >= wm.target_y {
                 return;
             }
-            if st % 150 == 149 && wm.branches > 0 {
+            if st % 100 == 99 && wm.branches > 0 {
                 wm.branches -= 1;
                 let id = *next_id;
                 *next_id += 1;
@@ -631,24 +670,25 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             step: 0,
             max_steps: 2500,
             target_y: DEEP_TOP + 100,
-            branches: 3,
+            branches: 5,
             horiz: None,
         });
     }
-    for i in 0..4u32 {
+    const LINK_ROWS: [i32; 7] = [380, 520, 660, 900, 1060, 1200, 1320];
+    for i in 0..7u32 {
         let id = 500 + i;
-        let base = if i < 2 { 500 } else { 1100 } + (rng(seed, 0, id, 0, SALT_GEN_HWORM) % 60) as i32;
+        let base = LINK_ROWS[i as usize] + (rng(seed, 0, id, 0, SALT_GEN_HWORM) % 60) as i32;
         let x = 150 + (rng(seed, 0, id, 1, SALT_GEN_HWORM) % 1700) as i32;
         todo.push(Worm {
             id,
             x,
             y: base,
-            r: 6,
-            r_min: 4,
+            r: 5,
+            r_min: 3,
             r_max: 8,
             drift: 0,
             step: 0,
-            max_steps: 700 + (rng(seed, 0, id, 2, SALT_GEN_HWORM) % 400),
+            max_steps: 500 + (rng(seed, 0, id, 2, SALT_GEN_HWORM) % 500),
             target_y: 0,
             branches: 0,
             horiz: Some((if i & 1 == 0 { 1 } else { -1 }, base)),
@@ -693,12 +733,50 @@ fn flood(g: &Grid, seen: &mut [u8], start: usize, stack: &mut Vec<u32>, mut regi
     }
 }
 
+/// A meandering tunnel from `from` to `to`: mostly steps along the longer axis, sometimes sideways,
+/// then a straight finish if it ran out of steps. Randomness is `rng(seed, 0, id, step, SALT_GEN_LINK)`.
+fn wander_link(g: &mut Grid, seed: u64, from: (i32, i32), to: (i32, i32), id: u32) {
+    let (mut x, mut y) = from;
+    let dist = (to.0 - x).abs() + (to.1 - y).abs();
+    let steps = 4 * dist as u32 + 100;
+    for st in 0..steps {
+        dig(g, x, y, 3 + ((st / 17) % 3) as i32);
+        let (dx, dy) = ((to.0 - x).signum(), (to.1 - y).signum());
+        if (to.0 - x).abs() <= 2 && (to.1 - y).abs() <= 2 {
+            break;
+        }
+        let r = rng(seed, 0, id, st, SALT_GEN_LINK);
+        let long_x = (to.0 - x).abs() >= (to.1 - y).abs();
+        match r % 8 {
+            0 | 1 => {
+                // Sideways jitter.
+                let j = if r & 8 == 0 { -1 } else { 1 };
+                if long_x { y += j } else { x += j }
+            }
+            2 => {
+                x += dx;
+                y += dy;
+            }
+            _ => {
+                if long_x { x += dx } else { y += dy }
+            }
+        }
+        x = x.clamp(WALL_COLS as i32 + 8, g.w as i32 - WALL_COLS as i32 - 8);
+        y = y.clamp(8, g.h as i32 - FLOOR_ROWS as i32 - 12);
+    }
+    let (dx, dy) = (to.0 - x, to.1 - y);
+    let n = dx.abs().max(dy.abs()).max(1);
+    for k in 0..=n {
+        dig(g, x + dx * k / n, y + dy * k / n, 3);
+    }
+}
+
 /// Smallest open region worth keeping (cells).
 pub const MIN_REGION: usize = 400;
 
 /// Reach everything from the sky: small unreachable pockets become Rock, big ones get a straight
 /// tunnel to the nearest worm path point, then anything still cut off is filled.
-fn connect_and_prune(g: &mut Grid, path: &[(i32, i32)]) {
+fn connect_and_prune(g: &mut Grid, seed: u64, path: &[(i32, i32)]) {
     let w = g.w;
     let mut seen = vec![0u8; g.mat.len()];
     let mut stack: Vec<u32> = Vec::new();
@@ -726,11 +804,7 @@ fn connect_and_prune(g: &mut Grid, path: &[(i32, i32)]) {
             .map(|&c| ((c as usize % w) as i32, (c as usize / w) as i32))
             .min_by_key(|&(x, y)| (d2(t, x, y), x, y))
             .unwrap_or((fx, fy));
-        let (dx, dy) = (t.0 - rep.0, t.1 - rep.1);
-        let n = dx.abs().max(dy.abs()).max(1);
-        for k in 0..=n {
-            dig(g, rep.0 + dx * k / n, rep.1 + dy * k / n, 4);
-        }
+        wander_link(g, seed, rep, t, i as u32);
     }
     // Links can open other pockets or leave a sliver cut off: reflood and fill what is left.
     seen.fill(0);
