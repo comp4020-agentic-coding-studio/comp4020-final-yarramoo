@@ -12,6 +12,8 @@
     "seed:examples": "node scripts/seed-examples.ts",
     "build:sim": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release",
     "build:sim:canary": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release --features canary --target-dir sim/target-canary",
+    "dev:client": "pnpm build:sim && vite --config client/vite.config.ts",
+    "build:client": "pnpm build:sim && vite build --config client/vite.config.ts",
     "test:determinism": "pnpm build:sim && pnpm build:sim:canary && vitest run --config vitest.determinism.config.ts"
   },
   "devDependencies": {
@@ -20,6 +22,7 @@
     "jsdom": "^30.1.0",
     "playwright": "^1.64.0",
     "typescript": "^6.0.3",
+    "vite": "^8.3.4",
     "vitest": "^5.0.1"
   },
   "engines": {

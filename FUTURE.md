@@ -120,3 +120,9 @@ outcome only, not admin notes.
 - **Source:** suggested by the worker that built report and block, 2026-10-05.
 - **Why:** a report that disappears into silence teaches people not to bother
   reporting.
+
+## Sandbox ideas (from M1)
+
+- Upload only `dirty_rects` once the sim reports them (now a full 512x512 upload per frame); from M1 client work, worth doing when the game world is 2048x1536.
+- Expose `matView()`/`auxView()` on `shared/sim.ts` so the client does not capture wasm exports; from the M1 worker.
+- A pause/step/clear control in the sandbox; from watching long gunpowder chains.
