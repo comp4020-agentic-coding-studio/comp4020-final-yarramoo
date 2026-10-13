@@ -4,6 +4,9 @@
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
+/** A restore takes about 400 ms; a job over this is a hung worker (review M4a S3). */
+export const VERIFY_TIMEOUT_MS = 10_000;
+
 export interface Verified {
   tick: number;
   hash: bigint;
@@ -20,14 +23,20 @@ export class SnapshotVerifier {
   private nextId = 1;
   private readonly bytes: Uint8Array;
   private closed = false;
+  private readonly timeoutMs: number;
+  private readonly workerUrl: URL;
+  /** Workers killed for exceeding the timeout (telemetry and tests). */
+  timeouts = 0;
 
-  constructor(wasmPath: string) {
+  constructor(wasmPath: string, opts: { timeoutMs?: number; workerUrl?: URL } = {}) {
     this.bytes = new Uint8Array(readFileSync(wasmPath));
+    this.timeoutMs = opts.timeoutMs ?? VERIFY_TIMEOUT_MS;
+    this.workerUrl = opts.workerUrl ?? new URL("./verify-worker.ts", import.meta.url);
   }
 
   private start(): Worker {
     if (this.worker) return this.worker;
-    const w = new Worker(new URL("./verify-worker.ts", import.meta.url), { workerData: { wasm: this.bytes } });
+    const w = new Worker(this.workerUrl, { workerData: { wasm: this.bytes } });
     w.on("message", (m: { id: number; ok: boolean; tick?: number; hash?: bigint; rawLength?: number }) => {
       const p = this.pending.get(m.id);
       if (!p) return;
@@ -54,8 +63,22 @@ export class SnapshotVerifier {
     if (this.closed) return Promise.resolve(null);
     return new Promise((resolve) => {
       const id = this.nextId++;
-      this.pending.set(id, { resolve });
-      this.start().postMessage({ id, data: compressed, maxRaw });
+      const w = this.start();
+      // A hung worker never answers and never exits: kill it, fail everything waiting on it (the next call
+      // starts a fresh worker), so one stuck job cannot block every later snapshot.
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.timeouts++;
+        if (this.worker === w) this.worker = null;
+        for (const [k, p] of this.pending) {
+          this.pending.delete(k);
+          p.resolve(null);
+        }
+        void w.terminate();
+      }, this.timeoutMs);
+      timer.unref();
+      this.pending.set(id, { resolve: (v) => (clearTimeout(timer), resolve(v)) });
+      w.postMessage({ id, data: compressed, maxRaw });
     });
   }
 

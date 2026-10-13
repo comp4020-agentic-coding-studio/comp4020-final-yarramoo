@@ -621,6 +621,12 @@ export class World {
         this.snapshotOnline = this.onlineAt.get(tick) ?? 0;
         this.stats.snapshotsAccepted++;
         this.say(`[world ${this.id}] snapshot ${tick} verified in ${this.stats.lastVerifyMs.toFixed(0)} ms: ${u.data.length} bytes compressed, ${got.rawLength} raw`);
+      })
+      .catch((e) => {
+        // A failed save (disk full) is a lost snapshot, not a dead process: the log keeps growing and the
+        // next request tries again.
+        this.verifying = false;
+        reject(`save failed: ${String(e)}`);
       });
   }
 }

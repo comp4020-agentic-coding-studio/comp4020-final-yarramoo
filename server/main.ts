@@ -67,6 +67,7 @@ export interface RunningServer {
   game: World;
   worlds: Map<number, World>;
   identity: Identity;
+  verifier: SnapshotVerifier | undefined;
   db: GameDb | null;
   stats: { droppedRate: number; rejected: number; originRefused: number; capRefused: number };
   close(): Promise<void>;
@@ -83,6 +84,9 @@ export interface ServerOptions {
   /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
   dataDir?: string | null;
   snapshotEveryTicks?: number;
+  /** Override the snapshot-verification timeout (tests). */
+  verifyTimeoutMs?: number;
+  verifierWorkerUrl?: URL;
   quiet?: boolean;
   /** Extra Origins allowed to POST /api/players (a dev client on another port). Same-origin is always allowed. */
   allowedOrigins?: string[];
@@ -97,7 +101,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const say = opts.quiet ? () => {} : (m: string) => console.log(m);
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
-  const verifier = db ? new SnapshotVerifier(wasmPath) : undefined;
+  const verifier = db ? new SnapshotVerifier(wasmPath, { timeoutMs: opts.verifyTimeoutMs, workerUrl: opts.verifierWorkerUrl }) : undefined;
   const mk = (id: number) =>
     new World({
       id,
@@ -353,6 +357,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     game,
     worlds,
     identity,
+    verifier,
     db,
     stats,
     /** Shutdown (plan 9.3): stop inputs, close the open tick, flush tick_log, close the DB. Safe to call twice. */
@@ -370,6 +375,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // Registered only when run as the server, so test runners keep their own (failing) unhandled-rejection reporting.
+  // Logs the cause loudly, then rethrows so the process still exits and the platform restarts it.
+  process.on("unhandledRejection", (e) => {
+    console.error("[server] UNHANDLED REJECTION", e);
+    throw e;
+  });
   const port = Number(process.env.PORT ?? 8080);
   const s = await startServer({ port });
   setInterval(() => {

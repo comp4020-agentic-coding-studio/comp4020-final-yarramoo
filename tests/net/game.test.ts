@@ -373,3 +373,38 @@ describe("connection limits (review M4a S2)", () => {
     a.close();
   });
 });
+
+describe("snapshot verification failures (review M4a S3)", () => {
+  async function runUntil(s: RunningServer, cond: () => boolean, what: string) {
+    const me = await register(s.port, "V" + Math.random());
+    const a = await connect(s.port, hex, { world: GAME, token: me.token });
+    const stepper = setInterval(() => a.ls.run(100000), 4);
+    cleanups.push(() => clearInterval(stepper));
+    await waitFor(cond, 40000, what);
+    clearInterval(stepper);
+    a.close();
+  }
+
+  it("a hung worker is terminated, and the upload is dropped, not waited on", async () => {
+    const dir = tmp();
+    const s = await startServer({ port: 0, dataDir: dir, snapshotEveryTicks: 120, quiet: true, verifyTimeoutMs: 600, verifierWorkerUrl: new URL("./hang-worker.ts", import.meta.url) });
+    cleanups.push(() => s.close());
+    await runUntil(s, () => s.verifier!.timeouts >= 1, "a verification timeout");
+    expect(s.game.stats.snapshotsAccepted).toBe(0);
+    expect(s.game.verifying).toBe(false); // not waiting forever
+    await waitFor(() => s.game.stats.snapshotsRejected >= 1, 3000, "the dropped upload is counted");
+  });
+
+  it("a failing saveSnapshot is logged and rejected, not an unhandled rejection", async () => {
+    const s = await boot(tmp(), 120);
+    let calls = 0;
+    s.db!.saveSnapshot = () => {
+      calls++;
+      throw new Error("disk full");
+    };
+    await runUntil(s, () => calls >= 1, "a save attempt");
+    await waitFor(() => s.game.stats.snapshotsRejected >= 1, 3000, "counted as rejected");
+    expect(s.game.stats.snapshotsAccepted).toBe(0);
+    await sleep(100);
+  });
+});
