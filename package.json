@@ -8,8 +8,6 @@
     "check": "pnpm typecheck && pnpm test",
     "check:evidence": "node scripts/check-evidence.ts",
     "test": "vitest run",
-    "seed:dev": "node scripts/seed-dev.ts",
-    "seed:examples": "node scripts/seed-examples.ts",
     "build:sim": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release",
     "build:sim:canary": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release --features canary --target-dir sim/target-canary",
     "dev:client": "pnpm build:sim && vite --config client/vite.config.ts",
@@ -17,7 +15,8 @@
     "test:determinism": "pnpm build:sim && pnpm build:sim:canary && vitest run --config vitest.determinism.config.ts",
     "test:net": "vitest run --config vitest.net.config.ts",
     "start:game": "node server/main.ts",
-    "dev:server": "pnpm build:client && node server/main.ts"
+    "dev:server": "pnpm build:client && node server/main.ts",
+    "build:client:only": "vite build --config client/vite.config.ts"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",
@@ -33,9 +32,7 @@
     "pnpm": ">=11"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.3",
     "fflate": "^0.8.3",
-    "hono": "^4.13.13",
     "marked": "^18.0.14",
     "ws": "^8.22.0"
   }
