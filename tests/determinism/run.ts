@@ -23,6 +23,10 @@ export type Batching =
 
 export interface RunOptions {
   batching?: Batching;
+  /** D7: switch chunk sleeping on or off before the first step (default: the sim's own default, on). */
+  sleep?: boolean;
+  /** D8: also record the state hash straight after init, as tick 0. */
+  hashTick0?: boolean;
 }
 
 const h64 = (n: bigint) => n.toString(16).padStart(16, "0");
@@ -35,7 +39,9 @@ export function run(
 ): RunResult {
   const sim = loadSim(simBytes, imports);
   sim.init(BigInt(script.seed), script.world_kind);
+  if (opts.sleep !== undefined) sim.setSleepEnabled(opts.sleep);
   const hashes: [number, string][] = [];
+  if (opts.hashTick0) hashes.push([0, h64(sim.stateHash())]);
   const b = opts.batching ?? { kind: "each" };
 
   // Inputs for tick t go in before the step that produces tick t (the queue is

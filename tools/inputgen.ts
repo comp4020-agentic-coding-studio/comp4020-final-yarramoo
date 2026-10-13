@@ -32,7 +32,7 @@ function mulberry32(seed: number): () => number {
 const MATS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 // Pairs painted together so reactive materials meet: gunpowder by fire, lava by water, seed on dirt.
 const COMBOS: [number, number][] = [[13, 10], [14, 5], [3, 7], [6, 10], [13, 14]];
-const SIZE = 512;
+const SIZE = 512; // sandbox size; game worlds ignore Paint, so only Pos reaches them (M4)
 
 export function generate(opts: GenOptions): Script {
   const { bots, ticks } = opts;
