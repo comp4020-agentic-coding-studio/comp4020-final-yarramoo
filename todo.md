@@ -63,12 +63,12 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       identity, two worlds, off-thread verify, Pos validation, avatar
       controller and figures (`74ca003`, `796636e`, `43a1cab`, `cc746dc`;
       D-062 to D-067). Next: slice 4b, spells.
-- [ ] Character animation: idle, walk, jump, levitate, cast and hit poses,
+- [x] Character animation (`377cb18`, `9520446`): idle, walk, jump, levitate, cast and hit poses,
       facing left and right. Small pixel sprites, drawn by the renderer only;
       animation is cosmetic and never enters the sim.
-- [ ] Push and Blast with knockback; pickups; Water and Rose seed spells; cast
-      previews; HUD.
-- [ ] Spell animation: a cast flash, projectile trails, impact bursts. Also
+- [x] Push and Blast with knockback; Water and Rose seed spells; cast
+      previews; HUD (`1bc6b0e`, `031f58a`, `9520446`; D-073 to D-077).
+- [x] Spell animation (`377cb18`, `9520446`): a cast flash, projectile trails, impact bursts. Also
       cosmetic, also renderer-only.
 - [ ] Touch: spectate the game world on phones (D-011).
 - [ ] Gate G2: N1 (three clients, ten minutes, jitter, a throttled CPU, zero
