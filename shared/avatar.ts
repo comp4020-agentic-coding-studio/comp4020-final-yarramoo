@@ -54,3 +54,12 @@ export class PosBaselines {
     return true;
   }
 }
+
+/** Inputs per second the server accepts from one connection (server/main.ts MAX_INPUTS_PER_SEC is set from this). */
+export const INPUT_RATE_LIMIT = 40;
+/** The client sends a Pos every this many 60 Hz ticks while moving. */
+export const POS_SEND_EVERY_TICKS = 2;
+/** Headroom under the limit for Join-time bursts and timer jitter. */
+export const RATE_MARGIN = 4;
+/** Shortest gap between casts so Pos plus casts stay under the limit with the margin (review M4b S3). */
+export const CAST_MIN_INTERVAL_MS = Math.ceil(1000 / (INPUT_RATE_LIMIT - RATE_MARGIN - 60 / POS_SEND_EVERY_TICKS));

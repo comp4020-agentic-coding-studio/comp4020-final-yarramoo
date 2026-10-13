@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KIND_CAST, KIND_PAINT, KIND_POS } from "../shared/inputs.ts";
-import { CAST_PAYLOAD_LEN, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
+import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
   cleanName,
   decodeClient,
@@ -29,7 +29,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");
 const WASM_PATH = join(ROOT, "sim/target/wasm32-unknown-unknown/release/sim.wasm");
 const CLIENT_DIR = join(ROOT, "dist/client");
-export const MAX_INPUTS_PER_SEC = 40;
+export const MAX_INPUTS_PER_SEC = INPUT_RATE_LIMIT;
 /** Connections per world, spectators included (plan 14: 8 players; the rest is headroom for spectators). */
 export const MAX_MEMBERS_PER_WORLD = 64;
 /** Concurrent sockets per client address. */

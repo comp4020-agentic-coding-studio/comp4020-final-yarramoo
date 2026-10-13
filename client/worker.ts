@@ -24,7 +24,7 @@ import {
   type Sim,
   type SimEvent,
 } from "../shared/sim.ts";
-import { CAST_PAYLOAD_LEN } from "../shared/avatar.ts";
+import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
 import { Particles, newPoseState, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { SPELLS } from "./spells.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
@@ -351,7 +351,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     for (let i = 0; i < n; i++) {
       avatar.step(keys, grid);
       // Pos every 2 ticks, quantised to 1/16 cell, with the current life; a keepalive while standing still.
-      if (++avTicks % 2 === 0) {
+      if (++avTicks % POS_SEND_EVERY_TICKS === 0) {
         const q = avatar.quantised();
         const sig = `${q.x},${q.y},${q.facing}`;
         if (sig !== lastSentPos || ++sinceSentPos >= POS_KEEPALIVE_TICKS / 2) {
@@ -518,7 +518,7 @@ function dropGhost(seq: number) {
 function onCast(spell: number, angle: number) {
   if (spectate || !avatar || !avatarReady || !ws || ws.readyState !== WebSocket.OPEN || net !== "live") return;
   const now = performance.now();
-  if (now - lastCastAt < 90) return; // under the server's 40 inputs/s even with Pos and a held button
+  if (now - lastCastAt < CAST_MIN_INTERVAL_MS) return; // Pos + casts stay under the server's rate limit
   lastCastAt = now;
   if (spell < 0 || spell >= SPELLS.length) return;
   const seq = ++castSeq & 0xffff;
