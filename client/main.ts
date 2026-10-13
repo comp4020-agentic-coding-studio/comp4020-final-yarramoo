@@ -134,7 +134,12 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       fallback?.draw(m.mat, m.aux, performance.now() / 1000);
       break;
     case "stats":
-      info.textContent = `${m.stepsPerSec.toFixed(0)} steps/s · tick ${m.tick}`;
+      lastStats = m;
+      renderInfo();
+      break;
+    case "net":
+      lastNet = m;
+      renderInfo();
       break;
     case "error":
       console.error("[worker]", m.error);
@@ -142,17 +147,41 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
   }
 };
+let lastStats: Extract<FromWorker, { type: "stats" }> | null = null;
+let lastNet: Extract<FromWorker, { type: "net" }> | null = null;
+
+function renderInfo() {
+  const n = lastNet;
+  if (!n) return;
+  let status: string;
+  switch (n.state) {
+    case "connecting": status = "connecting"; break;
+    case "reconnecting": status = "reconnecting"; break;
+    case "catching-up": status = `catching up ${Math.round(n.progress * 100)}%`; break;
+    case "rejected": status = n.reason.includes("reload") ? "new version, reload" : n.reason; break;
+    default: status = `live · ${n.players} player${n.players === 1 ? "" : "s"}`;
+  }
+  info.textContent = `${status}${lastStats && n.state === "live" ? ` · tick ${lastStats.tick}` : ""}`;
+  note.hidden = n.state !== "rejected" && !(n.state === "reconnecting");
+  if (!note.hidden) note.textContent = n.state === "rejected" ? status : "Connection lost, reconnecting and replaying the world...";
+  // Debug/measurement hook for the browser checks; read-only.
+  (window as unknown as { __net: unknown }).__net = { ...n, tick: lastStats?.tick ?? 0, buffered: lastStats?.buffered ?? 0 };
+}
+
 worker.onerror = (e) => console.error("[worker] uncaught", e.message);
 
 const wasmUrl = new URL("sim.wasm", document.baseURI).href;
+// Same origin as the page by default; ?server=host:port points a dev build at a separate server.
+const serverParam = new URLSearchParams(location.search).get("server");
+const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${serverParam ?? location.host}/ws`;
 const { w, h } = layout();
 if ("OffscreenCanvas" in window && "transferControlToOffscreen" in canvas) {
   canvas.width = w;
   canvas.height = h;
   const off = canvas.transferControlToOffscreen();
-  send({ type: "init", wasmUrl, canvas: off, width: w, height: h }, [off]);
+  send({ type: "init", wasmUrl, wsUrl, canvas: off, width: w, height: h }, [off]);
 } else {
-  send({ type: "init", wasmUrl, width: w, height: h });
+  send({ type: "init", wasmUrl, wsUrl, width: w, height: h });
   startFallback("no OffscreenCanvas");
 }
 
