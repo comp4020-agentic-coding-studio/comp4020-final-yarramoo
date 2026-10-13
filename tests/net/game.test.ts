@@ -112,15 +112,18 @@ describe("two worlds on one server", () => {
     await sleep(400);
     expect(s.world.log.length).toBeGreaterThan(10);
     expect(s.game.log.length).toBeGreaterThan(10);
-    expect(s.world.clock.lastClosed).not.toBe(s.game.clock.lastClosed);
     expect(s.world.playerCount).toBe(1);
     expect(s.game.playerCount).toBe(1);
     // Closing the sandbox pauses only the sandbox.
     sb.close();
     await waitFor(() => s.world.playerCount === 0, 3000, "sandbox empty");
+    // Two independent 60 Hz clocks often read the same tick, so equal counts prove nothing; a pause
+    // that stops one clock and not the other is what shows they're separate.
     const t = s.game.clock.lastClosed;
+    const st = s.world.clock.lastClosed;
     await sleep(300);
     expect(s.game.clock.lastClosed).toBeGreaterThan(t);
+    expect(s.world.clock.lastClosed).toBe(st);
     g.close();
   });
 
