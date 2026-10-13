@@ -202,8 +202,9 @@ fn line_entrances_with_dirt(g: &mut Grid, seed: u64, surf: &[i32]) {
 }
 
 /// Fill a mound of `mat` on the floors under a blob: each column rises by `(r - |dx|) / div + 1`.
-fn pile(g: &mut Grid, cx: i32, y_ref: i32, r: i32, div: i32, mat: u8) {
+fn pile(g: &mut Grid, cx: i32, y_ref: i32, r: i32, div: i32, mat: u8) -> usize {
     let w = g.w as i32;
+    let mut put = 0;
     for x in cx - r..=cx + r {
         let Some(yf) = find_floor(g, x, y_ref - 10, 40) else { continue };
         let depth = (r - (x - cx).abs()) / div + 1;
@@ -213,8 +214,10 @@ fn pile(g: &mut Grid, cx: i32, y_ref: i32, r: i32, div: i32, mat: u8) {
                 break;
             }
             g.mat[i] = mat;
+            put += 1;
         }
     }
+    put
 }
 
 fn place_sand(g: &mut Grid, seed: u64) {
@@ -240,7 +243,7 @@ fn near_material(g: &Grid, cx: i32, cy: i32, rx: i32, ry: i32, m: u8) -> bool {
 
 fn place_gunpowder(g: &mut Grid, seed: u64) {
     let mut placed = 0;
-    for k in 0..400u32 {
+    for k in 0..3000u32 {
         if placed == 45 {
             break;
         }
@@ -251,8 +254,10 @@ fn place_gunpowder(g: &mut Grid, seed: u64) {
         if near_material(g, x, y + 15, r + 8 + 2, 60, LAVA) {
             continue;
         }
-        pile(g, x, y, r, 2, GUNPOWDER);
-        placed += 1;
+        // Count only piles that landed, so a sparser cave system still gets its pockets.
+        if pile(g, x, y, r, 2, GUNPOWDER) >= 20 {
+            placed += 1;
+        }
     }
 }
 
@@ -440,7 +445,7 @@ fn pick_spots(g: &Grid, seed: u64) -> Vec<PickupSpot> {
     let mut out: Vec<PickupSpot> = Vec::new();
     for (band, &(y_lo, y_hi, want)) in TARGET_SPOTS.iter().enumerate() {
         let mut n = 0;
-        for k in 0..4000u32 {
+        for k in 0..400u32 {
             if n == want {
                 break;
             }
@@ -542,6 +547,8 @@ struct Worm {
     max_steps: u32,
     target_y: i32,
     branches: u8,
+    /// Sideways push added to a branch's first 200 steps, so it leaves its parent at an angle.
+    lean: i32,
     /// Horizontal link worm: heading (+1/-1) and the row it wanders around.
     horiz: Option<(i32, i32)>,
 }
@@ -570,21 +577,15 @@ fn near_border(g: &Grid, x: i32, y: i32, r: i32) -> bool {
 }
 
 fn pick_entrances(seed: u64, w: i32) -> Vec<i32> {
-    let want = 3 + (rng(seed, 0, 0, 0, SALT_GEN_ENTRANCE) % 3) as usize;
+    let want = 3 + (rng(seed, 0, 0, 0, SALT_GEN_ENTRANCE) % 3) as i32;
     let lo = WALL_COLS as i32 + 64;
-    let span = (w - 2 * lo) as u32;
-    let mut xs: Vec<i32> = Vec::new();
-    for k in 1..200u32 {
-        if xs.len() == want {
-            break;
-        }
-        let x = lo + (rng(seed, 0, k, 1, SALT_GEN_ENTRANCE) % span) as i32;
-        if xs.iter().all(|&o| (o - x).abs() >= 300) {
-            xs.push(x);
-        }
-    }
-    xs.sort_unstable();
-    xs
+    let span = w - 2 * lo;
+    let band = span / want;
+    // One entrance per equal band, at an rng offset inside the band's middle 60%, so neighbours
+    // are at least 40% of a band apart and the whole width is covered.
+    (0..want)
+        .map(|k| lo + k * band + band / 5 + (rng(seed, 0, k as u32, 2, SALT_GEN_ENTRANCE_BAND) % (band as u32 * 3 / 5)) as i32)
+        .collect()
 }
 
 /// Run one worm to completion, pushing branches onto `todo` and sampled positions onto `path`.
@@ -603,17 +604,18 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
             wm.r = (wm.r + (rn(SALT_GEN_WORM_R) % 3) as i32 - 1).clamp(wm.r_min, wm.r_max);
         }
         if let Some((dir, base)) = wm.horiz {
-            if st % 30 == 0 {
+            if st % 14 == 0 {
                 wm.drift = (rn(SALT_GEN_HWORM) % 3) as i32 - 1;
             }
-            // Wander freely, but turn back toward the base row once 45 or more cells off it.
-            if (wm.y - base).abs() > 45 {
+            // Meander: change heading often, move vertically as fast as sideways, and only turn
+            // back toward the base row once 70 or more cells off it.
+            if (wm.y - base).abs() > 70 {
                 wm.drift = (base - wm.y).signum();
             }
-            if st % 3 == 0 {
+            if st % 2 == 0 {
                 wm.y += wm.drift;
             }
-            wm.x += dir * (1 + (rn(SALT_GEN_WORM_DX) % 2) as i32);
+            wm.x += dir * (rn(SALT_GEN_WORM_DX) % 2) as i32 + if st % 5 == 0 { 1 } else { 0 };
         } else {
             if st % 24 == 0 {
                 wm.drift = (rn(SALT_GEN_WORM_DRIFT) % 3) as i32 - 1;
@@ -624,11 +626,12 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
                 _ => -1,
             };
             wm.y += dy;
-            wm.x += (wm.drift + (rn(SALT_GEN_WORM_DX) % 3) as i32 - 1).clamp(-2, 2);
+            let lean = if st < 200 { wm.lean } else { 0 };
+            wm.x += (wm.drift + (rn(SALT_GEN_WORM_DX) % 3) as i32 - 1).clamp(-2, 2) + lean;
             if wm.y >= wm.target_y {
                 return;
             }
-            if st % 100 == 99 && wm.branches > 0 {
+            if st % 220 == 219 && wm.branches > 0 {
                 wm.branches -= 1;
                 let id = *next_id;
                 *next_id += 1;
@@ -644,6 +647,7 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
                     max_steps: 2500,
                     target_y: deeper.max(wm.y + 150),
                     branches: 0,
+                    lean: side * 2,
                     ..wm
                 });
             }
@@ -669,7 +673,8 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             step: 0,
             max_steps: 2500,
             target_y: DEEP_TOP + 100,
-            branches: 5,
+            branches: 2,
+            lean: 0,
             horiz: None,
         });
     }
@@ -684,12 +689,13 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             y: base,
             r: 5,
             r_min: 3,
-            r_max: 8,
+            r_max: 9,
             drift: 0,
             step: 0,
-            max_steps: 500 + (rng(seed, 0, id, 2, SALT_GEN_HWORM) % 500),
+            max_steps: 280 + (rng(seed, 0, id, 2, SALT_GEN_HWORM) % 280),
             target_y: 0,
             branches: 0,
+            lean: 0,
             horiz: Some((if i & 1 == 0 { 1 } else { -1 }, base)),
         });
     }
@@ -940,7 +946,8 @@ mod tests {
         for seed in 0..20u64 {
             let xs = pick_entrances(seed, 2048);
             assert!((3..=5).contains(&xs.len()), "seed {seed}: {xs:?}");
-            assert!(xs.windows(2).all(|p| p[1] - p[0] >= 300));
+            assert!(xs.windows(2).all(|p| p[1] - p[0] >= 150));
+            assert!(xs[0] < 2048 / 3 && *xs.last().unwrap() > 2048 * 2 / 3, "seed {seed}: {xs:?}");
         }
     }
 }

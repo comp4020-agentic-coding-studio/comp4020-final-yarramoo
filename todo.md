@@ -44,11 +44,11 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ### Generator follow-ups (from looking at the M3 overview, `/tmp/m3-shots/gen-c9b.png`)
 
-- [ ] Spread entrances across the whole surface width (all landed centre-right;
+- [x] Spread entrances across the whole surface width (all landed centre-right;
       the left third is reachable from above only by a long side tunnel).
-- [ ] Fewer, less parallel branches per entrance worm: 5 branches make a dense
+- [x] Fewer, less parallel branches per entrance worm: 5 branches make a dense
       vertical tangle around x 700-1600.
-- [ ] Horizontal link worms run nearly straight across the world; shorten them
+- [x] Horizontal link worms run nearly straight across the world; shorten them
       and let them meander, so they read as caves, not corridors.
 
 ## Plants
@@ -100,6 +100,10 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       the active region per player. Decide before M5 adds lava floods.
 
 ## Crit 10: fly by instruments (by Tue 20 Oct)
+
+Budgeted from next week's allowance (resets Thu 15 Oct 9 am); the user decided
+on 14 Oct. Still open: whether it lands on `main` with the game world (merge
+`multa`) or on its own on top of the live sandbox.
 
 - [ ] Structured server logs: joins, leaves, desyncs, snapshots, rejects.
 - [ ] Basic live dashboard at `/dashboard`: players online, tick rate,
