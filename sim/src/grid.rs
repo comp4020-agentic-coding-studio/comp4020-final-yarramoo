@@ -5,6 +5,16 @@ use crate::materials::*;
 use crate::rng::*;
 
 pub const CHUNK: usize = 64;
+/// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
+#[derive(Clone, Copy)]
+pub struct Liquid {
+    diag: u32,
+    side: u32,
+    reach: usize,
+}
+const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6 };
+/// Lava is thicker, so it spreads less per update (and it only moves on even ticks).
+const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3 };
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
 /// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
 pub const ACTIVE_W: i32 = crate::tuning::ACTIVE_W;
@@ -282,25 +292,49 @@ impl Grid {
         self.try_move(x, y, d, 1, Self::powder_ok) || self.try_move(x, y, -d, 1, Self::powder_ok)
     }
 
-    /// Shared liquid motion: down, diagonal down, sideways.
-    fn liquid_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, diag: u32, side: u32) {
+    /// Shared liquid motion: down, diagonal down, then a sideways slide of up to `reach` cells.
+    fn liquid_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, l: Liquid) {
         let ok = Self::liquid_ok;
         if self.try_move(x, y, 0, 1, ok) {
             return;
         }
-        let d = if rng(seed, tick, x as u32, y as u32, diag) & 1 == 0 { -1 } else { 1 };
+        let d = if rng(seed, tick, x as u32, y as u32, l.diag) & 1 == 0 { -1 } else { 1 };
         if self.try_move(x, y, d, 1, ok) || self.try_move(x, y, -d, 1, ok) {
             return;
         }
-        let s = if rng(seed, tick, x as u32, y as u32, side) & 1 == 0 { -1 } else { 1 };
-        if self.try_move(x, y, s, 0, ok) {
-            return;
+        let s = if rng(seed, tick, x as u32, y as u32, l.side) & 1 == 0 { -1 } else { 1 };
+        if !self.slide(x, y, s, l.reach) {
+            self.slide(x, y, -s, l.reach);
         }
-        self.try_move(x, y, -s, 0, ok);
+    }
+
+    /// Slide a liquid cell sideways to the furthest free cell within `reach`, stopping at the first
+    /// blocked one, and dropping into a gap it passes over. One step at a time, a deep heap only levels
+    /// from its surface a cell per update and settles into a staircase on chunk edges; dispersion is how
+    /// a liquid finds its level. Bounded by `reach`, integer-only, and a fixed scan order.
+    fn slide(&mut self, x: usize, y: usize, dir: isize, reach: usize) -> bool {
+        let mut best = None;
+        for k in 1..=reach as isize {
+            let Some((nx, ny)) = self.off(x, y, dir * k, 0) else { break };
+            if !Self::liquid_ok(self.at(nx, ny)) {
+                break;
+            }
+            best = Some((nx, ny));
+            if self.off(nx, ny, 0, 1).is_some_and(|(bx, by)| Self::liquid_ok(self.at(bx, by))) {
+                break; // a gap below: fall into it from here
+            }
+        }
+        match best {
+            Some((nx, ny)) => {
+                self.swap(y * self.w + x, ny * self.w + nx);
+                true
+            }
+            None => false,
+        }
     }
 
     fn update_water(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
-        self.liquid_move(x, y, seed, tick, SALT_WATER_DIAG, SALT_WATER_SIDE);
+        self.liquid_move(x, y, seed, tick, WATER_FLOW);
     }
 
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
@@ -322,7 +356,7 @@ impl Grid {
             }
         }
         if tick & 1 == 0 {
-            self.liquid_move(x, y, seed, tick, SALT_LAVA_DIAG, SALT_LAVA_SIDE);
+            self.liquid_move(x, y, seed, tick, LAVA_FLOW);
         }
     }
 
@@ -791,5 +825,59 @@ mod tests {
             assert!(paintable(m), "{m}");
         }
         assert!(!paintable(BEDROCK) && !paintable(15));
+    }
+}
+
+#[cfg(test)]
+mod lava_levels {
+    use super::*;
+
+    fn lava_column(sleep: bool) -> Grid { column(sleep, LAVA) }
+    fn column(sleep: bool, mat: u8) -> Grid {
+        let (w, h) = (384, 192);
+        let mut g = Grid::new(w, h);
+        g.set_all_active();
+        g.sleep_enabled = sleep;
+        for x in 0..w {
+            g.set((h - 1) * w + x, BEDROCK, 0);
+        }
+        for y in 0..h {
+            g.set(y * w + w - 1, BEDROCK, 0);
+            g.set(y * w, BEDROCK, 0);
+        }
+        // A tall column of lava against the right wall, as in the bug screenshot.
+        for y in 20..h - 1 {
+            for x in w - 60..w - 1 {
+                g.set(y * w + x, mat, 0);
+            }
+        }
+        for t in 0..6000 {
+            g.step_cells(7, t);
+        }
+        g
+    }
+
+    fn surface(g: &Grid) -> Vec<usize> { surface_of(g, LAVA) }
+    fn surface_of(g: &Grid, m: u8) -> Vec<usize> {
+        (1..g.w - 1).map(|x| (0..g.h).find(|&y| g.mat[y * g.w + x] == m).unwrap_or(g.h)).collect()
+    }
+
+    #[test]
+    fn water_levels_out() {
+        let g = column(true, WATER);
+        let s = surface_of(&g, WATER);
+        let spread = s.iter().max().unwrap() - s.iter().min().unwrap();
+        assert!(spread <= 2, "water surface spans {spread} rows; a liquid should level");
+    }
+
+    #[test]
+    fn lava_settles_the_same_with_sleeping_on_and_off() {
+        let (on, off) = (lava_column(true), lava_column(false));
+        let (son, soff) = (surface(&on), surface(&off));
+        let spread = |s: &[usize]| s.iter().max().unwrap() - s.iter().min().unwrap();
+        assert_eq!(on.mat, off.mat, "sleeping changed the result (invariant 8)");
+        // The reported bug: a heap of lava settled into a staircase on chunk edges, 48 rows high.
+        assert!(spread(&son) <= 2, "lava surface spans {} rows; a liquid should level", spread(&son));
+        let _ = soff;
     }
 }
