@@ -90,6 +90,15 @@ fn inputs_apply_next_step_in_push_order() {
 }
 
 #[test]
+fn huge_paint_is_clamped_not_overflowed() {
+    let mut s = sim::sim::Sim::new(5, 0).unwrap();
+    s.push_input(&encode_paint(1, 4, i16::MIN, i16::MIN, i16::MAX, i16::MAX, 255));
+    s.step();
+    let sand = s.grid.mat.iter().filter(|&&m| m == 4).count();
+    assert!(sand > 0 && sand < 512 * 512);
+}
+
+#[test]
 fn paint_skips_bedrock_and_ignores_others() {
     let mut s = Sim::new(1, 0).unwrap();
     s.push_input(&encode_paint(1, 4, 0, 505, 40, 505, 4));

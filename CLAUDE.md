@@ -132,3 +132,17 @@ asking the user.
 Run the determinism suite before every commit that touches `sim/`,
 `shared/protocol` or the input path. Build and test commands go here as they
 come into existence.
+
+- **Two Rust toolchains are installed and the wrong one is first on PATH.**
+  Homebrew's `/usr/local/bin/rustc` has no wasm32 target, so wasm builds and
+  clippy fail with "can't find crate for `core`". Prefix sim commands with
+  `PATH="$HOME/.cargo/bin:$PATH"`.
+- **Sim commands** (from `sim/`): `cargo test --release` (debug is about 25×
+  slower on the 512×512 sandbox); `cargo clippy --target wasm32-unknown-unknown
+  --release -- -D warnings`; `cargo build --target wasm32-unknown-unknown
+  --release` writes `target/wasm32-unknown-unknown/release/sim.wasm`, which must
+  have zero imports.
+- **An input must not be able to cost unbounded work.** Every client runs every
+  input, so one huge `Paint` freezes the whole room. The sim clamps paint
+  endpoints to the world and the radius to `MAX_PAINT_RADIUS`; new input kinds
+  need the same bound.

@@ -11,6 +11,7 @@ pub const GAME_W: usize = 2048;
 pub const GAME_H: usize = 1536;
 const FLOOR_ROWS: usize = 16;
 const WALL_COLS: usize = 16;
+pub const MAX_PAINT_RADIUS: i32 = 32;
 
 pub struct Sim {
     pub seed: u64,
@@ -88,6 +89,11 @@ impl Sim {
         if !paintable(mat) {
             return;
         }
+        // Clamping bounds the work one input can cost every client, and keeps the line maths in range.
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let (x0, x1) = (x0.clamp(0, w - 1), x1.clamp(0, w - 1));
+        let (y0, y1) = (y0.clamp(0, h - 1), y1.clamp(0, h - 1));
+        let r = r.min(MAX_PAINT_RADIUS);
         let (dx, dy) = (x1 - x0, y1 - y0);
         let n = dx.abs().max(dy.abs());
         for k in 0..=n {
