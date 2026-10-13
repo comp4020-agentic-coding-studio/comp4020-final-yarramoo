@@ -1,6 +1,6 @@
 //! The simulation instance: grid + tick + queued inputs.
 
-use crate::entities::{self, Event, Pickup, Player, EV_PICKUP, EV_SPAWN};
+use crate::entities::{self, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
@@ -26,6 +26,8 @@ pub struct Sim {
     pub players: Vec<Player>,
     /// Pickups created by generation, in id order (game worlds only). State.
     pub pickups: Vec<Pickup>,
+    /// Bolts in flight, in spawn order (game worlds only). State: hashed and snapshotted.
+    pub projectiles: Vec<Projectile>,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
 }
@@ -51,7 +53,7 @@ impl Sim {
                     Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
                 })
                 .collect();
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, events: Vec::new() });
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), events: Vec::new() });
         }
         for y in 0..h {
             for x in 0..w {
@@ -60,7 +62,7 @@ impl Sim {
                 }
             }
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), events: Vec::new() })
+        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), events: Vec::new() })
     }
 
     /// 0 on success, negative if malformed (input is then dropped).
@@ -124,7 +126,7 @@ impl Sim {
                 }
             }
             // Players live in game worlds only: a sandbox visitor has no entity to grow without bound.
-            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } if self.world_kind == 0 => {}
+            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } if self.world_kind == 0 => {}
             Input::Join { player } => self.join(player),
             Input::Leave { player } => {
                 if let Ok(k) = self.player_index(player) {
@@ -143,8 +145,7 @@ impl Sim {
                     }
                 }
             }
-            // Spells arrive in slice 4b.
-            Input::Cast { .. } => {}
+            Input::Cast { player, spell, angle, cast_seq } => self.cast(player, spell, angle, cast_seq),
         }
     }
 
@@ -171,7 +172,7 @@ impl Sim {
 
     /// Centre of the surface plus an rng offset: the first column from a few candidates whose hitbox
     /// has clear air above solid ground (trees and overhangs are skipped). Pure function of state.
-    fn spawn_point(&self, id: u32) -> (i32, i32) {
+    pub(crate) fn spawn_point(&self, id: u32) -> (i32, i32) {
         let g = &self.grid;
         let (w, h) = (g.w as i32, g.h as i32);
         let first = (rng(self.seed, self.tick, id, 0, SALT_SPAWN_X) % (2 * SPAWN_JITTER + 1)) as i32 - SPAWN_JITTER as i32;
@@ -194,6 +195,7 @@ impl Sim {
     /// Plan 6.2 step 2: pickups (players move only through Pos inputs). Players by id, pickups by id,
     /// so two players on one pickup resolve to the lower id.
     fn update_entities(&mut self) {
+        self.update_projectiles();
         if self.pickups.is_empty() {
             return;
         }
@@ -254,7 +256,7 @@ impl Sim {
         if self.world_kind == 0 {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups)
+        entities::encode(&self.players, &self.pickups, &self.projectiles)
     }
 
     pub fn state_hash(&mut self) -> u64 {

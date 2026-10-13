@@ -11,7 +11,9 @@ pub mod materials;
 pub mod rng;
 pub mod script;
 pub mod sim;
+pub mod spells;
 pub mod snapshot;
+pub mod trig;
 pub mod tuning;
 
 use core::cell::UnsafeCell;
@@ -175,7 +177,7 @@ pub extern "C" fn entities(out_ptr: u32, max: u32) -> u32 {
     with(|s| {
         // SAFETY: caller provides `max` records of ENTITY_BYTES.
         let o = unsafe { out_slice(out_ptr, max as usize * entities::ENTITY_BYTES) };
-        entities::write_view(&s.players, &s.pickups, s.tick, o, max as usize) as u32
+        entities::write_view(&s.players, &s.pickups, &s.projectiles, s.tick, o, max as usize) as u32
     })
     .unwrap_or(0)
 }
@@ -193,4 +195,18 @@ pub extern "C" fn set_sleep_enabled(on: u32) {
 #[no_mangle]
 pub extern "C" fn ran_chunks() -> u32 {
     with(|s| s.grid.ran_chunks).unwrap_or(0)
+}
+
+/// HUD view of one player's spells, written to `out_ptr` (`PLAYER_VIEW_BYTES` bytes: charges u16[6],
+/// ticks of cooldown left u16[6]). Returns 1 if the player exists, else 0. Render and UI only.
+#[no_mangle]
+pub extern "C" fn player_view(id: u32, out_ptr: u32) -> u32 {
+    with(|s| {
+        let Ok(k) = s.players.binary_search_by_key(&id, |p| p.id) else { return 0 };
+        // SAFETY: caller provides PLAYER_VIEW_BYTES writable bytes.
+        let o = unsafe { out_slice(out_ptr, entities::PLAYER_VIEW_BYTES) };
+        entities::write_player_view(&s.players[k], s.tick, o);
+        1
+    })
+    .unwrap_or(0)
 }

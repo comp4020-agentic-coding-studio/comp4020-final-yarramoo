@@ -73,7 +73,7 @@ pub fn restore(b: &[u8]) -> Result<Sim, ()> {
             return Err(()); // v1 and sandbox snapshots have no entities
         }
     } else {
-        s.players = crate::entities::decode(&b[o..eend], &mut s.pickups)?;
+        (s.players, s.projectiles) = crate::entities::decode(&b[o..eend], &mut s.pickups)?;
     }
     o = eend;
     let n = u32_at(o) as usize;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compare } from "./compare.ts";
-import { readWasm, sharedScript, wasmPath } from "./helpers.ts";
+import { castScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 
 const wasm = readWasm(wasmPath);
@@ -18,6 +18,24 @@ describe("Node determinism", () => {
     const one = run(wasm, script, {}, { batching: { kind: "each" } });
     const seven = run(wasm, script, {}, { batching: { kind: "batch", k: 7 } });
     const burst = run(wasm, script, {}, { batching: { kind: "burst", at: 500, len: 600 } });
+    expect(compare(one, seven, ["each", "k=7"])).toBeNull();
+    expect(compare(one, burst, ["each", "burst"])).toBeNull();
+  });
+
+  // The same two properties with players casting in the game world (projectiles in entity state).
+  const cast = castScript().script;
+  it("D1 with casts: two fresh instances agree, and bolts really flew", () => {
+    const a = run(readWasm(wasmPath), cast);
+    const b = run(readWasm(wasmPath), cast);
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    const n = Object.values(cast.inputs).flat().filter((h) => h.startsWith("04")).length;
+    expect(n).toBeGreaterThan(20);
+  });
+
+  it("D6 with casts: 1 step per call, 7 per call and a catch-up burst agree", () => {
+    const one = run(wasm, cast, {}, { batching: { kind: "each" } });
+    const seven = run(wasm, cast, {}, { batching: { kind: "batch", k: 7 } });
+    const burst = run(wasm, cast, {}, { batching: { kind: "burst", at: 300, len: 400 } });
     expect(compare(one, seven, ["each", "k=7"])).toBeNull();
     expect(compare(one, burst, ["each", "burst"])).toBeNull();
   });

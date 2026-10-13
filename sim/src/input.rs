@@ -80,6 +80,15 @@ pub fn encode_paint(player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, ra
     v
 }
 
+pub fn encode_cast(player: u32, spell: u8, angle: u16, cast_seq: u16) -> Vec<u8> {
+    let mut v = vec![4];
+    v.extend_from_slice(&player.to_le_bytes());
+    v.push(spell);
+    v.extend_from_slice(&angle.to_le_bytes());
+    v.extend_from_slice(&cast_seq.to_le_bytes());
+    v
+}
+
 pub fn encode_join(player: u32) -> Vec<u8> {
     let mut v = vec![1];
     v.extend_from_slice(&player.to_le_bytes());

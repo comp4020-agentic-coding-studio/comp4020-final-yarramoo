@@ -74,6 +74,7 @@ pub const SALT_GEN_SPOT_Y: u32 = 133;
 pub const SALT_GEN_LINK: u32 = 134;
 pub const SALT_SPAWN_X: u32 = 140;
 pub const SALT_PICKUP_SPELL: u32 = 141;
+pub const SALT_BURST: u32 = 142;
 
 #[cfg(test)]
 mod tests {

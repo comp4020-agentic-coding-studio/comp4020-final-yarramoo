@@ -21,15 +21,31 @@ export interface SimExports {
   ran_chunks(): number;
   events(outPtr: number, max: number): number;
   entities(outPtr: number, max: number): number;
+  player_view(id: number, outPtr: number): number;
 }
 
 /** Event kinds from `events()` (plan 6.11). Render and UI only: nothing read here may become an input (invariant 9). */
 export const EV_SPAWN = 1;
 export const EV_PICKUP = 2;
+export const EV_CAST = 3;
+export const EV_CAST_REJECTED = 4;
+export const EV_KNOCK = 5;
+export const EV_IMPACT = 6;
+export const EV_RESPAWN = 7;
+/** Why a cast was refused (`CastRejected.b`). */
+export const REJECT_SPELL = 1;
+export const REJECT_CHARGES = 2;
+export const REJECT_COOLDOWN = 3;
+export const REJECT_FULL = 4;
+export const REJECT_DEAD = 5;
 export interface SimEvent {
   kind: number;
   player: number;
-  /** Spawn: x, y (1/16 cell), life. Pickup: pickup id, spell, charges. */
+  /**
+   * Spawn: x, y (1/16 cell), life. Pickup: pickup id, spell, charges. Cast: spell, angle, cast_seq.
+   * CastRejected: spell, reason, cast_seq. Knock: vx, vy (1/16 cell per tick), attacker. Impact (`player` = owner):
+   * cell x, y, spell. Respawn: x, y (1/16 cell), new life.
+   */
   a: number;
   b: number;
   c: number;
@@ -37,6 +53,9 @@ export interface SimEvent {
 
 export const ENT_PLAYER = 1;
 export const ENT_PICKUP = 2;
+/** A bolt in flight: `id` is the owner, `sub` the spell, `a` the cast_seq, x and y in 1/16 cell. */
+export const ENT_PROJECTILE = 3;
+export const NUM_SPELLS = 6;
 export interface EntityView {
   type: number;
   id: number;
@@ -46,7 +65,7 @@ export interface EntityView {
   /** 1/16 cell. Player: feet centre. Pickup: the cell's bottom centre. */
   x: number;
   y: number;
-  /** Player: life. Pickup: charges. */
+  /** Player: life. Pickup: charges. Projectile: cast_seq. */
   a: number;
   health: number;
 }
@@ -55,7 +74,12 @@ export const EVENT_BYTES = 17;
 export const ENTITY_BYTES = 18;
 /** Buffers for events() and entities(): a render view past these is truncated, which is harmless. */
 export const MAX_EVENTS = 256;
-export const MAX_ENTITIES = 1200;
+export const MAX_ENTITIES = 1600;
+/** One player's spells for the HUD: charges (65535 = infinite) and ticks of cooldown left. */
+export interface PlayerView {
+  charges: number[];
+  cooldown: number[];
+}
 
 export interface Sim {
   init(seed: bigint, worldKind: number): void;
@@ -79,6 +103,8 @@ export interface Sim {
   events(): SimEvent[];
   /** Players then pickups, as the renderer should draw them (render-only). */
   entities(): EntityView[];
+  /** Spell charges and cooldowns of a player, or null if it does not exist (render-only). */
+  playerView(id: number): PlayerView | null;
 }
 
 // chunk_hashes writes 8 bytes per chunk: the 2048x1536 game world has 32 x 24 = 768 at CHUNK = 64.
@@ -138,6 +164,19 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
           });
         }
         return out;
+      });
+    },
+    playerView(id) {
+      return withBuf(4 * NUM_SPELLS, (p) => {
+        if (x.player_view(id, p) === 0) return null;
+        const dv = new DataView(x.memory.buffer);
+        const charges: number[] = [];
+        const cooldown: number[] = [];
+        for (let k = 0; k < NUM_SPELLS; k++) {
+          charges.push(dv.getUint16(p + 2 * k, true));
+          cooldown.push(dv.getUint16(p + 2 * NUM_SPELLS + 2 * k, true));
+        }
+        return { charges, cooldown };
       });
     },
     init(seed, worldKind) {

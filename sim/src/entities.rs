@@ -99,15 +99,52 @@ impl Pickup {
     }
 }
 
-/// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id)`.
-pub fn encode(players: &[Player], pickups: &[Pickup]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(8 + players.len() * PLAYER_BYTES + pickups.len() * PICKUP_BYTES);
+/// A spell bolt in flight (plan 6.6). Entity state: hashed and snapshotted, kept in spawn order.
+/// `x`, `y`, `vx`, `vy` are in 1/256 cell (and per tick).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Projectile {
+    pub owner: u32,
+    pub spell: u8,
+    pub cast_seq: u16,
+    pub x: i32,
+    pub y: i32,
+    pub vx: i32,
+    pub vy: i32,
+    /// Ticks since the cast; the owner cannot be hit while this is at most `OWNER_GRACE`.
+    pub age: u16,
+}
+
+pub const PROJECTILE_BYTES: usize = 4 + 1 + 2 + 4 + 4 + 4 + 4 + 2;
+
+impl Projectile {
+    fn write(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.owner.to_le_bytes());
+        v.push(self.spell);
+        v.extend_from_slice(&self.cast_seq.to_le_bytes());
+        v.extend_from_slice(&self.x.to_le_bytes());
+        v.extend_from_slice(&self.y.to_le_bytes());
+        v.extend_from_slice(&self.vx.to_le_bytes());
+        v.extend_from_slice(&self.vy.to_le_bytes());
+        v.extend_from_slice(&self.age.to_le_bytes());
+    }
+}
+
+/// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
+/// n_projectiles u32, projectiles (spawn order)`.
+pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(
+        12 + players.len() * PLAYER_BYTES + pickups.len() * PICKUP_BYTES + projectiles.len() * PROJECTILE_BYTES,
+    );
     v.extend_from_slice(&(players.len() as u32).to_le_bytes());
     for p in players {
         p.write(&mut v);
     }
     v.extend_from_slice(&(pickups.len() as u32).to_le_bytes());
     for p in pickups {
+        p.write(&mut v);
+    }
+    v.extend_from_slice(&(projectiles.len() as u32).to_le_bytes());
+    for p in projectiles {
         p.write(&mut v);
     }
     v
@@ -138,11 +175,20 @@ impl R<'_> {
 
 /// Decode entity bytes against the freshly generated `pickups` (their identity must match; only
 /// `respawn_at` and `charges` are taken from the bytes). Hostile input fails cleanly, never panics.
-pub fn decode(b: &[u8], pickups: &mut [Pickup]) -> Result<Vec<Player>, ()> {
+pub fn decode(b: &[u8], pickups: &mut [Pickup]) -> Result<(Vec<Player>, Vec<Projectile>), ()> {
     let mut r = R(b, 0);
     let np = r.u32().ok_or(())? as usize;
     // Compare in u64 so a crafted count cannot wrap a 32-bit usize.
-    if np > MAX_PLAYERS || (np as u64) * (PLAYER_BYTES as u64) + 8 + (pickups.len() * PICKUP_BYTES) as u64 != b.len() as u64 {
+    if np > MAX_PLAYERS {
+        return Err(());
+    }
+    // Everything up to the projectile count has a fixed size once np is known; the count then fixes the rest.
+    let fixed = (np as u64) * (PLAYER_BYTES as u64) + 12 + (pickups.len() * PICKUP_BYTES) as u64;
+    if (b.len() as u64) < fixed {
+        return Err(());
+    }
+    let tail = u32::from_le_bytes(b[(fixed - 4) as usize..fixed as usize].try_into().map_err(|_| ())?) as usize;
+    if tail > MAX_PROJECTILES || fixed + (tail as u64) * (PROJECTILE_BYTES as u64) != b.len() as u64 {
         return Err(());
     }
     let mut players: Vec<Player> = Vec::with_capacity(np);
@@ -181,13 +227,50 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup]) -> Result<Vec<Player>, ()> {
         pk.charges = r.u16().ok_or(())?;
         pk.respawn_at = r.u32().ok_or(())?;
     }
-    Ok(players)
+    let n = r.u32().ok_or(())? as usize;
+    if n != tail {
+        return Err(());
+    }
+    let mut projectiles = Vec::with_capacity(n);
+    for _ in 0..n {
+        let owner = r.u32().ok_or(())?;
+        let spell = r.u8().ok_or(())?;
+        if usize::from(spell) >= NUM_SPELLS {
+            return Err(());
+        }
+        projectiles.push(Projectile {
+            owner,
+            spell,
+            cast_seq: r.u16().ok_or(())?,
+            x: r.i32().ok_or(())?,
+            y: r.i32().ok_or(())?,
+            vx: r.i32().ok_or(())?,
+            vy: r.i32().ok_or(())?,
+            age: r.u16().ok_or(())?,
+        });
+    }
+    Ok((players, projectiles))
 }
 
 // ---- render-only views (plan 6.11; invariant 9: nothing read from these may become an input) ----------
 
 pub const EV_SPAWN: u8 = 1;
 pub const EV_PICKUP: u8 = 2;
+/// A cast that was accepted: `player` = caster, a = spell, b = angle, c = cast_seq.
+pub const EV_CAST: u8 = 3;
+/// A cast that was refused: a = spell, b = reason (`REJECT_*`), c = cast_seq.
+pub const EV_CAST_REJECTED: u8 = 4;
+/// `player` = victim, a = vx, b = vy (1/16 cell per tick), c = attacker. The sim does not move the victim.
+pub const EV_KNOCK: u8 = 5;
+/// A projectile ended: `player` = owner, a, b = cell x, y, c = spell.
+pub const EV_IMPACT: u8 = 6;
+/// A player was put back at the spawn point: a, b = x, y (1/16 cell), c = new life.
+pub const EV_RESPAWN: u8 = 7;
+pub const REJECT_SPELL: i32 = 1;
+pub const REJECT_CHARGES: i32 = 2;
+pub const REJECT_COOLDOWN: i32 = 3;
+pub const REJECT_FULL: i32 = 4;
+pub const REJECT_DEAD: i32 = 5;
 /// Event record: `kind u8, player u32, a i32, b i32, c i32`.
 pub const EVENT_BYTES: usize = 17;
 
@@ -212,11 +295,13 @@ impl Event {
 
 pub const ENT_PLAYER: u8 = 1;
 pub const ENT_PICKUP: u8 = 2;
+/// Projectile view record: `id` = owner, `sub` = spell, x, y in 1/16 cell, `a` = cast_seq.
+pub const ENT_PROJECTILE: u8 = 3;
 /// Entity record: `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`.
 pub const ENTITY_BYTES: usize = 18;
 
 /// Entity views for the renderer, players then pickups, written into `out` (at most `max` records).
-pub fn write_view(players: &[Player], pickups: &[Pickup], tick: u32, out: &mut [u8], max: usize) -> usize {
+pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], tick: u32, out: &mut [u8], max: usize) -> usize {
     let mut n = 0;
     let mut put = |t: u8, id: u32, active: bool, sub: u8, x: i32, y: i32, a: u16, health: u8| {
         if n >= max || (n + 1) * ENTITY_BYTES > out.len() {
@@ -249,5 +334,21 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], tick: u32, out: &mut [
             0,
         );
     }
+    for q in projectiles {
+        put(ENT_PROJECTILE, q.owner, true, q.spell, q.x >> 4, q.y >> 4, q.cast_seq, 0);
+    }
     n
 }
+
+/// Per-spell HUD record for one player: `charges u16[NUM_SPELLS]`, then ticks of cooldown left `u16[NUM_SPELLS]`.
+pub const PLAYER_VIEW_BYTES: usize = 4 * NUM_SPELLS;
+
+pub fn write_player_view(p: &Player, tick: u32, out: &mut [u8]) {
+    for k in 0..NUM_SPELLS {
+        out[2 * k..2 * k + 2].copy_from_slice(&p.charges[k].to_le_bytes());
+        let left = p.cooldown_until[k].saturating_sub(tick).min(u32::from(u16::MAX)) as u16;
+        let o = 2 * NUM_SPELLS + 2 * k;
+        out[o..o + 2].copy_from_slice(&left.to_le_bytes());
+    }
+}
+

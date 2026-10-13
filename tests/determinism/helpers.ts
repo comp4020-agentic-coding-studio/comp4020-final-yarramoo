@@ -35,3 +35,12 @@ export function gameScript(): { script: Script; path: string } {
   writeFileSync(path, JSON.stringify(script));
   return { script, path };
 }
+
+/** M4b script: three bots in the game world, Joining, moving and casting (Push, Blast, refused spells) for 900 ticks. */
+export function castScript(): { script: Script; path: string } {
+  const path = resolve(root, "tests/determinism/.cache/script-game-cast.json");
+  const script = generate({ seed: 7, bots: 3, ticks: 900, worldKind: 1 });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(script));
+  return { script, path };
+}

@@ -1,6 +1,6 @@
 // Seeded determinism-script generator (plan 6.11 "Input script format", 12.1).
 // Usage: node tools/inputgen.ts --seed 42 --bots 4 --ticks 1800 > out.json
-import { encodeJoin, encodeLeave, encodePaint, encodePos, hex } from "../shared/inputs.ts";
+import { encodeCast, encodeJoin, encodeLeave, encodePaint, encodePos, hex } from "../shared/inputs.ts";
 
 export interface Script {
   seed: string;
@@ -35,6 +35,7 @@ const COMBOS: [number, number][] = [[13, 10], [14, 5], [3, 7], [6, 10], [13, 14]
 const SIZE = 512; // sandbox size; game worlds ignore Paint, so only Pos reaches them (M4)
 
 export function generate(opts: GenOptions): Script {
+  if ((opts.worldKind ?? 0) === 1) return generateGame(opts);
   const { bots, ticks } = opts;
   const worldKind = opts.worldKind ?? 0;
   const seed = BigInt.asUintN(64, BigInt(opts.seed));
@@ -82,6 +83,45 @@ export function generate(opts: GenOptions): Script {
     }
   }
   return { seed: seed.toString(), world_kind: worldKind, ticks, inputs };
+}
+
+/**
+ * A game-world script (world_kind 1): bots Join, drift around the surface near the spawn and cast Push, Blast,
+ * and the pickup spells (which refuse without charges: that is part of the point) at random angles, so bolts
+ * fly, hit terrain and each other, and refusals are exercised. Paint does nothing in a game world.
+ * Positions are quantised to 1/16 cell and angles to u16 here, before they become inputs (invariant 2).
+ */
+function generateGame(opts: GenOptions): Script {
+  const { bots, ticks } = opts;
+  const seed = BigInt.asUintN(64, BigInt(opts.seed));
+  const rand = mulberry32(Number(seed & 0xffffffffn) ^ Number((seed >> 32n) & 0xffffffffn) ^ 0x9e3779b9);
+  const int = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1));
+  const inputs: Record<string, string[]> = {};
+  const push = (t: number, b: Uint8Array) => (inputs[String(t)] ??= []).push(hex(b));
+  interface Bot { id: number; on: boolean; x: number; y: number; seq: number }
+  const all: Bot[] = [];
+  for (let i = 0; i < bots; i++) all.push({ id: i + 1, on: false, x: 1000 + 14 * i, y: 215 + int(0, 12), seq: 0 });
+  for (let t = 1; t <= ticks; t++) {
+    for (const b of all) {
+      if (!b.on) {
+        if (t === 1 || rand() < 0.01) {
+          b.on = true;
+          push(t, encodeJoin(b.id));
+        }
+        continue;
+      }
+      if (rand() < 0.003) {
+        b.on = false;
+        push(t, encodeLeave(b.id));
+        continue;
+      }
+      b.x = Math.min(1100, Math.max(960, b.x + int(-2, 2)));
+      b.y = Math.min(235, Math.max(200, b.y + int(-1, 1)));
+      push(t, encodePos(b.id, 0, b.x * 16, b.y * 16, int(0, 1)));
+      if (rand() < 0.06) push(t, encodeCast(b.id, rand() < 0.5 ? int(0, 1) : int(0, 5), int(0, 65535), b.seq++ & 0xffff));
+    }
+  }
+  return { seed: seed.toString(), world_kind: 1, ticks, inputs };
 }
 
 function arg(name: string, def: string): string {

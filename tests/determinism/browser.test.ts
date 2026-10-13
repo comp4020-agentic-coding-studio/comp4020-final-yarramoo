@@ -3,7 +3,7 @@ import { chromium, firefox, webkit } from "playwright";
 import type { BrowserType } from "playwright";
 import type { Server } from "node:http";
 import { compare } from "./compare.ts";
-import { canaryPath, gameScript, readWasm, root, sharedScript, wasmPath } from "./helpers.ts";
+import { canaryPath, castScript, gameScript, readWasm, root, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 import type { RunResult } from "./run.ts";
 import { serve } from "./server.ts";
@@ -69,6 +69,16 @@ describe("cross-engine", () => {
       expect(out.result.hashes[0][0]).toBe(0);
       expect(out.result.finalChunkHashes).toHaveLength(768);
       expect(compare(gameNode, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // D2 with players casting: bolts, knockback events and bursts are identical in every engine.
+  const cast = castScript();
+  const castNode = run(readWasm(wasmPath), cast.script);
+  for (const [name, type] of engines) {
+    it(`D2 with casts: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, cast.path);
+      expect(compare(castNode, out.result, ["node", name])).toBeNull();
     });
   }
 
