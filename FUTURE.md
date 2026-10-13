@@ -134,3 +134,10 @@ Late join replays the whole log at roughly 200-400 ticks/s on a laptop (about 5 
 ## Adaptive J from measured jitter (from M2a)
 
 J is a constant 2. The plan says adapted to jitter; the client already sees tick arrival times, so a rolling p95 of inter-arrival gaps could set J between 2 and 6.
+
+## From M2b (persistence and snapshots)
+
+- **Snapshot the last player out.** The server could ask the departing client for a snapshot on a clean close (the socket's `close` event arrives after the tab is gone, so it needs a `beforeunload` hint or a heartbeat-driven "you're the last, upload now" push). Source: D-042. Worth it if cold-start replay of ~30 s is noticeable.
+- **CHUNK_HASHES diff for desync incidents.** Keep the last 5 chunk-hash arrays on the client and diff on request, so an incident names the diverging chunks. Source: D-043.
+- **Server-side check of snapshot "reasonableness".** The majority-hash rule trusts that the majority's sim is right; a periodic deliberate-lie client in CI could run the bad-snapshot test against the deployed build.
+- **Per-player upload budget for SNAPSHOT_UPLOAD.** Unsolicited uploads are ignored cheaply, but a solicited client can upload once per request at up to 1 MiB; fine for co-op, worth rate-limiting if the URL is public.
