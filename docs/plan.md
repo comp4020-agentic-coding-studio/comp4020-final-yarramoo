@@ -1,5 +1,7 @@
 # Handover brief: multiplayer falling-sand game (COMP4020 final project)
 
+> **Conformed 2026-10-13** to the real course setup (see `docs/assignment-spec.md`, `fly.toml`, and `docs/DECISIONS.md` D-001 to D-016). Where the original brief assumed Postgres, 512 MB, a team, or no phone support, the text below has been changed and the decision is logged.
+
 You are picking up a project that was designed in a separate planning conversation. This file is the complete brief: product, architecture, implementation details, the determinism test suite, and the timeline. Read all of it before writing any code.
 
 ---
@@ -8,8 +10,8 @@ You are picking up a project that was designed in a separate planning conversati
 
 **First actions, in order:**
 
-1. The planning session could not open the official assignment page. If `docs/assignment-spec.md` does not exist, ask the team to paste the spec into it. Then re-check section 1 against it and flag any conflict before building.
-2. Create `CLAUDE.md` at the repo root containing section 4 (hard rules) verbatim. Add build and test commands to it as they come into existence.
+1. The official brief is summarised in `docs/assignment-spec.md` (fetched 2026-10-13). Section 1 has been re-checked against it.
+2. `CLAUDE.md` already exists and holds the harness rules. Section 4 (hard rules) is copied into it as its own section of code invariants. Add build and test commands to it as they come into existence.
 3. Create a task list from the milestones in section 13 and work through them in order. Every milestone ends deployed and demoable.
 4. Start with Milestone 0, the determinism spike. Do not build game features until gate G1 passes.
 
@@ -17,21 +19,22 @@ You are picking up a project that was designed in a separate planning conversati
 
 - Record decisions in `docs/DECISIONS.md` (date, decision, reason). Section 14 lists open decisions with defaults. When one blocks you, use the default, record it, and keep going.
 - Never break a hard rule in section 4 without asking the user first.
-- The team's Claude Code credit budget is limited. Prefer targeted file reads, small diffs and fast tests, and don't fan out subagents unless asked.
+- The Claude Code credit budget is limited. Prefer targeted file reads, small diffs and fast tests. Delegation follows the rules already in `CLAUDE.md`.
 - Keep commits small, one concern each. Run the determinism suite before every commit that touches `sim/`, `shared/protocol`, or the input path.
 
 ---
 
 ## 1. Context and known requirements
 
-- **Course:** COMP4020 Agentic Coding Studio (ANU), Final Project (Assignment 3). Team project, worth 40%, **due Monday 9 November 2026**.
-- **Known requirements** (verify against the spec):
-  - full-stack web app with a persistent backend, built and deployed with an agentic workflow
-  - real-time and multi-user
-  - shared state persists after users log out
-  - a separate course task instruments the project with **server-side telemetry and a live dashboard**, and demos it using the instruments alone
-  - weekly in-person studio crits where work-in-progress is demoed
-- **Infrastructure:** Fly.io hosting with a small (1 GB) Fly database. The stack is otherwise open.
+- **Course:** COMP4020 Agentic Coding Studio (ANU), Final Project (Assignment 3). **Individual** project, worth 40%, **due noon Monday 9 November 2026**. Marked 50% legibility of process, 25% deployed app, 25% response to the brief.
+- **Requirements** (from `docs/assignment-spec.md`):
+  - **Multi-user:** two people in separate browsers act on shared state and the app tells them apart. Markers use two Chrome profiles with no shared storage.
+  - **Real-time:** a change shows in every other open session within about a second, with no reload. Markers watch both sessions at once, **one at each marking viewport (desktop and phone)**.
+  - **Persists:** survives sessions, restarts and redeploys. The marker returns the next day, after the machine has stopped and restarted.
+  - **Good by a defended definition:** `README.md` (400–600 words, with sources, published at `/readme/`) argues it, `CLAUDE.md` holds the rules, `spec/` holds the checks, and the three must agree.
+  - `pnpm check` and `pnpm check:evidence` pass. `PROCESS.md` is 900–1100 words and justifies the stack and workflow.
+  - Crit 9 "All at once" (Wed 14 Oct): real-time. Crit 10 "Fly by instruments" (Wed 21 Oct): two classmates use it from the URL alone while you read the logs, which is where the telemetry and dashboard come in.
+- **Infrastructure** (fixed by `fly.toml`): **one `shared-cpu-1x` machine with 256 MB of memory**, **one 1 GB volume at `/data`** as the only storage that survives a restart, region `syd`, and **auto-stop when idle**. There is no database server; a separate Fly Postgres app is outside the course setup. The stack is otherwise open.
 
 ---
 
@@ -52,7 +55,7 @@ A Noita-style 2D falling-sand world shared by everyone, in the browser.
 ## 3. Architecture: server-paced deterministic lockstep
 
 ```
- Browser (Web Worker)                    Fly server (Node, never simulates)           Fly Postgres
+ Browser (Web Worker)                    Fly server (Node, never simulates)           SQLite on /data
  ┌───────────────────────┐   inputs     ┌──────────────────────────────────┐        ┌─────────────┐
  │ sim.wasm (deterministic)│ ──────────► │ tick clock + input sequencer      │        │ worlds      │
  │ avatar controller      │             │ closed-tick broadcast             │ ─────► │ snapshots   │
@@ -71,7 +74,9 @@ A Noita-style 2D falling-sand world shared by everyone, in the browser.
 
 **Why lockstep and not ownership-plus-corrections:** lockstep is exactly consistent by construction and has very few moving parts. A desync is then always a bug, which can be detected (hash checks) and reproduced (input log replay). The trade-off is that determinism is all-or-nothing, which is why Milestone 0 exists.
 
-**Persistence:** periodic snapshots (produced by clients, verified by the server) plus the input log. Recovery is the latest snapshot plus exact replay of the logged inputs.
+**Persistence:** periodic snapshots (produced by clients, verified by the server) plus the input log, both in SQLite on the `/data` volume. Recovery is the latest snapshot plus exact replay of the logged inputs, and the replay is done by the first client to join, never the server.
+
+**Idle stop is the normal case.** Fly stops the machine when nobody is using it and starts it on the next request, so "restore from the latest snapshot and replay the log" runs on every cold start, not only after a crash. The marker's next-day visit always takes this path.
 
 **Players' own movement is not lockstepped.** Each client predicts its avatar locally and sends its position as an input. The simulation only ever sees these "official" positions, which arrive through the input stream and are therefore about a round trip old.
 
@@ -96,13 +101,14 @@ A Noita-style 2D falling-sand world shared by everyone, in the browser.
 ## 5. Stack and repo layout
 
 - **Simulation:** Rust → `wasm32-unknown-unknown`, raw `extern "C"` exports (no wasm-bindgen, so the module has zero imports). Use the `xxhash-rust` crate (xxh3) for hashing. Release profile: `panic = "abort"`, `opt-level = 3`.
-  - The team may choose Zig instead (`wasm32-freestanding`, `export fn`). The ABI and rules are identical. Decide before M0 starts.
+  - Rust is decided (D-006); Zig is no longer an option.
 - **Client:** TypeScript + Vite. The simulation, networking, avatar controller and renderer all run in a **Web Worker**, rendering to an OffscreenCanvas with WebGL2. The main thread handles DOM UI (HUD, inventory, toasts) and forwards input events.
-  - Verify OffscreenCanvas + WebGL2 support on the team's browsers. Fallback: render on the main thread from a transferred buffer.
-- **Server:** TypeScript on the current Node LTS with `ws` for WebSockets and `postgres` (or `pg`) for the database. It loads `sim.wasm` **only** to restore and hash snapshots for verification, and for the replay tool. Use `fflate` for snapshot compression on both ends.
-- **Database:** Fly Postgres via `DATABASE_URL`. If the Fly DB turns out to be SQLite on a volume, use the same schema with adjusted types.
+  - Verify OffscreenCanvas + WebGL2 support in Chrome (desktop and phone), Firefox and Safari. Fallback: render on the main thread from a transferred buffer.
+- **Server:** TypeScript on Node 24 (as the existing `Dockerfile` runs it, with built-in type stripping). Keep Hono for HTTP, add `ws` for WebSockets, and use Node's built-in `node:sqlite` for the database. It loads `sim.wasm` **only** to restore and hash snapshots for verification, and for the replay tool. Use `fflate` for snapshot compression on both ends.
+- **Database:** SQLite on the `/data` volume (`DATA_DIR`), in WAL mode. Section 9.1 gives the schema.
 - **Tests:** `cargo test` (native simulation), Vitest (TypeScript units plus the Node determinism runner), Playwright (Chromium, Firefox and WebKit determinism runners and multi-client tests).
-- **CI:** GitHub Actions running all of the above on every PR.
+- **CI:** the course workflow (`.github/workflows/checks.yml`) builds the Docker image, starts it with a throwaway `/data` and runs `pnpm check` against it. It only runs once the repo is public; until then `pnpm check` runs locally. Add the Rust and Playwright determinism jobs to it without removing the course steps.
+- **Build:** the `Dockerfile` becomes multi-stage: a Rust stage builds `sim.wasm`, a Node stage builds the Vite client, and the final `node:24-slim` stage runs the server with both copied in. Fly builds it remotely.
 
 ```
 /sim                 Rust crate → sim.wasm (deterministic core)
@@ -122,7 +128,7 @@ A Noita-style 2D falling-sand world shared by everyone, in the browser.
 /tools               inputgen (seeded bot inputs), replay CLI, bench
 /tests/determinism   runners (node, browser page) + comparator
 /docs                assignment-spec.md, DECISIONS.md
-fly.toml, Dockerfile, docker-compose.yml (local Postgres)
+fly.toml, Dockerfile (multi-stage: Rust → wasm, Vite build, Node runtime)
 ```
 
 ---
@@ -406,62 +412,65 @@ set_sleep_enabled(on: u32)                 // test hook for D7
 
 ## 9. Server and persistence
 
-### 9.1 Schema (Postgres)
+### 9.1 Schema (SQLite on `/data`)
+
+Types follow SQLite: `u64` hashes are stored as the signed 64-bit reinterpretation, blobs hold the fflate-compressed bytes, and times are Unix milliseconds.
 
 ```sql
 create table worlds (
-  id serial primary key,
+  id integer primary key,
   kind text not null check (kind in ('sandbox','game')),
-  seed bigint not null,
+  seed integer not null,
   sim_build text not null,
   last_tick integer not null default 0,
-  created_at timestamptz not null default now()
+  created_at integer not null
 );
 create table snapshots (
-  world_id int not null references worlds(id),
+  world_id integer not null references worlds(id),
   tick integer not null,
-  state_hash bigint not null,          -- u64 reinterpreted as signed
+  state_hash integer not null,         -- u64 reinterpreted as signed
   sim_build text not null,
-  data bytea not null,                 -- fflate-compressed canonical snapshot
-  keep_for_timelapse boolean not null default false,
-  created_at timestamptz not null default now(),
+  format_version integer not null,
+  data blob not null,                  -- fflate-compressed canonical snapshot
+  keep_for_timelapse integer not null default 0,
+  created_at integer not null,
   primary key (world_id, tick)
 );
 create table tick_log (
-  world_id int not null references worlds(id),
+  world_id integer not null references worlds(id),
   first_tick integer not null,
   last_tick integer not null,
   sim_build text not null,
-  data bytea not null,                 -- encoded TICK entries for [first_tick, last_tick]
+  data blob not null,                  -- encoded TICK entries for [first_tick, last_tick]
   primary key (world_id, first_tick)
 );
 create table players (
-  id serial primary key,
+  id integer primary key,
   display_name text not null,
   token_hash text unique not null,
-  created_at timestamptz not null default now(),
-  last_seen timestamptz
+  created_at integer not null,
+  last_seen integer
 );
 create table player_stats (
-  player_id int references players(id),
+  player_id integer references players(id),
   stat text not null,                  -- casts_push, casts_water, max_depth, kills, deaths, ...
-  value bigint not null default 0,
+  value integer not null default 0,
   primary key (player_id, stat)
 );
 create table achievements (
-  player_id int references players(id),
+  player_id integer references players(id),
   achievement text not null,
-  world_id int references worlds(id),
+  world_id integer references worlds(id),
   tick integer,
-  earned_at timestamptz not null default now(),
+  earned_at integer not null,
   primary key (player_id, achievement)
 );
 create table desync_incidents (
-  id serial primary key,
-  world_id int, tick integer, details jsonb, created_at timestamptz default now()
+  id integer primary key,
+  world_id integer, tick integer, details text, created_at integer   -- details is JSON text
 );
 create table metrics_minutely (
-  world_id int, minute timestamptz, name text, value double precision,
+  world_id integer, minute integer, name text, value real,
   primary key (world_id, minute, name)
 );
 ```
@@ -472,19 +481,24 @@ create table metrics_minutely (
 - Flush `tick_log` batches at least every second.
 - Write verified snapshots as soon as they're accepted.
 - Update stats and achievements on change, batched.
-- **Recovery after a crash** is the latest verified snapshot plus the replayed `tick_log`, so at most about 1 second of world is lost.
+- **Recovery after a crash or an idle stop** is the latest verified snapshot plus the replayed `tick_log`, so at most about 1 second of world is lost.
+- **When the last player leaves,** request a snapshot from them before stamping `Leave`, so the next cold start replays a short log rather than the whole session.
+- **Memory budget (256 MB):** Node itself takes roughly 60–80 MB. One game world is about 6.3 MB of cells, and the server's verify-only `sim.wasm` instance needs about the same again. Keep only the tick log since the latest verified snapshot in memory, and watch RSS on the dashboard; warn at 200 MB.
 
 ### 9.3 Shutdown and deploys
 
-- Handle `SIGINT`/`SIGTERM`: stop accepting inputs, close the current tick, flush `tick_log`, then exit. Check `kill_signal` and `kill_timeout` in `fly.toml`.
-- **New sim build deployed:** the logged inputs after the latest snapshot can't be replayed under new rules. Load the latest verified snapshot under the new build (if the snapshot `format_version` is unchanged), start a fresh log, and accept losing at most 30 seconds of history. If `format_version` changes, reset the world (acceptable before submission) or write a migration.
+- Handle `SIGINT`/`SIGTERM`: stop accepting inputs, close the current tick, flush `tick_log`, then exit. Auto-stop sends this signal every time the machine idles, so it is a hot path. Set `kill_signal` and `kill_timeout` in `fly.toml` if the defaults are too short (adding them leaves the course-fixed settings alone).
+- **New sim build deployed:** the logged inputs after the latest snapshot can't be replayed under new rules. Load the latest verified snapshot under the new build (if the snapshot `format_version` is unchanged), start a fresh log, and accept losing at most 30 seconds of history. If `format_version` changes, reset the world only before crit 10 (Wed 21 Oct). After that, classmates and markers rely on the world persisting across redeploys, so a format change needs a migration.
 
 ### 9.4 Fly configuration
 
+`fly.toml` is fixed by the course; don't change these settings:
+
 - `primary_region = "syd"`.
-- **Exactly one machine** (`fly scale count 1`), because world state lives in this process's memory.
-- `shared-cpu-1x`, 512 MB.
-- Serve the client's static build from the same Node process (or a CDN), so WebSockets share the origin.
+- **One `shared-cpu-1x` machine with 256 MB**, deployed with `--ha=false`. One machine is also what the design needs, because world state lives in this process's memory.
+- **One 1 GB volume at `/data`.** The SQLite file, snapshots and tick log all live here; warn at 700 MB.
+- **Auto-stop and auto-start**, with `min_machines_running = 0`. See section 9.2 for what this means for recovery.
+- Serve the client's static build from the same Node process, so WebSockets share the origin.
 
 ---
 
@@ -530,9 +544,11 @@ The server collects metrics in memory, streams them to `/dashboard` via SSE (pro
 - **Traffic:** bytes in and out per client; inputs per second by kind; casts by spell
 - **Consistency:** hash checks passed and failed, resyncs, desync incidents (with the first diverging chunk)
 - **Snapshots:** count, compressed size, verify time, upload latency
-- **Database:** `tick_log` write latency, rows per second, `pg_database_size` (warn at 700 MB)
+- **Database:** `tick_log` write latency, rows per second, SQLite file size on `/data` (warn at 700 MB of the 1 GB volume)
 - **Game:** kills, deaths, achievements awarded
-- **Process:** event-loop lag, RSS, CPU (headline point for the demo: the server stays near idle because it never simulates)
+- **Process:** event-loop lag, RSS (warn at 200 MB of 256 MB), CPU (headline point for the demo: the server stays near idle because it never simulates)
+
+Crit 10 (Wed 21 Oct) has classmates use the app from the URL alone while you read the logs, so structured server logs and the basic dashboard must be live by then, not at M6.
 
 ---
 
@@ -555,7 +571,7 @@ The server collects metrics in memory, streams them to `/dashboard` via SSE (pro
 | D1 | Repeatability: two fresh instances, same runtime, same script | uninitialised memory, ordering bugs | M0 / G1 |
 | D2 | Cross-engine: Node vs Chromium vs Firefox vs WebKit | engine-dependent behaviour | M0 / G1 |
 | D3 | Native Rust vs WASM hash logs | `usize`/target-dependent code | M0 / G1 |
-| D4 | Cross-machine: D2 on x86-64 CI **and** one teammate's ARM laptop (once) | architecture differences | G1 |
+| D4 | Cross-machine: D2 on x86-64 (this Mac and CI) **and** an ARM device once; a phone opening the browser runner counts | architecture differences | G1 |
 | D5 | Snapshot round-trip: snapshot at random ticks, restore into a fresh instance, continue, compare | state missing from snapshots | M0 (grid); re-run at M4 and M5 as entities are added |
 | D6 | Step-batching invariance: 1 step per call vs k per call vs catch-up mode | frame-timing dependence | M0 / G1 |
 | D7 | Sleep invisibility: `set_sleep_enabled(0)` vs `1` | sleep optimisation leaking into results | M3 |
@@ -565,7 +581,7 @@ The server collects metrics in memory, streams them to `/dashboard` via SSE (pro
 | D11 | Static guards in CI: `clippy::float_arithmetic` deny, `disallowed-types` (HashMap/HashSet), `disallowed-methods` (time APIs), and **assert the normal `sim.wasm` build has zero imports** (the D10 canary build is exempt) | rule violations | M0 / G1 |
 | D12 | Soak: 4 bots × 100k ticks across all runtimes | rare-path divergence | before G2; then nightly |
 | N1 | Live multi-client: local server plus 3 Playwright clients running bots for 10 minutes, with WebSocket delay/jitter injection (20–150 ms) and one client CPU-throttled 4× via CDP. Zero mismatches; the throttled client catches up or resyncs cleanly. | protocol, playout and resync bugs | G2 |
-| P1 | Worst-case performance: 4 players spread across the world, each starting a large fire and a flood at once. Measure step time p50/p95 in Chromium on the **weakest team laptop**. Budget: **p95 ≤ 8 ms**. | the CPU assumption | G2 |
+| P1 | Worst-case performance: 4 players spread across the world, each starting a large fire and a flood at once. Measure step time p50/p95 in Chromium on this laptop with 4× CDP CPU throttling as a stand-in for a weak machine, and once on a real phone at the marking viewport. Budget: **p95 ≤ 8 ms**. | the CPU assumption | G2 |
 
 ### 12.3 If P1 fails (in order)
 
@@ -578,18 +594,23 @@ The server collects metrics in memory, streams them to `/dashboard` via SSE (pro
 
 ## 13. Milestones and timeline
 
-Today is Tuesday 13 October 2026. The project is due **Monday 9 November**. If the spec gives earlier dates for the telemetry task or a "first working slice" checkpoint, pull those items forward.
+Today is Tuesday 13 October 2026. The project is due **noon Monday 9 November**. It is individual, so these dates are for one person.
+
+The course checkpoints set two hard dates inside this plan:
+
+- **Crit 9 "All at once", Wed 14 Oct:** too soon for this branch. Whatever is shown there comes from the existing work, and that choice is the user's.
+- **Crit 10 "Fly by instruments", Wed 21 Oct:** classmates use the deployed URL while you read the logs. M2 (deployed multiplayer sandbox) plus basic telemetry must be live by **Tue 20 Oct**.
 
 | Milestone | Dates | Scope | Done when |
 |---|---|---|---|
 | **M0: Determinism spike + skeleton** | Tue 13 – Thu 15 Oct | Monorepo and CI. Simulation core: grid, update order, RNG, hashing, snapshot/restore, Paint input, materials 0–5 and 10. ABI and TS wrapper. Harness: inputgen, the 3 runner types, comparator, canary. | **Gate G1:** D1, D2 (all 4 runtimes), D3, D5, D6, D10, D11 green in CI; D4 run once. |
 | **M1: Single-player sandbox** | Thu 15 – Sat 17 Oct | Worker, WebGL2 renderer, paint UI, the full material set and interactions (section 6.4). | All materials paintable and interacting; D1–D6 still green. |
-| **M2: Multiplayer sandbox, deployed** (fallback #1) | Sat 17 – Mon 19 Oct | Tick clock, sequencer, protocol, join/leave, late join, playout buffer, hash checks and resync, verified snapshots, Postgres persistence, identity tokens, Fly deploy (`syd`), basic telemetry. | 3 browsers paint together on the Fly URL. Killing and restarting the server restores the world to within about 1 second of the crash. D9 passes. |
+| **M2: Multiplayer sandbox, deployed** (fallback #1) | Sat 17 – Tue 20 Oct | Tick clock, sequencer, protocol, join/leave, late join, playout buffer, hash checks and resync, verified snapshots, SQLite persistence on `/data`, identity tokens, Fly deploy (`syd`), structured logs and a basic dashboard for crit 10, touch painting at the phone viewport, a first README definition of good. | 3 browsers paint together on the Fly URL, one at phone width. Killing the server, and separately letting it idle-stop, restores the world to within about 1 second. D9 passes. Live for crit 10. |
 | **M3: Big world** | Tue 20 – Thu 22 Oct | 2048 × 1536 game world, generation (bands, caves, entrances, pickups placed), active-set rule, sleeping, pristine snapshots, camera and scrolling. | D7 and D8 green; world explorable in free-camera mode. |
 | **M4: Avatars + surface/shallow spells** (fallback #2) | Thu 22 – Mon 26 Oct | Player entities, Pos inputs with `life`, avatar controller (walk, jump, levitate), collision, Push, Blast, knockback, pickups, Water and Rose seed with growth, cast previews, HUD. | **Gate G2 (Mon 26 Oct):** N1 passes (3 players, 10 minutes, zero mismatches) and P1 within budget. |
 | **M5: Deep caves and damage** | Tue 27 – Sat 31 Oct | Fire bolt, Bomb, gunpowder, lava, explosions, health, fire and lava damage, death and respawn, last-hit kills, events. | D5 re-run with entities green; deep caves playable. |
-| **M6: Achievements + telemetry** | Fri 30 Oct – Mon 2 Nov | Server-counted and majority-claimed achievements, toasts, full dashboard with per-minute history. | **Feature freeze, end of Mon 2 Nov.** |
-| **M7: Polish + demo** | Tue 3 – Sun 8 Nov | Balance, onboarding, D12 and a 30-minute N1 soak, bug fixes, README, demo script (including a telemetry-only demo), final deploy. | Final deploy by Sun 8 Nov; submit by Mon 9 Nov. |
+| **M6: Achievements + full dashboard** | Fri 30 Oct – Mon 2 Nov | Server-counted and majority-claimed achievements, toasts, per-minute dashboard history (basic telemetry already shipped at M2). | **Feature freeze, end of Mon 2 Nov.** |
+| **M7: Polish + submission** | Tue 3 – Sun 8 Nov | Balance, onboarding, D12 and a 30-minute N1 soak, bug fixes, final README (400–600 words) and PROCESS.md (900–1100 words) rewrite, check both marking viewports, final deploy. | Final deploy by Sun 8 Nov; submit by noon Mon 9 Nov. |
 
 **Gate playbook:**
 
@@ -599,16 +620,17 @@ Today is Tuesday 13 October 2026. The project is due **Monday 9 November**. If t
 
 ---
 
-## 14. Open decisions (use the default unless the team says otherwise)
+## 14. Open decisions (use the default unless the user says otherwise)
 
 | Decision | Default |
 |---|---|
 | How players get underground | Pre-generated cave entrances; explosions can carve. A Dig spell is optional later. |
 | Spell charges, cooldowns, pickup respawn | Values in section 6.7; `PICKUP_RESPAWN = 3600` ticks (60 s) |
 | Death penalty | Keep inventory; respawn on the surface after 3 seconds |
-| Simulation language | Rust (Zig allowed; same ABI and rules; decide before M0) |
-| Database flavour | Postgres via `DATABASE_URL` |
+| Simulation language | Rust (installed locally with the `wasm32-unknown-unknown` target) |
+| Database flavour | SQLite (`node:sqlite`) on the `/data` volume; no database server is available |
 | Maximum players per world | 8 |
+| Phone viewport | The marker watches one session on a phone. The sandbox supports touch painting; the game world on a phone is spectate-only (camera follow, no avatar). |
 | Sandbox in the final build | Kept as a separate "creative mode" world |
 | Climbing out of caves | Levitation with limited energy |
 
@@ -622,7 +644,7 @@ Every milestone leaves a playable product, so there's always a shippable fallbac
 - If M4 slips, ship M2 plus M3: a persistent multiplayer sandbox on a big world.
 - The sandbox world stays in the final build as creative mode, so no milestone's work is thrown away.
 
-**Do not split the team to build the Noita version and the sandbox in parallel.** They share one core.
+**Do not build the Noita version and the sandbox in parallel.** They share one core.
 
 ---
 
@@ -635,4 +657,4 @@ Every milestone leaves a playable product, so there's always a shippable fallbac
 - Rigid-body physics
 - Per-cell ownership or provenance tags
 - Anti-cheat beyond the light validation in section 7.6
-- Mobile controls
+- Full avatar controls on phones (touch painting in the sandbox and spectating the game world are in scope; see section 14)
