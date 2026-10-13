@@ -73,6 +73,10 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 - [ ] Touch: spectate the game world on phones (D-011).
 - [ ] Gate G2: N1 (three clients, ten minutes, jitter, a throttled CPU, zero
       mismatches) and P1 (worst-case step time p95 ≤ 8 ms).
+      Measured 2026-10-14 (`docs/research/g2-results.md`): N1 PASS (36506 ticks, 0
+      incidents, 0 resyncs, same final hash). P1 FAIL: worst case p95 9.0 ms
+      native, 36 ms at 4x; the flood keeps ~70 chunks awake. Plan 12.3 remedies 1
+      and 2 apply; user to decide.
 
 ### Animation, to look at with fresh eyes
 
