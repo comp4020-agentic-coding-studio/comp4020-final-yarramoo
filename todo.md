@@ -42,6 +42,15 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 - [x] Camera and scrolling; free-camera mode (`a0d3ed5`, `7f73c5d`); `?world=game` with `pnpm dev:client`.
 - [x] Performance baseline: see the M3 report: native p95 3.9 ms at rest with sleeping, 14.0 ms without; Chromium p95 7.3 and 18.5 ms.
 
+### Generator follow-ups (from looking at the M3 overview, `/tmp/m3-shots/gen-c9b.png`)
+
+- [ ] Spread entrances across the whole surface width (all landed centre-right;
+      the left third is reachable from above only by a long side tunnel).
+- [ ] Fewer, less parallel branches per entrance worm: 5 branches make a dense
+      vertical tangle around x 700-1600.
+- [ ] Horizontal link worms run nearly straight across the world; shorten them
+      and let them meander, so they read as caves, not corridors.
+
 ## Plants
 
 - [ ] Randomise how a flower grows: the stem leans or branches, leaves sprout,
