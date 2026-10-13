@@ -21,3 +21,4 @@ here wherever it changed from the original brief.
 | D-014 | 2026-10-13 | No format-version world resets after crit 10; write a migration instead. | From crit 10 on, classmates and markers rely on the world persisting across redeploys. |
 | D-015 | 2026-10-13 | D4 (cross-architecture) uses this x86-64 Mac and CI, plus one ARM device such as a phone, once. P1 uses 4× CDP throttling on this laptop and one real phone. | There are no teammate laptops; a phone is ARM and is also a marking viewport. |
 | D-016 | 2026-10-13 | Delegation follows `CLAUDE.md`, not the plan's "don't fan out subagents". | The user's harness rules take precedence over the handed-over brief. |
+| D-017 | 2026-10-13 | Fix the input byte layout, `world_kind` values and the determinism script format in plan section 6.11 before M0 code exists. | The Rust sim and the TypeScript harness are built by separate delegated workers; a pinned contract stops them disagreeing. |

@@ -313,6 +313,22 @@ set_sleep_enabled(on: u32)                 // test hook for D7
 | `Cast` | `player_id, spell, angle u16, cast_seq u16` | |
 | `Paint` | `player_id, mat, x0, y0, x1, y1, radius` | Sandbox worlds only; ignored in game worlds. |
 
+**Byte layout (fixed 2026-10-13, D-017).** Every input passed to `push_input` is `kind u8, player_id u32` followed by the kind's fields, all little-endian, no padding:
+
+| kind | Input | Fields after `player_id` | Total bytes |
+|---|---|---|---|
+| 1 | `Join` | – | 5 |
+| 2 | `Leave` | – | 5 |
+| 3 | `Pos` | `life u16, x i32, y i32, facing u8` | 16 |
+| 4 | `Cast` | `spell u8, angle u16, cast_seq u16` | 10 |
+| 5 | `Paint` | `mat u8, x0 i16, y0 i16, x1 i16, y1 i16, radius u8` | 15 |
+
+`Paint` coordinates are whole cells; it stamps a filled disc of `radius` along the segment from `(x0,y0)` to `(x1,y1)` (integer DDA), skipping Bedrock. `push_input` returns 0 on success and a negative value for a malformed input, which is then ignored.
+
+**`world_kind`:** 0 = sandbox (512 × 512, all chunks active), 1 = game (2048 × 1536). Until M3, `init` for a sandbox world fills the bottom 16 rows and the side 16 columns with Bedrock and leaves the rest Empty.
+
+**Input script format (determinism harness):** a JSON file `{ "seed": "<u64 decimal>", "world_kind": 0, "ticks": N, "inputs": { "<tick>": ["<hex-encoded input>", ...] } }`. Inputs listed under tick `t` are pushed before the step that produces tick `t`. The script is the shared contract between `tools/inputgen` and every runner.
+
 ---
 
 ## 7. Networking protocol
