@@ -2,7 +2,7 @@
 // checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
 // (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
-import { GAME_H, GAME_W, maxPosJump, POS_ONE, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
+import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, posAllowed, type PosBaseline } from "../shared/avatar.ts";
 import {
   decompressSnapshot,
   encodePlayerName,
@@ -141,7 +141,7 @@ export class World {
   verifying = false;
   private lastRequestTick = 0;
   /** Last accepted Pos per sim player, kept across reconnects within this process (the baseline for plan 7.6). */
-  private readonly lastPosOf = new Map<number, { x: number; y: number; tick: number }>();
+  private readonly lastPosOf = new Map<number, PosBaseline>();
 
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
@@ -426,8 +426,8 @@ export class World {
   /**
    * Plan 7.6: accept a game-world Pos only if it stays within what the avatar controller and one knockback can
    * cover since the last accepted Pos of that player. `payload` is the sim's Pos minus kind and player.
-   * The first Pos of a session (and the first after a respawn changes `life`) has no baseline: it is accepted
-   * if it is inside the world, because the server cannot read the entity's position without the sim.
+   * The first Pos of a session, and the first after `life` changes (a respawn), has no usable baseline: it is
+   * accepted if it is inside the world, because the server cannot read the entity's position without the sim.
    */
   acceptPos(conn: number, payload: Uint8Array): boolean {
     const m = this.members.get(conn);
@@ -443,15 +443,9 @@ export class World {
     };
     if (facing > 1 || x < 0 || y < 0 || x >= GAME_W * POS_ONE || y >= GAME_H * POS_ONE) return bad();
     const openTick = this.clock.lastClosed + 1;
-    // Compared whatever `life` the client claims: `life` is the client's word, and trusting it would let a
-    // cheater dodge the check by changing it. (M5: a real respawn must reset this baseline.)
-    void life;
-    const last = this.lastPosOf.get(m.playerId);
-    if (last) {
-      const limit = maxPosJump(openTick - last.tick);
-      if (Math.abs(x - last.x) > limit || Math.abs(y - last.y) > limit) return bad();
-    }
-    this.lastPosOf.set(m.playerId, { x, y, tick: openTick });
+    // A new `life` is a respawn: the first Pos carrying it skips the distance check (see `posAllowed`, D-073).
+    if (!posAllowed(this.lastPosOf.get(m.playerId), x, y, life, openTick)) return bad();
+    this.lastPosOf.set(m.playerId, { x, y, tick: openTick, life });
     return true;
   }
 
