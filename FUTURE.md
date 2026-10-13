@@ -126,3 +126,11 @@ outcome only, not admin notes.
 - Upload only `dirty_rects` once the sim reports them (now a full 512x512 upload per frame); from M1 client work, worth doing when the game world is 2048x1536.
 - Expose `matView()`/`auxView()` on `shared/sim.ts` so the client does not capture wasm exports; from the M1 worker.
 - A pause/step/clear control in the sandbox; from watching long gunpowder chains.
+
+## Show catch-up as a real progress bar, and replay faster (from M2a)
+
+Late join replays the whole log at roughly 200-400 ticks/s on a laptop (about 5 s for 1300 ticks), shown only as a percentage in the header. Snapshots will cut this, but a visible bar plus rendering every Nth tick during fast-forward would make the wait feel shorter on phones.
+
+## Adaptive J from measured jitter (from M2a)
+
+J is a constant 2. The plan says adapted to jitter; the client already sees tick arrival times, so a rolling p95 of inter-arrival gaps could set J between 2 and 6.
