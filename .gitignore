@@ -24,3 +24,5 @@ mise.local.toml
 # local sqlite data
 .data/
 sim/target/
+sim/target-canary/
+tests/determinism/.cache/
