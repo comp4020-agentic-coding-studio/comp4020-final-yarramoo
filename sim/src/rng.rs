@@ -36,6 +36,16 @@ pub const SALT_LAVA_DIAG: u32 = 21;
 pub const SALT_LAVA_SIDE: u32 = 22;
 pub const SALT_LAVA_IGNITE: u32 = 23;
 
+pub const SALT_GEN_SURF_A: u32 = 100;
+pub const SALT_GEN_SURF_B: u32 = 101;
+pub const SALT_GEN_SURF_C: u32 = 102;
+pub const SALT_GEN_DIRT: u32 = 103;
+pub const SALT_GEN_CAVE_A: u32 = 104;
+pub const SALT_GEN_CAVE_B: u32 = 105;
+pub const SALT_GEN_WARP_X: u32 = 106;
+pub const SALT_GEN_WARP_Y: u32 = 107;
+pub const SALT_GEN_DETAIL: u32 = 108;
+
 #[cfg(test)]
 mod tests {
     use super::*;

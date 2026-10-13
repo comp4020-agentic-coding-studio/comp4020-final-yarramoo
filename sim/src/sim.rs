@@ -26,11 +26,14 @@ impl Sim {
     pub fn new(seed: u64, world_kind: u8) -> Option<Sim> {
         let (w, h) = match world_kind {
             0 => (SANDBOX_W, SANDBOX_H),
-            // Game worlds get their real generator in M3; until then they are an empty box.
             1 => (GAME_W, GAME_H),
             _ => return None,
         };
         let mut grid = Grid::new(w, h);
+        if world_kind == 1 {
+            crate::gen::generate(&mut grid, seed);
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new() });
+        }
         for y in 0..h {
             for x in 0..w {
                 if y >= h - FLOOR_ROWS || x < WALL_COLS || x >= w - WALL_COLS {

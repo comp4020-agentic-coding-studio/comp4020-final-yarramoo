@@ -2,6 +2,7 @@
 #![deny(clippy::float_arithmetic)]
 #![allow(clippy::result_unit_err)]
 
+pub mod gen;
 pub mod grid;
 pub mod hash;
 pub mod input;
