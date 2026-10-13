@@ -74,6 +74,14 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 - [ ] Gate G2: N1 (three clients, ten minutes, jitter, a throttled CPU, zero
       mismatches) and P1 (worst-case step time p95 ≤ 8 ms).
 
+### Animation, to look at with fresh eyes
+
+- [ ] Character sprites are 5 x 10 cells, about 15 x 30 screen px at desktop
+      size. The six poses and 4-frame walk cycle are in `client/fx.ts` and run
+      (checked in code and by the idle head bob on screen), but they're too
+      small to judge how they read. Worth a zoom control or larger sprites, and
+      a human eye on whether the walk reads as walking.
+
 ## Crit 10: fly by instruments (by Tue 20 Oct)
 
 - [ ] Structured server logs: joins, leaves, desyncs, snapshots, rejects.
