@@ -62,6 +62,26 @@ A delegated task still follows the dispatch cap above, and its brief says
 which files it may touch. Review what comes back before it's pushed: the
 cheaper model writes the code, but the session model answers for it.
 
+### Architectural decisions go to review, not straight in
+
+Every delegated brief asks for a section "Architectural decisions for review":
+each choice that shapes code later milestones build on, with what was chosen,
+the alternatives, why, and what it costs later. When a worker is unsure about a
+hard-to-reverse choice it takes the more reversible option and flags it. The
+session model reviews these before pushing; anything it would change goes back
+to the same worker, and anything that changes the design gets a row in
+`docs/DECISIONS.md`.
+
+Slices that set structure (a milestone's core, anything touching the shared
+input path, the snapshot format or the ABI) also get an independent Sonnet
+reviewer that reads the diff cold and writes to `docs/research/review-*.md`.
+Its findings are checked against the code before they're acted on. The M3
+review found a snapshot buffer overrun and a server stall that every test had
+passed over.
+
+Name commit boundaries in a brief as a checklist. Left as a suggestion, a
+worker landed one slice as a single 1000-line commit (D-046).
+
 ## Log good ideas in `FUTURE.md`
 
 When a good idea for a feature turns up and isn't part of the current task,
