@@ -55,7 +55,6 @@ interface Member {
   /** The sim player id this connection controls; 0 for a spectator (no Join was stamped). */
   playerId: number;
   peer: Peer;
-  lastPos: null;
   /** Connection order: lower means connected longer. */
   seq: number;
   /** Display name, already trimmed and capped; render-only. */
@@ -121,6 +120,9 @@ export class World {
   private readonly snapshotEvery: number;
   private readonly say: (m: string) => void;
   private nextPlayer = 1;
+  /** Members whose send failed or whose queue overflowed: they get a Leave once the tick being closed is done. */
+  private readonly dropped: number[] = [];
+  private snapFrame: { src: Uint8Array; frame: Uint8Array } | null = null;
   private nextSeq = 1;
   private online = 0;
   /** Players online as of tick t, for multiples of HASH_EVERY (UI presence for a client starting at a snapshot). */
@@ -242,17 +244,7 @@ export class World {
   private onClosed(t: ClosedTick): void {
     const frame = encodeTick(t.tick, t.inputs);
     this.log.push(frame);
-    for (const [id, m] of this.members) {
-      if (m.peer.buffered() > MAX_BUFFERED_BYTES) {
-        m.peer.close(1013, "too slow");
-        continue;
-      }
-      try {
-        m.peer.send(frame);
-      } catch {
-        this.members.delete(id);
-      }
-    }
+    for (const [id, m] of this.members) if (!this.trySend(m.peer, frame)) this.dropped.push(id);
     this.onTickClosed?.(t.tick);
     // Everything below is after the broadcast and is bookkeeping only.
     for (const i of t.inputs) {
@@ -267,6 +259,42 @@ export class World {
       if (this.pending.length === 0) this.pendingFirst = t.tick;
       this.pending.push(frame);
     }
+    // Every path that removes a member stamps its Leave, so a player never stays active in the sim (S4).
+    while (this.dropped.length) this.leave(this.dropped.shift()!);
+  }
+
+  /**
+   * Send one frame, enforcing the queue cap at send time (review M4a S2): a slow reader is closed before it holds
+   * megabytes, not only at the next tick close. False means the peer is unusable and must be dropped.
+   */
+  private trySend(peer: Peer, frame: Uint8Array): boolean {
+    if (peer.buffered() > MAX_BUFFERED_BYTES) {
+      try {
+        peer.close(1013, "too slow");
+      } catch {
+        // already gone
+      }
+      return false;
+    }
+    try {
+      peer.send(frame);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  snapshotFrameForTest(): Uint8Array | null {
+    return this.snapshotFrame();
+  }
+
+  /** The snapshot as one encoded frame, built once and shared by every join (not a 3 MB copy per connection). */
+  private snapshotFrame(): Uint8Array | null {
+    if (!this.snapshot) return null;
+    if (this.snapFrame?.src !== this.snapshot.data) {
+      this.snapFrame = { src: this.snapshot.data, frame: encodeSnapshot(this.snapshot.tick, this.snapshot.data) };
+    }
+    return this.snapFrame.frame;
   }
 
   /** Write the pending ticks as one tick_log row. A failure keeps them for the next try. */
@@ -319,14 +347,13 @@ export class World {
     const names: [number, string][] = [];
     for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
     this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
-    for (const [id, name] of names) peer.send(encodePlayerName(id, name));
+    for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
     this.members.set(conn, {
       id: conn,
       playerId,
       name: opts.name ?? "",
       peer,
       seq: conn,
-      lastPos: null,
       minHashTick: this.clock.lastClosed,
       lastBadTick: 0,
     });
@@ -347,20 +374,16 @@ export class World {
   private broadcastName(conn: number, playerId: number, name: string): void {
     const f = encodePlayerName(playerId, name);
     for (const m of this.members.values()) {
-      if (m.id === conn) continue;
-      try {
-        m.peer.send(f);
-      } catch {
-        // a dead peer is dropped by its close handler
-      }
+      if (m.id !== conn && !this.trySend(m.peer, f)) this.dropped.push(m.id);
     }
   }
 
   private sendCatchUp(peer: Peer, header: (playersAtBase: number) => Uint8Array): void {
     const base = this.snapshot ? (this.onlineAt.get(this.snapshot.tick) ?? this.snapshotOnline) : 0;
-    peer.send(header(base));
-    if (this.snapshot) peer.send(encodeSnapshot(this.snapshot.tick, this.snapshot.data));
-    for (const f of this.log) peer.send(f);
+    if (!this.trySend(peer, header(base))) return;
+    const sf = this.snapshotFrame();
+    if (sf && !this.trySend(peer, sf)) return;
+    for (const f of this.log) if (!this.trySend(peer, f)) return;
   }
 
   leave(conn: number): void {

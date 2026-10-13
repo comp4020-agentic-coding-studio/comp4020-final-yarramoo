@@ -320,3 +320,56 @@ function MAX_UPLOAD_FRAME_GAME_ok(): boolean {
   const z = compressSnapshot(raw);
   return z.length + 13 < MAX_UPLOAD_FRAME_GAME && raw.length < maxSnapshotRawFor(1) && MAX_UPLOAD_FRAME < MAX_UPLOAD_FRAME_GAME && decompressSnapshot(z, maxSnapshotRawFor(1)).length === raw.length;
 }
+
+describe("connection limits (review M4a S2)", () => {
+  it("refuses a cross-origin registration, allows same-origin and no Origin, honours an explicit allowance", async () => {
+    const s = await boot(tmp());
+    const url = `http://127.0.0.1:${s.port}/api/players`;
+    const post = (origin?: string) => fetch(url, { method: "POST", body: "{}", headers: origin ? { origin } : {} });
+    expect((await post("https://evil.example")).status).toBe(403);
+    expect((await post(`http://127.0.0.1:${s.port}`)).status).toBe(200);
+    expect((await post()).status).toBe(200);
+    expect(s.stats.originRefused).toBe(1);
+    expect(s.identity.count).toBe(2);
+    const t = await startServer({ port: 0, dataDir: tmp(), quiet: true, allowedOrigins: ["http://localhost:5173"] });
+    cleanups.push(() => t.close());
+    const ok = await fetch(`http://127.0.0.1:${t.port}/api/players`, { method: "POST", body: "{}", headers: { origin: "http://localhost:5173" } });
+    expect(ok.status).toBe(200);
+  });
+
+  it("caps connections per address and members per world", async () => {
+    const s = await startServer({ port: 0, dataDir: tmp(), quiet: true, maxConnsPerIp: 3 });
+    cleanups.push(() => s.close());
+    const a = [await connect(s.port, hex, { world: GAME, spectate: true }), await connect(s.port, hex, { world: GAME, spectate: true }), await connect(s.port, hex, { world: GAME, spectate: true })];
+    await expect(connect(s.port, hex, { world: GAME, spectate: true })).rejects.toThrow();
+    expect(s.stats.capRefused).toBe(1);
+    a[0].close();
+    await waitFor(() => s.game.playerCount === 2, 3000, "one left");
+    const b = await connect(s.port, hex, { world: GAME, spectate: true }); // the slot is free again
+    [...a.slice(1), b].forEach((x) => x.close());
+    // The per-world cap counts spectators too.
+    const t = await startServer({ port: 0, dataDir: tmp(), quiet: true, maxMembersPerWorld: 2 });
+    cleanups.push(() => t.close());
+    const c1 = await connect(t.port, hex, { world: GAME, spectate: true });
+    const c2 = await connect(t.port, hex, { world: GAME, spectate: true });
+    await expect(connect(t.port, hex, { world: GAME, spectate: true })).rejects.toThrow(/world is full/);
+    [c1, c2].forEach((x) => x.close());
+  });
+
+  it("drops a slow reader at send time, and a join shares one snapshot frame", async () => {
+    const s = await boot(tmp(), 120);
+    const me = await register(s.port, "Snapper");
+    const a = await connect(s.port, hex, { world: GAME, token: me.token });
+    const stepper = setInterval(() => a.ls.run(100000), 4);
+    cleanups.push(() => clearInterval(stepper));
+    await waitFor(() => s.game.snapshotFrameForTest() !== null, 30000, "a snapshot");
+    expect(s.game.snapshotFrameForTest()).toBe(s.game.snapshotFrameForTest()); // same buffer, not re-encoded
+    // A peer whose queue is over the cap is closed on the first send, with a Leave stamped for its player.
+    let closed = "";
+    const slow = { send() {}, buffered: () => 9 * 1024 * 1024, close: (_c: number, r: string) => { closed = r; } };
+    const joined = s.game.join(slow, { playerId: 9999, name: "slow" });
+    expect(closed).toBe("too slow");
+    await waitFor(() => !s.game.members.has(joined.conn), 3000, "slow member removed");
+    a.close();
+  });
+});

@@ -30,6 +30,10 @@ const ROOT = resolve(here, "..");
 const WASM_PATH = join(ROOT, "sim/target/wasm32-unknown-unknown/release/sim.wasm");
 const CLIENT_DIR = join(ROOT, "dist/client");
 export const MAX_INPUTS_PER_SEC = 40;
+/** Connections per world, spectators included (plan 14: 8 players; the rest is headroom for spectators). */
+export const MAX_MEMBERS_PER_WORLD = 64;
+/** Concurrent sockets per client address. */
+export const MAX_CONNS_PER_IP = 12;
 const MAX_FRAME_BYTES = 256;
 const TIMER_MS = 4;
 const HELLO_TIMEOUT_MS = 10_000;
@@ -64,7 +68,7 @@ export interface RunningServer {
   worlds: Map<number, World>;
   identity: Identity;
   db: GameDb | null;
-  stats: { droppedRate: number; rejected: number };
+  stats: { droppedRate: number; rejected: number; originRefused: number; capRefused: number };
   close(): Promise<void>;
 }
 
@@ -80,6 +84,10 @@ export interface ServerOptions {
   dataDir?: string | null;
   snapshotEveryTicks?: number;
   quiet?: boolean;
+  /** Extra Origins allowed to POST /api/players (a dev client on another port). Same-origin is always allowed. */
+  allowedOrigins?: string[];
+  maxConnsPerIp?: number;
+  maxMembersPerWorld?: number;
 }
 
 export async function startServer(opts: ServerOptions = {}): Promise<RunningServer> {
@@ -105,7 +113,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
   const identity = new Identity(db, say);
-  const stats = { droppedRate: 0, rejected: 0 };
+  const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
+  const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
+  const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
+  const connsByIp = new Map<string, number>();
 
   const http: Server = createServer((req, res) => {
     let path: string;
@@ -119,6 +130,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     if (path === "/api/players") {
       if (req.method !== "POST") {
         res.writeHead(405, { allow: "POST" }).end();
+        return;
+      }
+      // A browser always sends Origin on a POST, so a page on another site is recognised and refused; a request
+      // with no Origin is not a browser (a script or a test), which a drive-by page cannot forge. Review M4a S2.
+      const origin = req.headers.origin;
+      if (origin !== undefined && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}` && !allowedOrigins.has(origin)) {
+        stats.originRefused++;
+        res.writeHead(403).end("cross-origin registration refused");
         return;
       }
       // Body is a tiny JSON object; anything bigger is refused before it is parsed.
@@ -197,6 +216,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       socket.destroy();
       return;
     }
+    // Fly sets Fly-Client-IP (and replaces any client-supplied one); elsewhere it is the socket address.
+    const ip = String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?");
+    if ((connsByIp.get(ip) ?? 0) >= maxPerIp) {
+      stats.capRefused++;
+      socket.write("HTTP/1.1 429 Too Many Requests\r\nconnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    connsByIp.set(ip, (connsByIp.get(ip) ?? 0) + 1);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const n = (connsByIp.get(ip) ?? 1) - 1;
+      if (n <= 0) connsByIp.delete(ip);
+      else connsByIp.set(ip, n);
+    };
+    socket.on("close", release);
     wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, String(req.headers["user-agent"] ?? "").slice(0, 200)));
   });
 
@@ -232,6 +269,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         if (!w || worldKindOf(msg.worldId) === null) return reject(ws, "unknown world");
         if (w.closing) return reject(ws, "server is shutting down");
         if (w.full) return reject(ws, "world log is full; try again later");
+        if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
+          stats.capRefused++;
+          return reject(ws, "world is full; try again later");
+        }
         let playerId: number | undefined;
         let name = "";
         if (w.kind === WORLD_GAME && !(msg.flags & HELLO_SPECTATE)) {
