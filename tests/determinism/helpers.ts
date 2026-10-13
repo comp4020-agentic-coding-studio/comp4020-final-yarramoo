@@ -26,3 +26,12 @@ export function sharedScript(): { script: Script; path: string } {
 export function sh(cmd: string, args: string[], cwd = root): string {
   return execFileSync(cmd, args, { cwd, env: cargoEnv, encoding: "utf8", maxBuffer: 1 << 28 });
 }
+
+/** D8 script: a game world (world_kind 1), no inputs, 300 ticks. Cached on disk for the browser runner. */
+export function gameScript(): { script: Script; path: string } {
+  const path = resolve(root, "tests/determinism/.cache/script-game.json");
+  const script: Script = { seed: "20261014", world_kind: 1, ticks: 300, inputs: {} };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(script));
+  return { script, path };
+}
