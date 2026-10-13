@@ -475,8 +475,11 @@ impl Grid {
         }
     }
 
-    /// Stem: the tip (aux != 0) extends upward at random until it reaches its target height,
-    /// then places a Flower and matures (aux = 0). Blocked tips mature without a Flower.
+    /// Stem tips (D-084). `aux` is `hi << 4 | lo`; only a growing tip has a non-zero aux.
+    /// `hi` 8..=14 is a main tip (`hi` = target height, `lo` = current height), exactly D-024's
+    /// encoding, so stems saved by the older rule keep growing. `hi` 1..=7 is a side-branch tip
+    /// (`hi` = steps left, `lo` 1 = leans left, 2 = right). Any other non-zero value (never written)
+    /// is clamped or finished, so no saved byte can grow without bound.
     fn update_stem(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         let i = y * self.w + x;
         let a = self.aux[i] as u32;
@@ -486,20 +489,98 @@ impl Grid {
         if rng(seed, tick, x as u32, y as u32, SALT_STEM_GROW) % 12 != 0 {
             return;
         }
-        let (target, cur) = (a >> 4, a & 15);
-        let above = self.off(x, y, 0, -1).filter(|&(ax, ay)| self.at(ax, ay) == EMPTY);
-        match above {
-            Some((ax, ay)) => {
-                let j = ay * self.w + ax;
-                if cur >= target {
-                    self.set(j, FLOWER, 0);
-                } else {
-                    self.set(j, STEM, ((target << 4) | (cur + 1)) as u8);
-                }
-                self.moved[j] = 1;
-                self.set(i, STEM, 0);
+        let (hi, lo) = (a >> 4, a & 15);
+        if hi == 0 {
+            self.set(i, STEM, 0);
+        } else if hi < 8 {
+            self.grow_branch(x, y, hi, lo, seed, tick);
+        } else {
+            self.grow_main(x, y, hi.min(14), lo, seed, tick);
+        }
+    }
+
+    fn empty_at(&self, x: usize, y: usize, dx: isize, dy: isize) -> Option<(usize, usize)> {
+        self.off(x, y, dx, dy).filter(|&(ax, ay)| self.at(ax, ay) == EMPTY)
+    }
+
+    /// Put a new cell and mark it as already moved this tick, so it does not act until the next.
+    fn put_plant(&mut self, p: (usize, usize), m: u8, aux: u8) {
+        let j = p.1 * self.w + p.0;
+        self.set(j, m, aux);
+        self.moved[j] = 1;
+    }
+
+    /// Flower shapes, chosen by rng at the moment of blooming: one cell, a T (cell with both sides
+    /// and the top), or a 2x2 cluster leaning right. Only Empty cells are filled.
+    fn bloom(&mut self, p: (usize, usize), seed: u64, tick: u32) {
+        let shape = rng(seed, tick, p.0 as u32, p.1 as u32, SALT_STEM_BLOOM) % 4;
+        self.put_plant(p, FLOWER, 0);
+        let extra: &[(isize, isize)] = match shape {
+            2 => &[(-1, 0), (1, 0), (0, -1)],
+            3 => &[(1, 0), (0, -1), (1, -1)],
+            _ => &[],
+        };
+        for &(dx, dy) in extra {
+            if let Some(q) = self.empty_at(p.0, p.1, dx, dy) {
+                self.put_plant(q, FLOWER, 0);
             }
-            None => self.set(i, STEM, 0),
+        }
+    }
+
+    fn grow_main(&mut self, x: usize, y: usize, target: u32, cur: u32, seed: u64, tick: u32) {
+        let (xu, yu) = (x as u32, y as u32);
+        let i = y * self.w + x;
+        let r = rng(seed, tick, xu, yu, SALT_STEM_LEAN);
+        // Lean: one step in four goes diagonally, falling back to straight up if that is blocked.
+        let dx: isize = match r % 8 {
+            0 => -1,
+            1 => 1,
+            _ => 0,
+        };
+        let next = self.empty_at(x, y, dx, -1).or_else(|| self.empty_at(x, y, 0, -1));
+        let Some(p) = next else {
+            self.set(i, STEM, 0);
+            return;
+        };
+        if cur >= target {
+            self.set(i, STEM, 0);
+            self.bloom(p, seed, tick);
+            return;
+        }
+        // Leaf and branch are decided at fixed heights, so each can happen at most once per stem.
+        let rb = rng(seed, tick, xu, yu, SALT_STEM_BRANCH);
+        if cur == 3 && rb % 3 == 0 {
+            let side = if rb & 8 == 0 { -1 } else { 1 };
+            if let Some(q) = self.empty_at(x, y, side, 0) {
+                self.put_plant(q, STEM, 0);
+            }
+        }
+        if cur == 5 && rb % 2 == 0 {
+            let (side, bit) = if rb & 8 == 0 { (-1, 1) } else { (1, 2) };
+            if let Some(q) = self.empty_at(x, y, side, 0) {
+                let rem = 3 + (rb >> 4) % 3;
+                self.put_plant(q, STEM, ((rem << 4) | bit) as u8);
+            }
+        }
+        self.put_plant(p, STEM, ((target << 4) | (cur + 1)) as u8);
+        self.set(i, STEM, 0);
+    }
+
+    fn grow_branch(&mut self, x: usize, y: usize, rem: u32, lo: u32, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        let side: isize = if lo == 1 { -1 } else { 1 };
+        let up = rng(seed, tick, x as u32, y as u32, SALT_STEM_LEAN) % 2 == 0;
+        let next = self.empty_at(x, y, side, if up { -1 } else { 0 });
+        let Some(p) = next else {
+            self.set(i, STEM, 0);
+            return;
+        };
+        if rem == 1 {
+            self.set(i, STEM, 0);
+            self.put_plant(p, FLOWER, 0);
+        } else {
+            self.put_plant(p, STEM, (((rem - 1) << 4) | lo) as u8);
+            self.set(i, STEM, 0);
         }
     }
 
@@ -738,10 +819,77 @@ mod tests {
         g.set(61 * 64 + 22, WATER, 0);
         run(&mut g, 11, 3000);
         assert_eq!(g.at(20, 61), STEM);
-        let stems = (0..62).filter(|&y| g.at(20, y) == STEM).count();
-        assert!((8..=14).contains(&stems), "stem length {stems}");
-        let top = (0..62).find(|&y| g.at(20, y) != EMPTY).unwrap();
-        assert_eq!(g.at(20, top), FLOWER);
+        let plants = (0..64 * 62).filter(|&i| g.mat[i] == STEM || g.mat[i] == FLOWER).count();
+        assert!((9..=60).contains(&plants), "plant size {plants}");
+        assert!(count(&g, FLOWER) >= 1);
+    }
+
+    /// A dirt strip with one seed and water beside it, run to completion; returns the plant's cells.
+    fn grow_plant(seed: u64) -> Vec<(usize, usize, u8)> {
+        let mut g = boxed(64, 64);
+        for x in 0..64 {
+            g.set(62 * 64 + x, DIRT, 0);
+        }
+        g.set(61 * 64 + 30, SEED, 0);
+        g.set(61 * 64 + 32, WATER, 0);
+        run(&mut g, seed, 4000);
+        let mut cells = Vec::new();
+        for y in 0..62 {
+            for x in 0..64 {
+                let m = g.at(x, y);
+                if m == STEM || m == FLOWER {
+                    assert!(m != STEM || g.aux[y * 64 + x] == 0, "unfinished tip at {x},{y}");
+                    cells.push((x, y, m));
+                }
+            }
+        }
+        cells
+    }
+
+    #[test]
+    fn plants_are_bounded_vary_in_shape_and_repeat_per_seed() {
+        let mut shapes = std::collections::BTreeSet::new();
+        for seed in 0..40u64 {
+            let c = grow_plant(seed);
+            // Main stem 8-14, a leaf, one branch of up to 5 cells, a bloom of up to 4 cells.
+            assert!((9..=30).contains(&c.len()), "seed {seed}: {} cells", c.len());
+            assert!(c.iter().any(|&(_, _, m)| m == FLOWER), "seed {seed}: no flower");
+            let flowers = c.iter().filter(|&&(_, _, m)| m == FLOWER).count();
+            let stems = c.len() - flowers;
+            shapes.insert((flowers, c.iter().map(|&(x, _, _)| x).min().unwrap() != 30, stems > 14));
+            assert_eq!(c, grow_plant(seed), "same seed must grow the same plant");
+        }
+        assert!(shapes.len() >= 4, "plants too alike: {shapes:?}");
+        let all_flowers: std::collections::BTreeSet<usize> =
+            (0..40u64).map(|s| grow_plant(s).iter().filter(|c| c.2 == FLOWER).count()).collect();
+        assert!(all_flowers.len() >= 2, "one bloom shape only: {all_flowers:?}");
+    }
+
+    /// D-084: stems saved under D-024's encoding (`target << 4 | height`) and any odd byte must
+    /// finish as some plant, never grow without bound, and leave no growing tip behind.
+    #[test]
+    fn old_encoded_stems_finish() {
+        for aux in [0x81u8, 0xE1, 0xA7, 0xEE, 0xF1, 0xFF, 0x05, 0x13, 0x77, 0x01] {
+            let mut g = boxed(64, 64);
+            g.set(40 * 64 + 20, STEM, aux);
+            run(&mut g, 5, 6000);
+            let plant = count(&g, STEM) + count(&g, FLOWER);
+            assert!(plant <= 40, "aux {aux:#x}: {plant} cells");
+            assert!((0..64 * 64).all(|i| g.mat[i] != STEM || g.aux[i] == 0), "aux {aux:#x}: tip left growing");
+        }
+    }
+
+    #[test]
+    fn growing_stem_keeps_its_chunk_awake_and_mature_plants_sleep() {
+        let mut g = boxed(64, 64);
+        g.set(40 * 64 + 20, STEM, 0xC1);
+        g.step_cells(1, 0);
+        assert!(g.awake[g.chunk_of(20, 40)]);
+        run(&mut g, 1, 6000);
+        for t in 6000..6003 {
+            g.step_cells(1, t);
+        }
+        assert_eq!(g.ran_chunks, 0, "a finished plant must let its chunks sleep");
     }
 
     #[test]

@@ -9,10 +9,10 @@ import { readWasm, wasmPath } from "./helpers.ts";
 // - DATA: this build restores a snapshot that build wrote to exactly the same state. Must hold forever,
 //   or the live world is lost.
 // - RULES: from there the two builds step the same way only until a gameplay rule changes on purpose.
-//   Liquid dispersion (D-081) is such a change, so they now diverge. A future rule change must update
+//   Liquid dispersion (D-081) and varied plant growth (D-084) are such changes, so they now diverge. A future rule change must update
 //   RULES_CHANGED_BY rather than make this pass by accident.
 const DEPLOYED = "tests/fixtures/sim-v1-deployed.wasm";
-const RULES_CHANGED_BY = "D-081: liquids slide sideways to find their level";
+const RULES_CHANGED_BY = "D-081 (liquids slide sideways to find their level) and D-084 (plants lean, branch, leaf and bloom in several shapes)";
 
 function deployedSnapshot() {
   const old = loadSim(new Uint8Array(readFileSync(DEPLOYED)));

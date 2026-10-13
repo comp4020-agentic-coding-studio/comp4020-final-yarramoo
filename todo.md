@@ -53,7 +53,7 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ## Plants
 
-- [ ] Randomise how a flower grows: the stem leans or branches, leaves sprout,
+- [x] Randomise how a flower grows: the stem leans or branches, leaves sprout,
       heights and bloom shapes vary. All through the counter-based RNG, so
       every client grows the same flower.
 
