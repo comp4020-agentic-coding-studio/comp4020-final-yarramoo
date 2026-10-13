@@ -98,6 +98,18 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       budget; liquids every other tick would change gameplay and stays the
       user's call.
 
+### Unresolved, for a fresh look (14 Oct)
+
+- [ ] The join speed-up (`4ad1435`, D-088: restores reuse the generated world,
+      join path about 1170 ms -> 400 ms) is committed but NOT pushed. Its own
+      checks pass: hit/miss/cold restores are bit-identical, compat DATA still
+      restores the live sandbox exactly. But the M4b net test ("a third joins
+      late with bolts in flight") fails 4/4 on it, against 2/3 on the commit
+      before, so that test was already flaky. In my probe the cache keeps
+      projectiles on a hit, a miss and a cold restore. Yet in the test, a late
+      client's snapshot never had bolts in 20 rejoins over about 3 s, which is
+      unexplained. Don't push `4ad1435` until it is.
+
 ## Crit 10: fly by instruments (by Tue 20 Oct)
 
 Budgeted from next week's allowance (resets Thu 15 Oct 9 am); the user decided
