@@ -369,9 +369,16 @@ export function mountScene(container, opts) {
       orbiting = true; moving = true;
     }
     if (fx.out.following && !tween && !look.dragging && now - lastInput > (spectating ? IDLE_RESUME_MS : 3000)) {
+      // Track the vehicle in yaw and pitch: tilting alone looks at empty sky when
+      // the rocket isn't straight ahead, or when it pitches over downrange.
       const cx = rig.radius * Math.sin(rig.theta), cz = rig.radius * Math.cos(rig.theta);
-      const f = fx.out.focus, want = Math.atan2(f.y - rig.height, Math.hypot(f.x - cx, f.z - cz));
-      look.pitch += (clamp(want, -0.2, 1.3) - look.pitch) * (1 - Math.exp(-dt * 2.5));
+      const f = fx.out.focus, dx = f.x - cx, dz = f.z - cz;
+      const wantPitch = Math.atan2(f.y - rig.height, Math.hypot(dx, dz));
+      // camera.rotation.y = theta + yaw looks along (-sin, -cos) of that angle
+      const wantYaw = Math.atan2(-dx, -dz) - rig.theta;
+      const dyaw = Math.atan2(Math.sin(wantYaw - look.yaw), Math.cos(wantYaw - look.yaw));
+      const k = 1 - Math.exp(-dt * 2.5);
+      look.set(look.yaw + dyaw * k, look.pitch + (clamp(wantPitch, -0.2, 1.3) - look.pitch) * k);
       moving = true;
     }
     placeCamera();

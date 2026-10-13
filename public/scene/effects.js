@@ -372,8 +372,33 @@ export function buildEffects({ scene, container, rocket, pad, stations, lights, 
     clock.faceTo(camera);
 
     // --- hand the camera what it needs
-    out.following = flying && liftSec < 18 && rocketVis;
-    if (out.following) out.focus.set(arc.x, MOUNT_TOP + arc.y + rocket.height * 0.5, 0);
+    // Fade the tower while it stands between this camera and the vehicle in
+    // flight: whichever way the arc goes, some seat looks through the tower.
+    let fade = 1;
+    if ((flying && rocketVis) || (done && air && eOut < 6)) {
+      const b = pad.tower.base, cxz = camera.position;
+      const vx = arc.x - cxz.x, vz = 0 - cxz.z, tx = b.x - cxz.x, tz = b.z - cxz.z;
+      const along = (tx * vx + tz * vz) / Math.max(1e-6, vx * vx + vz * vz);
+      const off = Math.abs(tx * vz - tz * vx) / Math.max(1e-6, Math.hypot(vx, vz)); // tower's distance from the sight line
+      if (along > 0 && along < 1 && off < 6) fade = 0.25;
+    }
+    const tm = pad.tower.mat, to = tm.opacity + (fade - tm.opacity) * Math.min(1, dt * 4);
+    if (Math.abs(to - tm.opacity) > 0.002 || (fade === 1 && tm.opacity !== 1)) {
+      tm.opacity = Math.abs(to - 1) < 0.01 ? 1 : to;
+      tm.transparent = tm.opacity < 0.99; tm.depthWrite = !tm.transparent;
+    }
+    dbgState.tower = +tm.opacity.toFixed(2);
+    // Follow the whole climb, and hold on the spot of an in-air end (termination,
+    // range violation) for a few seconds so its flash is framed, not missed.
+    const airEnd = done && air && eOut < 6;
+    out.following = (flying && rocketVis) || airEnd;
+    if (flying && rocketVis) out.focus.set(arc.x, MOUNT_TOP + arc.y + rocket.height * 0.5, 0);
+    else if (airEnd) {
+      // where the vehicle was when it ended, on the same nominal arc
+      const pe = A ? clamp(Math.max(0, oc.atT) / 1000 / A, 0, 1) : 0;
+      pathAt(pe);
+      out.focus.set(arc.x, MOUNT_TOP + arc.y + rocket.height * 0.5, 0);
+    }
     if (reduced) { shakeAmp = 0; flashT = 0; }
     if (shakeAmp > 0) { tmpV.set(0, MOUNT_TOP, 0); shakeAmp *= Math.min(1.6, 25 / Math.max(8, camera.position.distanceTo(tmpV))); }
     out.shake = shakeAmp;

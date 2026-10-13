@@ -124,10 +124,13 @@ export function buildPad({ rocketHeight, mastThetas = [0.9, 2.3, 4.1, 5.3] }) {
   // the arm swings on a pivot at the tower corner.
   const tower = new THREE.Group();
   const towerGeo = tb.geometry();
-  const towerMesh = new THREE.Mesh(towerGeo, mat);
+  // Its own material, so the scene can fade the tower when it stands between a
+  // seat and the climbing rocket (a local view tweak; nothing private).
+  const towerMat = litMaterial();
+  const towerMesh = new THREE.Mesh(towerGeo, towerMat);
   towerMesh.frustumCulled = false;
   const armGeo = ab.geometry();
-  const armMesh = new THREE.Mesh(armGeo, mat);
+  const armMesh = new THREE.Mesh(armGeo, towerMat);
   armMesh.frustumCulled = false;
   const arm = new THREE.Group();
   arm.position.set(TX, armY, TZ + half);
@@ -153,9 +156,9 @@ export function buildPad({ rocketHeight, mastThetas = [0.9, 2.3, 4.1, 5.3] }) {
   return {
     group,
     towerHeight: towerH,
-    tower: { group: tower, base: new THREE.Vector3(TX, 0, TZ), arm },
+    tower: { group: tower, base: new THREE.Vector3(TX, 0, TZ), arm, mat: towerMat },
     beacons: { mesh: beacons, mat: beaconMat },
     triangles: b.triangles + bb.triangles + tb.triangles + ab.triangles,
-    dispose() { geo.dispose(); towerGeo.dispose(); armGeo.dispose(); mat.dispose(); beaconGeo.dispose(); beaconMat.dispose(); },
+    dispose() { geo.dispose(); towerGeo.dispose(); armGeo.dispose(); mat.dispose(); towerMat.dispose(); beaconGeo.dispose(); beaconMat.dispose(); },
   };
 }
