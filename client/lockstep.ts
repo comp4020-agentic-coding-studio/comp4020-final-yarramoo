@@ -4,6 +4,11 @@
 import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawFor, simInputBytes, WORLD_GAME, WORLD_SANDBOX, type TickInput } from "../shared/protocol.ts";
 import type { Sim } from "../shared/sim.ts";
 
+/** Review M4b S2: a Knock older than this many ticks behind the live edge is dropped (a stalled tab's backlog). */
+export const KNOCK_FRESH_TICKS = 6;
+/** The sim never moves anyone for a Knock, so skipping a stale one desyncs nothing; it only avoids a fling. */
+export const knockIsFresh = (tick: number, latestClosed: number): boolean => tick >= latestClosed - KNOCK_FRESH_TICKS;
+
 /** Target buffer depth, in ticks. */
 export const J = 2;
 export const MAX_EXTRA = 4;

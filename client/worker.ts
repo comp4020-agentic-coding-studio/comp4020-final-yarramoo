@@ -28,7 +28,7 @@ import { CAST_PAYLOAD_LEN } from "../shared/avatar.ts";
 import { Particles, newPoseState, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { SPELLS } from "./spells.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
-import { Lockstep, reactToTick } from "./lockstep.ts";
+import { Lockstep, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
 
@@ -201,7 +201,7 @@ function onTickApplied(tick: number, inputs: { player: number; kind: number }[])
   // Render-only reads of the sim's events (invariant 9), except Knock, which plan 6.7 says the victim applies.
   if (ls && !ls.fastForwarding && ls.sim.width() > 512) {
     for (const e of ls.sim.events()) {
-      if (e.kind === EV_KNOCK && e.player === myId && avatar && avatarReady && !spectate) avatar.knock(e.a, e.b);
+      if (e.kind === EV_KNOCK && e.player === myId && knockIsFresh(tick, ls.latestClosed) && avatar && avatarReady && !spectate) avatar.knock(e.a, e.b);
       if (pendingEvents.length < 300) pendingEvents.push(e);
     }
   }
