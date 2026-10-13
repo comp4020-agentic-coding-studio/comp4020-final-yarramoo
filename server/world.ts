@@ -4,7 +4,9 @@
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
 import { GAME_H, GAME_W, maxPosJump, POS_ONE, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
+  decompressSnapshot,
   encodePlayerName,
+  MAX_SNAPSHOT_RAW_GAME,
   encodeRequestSnapshot,
   encodeResync,
   encodeSnapshot,
@@ -224,8 +226,10 @@ export class World {
     }
     if (frames.length === 0 && db.ticksAfter(this.id, base).length > 0) rewrite = true;
     this.log.push(...frames);
-    this.snapshotOnline = Math.max(0, -net);
-    this.online = 0;
+    // Who the restored state says is active: the snapshot's players, then the logged Joins and Leaves (S4).
+    const stillActive = this.kind === WORLD_GAME ? activeAfter(snap ? activePlayersIn(snap.data) : new Set<number>(), frames) : new Set<number>();
+    this.snapshotOnline = this.kind === WORLD_GAME ? (snap ? activePlayersIn(snap.data).size : 0) : Math.max(0, -net);
+    this.online = this.kind === WORLD_GAME ? this.snapshotOnline + net : 0;
     this.clock.setClosed(base + frames.length);
     this.lastRequestTick = base;
     if (rewrite) {
@@ -236,7 +240,21 @@ export class World {
         this.pending = frames.slice();
       }
     }
+    this.leaveOrphans(stillActive);
     this.say(`[world] loaded: snapshot ${snap ? snap.tick : "none"}, ${frames.length} logged ticks, resuming at tick ${base + frames.length}`);
+  }
+
+  /**
+   * A hard crash (SIGKILL, OOM, a lost machine) leaves Joins in the log with no Leave, and nobody is connected after
+   * a cold start, so those players would stay active forever, waking their region for everyone (review M4a S4, D-069).
+   * Stamp a Leave for each, close that tick now and persist it: it is an ordinary input, so every client agrees.
+   */
+  private leaveOrphans(ids: Set<number>): void {
+    if (ids.size === 0) return;
+    for (const id of [...ids].sort((a, b) => a - b)) this.stamp({ player: id, kind: KIND_LEAVE, payload: new Uint8Array(0) });
+    this.clock.closeNow();
+    this.flush();
+    this.say(`[world ${this.id}] cold start: stamped Leave for ${ids.size} player(s) left active by a crash`);
   }
 
   // ---- tick close, broadcast, persistence ---------------------------------------------------------
@@ -629,6 +647,40 @@ export class World {
         reject(`save failed: ${String(e)}`);
       });
   }
+}
+
+/** Active player ids in a compressed game snapshot, read from its entity section (layout in plan 6.11). */
+function activePlayersIn(compressed: Uint8Array): Set<number> {
+  const out = new Set<number>();
+  try {
+    const raw = decompressSnapshot(compressed, MAX_SNAPSHOT_RAW_GAME);
+    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const ENTITY_AT = 55; // after the 55-byte header comes the entity length u32, then the entity bytes
+    let o = ENTITY_AT + 4;
+    const n = v.getUint32(o, true);
+    o += 4;
+    for (let k = 0; k < n; k++, o += 65) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
+  } catch {
+    // an unreadable snapshot would already have failed verification; treat as none active
+  }
+  return out;
+}
+
+function activeAfter(start: Set<number>, frames: Uint8Array[]): Set<number> {
+  const a = new Set(start);
+  for (const f of frames) {
+    const v = new DataView(f.buffer, f.byteOffset, f.byteLength);
+    const n = v.getUint16(5, true);
+    let o = 7;
+    for (let k = 0; k < n; k++) {
+      const kind = f[o + 4];
+      const id = v.getUint32(o, true);
+      if (kind === KIND_JOIN) a.add(id);
+      else if (kind === KIND_LEAVE) a.delete(id);
+      o += 7 + v.getUint16(o + 5, true);
+    }
+  }
+  return a;
 }
 
 function presenceDelta(frame: Uint8Array): number {

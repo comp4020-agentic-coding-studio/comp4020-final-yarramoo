@@ -4,8 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME, compressSnapshot, decompressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
-import { KIND_JOIN, KIND_PAINT, encodePaint } from "../../shared/inputs.ts";
+import { decodeServer, encodeTick, encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME, compressSnapshot, decompressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
+import { createHash } from "node:crypto";
+import { KIND_JOIN, KIND_LEAVE, KIND_PAINT, encodePaint } from "../../shared/inputs.ts";
+import { GameDb } from "../../server/db.ts";
 import { loadSim } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, register, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
@@ -408,3 +410,36 @@ describe("snapshot verification failures (review M4a S3)", () => {
     await sleep(100);
   });
 });
+
+describe("no player stays active (review M4a S4)", () => {
+  it("cold start after a crash stamps a Leave for a player whose Join has no Leave", async () => {
+    const dir = tmp();
+    // Make the world rows, then write a log as a crashed server would have left it: a Join, no Leave.
+    await (await boot(dir)).close();
+    const db = new GameDb(dir);
+    db.appendTicks(1, 1, 3, wasmHashHex(), new Uint8Array([...encodeTick(1, [{ player: 5, kind: KIND_JOIN, payload: new Uint8Array(0) }]), ...encodeTick(2, []), ...encodeTick(3, [])]));
+    db.close();
+    const s = await boot(dir);
+    expect(s.game.clock.lastClosed).toBe(4); // the Leave got its own tick, appended to the log
+    const me = await register(s.port, "After");
+    const c = await connect(s.port, hex, { world: GAME, token: me.token });
+    await waitFor(() => { stepAll(c); return c.ls.simTick >= 4; }, 20000, "replayed");
+    const ghost = c.ls.sim.entities().find((e) => e.type === 1 && e.id === 5);
+    expect(ghost, "the entity persists").toBeDefined();
+    expect(ghost!.active).toBe(false);
+    c.close();
+  });
+
+  it("a member dropped by a failed send gets a Leave", async () => {
+    const s = await boot(tmp(), 120);
+    const dead = { send() { throw new Error("socket gone"); }, buffered: () => 0, close() {} };
+    // The welcome itself fails to send; the member is dropped and must still be left.
+    const j = s.game.join(dead, { playerId: 777, name: "dead" });
+    await waitFor(() => !s.game.members.has(j.conn), 3000, "dropped");
+    await sleep(100);
+    const kinds = s.game.log.map((f) => decodeServer(f)).flatMap((m) => (m && m.t === "tick" ? m.inputs : [])).filter((i) => i.player === 777).map((i) => i.kind);
+    expect(kinds).toEqual([KIND_JOIN, KIND_LEAVE]);
+  });
+});
+
+const wasmHashHex = () => Buffer.from(createHash("sha256").update(wasmBytes).digest()).toString("hex");
