@@ -3,6 +3,7 @@
 //! Integer-only (clippy denies floats), no recursion, no `HashMap`. Every random draw is
 //! `rng(seed, 0, x, y, SALT_GEN_*)` with a salt per use. The generator writes straight into the grid
 //! without touching chunk metadata, so every chunk starts pristine.
+#![allow(clippy::manual_is_multiple_of, clippy::needless_range_loop)]
 
 use crate::grid::Grid;
 use crate::materials::*;
@@ -76,7 +77,7 @@ pub struct Params {
     pub thr_deep: i32,
 }
 
-pub const PARAMS: Params = Params { thr_shallow: 1700, thr_deep: 1900 };
+pub const PARAMS: Params = Params { thr_shallow: 1500, thr_deep: 1700 };
 
 /// Surface height per column: three octaves of 1D value noise around `SURFACE_Y`.
 fn surface_heights(seed: u64, w: i32, h: i32) -> Vec<i32> {
@@ -134,6 +135,9 @@ pub fn generate(g: &mut Grid, seed: u64) {
     let surf = surface_heights(seed, w, h);
     fill_terrain(g, seed, &surf);
     carve_noise_caves(g, seed, &surf);
+    let mut path = Vec::new();
+    carve_worms(g, seed, &surf, &mut path);
+    connect_and_prune(g, &path);
 }
 
 fn is_border(w: usize, h: usize, x: usize, y: usize) -> bool {
@@ -200,6 +204,256 @@ fn carve_noise_caves(g: &mut Grid, seed: u64, surf: &[i32]) {
     }
 }
 
+/// A tunnel digger. Its randomness is `rng(seed, 0, id, step, SALT_GEN_*)`, so a worm is a pure
+/// function of (seed, id) and does not depend on the order other worms run in.
+struct Worm {
+    id: u32,
+    x: i32,
+    y: i32,
+    r: i32,
+    r_min: i32,
+    r_max: i32,
+    drift: i32,
+    step: u32,
+    max_steps: u32,
+    target_y: i32,
+    branches: u8,
+    /// Horizontal link worm: heading (+1/-1) and the row it wanders around.
+    horiz: Option<(i32, i32)>,
+}
+
+/// Remove Rock and Dirt in a disc; Bedrock and everything else stays.
+fn dig(g: &mut Grid, cx: i32, cy: i32, r: i32) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    for y in (cy - r).max(0)..=(cy + r).min(h - 1) {
+        for x in (cx - r).max(0)..=(cx + r).min(w - 1) {
+            if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r {
+                let i = (y * w + x) as usize;
+                if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                    g.mat[i] = EMPTY;
+                }
+            }
+        }
+    }
+}
+
+/// True if a disc of radius `r` at (x, y) would reach the protected border.
+fn near_border(g: &Grid, x: i32, y: i32, r: i32) -> bool {
+    let m = r + 10;
+    x < WALL_COLS as i32 + m
+        || x >= g.w as i32 - WALL_COLS as i32 - m
+        || y >= g.h as i32 - FLOOR_ROWS as i32 - m
+}
+
+fn pick_entrances(seed: u64, w: i32) -> Vec<i32> {
+    let want = 3 + (rng(seed, 0, 0, 0, SALT_GEN_ENTRANCE) % 3) as usize;
+    let lo = WALL_COLS as i32 + 64;
+    let span = (w - 2 * lo) as u32;
+    let mut xs: Vec<i32> = Vec::new();
+    for k in 1..200u32 {
+        if xs.len() == want {
+            break;
+        }
+        let x = lo + (rng(seed, 0, k, 1, SALT_GEN_ENTRANCE) % span) as i32;
+        if xs.iter().all(|&o| (o - x).abs() >= 300) {
+            xs.push(x);
+        }
+    }
+    xs.sort_unstable();
+    xs
+}
+
+/// Run one worm to completion, pushing branches onto `todo` and sampled positions onto `path`.
+fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &mut Vec<(i32, i32)>, next_id: &mut u32) {
+    while wm.step < wm.max_steps {
+        let st = wm.step;
+        let rn = |salt: u32| rng(seed, 0, wm.id, st, salt);
+        if near_border(g, wm.x, wm.y, wm.r) {
+            return;
+        }
+        dig(g, wm.x, wm.y, wm.r);
+        if st % 8 == 0 {
+            path.push((wm.x, wm.y));
+        }
+        if st % 12 == 0 {
+            wm.r = (wm.r + (rn(SALT_GEN_WORM_R) % 3) as i32 - 1).clamp(wm.r_min, wm.r_max);
+        }
+        if let Some((dir, base)) = wm.horiz {
+            let r = rn(SALT_GEN_HWORM) % 8;
+            let pull = (base - wm.y).signum();
+            wm.y += match r {
+                0 | 1 => 1,
+                2 | 3 => -1,
+                4 => pull,
+                _ => 0,
+            };
+            wm.x += dir * (1 + (rn(SALT_GEN_WORM_DX) % 2) as i32);
+        } else {
+            if st % 24 == 0 {
+                wm.drift = (rn(SALT_GEN_WORM_DRIFT) % 3) as i32 - 1;
+            }
+            let dy = match rn(SALT_GEN_WORM_DY) % 10 {
+                0..=6 => 1,
+                7 | 8 => 0,
+                _ => -1,
+            };
+            wm.y += dy;
+            wm.x += (wm.drift + (rn(SALT_GEN_WORM_DX) % 3) as i32 - 1).clamp(-2, 2);
+            if wm.y >= wm.target_y {
+                return;
+            }
+            if st % 150 == 149 && wm.branches > 0 {
+                wm.branches -= 1;
+                let id = *next_id;
+                *next_id += 1;
+                let deeper = 900 + (rng(seed, 0, id, 0, SALT_GEN_WORM_BRANCH) % 450) as i32;
+                let side = if rng(seed, 0, id, 1, SALT_GEN_WORM_BRANCH) & 1 == 0 { -1 } else { 1 };
+                todo.push(Worm {
+                    id,
+                    x: wm.x,
+                    y: wm.y,
+                    r: (wm.r - 1).max(wm.r_min),
+                    drift: side,
+                    step: 0,
+                    max_steps: 2500,
+                    target_y: deeper.max(wm.y + 150),
+                    branches: 0,
+                    ..wm
+                });
+            }
+        }
+        wm.step += 1;
+    }
+}
+
+/// Entrance shafts from the surface to the deep band (with branches), plus horizontal links.
+fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>) {
+    let w = g.w as i32;
+    let mut todo: Vec<Worm> = Vec::new();
+    let mut next_id = 1000u32;
+    for (k, &x) in pick_entrances(seed, w).iter().enumerate() {
+        todo.push(Worm {
+            id: k as u32,
+            x,
+            y: surf[x as usize] - 4,
+            r: 7,
+            r_min: 5,
+            r_max: 9,
+            drift: 0,
+            step: 0,
+            max_steps: 2500,
+            target_y: DEEP_TOP + 100,
+            branches: 3,
+            horiz: None,
+        });
+    }
+    for i in 0..4u32 {
+        let id = 500 + i;
+        let base = if i < 2 { 500 } else { 1100 } + (rng(seed, 0, id, 0, SALT_GEN_HWORM) % 60) as i32;
+        let x = 150 + (rng(seed, 0, id, 1, SALT_GEN_HWORM) % 1700) as i32;
+        todo.push(Worm {
+            id,
+            x,
+            y: base,
+            r: 6,
+            r_min: 4,
+            r_max: 8,
+            drift: 0,
+            step: 0,
+            max_steps: 700 + (rng(seed, 0, id, 2, SALT_GEN_HWORM) % 400),
+            target_y: 0,
+            branches: 0,
+            horiz: Some((if i & 1 == 0 { 1 } else { -1 }, base)),
+        });
+    }
+    while let Some(wm) = todo.pop() {
+        run_worm(g, seed, wm, &mut todo, path, &mut next_id);
+    }
+}
+
+/// Mark every Empty cell 4-connected to `start` in `seen` (1 = reached). If `region` is given the
+/// reached cell indices are appended to it. Iterative, with an explicit stack.
+fn flood(g: &Grid, seen: &mut [u8], start: usize, stack: &mut Vec<u32>, mut region: Option<&mut Vec<u32>>) {
+    let (w, h) = (g.w, g.h);
+    stack.clear();
+    seen[start] = 1;
+    stack.push(start as u32);
+    while let Some(c) = stack.pop() {
+        let i = c as usize;
+        if let Some(r) = region.as_deref_mut() {
+            r.push(c);
+        }
+        let (x, y) = (i % w, i / w);
+        let mut visit = |j: usize| {
+            if g.mat[j] == EMPTY && seen[j] == 0 {
+                seen[j] = 1;
+                stack.push(j as u32);
+            }
+        };
+        if x > 0 {
+            visit(i - 1);
+        }
+        if x + 1 < w {
+            visit(i + 1);
+        }
+        if y > 0 {
+            visit(i - w);
+        }
+        if y + 1 < h {
+            visit(i + w);
+        }
+    }
+}
+
+/// Smallest open region worth keeping (cells).
+pub const MIN_REGION: usize = 400;
+
+/// Reach everything from the sky: small unreachable pockets become Rock, big ones get a straight
+/// tunnel to the nearest worm path point, then anything still cut off is filled.
+fn connect_and_prune(g: &mut Grid, path: &[(i32, i32)]) {
+    let w = g.w;
+    let mut seen = vec![0u8; g.mat.len()];
+    let mut stack: Vec<u32> = Vec::new();
+    let mut region: Vec<u32> = Vec::new();
+    // The sky: row 0 is Empty everywhere inside the walls.
+    flood(g, &mut seen, w / 2, &mut stack, None);
+    for i in 0..g.mat.len() {
+        if g.mat[i] != EMPTY || seen[i] != 0 {
+            continue;
+        }
+        region.clear();
+        flood(g, &mut seen, i, &mut stack, Some(&mut region));
+        if region.len() < MIN_REGION {
+            for &c in &region {
+                g.mat[c as usize] = ROCK;
+            }
+            continue;
+        }
+        // Nearest path point to the region's first cell, then the region cell nearest that point.
+        let (fx, fy) = ((i % w) as i32, (i / w) as i32);
+        let d2 = |a: (i32, i32), x: i32, y: i32| (a.0 - x) * (a.0 - x) + (a.1 - y) * (a.1 - y);
+        let Some(&t) = path.iter().min_by_key(|&&p| (d2(p, fx, fy), p)) else { continue };
+        let rep = region
+            .iter()
+            .map(|&c| ((c as usize % w) as i32, (c as usize / w) as i32))
+            .min_by_key(|&(x, y)| (d2(t, x, y), x, y))
+            .unwrap_or((fx, fy));
+        let (dx, dy) = (t.0 - rep.0, t.1 - rep.1);
+        let n = dx.abs().max(dy.abs()).max(1);
+        for k in 0..=n {
+            dig(g, rep.0 + dx * k / n, rep.1 + dy * k / n, 4);
+        }
+    }
+    // Links can open other pockets or leave a sliver cut off: reflood and fill what is left.
+    seen.fill(0);
+    flood(g, &mut seen, w / 2, &mut stack, None);
+    for i in 0..g.mat.len() {
+        if g.mat[i] == EMPTY && seen[i] == 0 && i / w >= 100 {
+            g.mat[i] = ROCK;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,11 +481,35 @@ mod tests {
             }
         }
         let top = |x: usize| (0..g.h).find(|&y| g.mat[y * g.w + x] != EMPTY).unwrap();
-        for x in WALL_COLS + 1..g.w - WALL_COLS {
-            assert!((190..=270).contains(&top(x)), "surface at x={x} is {}", top(x));
-        }
+        // Entrance shafts open a few columns, so allow a small fraction outside the band.
+        let bad = (WALL_COLS + 1..g.w - WALL_COLS).filter(|&x| !(190..=270).contains(&top(x))).count();
+        assert!(bad < 60, "{bad} columns off the surface band");
         let shallow: Vec<u8> = (300..780).flat_map(|y| g.mat[y * g.w + 20..y * g.w + 2028].to_vec()).collect();
         let open = shallow.iter().filter(|&&m| m == EMPTY).count() * 100 / shallow.len();
         assert!((10..=40).contains(&open), "shallow band is {open}% open");
+    }
+
+    #[test]
+    fn every_open_cell_is_reachable_from_the_sky() {
+        for seed in [1u64, 2, 3] {
+            let s = Sim::new(seed, 1).unwrap();
+            let g = &s.grid;
+            let mut seen = vec![0u8; g.mat.len()];
+            let mut stack = Vec::new();
+            flood(g, &mut seen, g.w / 2, &mut stack, None);
+            let stranded = (0..g.mat.len()).filter(|&i| g.mat[i] == EMPTY && seen[i] == 0).count();
+            assert_eq!(stranded, 0, "seed {seed}");
+            let deep_open = (DEEP_TOP as usize..g.h).map(|y| (0..g.w).filter(|&x| seen[y * g.w + x] == 1).count()).sum::<usize>();
+            assert!(deep_open > 20_000, "seed {seed}: only {deep_open} reachable deep cells");
+        }
+    }
+
+    #[test]
+    fn entrances_are_spread_and_few() {
+        for seed in 0..20u64 {
+            let xs = pick_entrances(seed, 2048);
+            assert!((3..=5).contains(&xs.len()), "seed {seed}: {xs:?}");
+            assert!(xs.windows(2).all(|p| p[1] - p[0] >= 300));
+        }
     }
 }

@@ -45,6 +45,13 @@ pub const SALT_GEN_CAVE_B: u32 = 105;
 pub const SALT_GEN_WARP_X: u32 = 106;
 pub const SALT_GEN_WARP_Y: u32 = 107;
 pub const SALT_GEN_DETAIL: u32 = 108;
+pub const SALT_GEN_ENTRANCE: u32 = 109;
+pub const SALT_GEN_WORM_DY: u32 = 110;
+pub const SALT_GEN_WORM_DX: u32 = 111;
+pub const SALT_GEN_WORM_R: u32 = 112;
+pub const SALT_GEN_WORM_DRIFT: u32 = 113;
+pub const SALT_GEN_WORM_BRANCH: u32 = 114;
+pub const SALT_GEN_HWORM: u32 = 115;
 
 #[cfg(test)]
 mod tests {
