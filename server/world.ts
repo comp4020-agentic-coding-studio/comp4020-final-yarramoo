@@ -650,7 +650,7 @@ export class World {
 }
 
 /** Active player ids in a compressed game snapshot, read from its entity section (layout in plan 6.11). */
-function activePlayersIn(compressed: Uint8Array): Set<number> {
+export function activePlayersIn(compressed: Uint8Array): Set<number> {
   const out = new Set<number>();
   try {
     const raw = decompressSnapshot(compressed, MAX_SNAPSHOT_RAW_GAME);
