@@ -69,6 +69,18 @@ export class Avatar {
     this.vx = this.vy = this.remX = this.remY = 0;
   }
 
+  /**
+   * A Knock event from the sim (plan 6.7): `vx`, `vy` in 1/16 cell per tick. The sim does not move players,
+   * so the victim's own controller takes the impulse and the result reaches everyone through its Pos inputs.
+   * Added to the current velocity and capped per axis so the Pos jump check still holds.
+   */
+  knock(vx: number, vy: number): void {
+    const cap = (MAX_AVATAR_SPEED + 96) / POS_ONE - 0.01;
+    this.vx = Math.max(-cap, Math.min(cap, this.vx + vx / POS_ONE));
+    this.vy = Math.max(-cap, Math.min(cap, this.vy + vy / POS_ONE));
+    if (vy < 0) this.onGround = false;
+  }
+
   /** Does the 5 x 10 box with feet centre (x, y) overlap a solid cell? Out of the world counts as solid. */
   collides(g: Grid, x: number, y: number): boolean {
     const x0 = Math.floor(x - BOX_W / 2);

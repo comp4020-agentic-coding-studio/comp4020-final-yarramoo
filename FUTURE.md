@@ -157,3 +157,19 @@ J is a constant 2. The plan says adapted to jitter; the client already sees tick
 - **A "who is online" list and a share-a-spot link.** The labels already know every active player; a side list with a "jump camera here" click is the spectate feature phones need (D-011) and helps markers find the second profile.
 - **Name tags that fade with distance, and a tiny minimap.** The world is 2048 wide and the view 480; two players can be many screens apart and never know. A strip along the top with a dot per player costs one DOM element each.
 - **Walking animation for the figures.** `pushFigure` is a static placeholder; leg swing and a lean while levitating need only the avatar's velocity, which the worker already has (todo: character animation).
+
+## Aim assist and a visible cone for Blast
+
+Draw a faint arc at Blast's reach while its key is selected, and a dotted line
+for Push's first few cells.
+
+- **Source:** building the M4b spell bar: Blast's 24-cell cone is invisible until it fires.
+- **Why:** players learn range by feel otherwise; the preview is renderer-only and costs nothing in the sim.
+
+## Interpolated cast ghosts for other players
+
+Show a faint ghost for another player's bolt for the round trip, from their Cast
+input as it reaches the server, not only for your own.
+
+- **Source:** the cast-preview work in M4b, where only the caster's own ghost hides the lockstep delay.
+- **Why:** other players see a bolt appear mid-air a round trip late; an early hint would smooth it. It needs the server to relay Cast before the tick closes, which touches the protocol.

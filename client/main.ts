@@ -1,6 +1,7 @@
 // Main thread: DOM (palette, brush), pointer forwarding, and the main-thread render fallback.
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
+import { BAR, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -124,6 +125,28 @@ function layout(): { w: number; h: number } {
   return px;
 }
 
+// Casting (M4b). The selected slot and the aim live here; the worker turns a "cast" message into an input.
+let selectedSpell = 0;
+let castHeld = false;
+let aimAt: { x: number; y: number } | null = null;
+/** Only a player in the networked game world casts; the sandbox paints and a spectator watches. */
+const castsOnClick = () => worldId === 1 && !spectate && localKind === null && worldKind === 1;
+
+/** Angle from my chest to the pointer, quantised to u16 here so the input never carries a float (invariant 2). */
+function castNow() {
+  const me = lastPlayers?.list.find((p) => p.me);
+  if (!me || !aimAt) return;
+  const r = canvas.getBoundingClientRect();
+  const wx = camera.x + ((aimAt.x - r.left) / r.width) * camera.vw;
+  const wy = camera.y + ((aimAt.y - r.top) / r.height) * camera.vh;
+  const angle = quantiseAngle(wx - me.x, wy - (me.y - 5));
+  send({ type: "cast", spell: selectedSpell, angle });
+}
+// Holding the button keeps casting; the worker and the sim's cooldown pace it.
+setInterval(() => {
+  if (castHeld) castNow();
+}, 100);
+
 function attachPointer(c: HTMLCanvasElement) {
   const toCell = (e: PointerEvent) => {
     const r = c.getBoundingClientRect();
@@ -172,10 +195,18 @@ function attachPointer(c: HTMLCanvasElement) {
       return;
     }
     if (e.button !== 0) return;
+    if (castsOnClick()) {
+      // The game world: the left button casts the selected spell (aim is quantised here, before it is an input).
+      aimAt = { x: e.clientX, y: e.clientY };
+      castHeld = true;
+      castNow();
+      return;
+    }
     down = true;
     post("down", e);
   });
   c.addEventListener("pointermove", (e) => {
+    if (castHeld) aimAt = { x: e.clientX, y: e.clientY };
     if (e.pointerType === "touch" && touches.has(e.pointerId)) {
       touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (panning && touches.size >= 2) {
@@ -196,6 +227,7 @@ function attachPointer(c: HTMLCanvasElement) {
     for (const ce of evs.length ? evs : [e]) post("move", ce);
   });
   const end = (e: PointerEvent) => {
+    if (e.button === 0) castHeld = false;
     touches.delete(e.pointerId);
     if (touches.size < 2 && e.pointerType === "touch") panning = false;
     if (e.button === 1) panning = false;
@@ -223,6 +255,11 @@ function sendKeys() {
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   const k = e.key.toLowerCase();
+  if (castsOnClick() && k >= "1" && k <= "4") {
+    selectedSpell = BAR[Number(k) - 1];
+    renderSpellBar();
+    return;
+  }
   if (["arrowleft", "arrowright", "arrowup", "arrowdown", "w", "a", "s", "d", " "].includes(k)) {
     if (k === " " && !steersAvatar()) return;
     held.add(k);
@@ -352,6 +389,41 @@ hud.id = "hud";
 hud.hidden = true;
 hud.innerHTML = '<span>Levitate</span><div class="bar"><i></i></div>';
 stage.append(hud);
+const spellBar = document.createElement("div");
+spellBar.id = "spells";
+spellBar.hidden = true;
+stage.append(spellBar);
+const slotEls = BAR.map((spell, i) => {
+  const el = document.createElement("div");
+  el.className = "slot";
+  const sw = document.createElement("i");
+  sw.className = "sw";
+  sw.style.background = SPELLS[spell].colour.map((v) => Math.round(v * 255)).reduce((a, v, j) => a + v.toString(16).padStart(2, "0"), "#");
+  const key = document.createElement("span");
+  key.className = "key";
+  key.textContent = String(i + 1);
+  const nm = document.createElement("span");
+  nm.className = "nm";
+  nm.textContent = SPELLS[spell].name;
+  const ch = document.createElement("span");
+  ch.className = "ch";
+  const cd = document.createElement("div");
+  cd.className = "cd";
+  el.append(cd, sw, key, nm, ch);
+  spellBar.append(el);
+  return { el, ch, cd, spell };
+});
+function renderSpellBar() {
+  const v = lastPlayers?.spells ?? null;
+  slotEls.forEach((s) => {
+    const charges = v ? v.charges[s.spell] : 0;
+    s.el.classList.toggle("sel", s.spell === selectedSpell);
+    s.el.classList.toggle("empty", charges === 0);
+    s.ch.textContent = charges === INFINITE ? "inf" : String(charges);
+    const left = v ? v.cooldown[s.spell] : 0;
+    s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[s.spell].cooldown) * 100))}%`;
+  });
+}
 const labelEls = new Map<number, HTMLSpanElement>();
 let lastPlayers: Extract<FromWorker, { type: "players" }> | null = null;
 
@@ -364,8 +436,11 @@ function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
   }
   placeLabels();
   hud.hidden = !steersAvatar();
+  spellBar.hidden = !steersAvatar() || !m.spells;
+  renderSpellBar();
   (hud.querySelector("i") as HTMLElement).style.width = `${Math.round((m.energy / m.energyMax) * 100)}%`;
   (window as unknown as { __players: unknown }).__players = m.list;
+  (window as unknown as { __spells: unknown }).__spells = { selected: selectedSpell, ...m.spells };
 }
 
 function placeLabels() {

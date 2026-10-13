@@ -8,7 +8,7 @@ import { decodeServer, encodeTick, encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRA
 import { createHash } from "node:crypto";
 import { KIND_JOIN, KIND_LEAVE, KIND_PAINT, encodePaint } from "../../shared/inputs.ts";
 import { GameDb } from "../../server/db.ts";
-import { loadSim } from "../../shared/sim.ts";
+import { ENT_PROJECTILE, EV_CAST, EV_KNOCK, loadSim } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, register, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
 
@@ -280,6 +280,67 @@ describe("snapshots in the game world", () => {
     for (const x of [a, b, c]) expect(x.ls.sim.entities().filter((e) => e.type === 1 && e.active)).toHaveLength(3);
     // The avatars really moved (the state is not three idle players).
     expect(Math.abs(a.ls.sim.entities().find((e) => e.type === 1 && e.id === ra.id)!.x / 16 - 1024)).toBeGreaterThan(0);
+    [a, b, c].forEach((x) => x.close());
+  });
+
+  it("M4b: two clients cast at each other, a third joins late with bolts in flight, and all agree on the state hash", async () => {
+    const s = await boot(tmp(), 120);
+    const [ra, rb, rc] = [await register(s.port, "A"), await register(s.port, "B"), await register(s.port, "C")];
+    const a = await connect(s.port, hex, { world: GAME, token: ra.token });
+    const b = await connect(s.port, hex, { world: GAME, token: rb.token });
+    // Count what the sims report, as the clients' own render code would (read-only).
+    const seen = { casts: 0, knocks: 0, maxBolts: 0 };
+    for (const x of [a, b]) {
+      const prev = x.ls.onStepped;
+      x.ls.onStepped = (tick, inputs) => {
+        prev?.(tick, inputs);
+        if (x !== a) return;
+        for (const e of x.ls.sim.events()) {
+          if (e.kind === EV_CAST) seen.casts++;
+          if (e.kind === EV_KNOCK) seen.knocks++;
+        }
+        seen.maxBolts = Math.max(seen.maxBolts, x.ls.sim.entities().filter((e) => e.type === ENT_PROJECTILE).length);
+      };
+    }
+    // Stand where the sim put each player. A aims at B (Push and Blast, so knockback is exercised when the line
+    // is clear); B shoots straight up, so a bolt is always in flight, whatever the terrain between them.
+    const at = (id: number) => a.ls.sim.entities().find((e) => e.type === 1 && e.id === id)!;
+    await waitFor(() => (a.ls.run(100000), at(ra.id) !== undefined && at(rb.id) !== undefined), 5000, "both joined");
+    const [pa, pb] = [at(ra.id), at(rb.id)];
+    const aim = Math.round(((Math.atan2(pb.y - pa.y, pb.x - pa.x) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
+    let n = 0;
+    const shooter = setInterval(() => {
+      n++;
+      a.move(pa.x / 16, pa.y / 16, 1);
+      b.move(pb.x / 16, pb.y / 16, 0);
+      a.cast(n % 4 === 0 ? 1 : 0, aim, n & 0xffff);
+      b.cast(0, 49152, n & 0xffff);
+    }, 100);
+    const stepper = setInterval(() => (a.ls.run(100000), b.ls.run(100000)), 4);
+    cleanups.push(() => (clearInterval(shooter), clearInterval(stepper)));
+    await waitFor(() => s.game.stats.snapshotsAccepted >= 1, 30000, "a verified snapshot");
+    const snapTick = s.game.snapshot!.tick;
+    // C joins late, manually stepped so the restored state can be looked at before any tick is applied.
+    const c = await connect(s.port, hex, { world: GAME, token: rc.token, manual: true });
+    await waitFor(() => c.counts.snapshots === 1, 5000, "late-join snapshot");
+    expect(c.ls.sim.entities().filter((e) => e.type === ENT_PROJECTILE).length, "bolts in flight in the snapshot").toBeGreaterThan(0);
+    const cs = setInterval(() => c.ls.run(100000), 4);
+    cleanups.push(() => clearInterval(cs));
+    await waitFor(() => s.game.clock.lastClosed > snapTick + 300, 20000, "more ticks");
+    clearInterval(shooter);
+    await sleep(300);
+    clearInterval(stepper);
+    clearInterval(cs);
+    [a, b, c].forEach((x) => x.drain());
+    expect(seen.casts).toBeGreaterThan(10);
+    expect(seen.maxBolts).toBeGreaterThan(0);
+    const common = [...a.hashes.keys()].filter((t) => b.hashes.has(t) && c.hashes.has(t));
+    expect(common.length).toBeGreaterThan(5);
+    for (const t of common) {
+      expect(b.hashes.get(t), `tick ${t} b`).toBe(a.hashes.get(t));
+      expect(c.hashes.get(t), `tick ${t} c`).toBe(a.hashes.get(t));
+    }
+    expect(s.game.stats.resyncs).toBe(0);
     [a, b, c].forEach((x) => x.close());
   });
 

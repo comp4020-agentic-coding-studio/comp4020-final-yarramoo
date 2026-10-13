@@ -1,6 +1,6 @@
 // Owns the sim, the WebSocket and the playout buffer; steps only through closed ticks from the server,
 // and (when it can) renders with WebGL2 into an OffscreenCanvas.
-import { KIND_JOIN, KIND_LEAVE, KIND_PAINT, KIND_POS, encodePaint, encodePos } from "../shared/inputs.ts";
+import { KIND_CAST, KIND_JOIN, KIND_LEAVE, KIND_PAINT, KIND_POS, encodeCast, encodePaint, encodePos } from "../shared/inputs.ts";
 import {
   PAINT_PAYLOAD_LEN,
   decodeServer,
@@ -10,7 +10,23 @@ import {
   encodePing,
   encodeSnapshotUpload,
 } from "../shared/protocol.ts";
-import { ENT_PICKUP, ENT_PLAYER, loadSim, simBuildHash, type EntityView, type Sim } from "../shared/sim.ts";
+import {
+  ENT_PICKUP,
+  ENT_PLAYER,
+  ENT_PROJECTILE,
+  EV_CAST,
+  EV_CAST_REJECTED,
+  EV_IMPACT,
+  EV_KNOCK,
+  loadSim,
+  simBuildHash,
+  type EntityView,
+  type Sim,
+  type SimEvent,
+} from "../shared/sim.ts";
+import { CAST_PAYLOAD_LEN } from "../shared/avatar.ts";
+import { Particles, newPoseState, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
+import { SPELLS } from "./spells.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
@@ -84,6 +100,19 @@ const PLAYER_COLOURS: [number, number, number][] = [
 const SPELL_COLOURS: Record<number, [number, number, number]> = {
   2: [0.35, 0.6, 1], 3: [1, 0.45, 0.7], 4: [1, 0.6, 0.15], 5: [0.75, 0.2, 0.2],
 };
+
+// Casting and animation (M4b). Everything below is cosmetic or an input source; none of it writes sim state.
+let castSeq = 0;
+/** Cast preview ghosts: drawn at once from the predicted avatar, removed when the real bolt (same cast_seq) shows up. */
+const ghosts: { seq: number; spell: number; x: number; y: number; vx: number; vy: number; bornMs: number }[] = [];
+const GHOST_MAX_MS = 600;
+let lastCastAt = 0;
+const fx = new Particles();
+const poses = new Map<number, PoseState>();
+/** Events from applied ticks waiting for the next frame, which knows where everyone is drawn. Bounded. */
+let pendingEvents: SimEvent[] = [];
+let avatarLife = -1;
+let lastFxAt = 0;
 
 // Paint stroke assembly: a drag sends one segment per SEND_EVERY_MS from the last sent point.
 let anchor: { x: number; y: number } | null = null;
@@ -169,6 +198,13 @@ function onTickApplied(tick: number, inputs: { player: number; kind: number }[])
       ws.send(encodeSnapshotUpload(tick, r.snapshot.hash, r.snapshot.data) as BufferSource);
     }
   }
+  // Render-only reads of the sim's events (invariant 9), except Knock, which plan 6.7 says the victim applies.
+  if (ls && !ls.fastForwarding && ls.sim.width() > 512) {
+    for (const e of ls.sim.events()) {
+      if (e.kind === EV_KNOCK && e.player === myId && avatar && avatarReady && !spectate) avatar.knock(e.a, e.b);
+      if (pendingEvents.length < 300) pendingEvents.push(e);
+    }
+  }
   for (const i of inputs) {
     if (i.player === myId && i.kind === KIND_PAINT) {
       const t = sentAt.shift();
@@ -193,6 +229,10 @@ function beginReplay(seed: bigint, worldKind: number, target: number, playersAtB
   shown.clear();
   avatar = null;
   avatarReady = false;
+  avatarLife = -1;
+  poses.clear();
+  ghosts.length = 0;
+  pendingEvents = [];
   ls = new Lockstep(sim);
   ls.catchUpTarget = target;
   ls.onStepped = onTickApplied;
@@ -292,11 +332,16 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   const w = sim.width();
   const h = sim.height();
   const mine = ents.find((e) => e.type === ENT_PLAYER && e.id === myId && e.active);
+  // Re-place the avatar whenever the sim's `life` for me changes (a respawn, D-073), not just on my own Join:
+  // otherwise my next Pos would carry the new life with the old position and undo the respawn.
+  if (avatarReady && mine && mine.a !== avatarLife) avatarReady = false;
   if (!spectate && mine && !avatarReady) {
     if (avatar) avatar.teleport(mine.x / 16, mine.y / 16);
     else avatar = new Avatar(mine.x / 16, mine.y / 16);
+    avatarLife = mine.a;
     avatarReady = true;
     avAcc = 0;
+    poses.delete(myId);
   }
   if (avatar && avatarReady && mine) {
     const grid = { mat: sim.matView(), w, h };
@@ -347,9 +392,18 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
       }
     }
     list.push({ id: e.id, name: names.get(e.id) ?? (e.id === myId ? myName : `#${e.id}`), x: px, y: py, me: e.id === myId });
-    pushFigure(rects, px, py, e.id, isMe, isMe ? avatar!.facing : e.sub);
+    let ps = poses.get(e.id);
+    if (!ps) poses.set(e.id, (ps = newPoseState(px, py, (isMe ? avatar!.facing : e.sub) === 1)));
+    if (Math.abs(px - ps.x) + Math.abs(py - ps.y) > 30) ps.x = px, ps.y = py;
+    updatePose(ps, px, py, dt, now, isMe ? avatar!.onGround : null, isMe ? keys.up && !avatar!.onGround && avatar!.energy > 0 : null);
+    // A figure that has not moved takes its facing from the official record (others turn without walking).
+    if (!isMe && Math.abs(ps.vx) < 0.05) ps.facingRight = e.sub === 1;
+    if (isMe) ps.facingRight = avatar!.facing === 1;
+    pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, PLAYER_COLOURS[e.id % PLAYER_COLOURS.length]);
+    if (isMe) rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
   }
   for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
+  for (const id of poses.keys()) if (!seen.has(id) && !(id === myId && avatar)) poses.delete(id);
   // Pickups, only the available ones in or near the view.
   for (const e of ents) {
     if (e.type !== ENT_PICKUP || !e.active) continue;
@@ -363,6 +417,8 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     rects.push({ x: x0, y: y0, w: 3, h: 3, r: c[0] * pulse, g: c[1] * pulse, b: c[2] * pulse });
     rects.push({ x: x0 + 1, y: y0 + 1, w: 1, h: 1, r: 1, g: 1, b: 1 });
   }
+
+  spellFx(ents, dt, now, rects);
 
   // Camera: the avatar, or for a spectator the first other player; the main thread pans freely otherwise.
   let following = false;
@@ -380,21 +436,109 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   isFollowing = following;
   if (now - lastPlayersPost >= 33) {
     lastPlayersPost = now;
-    send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX });
+    send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, spells: spectate ? null : sim.playerView(myId) });
   }
   return rects;
 }
 
-/** A simple pixel figure, BOX_W x BOX_H cells: legs and body in the player's colour, a head, an eye on the facing side. */
-function pushFigure(rects: Rect[], px: number, py: number, id: number, me: boolean, facing: number) {
-  const x0 = Math.round(px) - Math.floor(BOX_W / 2);
-  const y0 = Math.round(py) - BOX_H;
-  const c = PLAYER_COLOURS[id % PLAYER_COLOURS.length];
-  if (me) rects.push({ x: x0 - 1, y: y0 - 1, w: BOX_W + 2, h: BOX_H + 2, r: 1, g: 1, b: 1 });
-  rects.push({ x: x0, y: y0, w: BOX_W, h: BOX_H, r: c[0], g: c[1], b: c[2] });
-  rects.push({ x: x0 + 1, y: y0, w: 3, h: 3, r: 0.96, g: 0.82, b: 0.68 });
-  rects.push({ x: x0 + (facing ? 3 : 1), y: y0 + 1, w: 1, h: 1, r: 0.1, g: 0.1, b: 0.14 });
-  rects.push({ x: x0, y: y0 + BOX_H - 2, w: BOX_W, h: 2, r: c[0] * 0.6, g: c[1] * 0.6, b: c[2] * 0.6 });
+const chestOf = (id: number): { x: number; y: number } | null => {
+  if (id === myId && avatar && avatarReady) return { x: avatar.x, y: avatar.y - 5 };
+  const p = shown.get(id);
+  return p ? { x: p.x, y: p.y - 5 } : null;
+};
+
+/** Turn the queued sim events, the entities() view and the cast ghosts into particles and rectangles. */
+function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
+  const evs = pendingEvents;
+  pendingEvents = [];
+  for (const e of evs) {
+    if (e.kind === EV_CAST) {
+      const c = chestOf(e.player);
+      const col = SPELLS[e.a]?.colour ?? [1, 1, 1];
+      const ang = (e.b / 65536) * Math.PI * 2;
+      if (c) {
+        if (e.a === 1) fx.cone(c.x, c.y, ang, col);
+        else fx.flash(c.x, c.y, ang, col);
+      }
+      const ps = poses.get(e.player);
+      if (ps) {
+        ps.castUntil = now + 220;
+        if (e.player !== myId) ps.facingRight = Math.cos(ang) >= 0;
+      }
+      if (e.player === myId) dropGhost(e.c);
+    } else if (e.kind === EV_CAST_REJECTED) {
+      if (e.player === myId) dropGhost(e.c);
+    } else if (e.kind === EV_KNOCK) {
+      const ps = poses.get(e.player);
+      if (ps) ps.hitUntil = now + 380;
+      const c = chestOf(e.player);
+      if (c) fx.streak(c.x, c.y, e.a, e.b);
+    } else if (e.kind === EV_IMPACT) {
+      fx.burst(e.a + 0.5, e.b + 0.5, SPELLS[e.c]?.colour ?? [1, 1, 1], e.c === 2 ? 20 : 14);
+    }
+  }
+  // Real bolts: a body and a trail puff each frame.
+  for (const q of ents) {
+    if (q.type !== ENT_PROJECTILE) continue;
+    const col = SPELLS[q.sub]?.colour ?? [1, 1, 1];
+    const x = q.x / 16;
+    const y = q.y / 16;
+    if (q.id === myId) dropGhost(q.a);
+    fx.trail(x, y, col);
+    rects.push({ x: Math.round(x) - 1, y: Math.round(y) - 1, w: 2, h: 2, r: col[0], g: col[1], b: col[2] });
+    rects.push({ x: Math.round(x) - 1, y: Math.round(y) - 1, w: 1, h: 1, r: 1, g: 1, b: 1 });
+  }
+  // Ghosts: the same flight, predicted from the avatar's position at click time, drawn at once.
+  const ticks = dt / (1000 / 60);
+  for (let i = ghosts.length - 1; i >= 0; i--) {
+    const g = ghosts[i];
+    if (now - g.bornMs > GHOST_MAX_MS) {
+      ghosts.splice(i, 1);
+      continue;
+    }
+    const col = SPELLS[g.spell]?.colour ?? [1, 1, 1];
+    g.vy += SPELLS[g.spell].gravity * ticks;
+    g.x += g.vx * ticks;
+    g.y += g.vy * ticks;
+    const blast = g.spell === 1;
+    const size = blast ? 3 : 2;
+    rects.push({ x: Math.round(g.x) - 1, y: Math.round(g.y) - 1, w: size, h: size, r: col[0], g: col[1], b: col[2], a: 0.55 });
+  }
+  fx.update(Math.min(now - lastFxAt, 100));
+  lastFxAt = now;
+  fx.toRects(rects);
+}
+
+function dropGhost(seq: number) {
+  const i = ghosts.findIndex((g) => g.seq === seq);
+  if (i >= 0) ghosts.splice(i, 1);
+}
+
+/** The cast message from the main thread: quantised angle in, an input out, and a ghost drawn now. */
+function onCast(spell: number, angle: number) {
+  if (spectate || !avatar || !avatarReady || !ws || ws.readyState !== WebSocket.OPEN || net !== "live") return;
+  const now = performance.now();
+  if (now - lastCastAt < 90) return; // under the server's 40 inputs/s even with Pos and a held button
+  lastCastAt = now;
+  if (spell < 0 || spell >= SPELLS.length) return;
+  const seq = ++castSeq & 0xffff;
+  const payload = encodeCast(0, spell, angle & 0xffff, seq).subarray(5);
+  if (payload.length !== CAST_PAYLOAD_LEN) return;
+  ws.send(encodeInput(++inputSeq, KIND_CAST, payload) as BufferSource);
+  const rad = ((angle & 0xffff) / 65536) * Math.PI * 2;
+  avatar.facing = Math.cos(rad) >= 0 ? 1 : 0;
+  const ps = poses.get(myId);
+  if (ps) {
+    ps.castUntil = now + 220;
+    ps.facingRight = avatar.facing === 1;
+  }
+  // The ghost only when the HUD says the cast will go through (cosmetic; the input was sent regardless).
+  const v = ls?.sim.playerView(myId);
+  const ready = !v || (v.charges[spell] > 0 && v.cooldown[spell] === 0);
+  if (ready && SPELLS[spell].enabled) {
+    const sp = SPELLS[spell];
+    ghosts.push({ seq, spell, x: avatar.x, y: avatar.y - 5, vx: Math.cos(rad) * sp.speed, vy: Math.sin(rad) * sp.speed, bornMs: now });
+  }
 }
 
 let acc = 0;
@@ -552,6 +696,9 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "sleep":
       localSim?.setSleepEnabled(m.on);
+      break;
+    case "cast":
+      onCast(m.spell, m.angle);
       break;
     case "keys":
       keys.left = m.left;

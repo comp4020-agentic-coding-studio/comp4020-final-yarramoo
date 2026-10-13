@@ -23,6 +23,11 @@ export type ToWorker =
     }
   /** Held movement keys, for the avatar controller. */
   | { type: "keys"; left: boolean; right: boolean; up: boolean }
+  /**
+   * Cast a spell: the angle is ALREADY quantised to u16 (65536 per turn) by the main thread (invariant 2).
+   * The worker owns the cast_seq, the preview ghost and the input.
+   */
+  | { type: "cast"; spell: number; angle: number }
   /** Follow the avatar (or, for a spectator, the first other player) with the camera. */
   | { type: "follow"; on: boolean }
   /** Client-only camera: the world window to draw, in cells. Never an input. */
@@ -63,5 +68,7 @@ export type FromWorker =
       following: boolean;
       energy: number;
       energyMax: number;
+      /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
+      spells: { charges: number[]; cooldown: number[] } | null;
     }
   | { type: "error"; error: string };
