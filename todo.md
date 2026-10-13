@@ -18,9 +18,8 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       from the game server, multi-stage Dockerfile, `spec/game.test.ts`
       (`f94594d`..`b9a03db`). Checked on the real image: SIGTERM stop, restart
       on the same volume, world back at the same tick from snapshot + log.
-- [ ] Merge `multa` to `main` once `pnpm check` and `pnpm check:evidence` pass
-      against the Docker image; watch CI deploy; open the Fly URL in two
-      browsers (one at phone size) and paint between them.
+- [x] Merged to `main` (`22ec30b`); CI check and deploy green. Painted on
+      the live URL from a desktop browser and saw it in a phone-sized one.
 - [ ] Check the live app survives an idle stop: leave it, come back, the
       world is still there.
 
