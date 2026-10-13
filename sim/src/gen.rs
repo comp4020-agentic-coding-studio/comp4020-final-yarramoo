@@ -130,7 +130,7 @@ fn threshold(y: i32, surf: i32) -> i32 {
 }
 
 /// Generate a game world into an all-Empty grid.
-pub fn generate(g: &mut Grid, seed: u64) {
+pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     let (w, h) = (g.w as i32, g.h as i32);
     let surf = surface_heights(seed, w, h);
     fill_terrain(g, seed, &surf);
@@ -138,6 +138,294 @@ pub fn generate(g: &mut Grid, seed: u64) {
     let mut path = Vec::new();
     carve_worms(g, seed, &surf, &mut path);
     connect_and_prune(g, &path);
+    line_entrances_with_dirt(g, seed, &surf);
+    let mut lava_at: Vec<(i32, i32)> = Vec::new();
+    place_sand(g, seed);
+    place_lava(g, seed, &mut lava_at);
+    place_gunpowder(g, seed);
+    place_water(g, seed);
+    place_trees(g, seed, &surf);
+    pick_spots(g, seed)
+}
+
+/// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.
+/// Not simulation state: it is regenerated from the seed (and the pristine world) in `init` and
+/// `restore`, and nothing reads it until entities exist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PickupSpot {
+    pub x: u16,
+    pub y: u16,
+    /// 0 = shallow band, 1 = deep band.
+    pub band: u8,
+}
+
+const TARGET_SPOTS: [(i32, i32, i32); 2] = [(SHALLOW_TOP + 40, DEEP_TOP - 40, 40), (DEEP_TOP + 40, 1400, 25)];
+
+fn solid_ground(m: u8) -> bool {
+    matches!(m, ROCK | DIRT | BEDROCK | SAND)
+}
+
+/// Starting at (x, y0): skip down to the first Empty cell (within 60 rows), then fall to the floor
+/// (within `max_down` rows). Returns the Empty cell resting on Rock/Dirt/Sand/Bedrock.
+fn find_floor(g: &Grid, x: i32, y0: i32, max_down: i32) -> Option<i32> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    if x < 0 || x >= w {
+        return None;
+    }
+    let at = |y: i32| g.mat[(y * w + x) as usize];
+    let mut y = y0.clamp(0, h - 2);
+    let lim = y + 60;
+    while at(y) != EMPTY {
+        y += 1;
+        if y >= h - 1 || y > lim {
+            return None;
+        }
+    }
+    let end = (y + max_down).min(h - 2);
+    while y < end && at(y + 1) == EMPTY {
+        y += 1;
+    }
+    solid_ground(at(y + 1)).then_some(y)
+}
+
+/// Below the surface, most of the top 40 rows are Dirt, so shafts open through a soil layer.
+fn line_entrances_with_dirt(g: &mut Grid, seed: u64, surf: &[i32]) {
+    let w = g.w;
+    for x in WALL_COLS..w - WALL_COLS {
+        let s = surf[x];
+        for y in s + 8..s + 40 {
+            let i = y as usize * w + x;
+            if g.mat[i] == ROCK && rng(seed, 0, x as u32, y as u32, SALT_GEN_DIRTLINE) % 5 != 0 {
+                g.mat[i] = DIRT;
+            }
+        }
+    }
+}
+
+/// Fill a mound of `mat` on the floors under a blob: each column rises by `(r - |dx|) / div + 1`.
+fn pile(g: &mut Grid, cx: i32, y_ref: i32, r: i32, div: i32, mat: u8) {
+    let w = g.w as i32;
+    for x in cx - r..=cx + r {
+        let Some(yf) = find_floor(g, x, y_ref - 10, 40) else { continue };
+        let depth = (r - (x - cx).abs()) / div + 1;
+        for k in 0..depth {
+            let i = ((yf - k) * w + x) as usize;
+            if g.mat[i] != EMPTY || (mat == GUNPOWDER && near_material(g, x, yf - k, 9, 9, LAVA)) {
+                break;
+            }
+            g.mat[i] = mat;
+        }
+    }
+}
+
+fn place_sand(g: &mut Grid, seed: u64) {
+    for k in 0..40u32 {
+        let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_SAND_X) % 1930) as i32;
+        let y = SHALLOW_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_SAND_Y) % 500) as i32;
+        let r = 12 + (rng(seed, 0, k, 0, SALT_GEN_SAND_R) % 19) as i32;
+        pile(g, x, y, r, 3, SAND);
+    }
+}
+
+fn near_material(g: &Grid, cx: i32, cy: i32, rx: i32, ry: i32, m: u8) -> bool {
+    let (w, h) = (g.w as i32, g.h as i32);
+    for y in (cy - ry).max(0)..=(cy + ry).min(h - 1) {
+        for x in (cx - rx).max(0)..=(cx + rx).min(w - 1) {
+            if g.mat[(y * w + x) as usize] == m {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn place_gunpowder(g: &mut Grid, seed: u64) {
+    let mut placed = 0;
+    for k in 0..400u32 {
+        if placed == 30 {
+            break;
+        }
+        let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_GP_X) % 1930) as i32;
+        let y = DEEP_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_GP_Y) % 600) as i32;
+        let r = 6 + (rng(seed, 0, k, 0, SALT_GEN_GP_R) % 9) as i32;
+        // Keep 8 cells clear of lava over the whole area the pile could touch.
+        if near_material(g, x, y + 15, r + 8 + 2, 60, LAVA) {
+            continue;
+        }
+        pile(g, x, y, r, 2, GUNPOWDER);
+        placed += 1;
+    }
+}
+
+/// Fill a basin upward from the floor under column `x`: each row is the Empty span around `x`,
+/// bounded by solid on both sides and supported everywhere underneath. Stops at a leaking row or at
+/// `max_depth`. Returns the (floor row, rows filled); fewer than `min_depth` rows is undone.
+fn fill_basin(g: &mut Grid, x: i32, yf: i32, max_depth: i32, min_depth: i32, mat: u8) -> bool {
+    let w = g.w as i32;
+    let mut rows: Vec<(i32, i32, i32)> = Vec::new();
+    for d in 0..max_depth {
+        let y = yf - d;
+        if y < 1 || g.mat[(y * w + x) as usize] != EMPTY {
+            break;
+        }
+        let (mut l, mut r) = (x, x);
+        while l > x - 40 && g.mat[(y * w + l - 1) as usize] == EMPTY {
+            l -= 1;
+        }
+        while r < x + 40 && g.mat[(y * w + r + 1) as usize] == EMPTY {
+            r += 1;
+        }
+        // Both ends must be solid ground, not a cap hit by the width limit.
+        if g.mat[(y * w + l - 1) as usize] == EMPTY || g.mat[(y * w + r + 1) as usize] == EMPTY {
+            break;
+        }
+        let supported = (l..=r).all(|cx| {
+            let b = g.mat[((y + 1) * w + cx) as usize];
+            solid_ground(b) || b == mat
+        });
+        if !supported {
+            break;
+        }
+        for cx in l..=r {
+            g.mat[(y * w + cx) as usize] = mat;
+        }
+        rows.push((y, l, r));
+    }
+    if (rows.len() as i32) < min_depth {
+        for &(y, l, r) in &rows {
+            for cx in l..=r {
+                g.mat[(y * w + cx) as usize] = EMPTY;
+            }
+        }
+        return false;
+    }
+    true
+}
+
+fn place_water(g: &mut Grid, seed: u64) {
+    let mut placed = 0;
+    for k in 0..400u32 {
+        if placed == 26 {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_WATER_X) % 1960) as i32;
+        let y = SHALLOW_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_WATER_Y) % 480) as i32;
+        let depth = 4 + (rng(seed, 0, k, 0, SALT_GEN_WATER_D) % 11) as i32;
+        let Some(yf) = find_floor(g, x, y, 120) else { continue };
+        if yf >= DEEP_TOP - 12 || g.mat[(yf * g.w as i32 + x) as usize] != EMPTY {
+            continue;
+        }
+        if fill_basin(g, x, yf, depth, 3, WATER) {
+            placed += 1;
+        }
+    }
+}
+
+fn place_lava(g: &mut Grid, seed: u64, at: &mut Vec<(i32, i32)>) {
+    let w = g.w as i32;
+    let mut placed = 0;
+    for k in 0..500u32 {
+        if placed == 16 {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_X) % 1960) as i32;
+        let y = DEEP_TOP + 60 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_Y) % 520) as i32;
+        let depth = 6 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_D) % 15) as i32;
+        let Some(yf) = find_floor(g, x, y, 160) else { continue };
+        if yf < DEEP_TOP + 30 || g.mat[(yf * w + x) as usize] != EMPTY {
+            continue;
+        }
+        if fill_basin(g, x, yf, depth, 4, LAVA) {
+            // A 2-cell Rock lining under the pool, so it cannot meet other liquids from below.
+            let mut cx = x;
+            while g.mat[(yf * w + cx - 1) as usize] == LAVA {
+                cx -= 1;
+            }
+            while g.mat[(yf * w + cx) as usize] == LAVA {
+                for dy in 1..=2 {
+                    let i = ((yf + dy) * w + cx) as usize;
+                    if matches!(g.mat[i], DIRT | SAND) {
+                        g.mat[i] = ROCK;
+                    }
+                }
+                cx += 1;
+            }
+            at.push((x, yf));
+            placed += 1;
+        }
+    }
+}
+
+/// Wood trees on the Dirt surface: a trunk, two short branches.
+fn place_trees(g: &mut Grid, seed: u64, surf: &[i32]) {
+    let w = g.w as i32;
+    let mut xs: Vec<i32> = Vec::new();
+    for k in 0..120u32 {
+        if xs.len() == 28 {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_TREE_X) % 1960) as i32;
+        let (s0, s1) = (surf[x as usize], surf[x as usize + 1]);
+        if (s0 - s1).abs() > 1 || xs.iter().any(|&o| (o - x).abs() < 24) {
+            continue;
+        }
+        // Skip entrance shafts: the ground below the surface cell must be solid.
+        if g.mat[((s0 + 2) * w + x) as usize] != DIRT || g.mat[((s1 + 2) * w + x + 1) as usize] != DIRT {
+            continue;
+        }
+        let hgt = 14 + (rng(seed, 0, k, 0, SALT_GEN_TREE_H) % 16) as i32;
+        for dy in -2..hgt {
+            for dx in 0..2 {
+                let i = ((s0.min(s1) - dy) * w + x + dx) as usize;
+                if g.mat[i] == EMPTY || g.mat[i] == DIRT {
+                    g.mat[i] = WOOD;
+                }
+            }
+        }
+        for b in 0..2u32 {
+            let side = if rng(seed, 0, k, b, SALT_GEN_TREE_BR) & 1 == 0 { -1 } else { 1 };
+            let by = s0.min(s1) - hgt / 2 - (rng(seed, 0, k, b + 2, SALT_GEN_TREE_BR) % 6) as i32 - b as i32 * 3;
+            let len = 5 + (rng(seed, 0, k, b + 4, SALT_GEN_TREE_BR) % 5) as i32;
+            for j in 1..=len {
+                let (bx, byy) = (x + if side < 0 { -j } else { j + 1 }, by - j / 2);
+                let i = (byy * w + bx) as usize;
+                if g.mat[i] == EMPTY {
+                    g.mat[i] = WOOD;
+                }
+            }
+        }
+        xs.push(x);
+    }
+}
+
+/// Floor positions for pickups: about 40 in the shallow band, 25 in the deep, at least 40 apart.
+fn pick_spots(g: &Grid, seed: u64) -> Vec<PickupSpot> {
+    let w = g.w as i32;
+    let mut out: Vec<PickupSpot> = Vec::new();
+    for (band, &(y_lo, y_hi, want)) in TARGET_SPOTS.iter().enumerate() {
+        let mut n = 0;
+        for k in 0..4000u32 {
+            if n == want {
+                break;
+            }
+            let x = 40 + (rng(seed, 0, k, band as u32, SALT_GEN_SPOT_X) % 1960) as i32;
+            let y = y_lo + (rng(seed, 0, k, band as u32, SALT_GEN_SPOT_Y) % (y_hi - y_lo) as u32) as i32;
+            let Some(yf) = find_floor(g, x, y, 100) else { continue };
+            if yf < y_lo || yf > y_hi || g.mat[((yf + 1) * w + x) as usize] == SAND {
+                continue;
+            }
+            // Headroom: 8 Empty cells straight up, so an avatar fits.
+            if (1..=8).any(|d| g.mat[((yf - d) * w + x) as usize] != EMPTY) {
+                continue;
+            }
+            if out.iter().any(|s| (i32::from(s.x) - x).abs() < 40 && (i32::from(s.y) - yf).abs() < 40) {
+                continue;
+            }
+            out.push(PickupSpot { x: x as u16, y: yf as u16, band: band as u8 });
+            n += 1;
+        }
+    }
+    out
 }
 
 fn is_border(w: usize, h: usize, x: usize, y: usize) -> bool {
@@ -494,14 +782,83 @@ mod tests {
         for seed in [1u64, 2, 3] {
             let s = Sim::new(seed, 1).unwrap();
             let g = &s.grid;
+            // Pools and piles may plug a passage, so reach through any non-solid material.
+            let open = |m: u8| matches!(m, EMPTY | WATER | LAVA | SAND | GUNPOWDER);
             let mut seen = vec![0u8; g.mat.len()];
-            let mut stack = Vec::new();
-            flood(g, &mut seen, g.w / 2, &mut stack, None);
-            let stranded = (0..g.mat.len()).filter(|&i| g.mat[i] == EMPTY && seen[i] == 0).count();
-            assert_eq!(stranded, 0, "seed {seed}");
+            let mut stack = vec![(g.w / 2) as u32];
+            seen[g.w / 2] = 1;
+            while let Some(c) = stack.pop() {
+                let i = c as usize;
+                let (x, y) = (i % g.w, i / g.w);
+                let mut nb = Vec::new();
+                if x > 0 { nb.push(i - 1) }
+                if x + 1 < g.w { nb.push(i + 1) }
+                if y > 0 { nb.push(i - g.w) }
+                if y + 1 < g.h { nb.push(i + g.w) }
+                for j in nb {
+                    if open(g.mat[j]) && seen[j] == 0 {
+                        seen[j] = 1;
+                        stack.push(j as u32);
+                    }
+                }
+            }
+            // Sky pockets walled in by tree branches are cosmetic, so only look below the surface band.
+            let stranded = (SHALLOW_TOP as usize * g.w..g.mat.len()).filter(|&i| open(g.mat[i]) && seen[i] == 0).count();
+            let first: Vec<(usize, usize, u8)> = (0..g.mat.len()).filter(|&i| i / g.w >= SHALLOW_TOP as usize && open(g.mat[i]) && seen[i] == 0).take(5).map(|i| (i % g.w, i / g.w, g.mat[i])).collect();
+            assert_eq!(stranded, 0, "seed {seed}: {first:?}");
             let deep_open = (DEEP_TOP as usize..g.h).map(|y| (0..g.w).filter(|&x| seen[y * g.w + x] == 1).count()).sum::<usize>();
             assert!(deep_open > 20_000, "seed {seed}: only {deep_open} reachable deep cells");
         }
+    }
+
+    #[test]
+    fn liquids_rest_on_something_and_lava_keeps_away_from_gunpowder() {
+        for seed in [1u64, 5] {
+            let s = Sim::new(seed, 1).unwrap();
+            let g = &s.grid;
+            let (mut water, mut lava, mut gp, mut sand, mut wood) = (0, 0, 0, 0, 0);
+            for y in 0..g.h - 1 {
+                for x in 0..g.w {
+                    let m = g.mat[y * g.w + x];
+                    match m {
+                        WATER | LAVA => {
+                            assert_ne!(g.mat[(y + 1) * g.w + x], EMPTY, "floating liquid at {x},{y}");
+                            if m == WATER { water += 1 } else { lava += 1 }
+                            if m == WATER {
+                                assert!((SHALLOW_TOP as usize..DEEP_TOP as usize).contains(&y));
+                            } else {
+                                assert!(y >= DEEP_TOP as usize);
+                            }
+                        }
+                        GUNPOWDER => {
+                            gp += 1;
+                            assert!(y >= DEEP_TOP as usize);
+                            assert!(!near_material(g, x as i32, y as i32, 8, 8, LAVA), "gunpowder near lava at {x},{y}");
+                        }
+                        SAND => sand += 1,
+                        WOOD => wood += 1,
+                        _ => {}
+                    }
+                }
+            }
+            assert!(water > 80 && lava > 400 && gp > 600 && sand > 500 && wood > 200, "{water} {lava} {gp} {sand} {wood}");
+        }
+    }
+
+    #[test]
+    fn pickup_spots_are_on_floors_in_their_band() {
+        let s = Sim::new(2, 1).unwrap();
+        let g = &s.grid;
+        let shallow = s.spots.iter().filter(|p| p.band == 0).count();
+        let deep = s.spots.iter().filter(|p| p.band == 1).count();
+        assert!(shallow >= 30 && deep >= 18, "{shallow} shallow, {deep} deep");
+        for p in &s.spots {
+            let (x, y) = (p.x as usize, p.y as usize);
+            assert_eq!(g.mat[y * g.w + x], EMPTY);
+            assert!(solid_ground(g.mat[(y + 1) * g.w + x]));
+            assert_eq!(p.band == 1, y >= DEEP_TOP as usize);
+        }
+        assert_eq!(s.spots, Sim::new(2, 1).unwrap().spots);
     }
 
     #[test]

@@ -19,6 +19,9 @@ pub struct Sim {
     pub tick: u32,
     pub grid: Grid,
     queue: Vec<Input>,
+    /// Floor positions for pickups (game worlds). Not state: regenerated from the seed, never hashed
+    /// or snapshotted. M4 places pickup entities here.
+    pub spots: Vec<crate::gen::PickupSpot>,
 }
 
 impl Sim {
@@ -31,8 +34,8 @@ impl Sim {
         };
         let mut grid = Grid::new(w, h);
         if world_kind == 1 {
-            crate::gen::generate(&mut grid, seed);
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new() });
+            let spots = crate::gen::generate(&mut grid, seed);
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), spots });
         }
         for y in 0..h {
             for x in 0..w {
@@ -41,7 +44,7 @@ impl Sim {
                 }
             }
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new() })
+        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), spots: Vec::new() })
     }
 
     /// 0 on success, negative if malformed (input is then dropped).

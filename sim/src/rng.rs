@@ -53,6 +53,25 @@ pub const SALT_GEN_WORM_DRIFT: u32 = 113;
 pub const SALT_GEN_WORM_BRANCH: u32 = 114;
 pub const SALT_GEN_HWORM: u32 = 115;
 
+pub const SALT_GEN_DIRTLINE: u32 = 116;
+pub const SALT_GEN_SAND_X: u32 = 117;
+pub const SALT_GEN_SAND_Y: u32 = 118;
+pub const SALT_GEN_SAND_R: u32 = 119;
+pub const SALT_GEN_GP_X: u32 = 120;
+pub const SALT_GEN_GP_Y: u32 = 121;
+pub const SALT_GEN_GP_R: u32 = 122;
+pub const SALT_GEN_WATER_X: u32 = 123;
+pub const SALT_GEN_WATER_Y: u32 = 124;
+pub const SALT_GEN_WATER_D: u32 = 125;
+pub const SALT_GEN_LAVA_X: u32 = 126;
+pub const SALT_GEN_LAVA_Y: u32 = 127;
+pub const SALT_GEN_LAVA_D: u32 = 128;
+pub const SALT_GEN_TREE_X: u32 = 129;
+pub const SALT_GEN_TREE_H: u32 = 130;
+pub const SALT_GEN_TREE_BR: u32 = 131;
+pub const SALT_GEN_SPOT_X: u32 = 132;
+pub const SALT_GEN_SPOT_Y: u32 = 133;
+
 #[cfg(test)]
 mod tests {
     use super::*;
