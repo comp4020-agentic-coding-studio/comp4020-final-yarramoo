@@ -110,3 +110,43 @@ A starting point, not a rulebook. As the schema, the identity model and the
 real-time transport take shape, write down what you learn here --- a
 convention the work has to hold to, a sensor that keeps catching you out, a
 fact about the stack that's easy to get wrong --- and wire it into `check`.
+
+## Falling-sand simulation invariants (the `multa` branch)
+
+The code must hold to these; they are not harness guidance. The full design is
+`docs/plan.md` and the decisions log is `docs/DECISIONS.md`. Break one only after
+asking the user.
+
+1. **All logic that affects shared state lives in `sim/` (the WASM module).** TypeScript only captures input, renders, handles networking and predicts the local avatar. TypeScript never writes to simulation state except through `push_input`.
+2. **The simulation ABI accepts and returns integers only.** Quantize floats (aim angle, avatar position) in TypeScript *before* they become inputs.
+3. **No floating point in `sim/`.** Enforce with `#![deny(clippy::float_arithmetic)]`. Use fixed-point (plan section 6).
+4. **No host imports.** `sim.wasm` must import nothing. CI asserts that `WebAssembly.Module.imports(module)` is empty. This makes it impossible for the simulation to read clocks, randomness, or the JS engine.
+5. **No `HashMap`/`HashSet` in `sim/`** (ban via clippy `disallowed-types`). Use `Vec`, sorted `Vec`, or `BTreeMap`. No `std::time`, no threads, no entropy-seeded RNG.
+6. **Randomness is counter-based:** `rng(seed, tick, x, y, salt)`. There is no stateful RNG.
+7. **Hash only fixed-width integers** (`u8`/`u16`/`u32`/`u64`), never `usize`. `usize` is 32-bit on wasm32 and 64-bit natively.
+8. **Chunk sleeping must be semantically invisible.** Results are identical with sleeping disabled (test D7).
+9. **Outputs never feed back.** `dirty_rects`, `events` and `entities` are read-only views for rendering and UI. Nothing read from them may become an input, except where explicitly specified (Pos inputs come from the local controller, which is allowed).
+10. **All clients in a world run the identical `sim.wasm`.** The server rejects a client whose sim build hash differs from the world's.
+11. **No server-side stepping, no P2P/WebRTC, no rollback, no WASM threads, no per-cell ownership tags.** See plan section 16.
+
+Run the determinism suite before every commit that touches `sim/`,
+`shared/protocol` or the input path. Build and test commands go here as they
+come into existence.
+
+- **Two Rust toolchains are installed and the wrong one is first on PATH.**
+  Homebrew's `/usr/local/bin/rustc` has no wasm32 target, so wasm builds and
+  clippy fail with "can't find crate for `core`". Prefix sim commands with
+  `PATH="$HOME/.cargo/bin:$PATH"`.
+- **Sim commands** (from `sim/`): `cargo test --release` (debug is about 25×
+  slower on the 512×512 sandbox); `cargo clippy --target wasm32-unknown-unknown
+  --release -- -D warnings`; `cargo build --target wasm32-unknown-unknown
+  --release` writes `target/wasm32-unknown-unknown/release/sim.wasm`, which must
+  have zero imports.
+- **Determinism suite:** `pnpm test:determinism` (about 50 s) builds both
+  wasms and runs D1, D2 (Node, Chromium, Firefox, WebKit), D3, D6, D10 and D11.
+  It is separate from `pnpm check`, which needs a running server; run both
+  before committing anything in `sim/`, `shared/` or the input path.
+- **An input must not be able to cost unbounded work.** Every client runs every
+  input, so one huge `Paint` freezes the whole room. The sim clamps paint
+  endpoints to the world and the radius to `MAX_PAINT_RADIUS`; new input kinds
+  need the same bound.

@@ -1,0 +1,19 @@
+[package]
+name = "sim"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Test D10: adds exactly one host import so the "zero imports" check is proven to bite.
+canary = []
+
+[dependencies]
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true

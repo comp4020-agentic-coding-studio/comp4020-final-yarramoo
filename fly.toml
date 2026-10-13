@@ -20,6 +20,11 @@
 
 primary_region = "syd"
 
+# Fly stops an idle machine with SIGINT by default; the server handles both,
+# and SIGTERM with a 10 s grace is the documented path (flush the tick log, close the DB).
+kill_signal = "SIGTERM"
+kill_timeout = 10
+
 [build]
 dockerfile = "Dockerfile"
 

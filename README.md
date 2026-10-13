@@ -1,65 +1,21 @@
-# Makers Wanted
+# Sandbox
 
 ## What it is
 
-Makers Wanted is a noticeboard for Australians with a DIY or engineering
-project that needs more than one pair of hands. You post an idea, such as a
-LoRa weather station, a restored drill press or a high-power rocket, along
-with the skills it needs. People nearby ask to join. Once a team forms, its
-members post progress updates and photos that others can follow and take
-inspiration from.
+A shared falling-sand world in the browser. Everyone in it sees the same sand, water, fire and plants, live.
 
-You don't need a project to take part. You can join a lobby for a kind of
-making in your region, say rocketry in Canberra. When enough people are
-waiting, a team forms automatically, everyone is notified, and the team votes
-in a leader. There's also a question board for bench problems, where answers
-can be marked "this helped". Profiles show what you've made and the awards
-you've earned by taking part, and never a photo of you.
+## What good means here (draft)
 
-The site is deliberately not a workspace. It helps people find each other and
-celebrate the work. Teams plan and build with the tools listed on the
-resources page.
+This is a draft to be argued with sources, not a settled position. The working claim from the design: the world is exactly the same for everyone, because every browser runs the same deterministic simulation on the same ordered inputs, so it is shared rather than mirrored.
 
-## Why it exists
+## What is enforced
 
-Everything posted here is written by a person. The site isn't a protest
-against AI. Human-written text is how human knowledge and reasoning get
-recorded, and models learn from that record. The other reason is about us.
-Skills and thinking fade when the answer is always one prompt away. The best
-remedy is working through hard problems with other people, and that's most
-enjoyable done together, in person, around a real bench.
+A determinism suite checks that the simulation gives identical state however it is stepped, and the net tests check that clients fed the same ordered inputs agree on the world's hash.
 
-## What good means
+## What I chose not to build
 
-The app has a particular intention with the use of AI to choose projects and 
-create solutions. The generation of technically competent natural language is 
-still highly valuable for LLM training purposes, but with the culture of 
-stackoverflow dying, this is becoming rarer. Good here means a community 
-that is pro-AI improvement and training, but also pro-human cognitive effort. 
+Accounts, chat, and a server-side simulation. The server only orders inputs and keeps the log; it never steps the world.
 
-To support this, there are features in the backend that aim to detect AI-generated 
-submissions, but intentionally no user-reporting 
-features (we don't want the page to feel like it's being overtly policed). 
+## Status
 
-The site also has small animations that occur for all users when a significant 
-update occurs, like a new project being uploaded or completed. 
-
-The good-ness of the page heavily relies on user engagement and enthusiasm. 
-The projects page must be changing with new users and fun project outcomes 
-being posted. Future improvements may look at gamification methods to make 
-users feel more inclined to ask and answer questions, as well as to actively 
-participate. 
-
-## What I looked at
-
-- [Hackaday.io](https://hackaday.io/): project pages with team sections and
-  build logs, and their criticism for thin logs.
-- [CollabFinder](https://collabfinder.net/): filtering projects by the skills
-  they need, but software-only and not local.
-- Local clubs that already do this in person, such as the
-  [Canberra Rocketry Group](https://crg.tidyhq.com/) and the
-  [NSW Rocketry Association](https://nswrocketry.org.au/).
-- Safety advice for meeting strangers from the internet: the
-  [eSafety Commissioner](https://www.esafety.gov.au/key-topics/staying-safe/online-dating),
-  dating apps' safety pages, and makerspace safety rules. My notes are in
-  `research/`.
+A draft written during the build. The argument and its sources are still to come.
