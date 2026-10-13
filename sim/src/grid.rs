@@ -199,7 +199,7 @@ impl Grid {
         self.aux[i] = a - 1;
         self.touch(i);
         let r = rng(seed, tick, x as u32, y as u32, SALT_FIRE_RISE);
-        if r % 4 != 0 {
+        if r & 3 != 0 {
             self.try_move(x, y, 0, -1, ok);
         } else {
             let d = if rng(seed, tick, x as u32, y as u32, SALT_FIRE_DIR) & 1 == 0 { -1 } else { 1 };
@@ -228,7 +228,9 @@ mod tests {
     #[test]
     fn sand_sinks_through_water() {
         let mut g = Grid::new(64, 64);
-        g.set(63 * 64 + 5, BEDROCK, 0);
+        for x in 0..64 {
+            g.set(63 * 64 + x, BEDROCK, 0);
+        }
         g.set(62 * 64 + 5, WATER, 0);
         g.set(60 * 64 + 5, SAND, 0);
         for t in 0..20 {
@@ -271,6 +273,10 @@ mod tests {
         g.set(10 * 64 + 6, BEDROCK, 0);
         g.set(11 * 64 + 5, BEDROCK, 0);
         g.set(9 * 64 + 5, BEDROCK, 0);
+        g.set(11 * 64 + 4, BEDROCK, 0);
+        g.set(11 * 64 + 3, BEDROCK, 0);
+        g.set(10 * 64 + 3, BEDROCK, 0);
+        g.set(9 * 64 + 4, BEDROCK, 0);
         g.set(10 * 64 + 4, WATER, 0);
         g.step_cells(3, 0);
         assert_eq!(g.at(5, 10), EMPTY);

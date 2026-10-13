@@ -1,5 +1,6 @@
 //! Deterministic falling-sand core. C ABI per plan 6.11; integers only.
 #![deny(clippy::float_arithmetic)]
+#![allow(clippy::result_unit_err)]
 
 pub mod grid;
 pub mod hash;
