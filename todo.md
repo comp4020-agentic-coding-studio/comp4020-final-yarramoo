@@ -20,8 +20,9 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       on the same volume, world back at the same tick from snapshot + log.
 - [x] Merged to `main` (`22ec30b`); CI check and deploy green. Painted on
       the live URL from a desktop browser and saw it in a phone-sized one.
-- [ ] Check the live app survives an idle stop: leave it, come back, the
-      world is still there.
+- [x] Check the live app survives an idle stop (14 Oct): stopped about 2 h,
+      woke on one request in 4.2 s, log `loaded: snapshot 2180280, 37573 logged
+      ticks, resuming at tick 2217853`. The marker's next-day path, for real.
 
 ## M3: big world (plan 6.5, 6.9)
 
