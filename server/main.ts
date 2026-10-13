@@ -108,7 +108,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const stats = { droppedRate: 0, rejected: 0 };
 
   const http: Server = createServer((req, res) => {
-    const path = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    let path: string;
+    try {
+      path = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    } catch {
+      // A malformed escape like "/%" threw out of the handler and took the whole server down.
+      res.writeHead(400).end("bad request");
+      return;
+    }
     if (path === "/api/players") {
       if (req.method !== "POST") {
         res.writeHead(405, { allow: "POST" }).end();
