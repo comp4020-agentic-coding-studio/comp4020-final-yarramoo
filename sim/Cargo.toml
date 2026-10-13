@@ -9,6 +9,8 @@ crate-type = ["cdylib", "rlib"]
 [features]
 # Test D10: adds exactly one host import so the "zero imports" check is proven to bite.
 canary = []
+# Dev only (local ?world=game viewer, perf baseline): Paint also acts in game worlds. Never deployed.
+dev_paint = []
 
 [dependencies]
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }

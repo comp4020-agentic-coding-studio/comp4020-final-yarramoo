@@ -12,9 +12,8 @@ import {
 } from "../shared/protocol.ts";
 import { loadSim, simBuildHash, type Sim } from "../shared/sim.ts";
 import { Lockstep, reactToTick } from "./lockstep.ts";
-import { WORLD } from "./materials.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
-import { Renderer } from "./render.ts";
+import { Renderer, type Camera } from "./render.ts";
 
 const STEP_MS = 1000 / 60;
 const MAX_FRAME_STEPS = 4;
@@ -35,6 +34,11 @@ let buildHash: Uint8Array;
 let wsUrl = "";
 let renderer: Renderer | null = null;
 let sendFrames = false;
+let cam: Camera = { x: 0, y: 0, vw: 512, vh: 512 };
+// Local single-player mode (dev route ?world=game): no networking, the worker steps its own sim at 60 Hz.
+let localSim: Sim | null = null;
+const stepTimes: number[] = [];
+let ranChunks = 0;
 
 // Per-connection state; discarded on reconnect (the replay rebuilds it).
 let ws: WebSocket | null = null;
@@ -78,6 +82,10 @@ function postStatus() {
 }
 
 function sendPaint(mat: number, x0: number, y0: number, x1: number, y1: number, radius: number) {
+  if (localSim) {
+    localSim.pushInput(encodePaint(0, mat, x0, y0, x1, y1, radius));
+    return;
+  }
   if (!ws || ws.readyState !== WebSocket.OPEN || net !== "live") return;
   const payload = encodePaint(0, mat, x0, y0, x1, y1, radius).subarray(5);
   if (payload.length !== PAINT_PAYLOAD_LEN) return;
@@ -95,9 +103,15 @@ function flushStroke(force: boolean) {
   lastSend = now;
 }
 
+function worldSize(): { w: number; h: number } {
+  const s = localSim ?? ls?.sim;
+  return s ? { w: s.width(), h: s.height() } : { w: 512, h: 512 };
+}
+
 function onPointer(m: Extract<ToWorker, { type: "pointer" }>) {
-  const x = Math.max(0, Math.min(WORLD - 1, Math.round(m.x)));
-  const y = Math.max(0, Math.min(WORLD - 1, Math.round(m.y)));
+  const { w, h } = worldSize();
+  const x = Math.max(0, Math.min(w - 1, Math.round(m.x)));
+  const y = Math.max(0, Math.min(h - 1, Math.round(m.y)));
   if (m.kind === "up") {
     flushStroke(true);
     anchor = latest = null;
@@ -150,6 +164,8 @@ function beginReplay(seed: bigint, worldKind: number, target: number, playersAtB
   players = playersAtBase;
   wantSnapshotAt = 0;
   setNet(target > 0 ? "catching-up" : "live");
+  send({ type: "world", width: sim.width(), height: sim.height(), kind: worldKind });
+  renderer?.setWorld(sim.width(), sim.height());
 }
 
 function connect() {
@@ -235,7 +251,26 @@ function frame(now: number) {
   const dt = Math.min(now - last, 250);
   last = now;
   flushStroke(false);
-  if (ls) {
+  if (localSim) {
+    acc += dt;
+    const n = Math.min(Math.floor(acc / STEP_MS), MAX_FRAME_STEPS);
+    acc -= Math.floor(acc / STEP_MS) * STEP_MS;
+    for (let i = 0; i < n; i++) {
+      const t0 = performance.now();
+      localSim.step();
+      stepTimes.push(performance.now() - t0);
+      if (stepTimes.length > 600) stepTimes.shift();
+      statSteps++;
+    }
+    ranChunks = localSim.ranChunks();
+    if (renderer) {
+      renderer.draw(localSim.matView(), localSim.auxView(), now / 1000, cam);
+    } else if (sendFrames) {
+      const m = localSim.matView().slice();
+      const a = localSim.auxView().slice();
+      send({ type: "frame", mat: m, aux: a, tick: localSim.tick() }, [m.buffer, a.buffer]);
+    }
+  } else if (ls) {
     if (net === "catching-up") {
       ls.fastForward(FF_BUDGET_MS);
       statSteps = 0;
@@ -251,7 +286,7 @@ function frame(now: number) {
     }
     if (ls) {
       if (renderer) {
-        renderer.draw(ls.sim.matView(), ls.sim.auxView(), now / 1000);
+        renderer.draw(ls.sim.matView(), ls.sim.auxView(), now / 1000, cam);
       } else if (sendFrames) {
         const m = ls.sim.matView().slice();
         const a = ls.sim.auxView().slice();
@@ -260,7 +295,17 @@ function frame(now: number) {
     }
   }
   if (now - statStart > 500) {
-    send({ type: "stats", tick: ls ? ls.simTick : 0, stepsPerSec: (statSteps * 1000) / (now - statStart), buffered: ls ? ls.buffered : 0 });
+    const sorted = [...stepTimes].sort((a, b) => a - b);
+    const q = (p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : 0);
+    send({
+      type: "stats",
+      tick: localSim ? localSim.tick() : ls ? ls.simTick : 0,
+      stepsPerSec: (statSteps * 1000) / (now - statStart),
+      buffered: ls ? ls.buffered : 0,
+      stepP50: q(0.5),
+      stepP95: q(0.95),
+      ranChunks,
+    });
     postStatus();
     statSteps = 0;
     statStart = now;
@@ -300,7 +345,16 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
     sendFrames = true;
     send({ type: "ready", path: "main-thread-fallback" });
   }
-  connect();
+  if (m.local) {
+    const sim = loadSim(wasmBytes);
+    sim.init(BigInt(m.local.seed), m.local.kind);
+    localSim = sim;
+    setNet("live");
+    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind });
+    renderer?.setWorld(sim.width(), sim.height());
+  } else {
+    connect();
+  }
   loop();
 }
 
@@ -319,6 +373,12 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "pointer":
       onPointer(m);
+      break;
+    case "camera":
+      cam = { x: m.x, y: m.y, vw: m.vw, vh: m.vh };
+      break;
+    case "sleep":
+      localSim?.setSleepEnabled(m.on);
       break;
   }
 };

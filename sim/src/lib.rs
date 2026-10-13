@@ -172,3 +172,9 @@ pub extern "C" fn set_sleep_enabled(on: u32) {
         s.grid.wake_all();
     });
 }
+
+/// Telemetry only: chunks run by the last step. Not state, never an input.
+#[no_mangle]
+pub extern "C" fn ran_chunks() -> u32 {
+    with(|s| s.grid.ran_chunks).unwrap_or(0)
+}

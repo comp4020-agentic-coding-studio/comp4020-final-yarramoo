@@ -94,7 +94,7 @@ impl Sim {
     fn apply(&mut self, i: Input) {
         match i {
             Input::Paint { mat, x0, y0, x1, y1, radius, .. } => {
-                if self.world_kind == 0 {
+                if self.world_kind == 0 || cfg!(feature = "dev_paint") {
                     self.paint(mat, x0 as i32, y0 as i32, x1 as i32, y1 as i32, radius as i32);
                 }
             }

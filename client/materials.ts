@@ -31,4 +31,7 @@ export function paletteTable(): number[] {
   return t;
 }
 
-export const WORLD = 512;
+/** Sandbox size. Other worlds report their size through `sim.width()/height()`. */
+export const SANDBOX = 512;
+/** What the camera shows of a world larger than the sandbox (plan 8). */
+export const GAME_VIEW = { w: 480, h: 270 };

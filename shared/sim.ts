@@ -18,6 +18,7 @@ export interface SimExports {
   aux_ptr(): number;
   width(): number;
   height(): number;
+  ran_chunks(): number;
 }
 
 export interface Sim {
@@ -36,6 +37,8 @@ export interface Sim {
   auxView(): Uint8Array;
   width(): number;
   height(): number;
+  /** Telemetry: how many chunks the last step actually ran (sleeping and the active set skip the rest). */
+  ranChunks(): number;
 }
 
 const MAX_CHUNKS = 4096; // 2048x1536 game world at 32x32 chunks is 3072
@@ -62,6 +65,7 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
     auxView: () => new Uint8Array(x.memory.buffer, x.aux_ptr(), cells()),
     width: () => x.width(),
     height: () => x.height(),
+    ranChunks: () => x.ran_chunks(),
     init(seed, worldKind) {
       const s = BigInt.asUintN(64, seed);
       const rc = x.init(Number(s & 0xffffffffn), Number(s >> 32n), worldKind);
