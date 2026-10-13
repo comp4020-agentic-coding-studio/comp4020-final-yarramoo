@@ -119,3 +119,19 @@ fn reference_script_hashes() {
     println!("REFERENCE_HASHES {:?}", h);
     assert_eq!(h, run_script_json(json));
 }
+
+#[test]
+fn snapshot_size_matches_write_and_restore_rejects_crafted_counts() {
+    let mut s = sim::sim::Sim::new(9, 0).unwrap();
+    s.push_input(&encode_paint(1, 4, 100, 100, 300, 300, 8));
+    s.step();
+    let snap = sim::snapshot::write(&s);
+    assert_eq!(sim::snapshot::size(&s), snap.len());
+    assert!(sim::snapshot::restore(&snap).is_ok());
+    // Chunk count field sits after the 55-byte header and the 4-byte entity length.
+    for n in [u32::MAX, 0x0001_0000, 65, 64 * 64] {
+        let mut bad = snap.clone();
+        bad[59..63].copy_from_slice(&n.to_le_bytes());
+        assert!(sim::snapshot::restore(&bad).is_err(), "count {n} accepted");
+    }
+}

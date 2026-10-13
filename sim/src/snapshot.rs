@@ -17,8 +17,9 @@ pub fn write(s: &Sim) -> Vec<u8> {
     v.extend_from_slice(&s.tick.to_le_bytes());
     v.extend_from_slice(&(s.grid.w as u16).to_le_bytes());
     v.extend_from_slice(&(s.grid.h as u16).to_le_bytes());
+    // Entity section: byte length, then the bytes. Restore refuses a non-empty one until entities exist.
     let e = s.entity_bytes();
-    v.extend_from_slice(&(0u32).to_le_bytes()); // entity count
+    v.extend_from_slice(&(e.len() as u32).to_le_bytes());
     v.extend_from_slice(&e);
     let live: Vec<usize> = (0..s.grid.chunk_count()).filter(|&c| !s.grid.pristine[c]).collect();
     v.extend_from_slice(&(live.len() as u32).to_le_bytes());
@@ -35,9 +36,10 @@ pub fn write(s: &Sim) -> Vec<u8> {
     v
 }
 
+/// Exactly `write(s).len()`, by construction: a hand-computed size drifts from `write` as soon as a
+/// section grows, and the ABI caller allocates from this, so drift is a buffer overrun.
 pub fn size(s: &Sim) -> usize {
-    let live = (0..s.grid.chunk_count()).filter(|&c| !s.grid.pristine[c]).count();
-    HEADER + 4 + 4 + live * (2 + 2 * CHUNK_AREA)
+    write(s).len()
 }
 
 pub fn restore(b: &[u8]) -> Result<Sim, ()> {
@@ -67,7 +69,8 @@ pub fn restore(b: &[u8]) -> Result<Sim, ()> {
     let n = u32_at(o) as usize;
     o += 4;
     let rec = 2 + 2 * CHUNK_AREA;
-    if b.len() != o + n * rec {
+    // A crafted count must not wrap the length check on wasm32 (usize is 32-bit there).
+    if n > s.grid.chunk_count() || n.checked_mul(rec).and_then(|x| x.checked_add(o)) != Some(b.len()) {
         return Err(());
     }
     let mut prev: Option<usize> = None;
