@@ -39,7 +39,7 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 - [x] D8 (`3cff05c`): generation identical across Node and the three browsers;
       regenerated pristine chunks equal stored ones.
 - [x] Pristine-chunk snapshots: already in the snapshot format; restore regenerates then overwrites (checked by D8: a tick-0 snapshot is under 100 bytes).
-- [x] Camera and scrolling; free-camera mode (`02eff5a`, `5ba65b6`); `?world=game` with `pnpm dev:client`.
+- [x] Camera and scrolling; free-camera mode (`a0d3ed5`, `7f73c5d`); `?world=game` with `pnpm dev:client`.
 - [x] Performance baseline: see the M3 report: native p95 3.9 ms at rest with sleeping, 14.0 ms without; Chromium p95 7.3 and 18.5 ms.
 
 ## Plants
