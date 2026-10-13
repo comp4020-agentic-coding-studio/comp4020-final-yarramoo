@@ -82,6 +82,17 @@ passed over.
 Name commit boundaries in a brief as a checklist. Left as a suggestion, a
 worker landed one slice as a single 1000-line commit (D-046).
 
+### A test that passes on a retry is a bug, and `&&` is not a gate
+
+A merge was committed on a red `pnpm test:net` run because the commit was
+chained after the test with `;`, so it ran whatever the test said (`d24bf69`).
+Gate commits on the exit code (`pnpm test:net && git commit ...`), and never
+on output piped through `grep`, which exits 0 whatever the tests did. A test
+that fails one run in three is a real defect: in lockstep code, intermittent
+means a race until shown otherwise. Find which assertion is timing-dependent
+before calling it flaky. The first one turned out to compare two independent
+clocks' tick numbers.
+
 ## Log good ideas in `FUTURE.md`
 
 When a good idea for a feature turns up and isn't part of the current task,
