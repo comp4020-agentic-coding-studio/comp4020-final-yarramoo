@@ -298,11 +298,33 @@ impl Grid {
         if self.try_move(x, y, 0, 1, ok) {
             return;
         }
-        let d = if rng(seed, tick, x as u32, y as u32, l.diag) & 1 == 0 { -1 } else { 1 };
-        if self.try_move(x, y, d, 1, ok) || self.try_move(x, y, -d, 1, ok) {
+        // The rng only picks which side is tried first, so it is drawn only when both sides are open
+        // (a lone open side is taken whatever the draw says; none open moves nothing). Same result.
+        let open = |g: &Grid, dx: isize, dy: isize| g.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(g.at(nx, ny)));
+        let (dl, dr) = (open(self, -1, 1), open(self, 1, 1));
+        if dl || dr {
+            let d = if dl && dr {
+                if rng(seed, tick, x as u32, y as u32, l.diag) & 1 == 0 { -1 } else { 1 }
+            } else if dl {
+                -1
+            } else {
+                1
+            };
+            if self.try_move(x, y, d, 1, ok) || self.try_move(x, y, -d, 1, ok) {
+                return;
+            }
+        }
+        let (sl, sr) = (open(self, -1, 0), open(self, 1, 0));
+        if !sl && !sr {
             return;
         }
-        let s = if rng(seed, tick, x as u32, y as u32, l.side) & 1 == 0 { -1 } else { 1 };
+        let s = if sl && sr {
+            if rng(seed, tick, x as u32, y as u32, l.side) & 1 == 0 { -1 } else { 1 }
+        } else if sl {
+            -1
+        } else {
+            1
+        };
         if !self.slide(x, y, s, l.reach) {
             self.slide(x, y, -s, l.reach);
         }
