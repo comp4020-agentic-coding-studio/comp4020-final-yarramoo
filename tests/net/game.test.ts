@@ -228,7 +228,28 @@ describe("respawn Pos rule (D-078, review M4b S1)", () => {
     expect(b.accept(1800 * 16, 300 * 16, 1, 120)).toBe(true); // respawn teleport
     expect(b.accept(1800 * 16 + 5000, 300 * 16, 1, 121)).toBe(false); // new life is checked against its own baseline
     expect(b.accept(1000 * 16 + 16, 240 * 16, 0, 122)).toBe(true); // old life still has its own
-    expect(b.accept(1800 * 16, 300 * 16, 3, 123)).toBe(false); // skipped life is not a respawn
+    expect(b.accept(1800 * 16, 300 * 16, 9, 123)).toBe(false); // a life far ahead is not a respawn
+  });
+
+  it("two deaths between Pos inputs (life jumps by 2) is a respawn, not a permanent lockout", async () => {
+    // With only life+1 accepted, a player who died twice before their next Pos sent life+2 forever,
+    // every one was refused, and their position never reached the sim again until they reconnected.
+    const { PosBaselines, RESPAWN_LIFE_WINDOW } = await import("../../shared/avatar.ts");
+    const b = new PosBaselines();
+    expect(b.accept(1000 * 16, 240 * 16, 5, 100)).toBe(true);
+    expect(b.accept(1500 * 16, 260 * 16, 7, 130)).toBe(true); // died twice, respawned far away
+    expect(b.accept(1500 * 16 + 16, 260 * 16, 7, 132)).toBe(true); // and keeps playing
+    expect(b.accept(1000 * 16, 240 * 16, 7 + RESPAWN_LIFE_WINDOW + 1, 140)).toBe(false); // beyond the window
+  });
+
+  it("the window doesn't reopen the two-message teleport", async () => {
+    const { PosBaselines, RESPAWN_LIFE_WINDOW } = await import("../../shared/avatar.ts");
+    for (let ahead = 1; ahead <= RESPAWN_LIFE_WINDOW; ahead++) {
+      const b = new PosBaselines();
+      expect(b.accept(1000 * 16, 240 * 16, 4, 100)).toBe(true);
+      expect(b.accept(1900 * 16, 300 * 16, 4 + ahead, 101)).toBe(true); // fake respawn far away
+      expect(b.accept(1900 * 16, 300 * 16, 4, 102), `ahead ${ahead}`).toBe(false); // real life: still refused
+    }
   });
 });
 

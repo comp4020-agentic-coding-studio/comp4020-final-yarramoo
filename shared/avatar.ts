@@ -35,6 +35,12 @@ export const GAME_H = 1536;
  * it can only hurt the cheater, whose real life's baseline is untouched (or, after several claims, pruned, and
  * then rejected).
  */
+/** How many lives ahead a Pos may jump and still count as a respawn: deaths can outrun Pos inputs. */
+export const RESPAWN_LIFE_WINDOW = 3;
+
+/** Lives ahead of `top`, modulo the u16 wrap; 0 when equal. */
+const livesAhead = (life: number, top: number): number => (life - top) & 0xffff;
+
 export class PosBaselines {
   private readonly byLife = new Map<number, { x: number; y: number; tick: number }>();
   private top: number | null = null;
@@ -44,13 +50,17 @@ export class PosBaselines {
     if (b) {
       const limit = maxPosJump(tick - b.tick);
       if (Math.abs(x - b.x) > limit || Math.abs(y - b.y) > limit) return false;
-    } else if (this.top !== null && ((this.top + 1) & 0xffff) !== life) {
-      return false;
+    } else if (this.top !== null) {
+      // A new life is a respawn only a few lives ahead. A Pos never moves another life's baseline, so a fake
+      // future life cannot drag the real one (the D-078 attack); the window only lets real deaths that
+      // outran a Pos through, instead of refusing that player's every Pos until they reconnect.
+      const ahead = livesAhead(life, this.top);
+      if (ahead === 0 || ahead > RESPAWN_LIFE_WINDOW) return false;
     }
     this.byLife.set(life, { x, y, tick });
-    if (!b && (this.top === null || ((this.top + 1) & 0xffff) === life)) this.top = life;
-    // Keep the newest two lives.
-    for (const k of this.byLife.keys()) if (k !== this.top && k !== ((this.top! - 1) & 0xffff)) this.byLife.delete(k);
+    if (!b) this.top = life;
+    // Keep the lives within the window below the newest, so the real life survives a burst of fake ones.
+    for (const k of this.byLife.keys()) if (livesAhead(this.top!, k) > RESPAWN_LIFE_WINDOW) this.byLife.delete(k);
     return true;
   }
 }
