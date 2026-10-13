@@ -323,6 +323,9 @@ fn d5_snapshot_with_projectiles_in_flight() {
             }
             s.step();
         }
+        if cut <= 63 {
+            assert!(!s.projectiles.is_empty(), "cut {cut} must have bolts in flight");
+        }
         let snap = snapshot::write(&s);
         assert_eq!(snap.len(), snapshot::size(&s));
         let mut r = snapshot::restore(&snap).unwrap();
