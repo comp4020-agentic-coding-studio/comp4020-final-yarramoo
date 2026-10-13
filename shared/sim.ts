@@ -14,6 +14,10 @@ export interface SimExports {
   snapshot_write(outPtr: number): number;
   restore(ptr: number, len: number): number;
   set_sleep_enabled(on: number): void;
+  mat_ptr(): number;
+  aux_ptr(): number;
+  width(): number;
+  height(): number;
 }
 
 export interface Sim {
@@ -27,6 +31,11 @@ export interface Sim {
   snapshot(): Uint8Array;
   restore(snap: Uint8Array): void;
   setSleepEnabled(on: boolean): void;
+  /** Read-only views for rendering (invariant 9). Rebuild after every call: memory can grow. */
+  matView(): Uint8Array;
+  auxView(): Uint8Array;
+  width(): number;
+  height(): number;
 }
 
 const MAX_CHUNKS = 4096; // 2048x1536 game world at 32x32 chunks is 3072
@@ -46,7 +55,13 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
     }
   }
 
+  const cells = () => x.width() * x.height();
+
   return {
+    matView: () => new Uint8Array(x.memory.buffer, x.mat_ptr(), cells()),
+    auxView: () => new Uint8Array(x.memory.buffer, x.aux_ptr(), cells()),
+    width: () => x.width(),
+    height: () => x.height(),
     init(seed, worldKind) {
       const s = BigInt.asUintN(64, seed);
       const rc = x.init(Number(s & 0xffffffffn), Number(s >> 32n), worldKind);

@@ -76,7 +76,9 @@ function attachPointer(c: HTMLCanvasElement) {
   c.addEventListener("pointermove", (e) => {
     if (!down) return;
     // Coalesced events keep fast drags smooth.
-    for (const ce of e.getCoalescedEvents?.() ?? [e]) post("move", ce);
+    // An empty list (synthetic events, some browsers) must still paint the event itself.
+    const evs = e.getCoalescedEvents?.() ?? [];
+    for (const ce of evs.length ? evs : [e]) post("move", ce);
   });
   const end = (e: PointerEvent) => {
     if (!down) return;

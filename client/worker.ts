@@ -10,12 +10,6 @@ const MAX_CATCHUP = 4;
 const PLAYER = 1;
 const SEED = 1n;
 
-interface GridExports {
-  memory: WebAssembly.Memory;
-  mat_ptr(): number;
-  aux_ptr(): number;
-}
-
 interface WorkerScope {
   postMessage(m: unknown, transfer?: Transferable[]): void;
   onmessage: ((e: MessageEvent<ToWorker>) => void) | null;
@@ -25,38 +19,13 @@ const ctx = self as unknown as WorkerScope;
 const send = (m: FromWorker, transfer: Transferable[] = []) => ctx.postMessage(m, transfer);
 
 let sim: Sim;
-let exportsRef: GridExports;
 let renderer: Renderer | null = null;
 let sendFrames = false;
 let lastPointer: { x: number; y: number } | null = null;
 const pending: Uint8Array[] = [];
 
-/** shared/sim.ts does not expose the wasm exports, so capture them as it instantiates (see D-026). */
-function loadCapturing(bytes: Uint8Array): { sim: Sim; exports: GridExports } {
-  const Original = WebAssembly.Instance;
-  let captured: GridExports | null = null;
-  WebAssembly.Instance = class extends Original {
-    constructor(module: WebAssembly.Module, imports?: WebAssembly.Imports) {
-      super(module, imports);
-      captured = this.exports as unknown as GridExports;
-    }
-  } as typeof WebAssembly.Instance;
-  try {
-    const s = loadSim(bytes);
-    return { sim: s, exports: captured! };
-  } finally {
-    WebAssembly.Instance = Original;
-  }
-}
-
 function grids(): { mat: Uint8Array; aux: Uint8Array } {
-  // Memory may grow, so build fresh views every time.
-  const buf = exportsRef.memory.buffer;
-  const n = WORLD * WORLD;
-  return {
-    mat: new Uint8Array(buf, exportsRef.mat_ptr(), n),
-    aux: new Uint8Array(buf, exportsRef.aux_ptr(), n),
-  };
+  return { mat: sim.matView(), aux: sim.auxView() };
 }
 
 function paint(mat: number, x0: number, y0: number, x1: number, y1: number, radius: number) {
@@ -127,9 +96,7 @@ function loop() {
 
 async function init(m: Extract<ToWorker, { type: "init" }>) {
   const bytes = new Uint8Array(await (await fetch(m.wasmUrl)).arrayBuffer());
-  const loaded = loadCapturing(bytes);
-  sim = loaded.sim;
-  exportsRef = loaded.exports;
+  sim = loadSim(bytes);
   sim.init(SEED, 0);
   sim.pushInput(encodeJoin(PLAYER));
   if (m.canvas) {
