@@ -61,7 +61,10 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
     step: () => x.step(),
     tick: () => x.tick(),
     stateHash() {
-      return withBuf(8, (p) => new DataView(x.memory.buffer).getBigUint64(p, true));
+      return withBuf(8, (p) => {
+        x.state_hash(p);
+        return new DataView(x.memory.buffer).getBigUint64(p, true);
+      });
     },
     chunkHashes() {
       return withBuf(MAX_CHUNKS * 8, (p) => {

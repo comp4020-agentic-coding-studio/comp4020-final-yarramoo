@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Determinism runner</title>
+<body>
+<pre id="out">idle</pre>
+<script type="module">
+  import { run } from "./run.ts";
+  import { simBuildHash } from "../../shared/sim.ts";
+
+  // window.runDeterminism(wasmUrl, scriptUrl, { canary }) -> { result, buildHash, userAgent }
+  window.runDeterminism = async (wasmUrl, scriptUrl, opts = {}) => {
+    const wasm = new Uint8Array(await (await fetch(wasmUrl)).arrayBuffer());
+    const script = await (await fetch(scriptUrl)).json();
+    // Engine-dependent value for the D10 canary build: derived from the user agent.
+    const imports = opts.canary
+      ? { env: { canary_value: () => (navigator.userAgent.startsWith("Mozilla") ? 1 : 0) } }
+      : {};
+    const result = run(wasm, script, imports);
+    return { result, buildHash: await simBuildHash(wasm), userAgent: navigator.userAgent };
+  };
+  document.getElementById("out").textContent = "ready";
+  window.runnerReady = true;
+</script>
