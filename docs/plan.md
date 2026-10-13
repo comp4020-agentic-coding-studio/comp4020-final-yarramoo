@@ -323,6 +323,12 @@ set_sleep_enabled(on: u32)                 // test hook for D7
 | 4 | `Cast` | `spell u8, angle u16, cast_seq u16` | 10 |
 | 5 | `Paint` | `mat u8, x0 i16, y0 i16, x1 i16, y1 i16, radius u8` | 15 |
 
+**Entity bytes and views (M4a, fixed 2026-10-14, D-062).** All little-endian, fixed-width; positions are 1/16 cell, `x` is the feet centre and `y` the feet line (the hitbox covers the 10 rows above `y`).
+
+- *Canonical entity bytes* (state hash and the snapshot's entity section; empty in the sandbox): `n_players u32`, then per player (sorted by id) `id u32, active u8, life u16, x i32, y i32, facing u8, health u8, dead_until u32, charges u16[6], cooldown_until u32[6], last_hit_by u32, last_hit_tick u32` (65 bytes), then `n_pickups u32`, then per pickup (id order) `id u16, spell u8, x u16, y u16, charges u16, respawn_at u32` (13 bytes). Pickup identity comes from generation; restore checks it matches and takes only `charges` and `respawn_at`. Snapshot `format_version` is 2; version 1 (no entities, the sandbox snapshots already stored) still restores.
+- *`events(out, max) -> n`* (events of the last step): records of 17 bytes, `kind u8, player u32, a i32, b i32, c i32`. Kind 1 `Spawn` (a, b = x, y; c = life), kind 2 `Pickup` (a = pickup id, b = spell, c = charges granted).
+- *`entities(out, max) -> n`*: records of 18 bytes, `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`. Type 1 player (sub = facing, a = life), type 2 pickup (active = available now, sub = spell, x, y = bottom centre of its cell, a = charges). Players first, then pickups. The caller's buffer holds `max` records.
+
 `Paint` coordinates are whole cells; it stamps a filled disc of `radius` along the segment from `(x0,y0)` to `(x1,y1)` (integer DDA), skipping Bedrock. `push_input` returns 0 on success and a negative value for a malformed input, which is then ignored.
 
 **`world_kind`:** 0 = sandbox (512 × 512, all chunks active), 1 = game (2048 × 1536). Until M3, `init` for a sandbox world fills the bottom 16 rows and the side 16 columns with Bedrock and leaves the rest Empty.
