@@ -54,3 +54,31 @@ main thread. A real phone was not measured (plan asks for one).
   to open the proxied ws:// on 127.0.0.1.
 - All three clients are Chromium on one machine with the server: no cross-engine or cross-architecture coverage.
 - Desync is checked at 60-tick checkpoints, so a transient divergence that re-converged between checkpoints is invisible.
+
+## P1 after profiling (2026-10-14)
+
+Benchmark: `sim/examples/p1_bench.rs` (`cargo run --release --features dev_paint --example p1_bench`), the P1 layout through the
+real `Sim` API, 1200 timed ticks after a 300-tick warm-up. Phases cannot be timed from inside `sim/src` (time APIs are banned), so
+the two cheap phases are replayed from outside on the same state: a 3.1 MB buffer fill (what `moved.fill(0)` costs) and
+`set_active_around`. Entity update and `resolve_explosions` are not timed separately: with four still players and no
+gunpowder left burning they are a few comparisons, and the step total minus the replayed phases is the cell pass.
+
+Before (native, step p50 / p95, noisy machine, runs 4.4-6.4 / 6.1-9.5 ms): `moved.fill` about 0.11 ms (2-3% of the step),
+`set_active_around` 0.005 ms, the rest (over 95%) is the cell pass over about 72 chunks, almost all of it water.
+
+Cause found in the cell pass: `liquid_move` drew the left/right rng for every water cell that could not fall, which is nearly
+every cell of a settled flood. Each draw is three `mix` rounds. The draw only decides the order when both sides are open; with
+one open side the result is the same whatever the draw says, and with none nothing moves. So the draw is now taken only when both
+sides are open. Every result is bit-identical.
+
+| | p50 | p95 |
+|---|---|---|
+| native, bench, before | about 4.6 ms | about 7.5 ms |
+| native, bench, after | 2.4 ms | 2.8 ms |
+| native, P1 in Chromium, before (above) | 7.6 ms | 9.0 ms |
+| native, P1 in Chromium, after | 3.0 ms | 4.8 ms |
+| 4x throttle, P1 in Chromium, before | 30.1 ms | 36.0 ms |
+| 4x throttle, P1 in Chromium, after | 11.4 ms | 16.0 ms |
+
+P1 now passes the 8 ms native budget. At 4x it is 16 ms, so a slow phone is still over, and the every-other-tick liquid option
+remains the user's call for that. `moved.fill` was left alone: 0.11 ms is under 5% of the step.

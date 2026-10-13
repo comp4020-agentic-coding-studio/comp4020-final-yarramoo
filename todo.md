@@ -91,14 +91,12 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 - N1 PASSED: 3 browsers, 10 minutes, 20-150 ms jitter, one CPU slowed 4x,
   608 hash checks with zero mismatches, all live at the end (`5619477`).
-- [ ] P1 FAILED: worst case p95 9.0 ms native (budget 8), 36 ms at 4x. The
-      cost is moving water, not a sleep bug: a spreading flood really moves
-      every tick, about 0.11 ms per awake chunk. Plan 12.3's remedy 2 (liquids
-      update every other tick) is the lever, but it changes how fast water
-      flows for everyone, so it's a gameplay call, not an optimisation.
-      Options: (a) liquids every other tick; (b) accept it, since P1's flood is
-      bigger than the Water spell can make and fire alone is 1.3 ms; (c) cap
-      the active region per player. Decide before M5 adds lava floods.
+- [x] P1 now PASSES native: profiling found rng draws on every resting water
+      cell; skipping them (D-087, bit-identical) took worst-case p95 from 9.0
+      to 4.8 ms native, 36 to 16 ms at 4x (`docs/research/g2-results.md`,
+      "P1 after profiling"). Still open: 4x is 16 ms, so a slow phone is over
+      budget; liquids every other tick would change gameplay and stays the
+      user's call.
 
 ## Crit 10: fly by instruments (by Tue 20 Oct)
 
