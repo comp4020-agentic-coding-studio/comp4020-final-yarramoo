@@ -24,29 +24,33 @@ export const CAST_PAYLOAD_LEN = 5;
 export const GAME_W = 2048;
 export const GAME_H = 1536;
 
-/** What the server remembers of a player's last accepted Pos. */
-export interface PosBaseline {
-  x: number;
-  y: number;
-  tick: number;
-  life: number;
-}
-
 /**
- * Plan 7.6, D-067/D-073: may this Pos follow `last`? Pure, so it is tested directly.
- * - No baseline (first Pos of a process): accepted, the server cannot read the entity's position.
- * - A `life` one above the last accepted one (mod 65536): accepted without a distance check. A respawn teleports the
- *   avatar to the spawn point, and the server never sees the sim's Respawn event; the sim itself ignores any Pos
- *   whose life is not the entity's current one, so a client cannot use a made-up life to teleport (it would be
- *   dropped), and the first Pos with a real new life is still bounded by the world check the caller applies.
- * - Any other life (a stale one, or a skipped one) is held to the distance limit like the same life.
- *   Cost: a client can claim `life + 1` once per claim for a free teleport (the sim drops that Pos), then send
- *   its real life near the claimed spot. Anti-cheat here is light by design (plan 7.6); closing it needs the
- *   server to read `life` from the sim.
- * - Same life: each axis may move at most `maxPosJump(dt)`.
+ * D-078 (supersedes D-073's rule): the server's memory of one player's accepted Pos, one baseline PER LIFE.
+ * - A Pos with life L is checked against L's baseline, within `maxPosJump(dt)` per axis.
+ * - If L has no baseline, it is accepted with no distance check only when L is the highest known life + 1
+ *   (mod 65536), a respawn; that creates L's baseline. The first Pos ever has no baseline at all and is accepted.
+ * - A Pos only ever moves the baseline of its own life, so a fake `life + 1` cannot drag the real life's
+ *   baseline to a far spot: the real life's next Pos is still measured from where it really was.
+ * Only the newest two lives are kept. A made-up life + 1 gets its own harmless baseline (the sim drops that Pos);
+ * it can only hurt the cheater, whose real life's baseline is untouched (or, after several claims, pruned, and
+ * then rejected).
  */
-export function posAllowed(last: PosBaseline | undefined, x: number, y: number, life: number, tick: number): boolean {
-  if (!last || ((last.life + 1) & 0xffff) === life) return true;
-  const limit = maxPosJump(tick - last.tick);
-  return Math.abs(x - last.x) <= limit && Math.abs(y - last.y) <= limit;
+export class PosBaselines {
+  private readonly byLife = new Map<number, { x: number; y: number; tick: number }>();
+  private top: number | null = null;
+
+  accept(x: number, y: number, life: number, tick: number): boolean {
+    const b = this.byLife.get(life);
+    if (b) {
+      const limit = maxPosJump(tick - b.tick);
+      if (Math.abs(x - b.x) > limit || Math.abs(y - b.y) > limit) return false;
+    } else if (this.top !== null && ((this.top + 1) & 0xffff) !== life) {
+      return false;
+    }
+    this.byLife.set(life, { x, y, tick });
+    if (!b && (this.top === null || ((this.top + 1) & 0xffff) === life)) this.top = life;
+    // Keep the newest two lives.
+    for (const k of this.byLife.keys()) if (k !== this.top && k !== ((this.top! - 1) & 0xffff)) this.byLife.delete(k);
+    return true;
+  }
 }

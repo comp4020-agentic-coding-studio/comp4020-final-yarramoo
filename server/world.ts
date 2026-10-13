@@ -2,7 +2,7 @@
 // checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
 // (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
-import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, posAllowed, type PosBaseline } from "../shared/avatar.ts";
+import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
   decompressSnapshot,
   encodePlayerName,
@@ -141,7 +141,7 @@ export class World {
   verifying = false;
   private lastRequestTick = 0;
   /** Last accepted Pos per sim player, kept across reconnects within this process (the baseline for plan 7.6). */
-  private readonly lastPosOf = new Map<number, PosBaseline>();
+  private readonly lastPosOf = new Map<number, PosBaselines>();
 
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
@@ -443,9 +443,10 @@ export class World {
     };
     if (facing > 1 || x < 0 || y < 0 || x >= GAME_W * POS_ONE || y >= GAME_H * POS_ONE) return bad();
     const openTick = this.clock.lastClosed + 1;
-    // A new `life` is a respawn: the first Pos carrying it skips the distance check (see `posAllowed`, D-073).
-    if (!posAllowed(this.lastPosOf.get(m.playerId), x, y, life, openTick)) return bad();
-    this.lastPosOf.set(m.playerId, { x, y, tick: openTick, life });
+    // One baseline per life (D-078): a claimed life + 1 starts its own baseline and cannot move the real one.
+    let bl = this.lastPosOf.get(m.playerId);
+    if (!bl) this.lastPosOf.set(m.playerId, (bl = new PosBaselines()));
+    if (!bl.accept(x, y, life, openTick)) return bad();
     return true;
   }
 

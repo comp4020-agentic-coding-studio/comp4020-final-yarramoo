@@ -115,20 +115,3 @@ describe("avatar controller", () => {
     expect(worst).toBeLessThan(MAX_AVATAR_SPEED);
   });
 });
-
-describe("Pos validation across a respawn (D-073)", () => {
-  const base = { x: 1000 * 16, y: 200 * 16, tick: 100, life: 0 };
-  it("holds a same-life jump to the speed limit but lets the first Pos of the next life teleport", async () => {
-    const { posAllowed, maxPosJump } = await import("../../shared/avatar.ts");
-    const far = base.x + maxPosJump(5) + 16;
-    expect(posAllowed(undefined, far, base.y, 0, 105)).toBe(true); // no baseline
-    expect(posAllowed(base, base.x + 32, base.y, 0, 105)).toBe(true);
-    expect(posAllowed(base, far, base.y, 0, 105)).toBe(false); // a teleport on the same life
-    expect(posAllowed(base, far, base.y, 3, 105)).toBe(false); // a made-up life is not a respawn
-    expect(posAllowed(base, far, base.y, 0xffff, 105)).toBe(false);
-    expect(posAllowed(base, far, base.y, 1, 105)).toBe(true); // life + 1: the respawn
-    expect(posAllowed({ ...base, life: 0xffff }, far, base.y, 0, 105)).toBe(true); // wraps
-    // After it is accepted the new life is the baseline again.
-    expect(posAllowed({ ...base, x: far, life: 1 }, far + maxPosJump(5) + 16, base.y, 1, 105)).toBe(false);
-  });
-});

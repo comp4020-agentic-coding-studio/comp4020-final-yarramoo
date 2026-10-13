@@ -204,6 +204,34 @@ describe("Pos validation (plan 7.6)", () => {
   });
 });
 
+describe("respawn Pos rule (D-078, review M4b S1)", () => {
+  it("a fake life+1 then a far Pos at the real life is rejected at step 2; the entity never teleports", async () => {
+    const s = await boot(tmp());
+    const me = await register(s.port, "Cheat");
+    const g = await connect(s.port, hex, { world: GAME, token: me.token });
+    g.move(1000, 240);
+    await sleep(60);
+    const before = s.game.stats.posRejected;
+    g.move(1800, 300, 0, 1); // step 1: claims a respawn; the sim drops it (stale life)
+    g.move(1800, 300, 0, 0); // step 2: the real life, far away
+    await sleep(150);
+    stepAll(g);
+    expect(s.game.stats.posRejected - before).toBe(1);
+    const e = g.ls.sim.entities().find((x) => x.type === 1 && x.id === me.id)!;
+    expect(Math.abs(e.x / 16 - 1800)).toBeGreaterThan(500);
+    g.close();
+  });
+  it("a genuine respawn (life+1, far away) is accepted, and then the new life is held to the limit", async () => {
+    const { PosBaselines } = await import("../../shared/avatar.ts");
+    const b = new PosBaselines();
+    expect(b.accept(1000 * 16, 240 * 16, 0, 100)).toBe(true);
+    expect(b.accept(1800 * 16, 300 * 16, 1, 120)).toBe(true); // respawn teleport
+    expect(b.accept(1800 * 16 + 5000, 300 * 16, 1, 121)).toBe(false); // new life is checked against its own baseline
+    expect(b.accept(1000 * 16 + 16, 240 * 16, 0, 122)).toBe(true); // old life still has its own
+    expect(b.accept(1800 * 16, 300 * 16, 3, 123)).toBe(false); // skipped life is not a respawn
+  });
+});
+
 describe("snapshots in the game world", () => {
   it("caps scale with the world kind", () => {
     expect(maxSnapshotRawFor(1)).toBeGreaterThan(6_400_000);
