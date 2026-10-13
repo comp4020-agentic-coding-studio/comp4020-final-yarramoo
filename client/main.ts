@@ -81,6 +81,9 @@ let worldW = SANDBOX;
 let worldH = SANDBOX;
 let worldKind = 0;
 let overview = false;
+/** Game-world zoom: 1, 2 or 3 times closer, as whole divisors of the 480 x 270 view so pixels stay crisp. Client-only. */
+let zoom = 1;
+const ZOOM_MAX = 3;
 const camera: Camera = { x: 0, y: 0, vw: SANDBOX, vh: SANDBOX };
 
 /** The window of the world on screen: the whole world for the sandbox, 480 x 270 cells for a game world. */
@@ -89,15 +92,31 @@ function applyCamera() {
     camera.vw = worldW;
     camera.vh = worldH;
   } else {
-    camera.vw = GAME_VIEW.w;
-    camera.vh = GAME_VIEW.h;
+    camera.vw = GAME_VIEW.w / zoom;
+    camera.vh = GAME_VIEW.h / zoom;
   }
   camera.x = Math.max(0, Math.min(worldW - camera.vw, camera.x));
   camera.y = Math.max(0, Math.min(worldH - camera.vh, camera.y));
   send({ type: "camera", x: Math.round(camera.x), y: Math.round(camera.y), vw: camera.vw, vh: camera.vh });
   fallback?.setCamera(camera);
-  (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview };
+  (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview, zoom };
+  zoomEl.hidden = worldKind === 0;
+  zoomOut.disabled = zoom <= 1;
+  zoomIn.disabled = zoom >= ZOOM_MAX;
+  zoomLabel.textContent = zoom + "x";
   layout();
+}
+
+/** Change zoom by `d` levels around the current view centre (the worker keeps following the avatar). */
+function setZoom(next: number) {
+  next = Math.max(1, Math.min(ZOOM_MAX, next));
+  if (next === zoom || worldKind === 0) return;
+  const cx = camera.x + camera.vw / 2;
+  const cy = camera.y + camera.vh / 2;
+  zoom = next;
+  camera.x = cx - GAME_VIEW.w / zoom / 2;
+  camera.y = cy - GAME_VIEW.h / zoom / 2;
+  applyCamera();
 }
 
 // Canvas: fit the camera's aspect into the stage; whole multiples of the view where they fit.
@@ -147,7 +166,20 @@ setInterval(() => {
   if (castHeld) castNow();
 }, 100);
 
+let lastWheel = 0;
 function attachPointer(c: HTMLCanvasElement) {
+  c.addEventListener(
+    "wheel",
+    (e) => {
+      if (worldKind === 0) return;
+      e.preventDefault();
+      const now = performance.now();
+      if (now - lastWheel < 120) return; // one level per notch, not per event of a trackpad flick
+      lastWheel = now;
+      setZoom(zoom + (e.deltaY < 0 ? 1 : -1));
+    },
+    { passive: false },
+  );
   const toCell = (e: PointerEvent) => {
     const r = c.getBoundingClientRect();
     return {
@@ -270,6 +302,10 @@ addEventListener("keydown", (e) => {
       following = false;
       send({ type: "follow", on: false });
     }
+  } else if ((k === "+" || k === "=") && worldKind !== 0) {
+    setZoom(zoom + 1);
+  } else if ((k === "-" || k === "_") && worldKind !== 0) {
+    setZoom(zoom - 1);
   } else if (k === "o" && worldKind !== 0) {
     overview = !overview;
     applyCamera();
@@ -381,6 +417,22 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
   }
 };
 // Player labels and the levitation bar (DOM over the canvas; render-only, never an input).
+// Zoom control (game world only): - / level / +.
+const zoomEl = document.createElement("div");
+zoomEl.id = "zoom";
+zoomEl.hidden = true;
+const zoomOut = document.createElement("button");
+const zoomIn = document.createElement("button");
+const zoomLabel = document.createElement("span");
+zoomOut.textContent = "\u2212";
+zoomIn.textContent = "+";
+for (const [b, label, d] of [[zoomOut, "Zoom out", -1], [zoomIn, "Zoom in", 1]] as const) {
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  b.onclick = () => setZoom(zoom + d);
+}
+zoomEl.append(zoomOut, zoomLabel, zoomIn);
+stage.append(zoomEl);
 const labels = document.createElement("div");
 labels.id = "labels";
 stage.append(labels);
@@ -432,7 +484,7 @@ function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
   if (m.following && !overview) {
     camera.x = m.cam.x;
     camera.y = m.cam.y;
-    (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview };
+    (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview, zoom };
   }
   placeLabels();
   hud.hidden = !steersAvatar();

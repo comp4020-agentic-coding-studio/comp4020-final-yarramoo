@@ -80,7 +80,7 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ### Animation, to look at with fresh eyes
 
-- [ ] Character sprites are 5 x 10 cells, about 15 x 30 screen px at desktop
+- [x] Zoom control added (1x/2x/3x; keys +/-/=, wheel, on-screen buttons); walk cycle checked zoomed and reads as walking. Character sprites are 5 x 10 cells, about 15 x 30 screen px at desktop
       size. The six poses and 4-frame walk cycle are in `client/fx.ts` and run
       (checked in code and by the idle head bob on screen), but they're too
       small to judge how they read. Worth a zoom control or larger sprites, and
