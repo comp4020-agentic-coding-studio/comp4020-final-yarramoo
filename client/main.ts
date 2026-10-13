@@ -39,7 +39,8 @@ brush.oninput = () => {
 // Dev route: ?world=game runs a LOCAL single-player sim of the game world (no networking, the dev-only
 // wasm where Paint works). The networked path is untouched and stays on the sandbox.
 const params = new URLSearchParams(location.search);
-const localKind = params.get("world") === "game" ? 1 : null;
+// Dev-only: the production build serves no sim-dev.wasm, so the route must not exist there.
+const localKind = import.meta.env.DEV && params.get("world") === "game" ? 1 : null;
 
 // The world and the camera. The camera is client-only state: it is never an input (invariant 9).
 let worldW = SANDBOX;
