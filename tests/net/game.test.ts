@@ -78,12 +78,28 @@ describe("identity", () => {
     // Two tokens, two players; an unknown token gets a fresh, different player.
     const other = await register(s.port, "Other");
     const c = await connect(s.port, hex, { world: GAME, token: other.token });
-    const d = await connect(s.port, hex, { world: GAME }); // no token: a fresh, unclaimable player
-    expect(new Set([b.playerId, c.playerId, d.playerId]).size).toBe(3);
+    expect(new Set([b.playerId, c.playerId]).size).toBe(2);
     // A token nobody holds is refused, so a client whose database was reset re-registers.
     await expect(connect(s.port, hex, { world: GAME, token: new Uint8Array(32).fill(7) })).rejects.toThrow(/unknown token/);
     await waitFor(() => c.names.get(me.id) === "Returner", 5000, "name of the other player");
-    [b, c, d].forEach((x) => x.close());
+    [b, c].forEach((x) => x.close());
+  });
+
+  it("S1: a zero-token HELLO is refused and mints nothing; unjoined registrations are evicted at the cap", async () => {
+    const s = await boot(tmp());
+    const before = s.identity.count;
+    for (let i = 0; i < 3; i++) await expect(connect(s.port, hex, { world: GAME })).rejects.toThrow(/unknown token/);
+    expect(s.identity.count).toBe(before);
+    expect(s.game.playerCount).toBe(0);
+    // Registrations that never joined are evicted after the grace; one that joined is kept.
+    const joined = await register(s.port, "Joiner");
+    const idle = await register(s.port, "Idle");
+    (await connect(s.port, hex, { world: GAME, token: joined.token })).close();
+    expect(s.identity.evictUnjoined(Date.now() + 1000, 0)).toBe(1);
+    await expect(connect(s.port, hex, { world: GAME, token: idle.token })).rejects.toThrow(/unknown token/);
+    const again = await connect(s.port, hex, { world: GAME, token: joined.token });
+    expect(again.playerId).toBe(joined.id);
+    again.close();
   });
 
   it("a second connection with the same token replaces the first, without a Leave", async () => {

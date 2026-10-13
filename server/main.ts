@@ -104,7 +104,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const world = worlds.get(SANDBOX_ID)!;
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
-  const identity = new Identity(db);
+  const identity = new Identity(db, say);
   const stats = { droppedRate: 0, rejected: 0 };
 
   const http: Server = createServer((req, res) => {
@@ -237,7 +237,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         if (w.kind === WORLD_GAME && !(msg.flags & HELLO_SPECTATE)) {
           const who = identity.resolve(msg.token);
           if (who === "unknown") return reject(ws, "unknown token");
-          if (!who) return reject(ws, "too many players registered");
           playerId = who.id;
           name = who.name;
         }

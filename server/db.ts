@@ -54,6 +54,8 @@ const MIGRATIONS: string[] = [
     last_seen integer
   );
   `,
+  // Review M4a S1: remember who actually joined, so registrations that never did can be evicted.
+  `alter table players add column joined_at integer;`,
 ];
 
 export interface WorldRow {
@@ -236,8 +238,14 @@ export class GameDb {
     return (this.q("select count(*) as n from players").get() as { n: number }).n;
   }
 
+  /** A HELLO with this player's token: stamp last_seen, and joined_at the first time. */
   touchPlayer(id: number): void {
-    this.q("update players set last_seen = ? where id = ?").run(Date.now(), id);
+    this.q("update players set last_seen = ?, joined_at = coalesce(joined_at, ?) where id = ?").run(Date.now(), Date.now(), id);
+  }
+
+  /** Delete registrations created before `cutoffMs` that never joined. Returns how many. */
+  evictUnjoined(cutoffMs: number): number {
+    return Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
   }
 
   playerNames(ids: number[]): Record<number, string> {
