@@ -44,7 +44,7 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ### Generator follow-ups (from looking at the M3 overview, `/tmp/m3-shots/gen-c9b.png`)
 
-- [x] Spread entrances across the whole surface width (all landed centre-right;
+- [x] (4a5aed1) Spread entrances across the whole surface width (all landed centre-right;
       the left third is reachable from above only by a long side tunnel).
 - [x] Fewer, less parallel branches per entrance worm: 5 branches make a dense
       vertical tangle around x 700-1600.
@@ -53,7 +53,7 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ## Plants
 
-- [x] Randomise how a flower grows: the stem leans or branches, leaves sprout,
+- [x] (46c32bd) Randomise how a flower grows: the stem leans or branches, leaves sprout,
       heights and bloom shapes vary. All through the counter-based RNG, so
       every client grows the same flower.
 
@@ -80,7 +80,7 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ### Animation, to look at with fresh eyes
 
-- [x] Zoom control added (1x/2x/3x; keys +/-/=, wheel, on-screen buttons); walk cycle checked zoomed and reads as walking. Character sprites are 5 x 10 cells, about 15 x 30 screen px at desktop
+- [x] (bacce17) Zoom control added (1x/2x/3x; keys +/-/=, wheel, on-screen buttons); walk cycle checked zoomed and reads as walking. Character sprites are 5 x 10 cells, about 15 x 30 screen px at desktop
       size. The six poses and 4-frame walk cycle are in `client/fx.ts` and run
       (checked in code and by the idle head bob on screen), but they're too
       small to judge how they read. Worth a zoom control or larger sprites, and
