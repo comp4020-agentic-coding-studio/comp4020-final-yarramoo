@@ -44,6 +44,16 @@ const MIGRATIONS: string[] = [
     world_id integer, tick integer, details text, created_at integer
   );
   `,
+  // M4a identity (plan 9.1): only sha256(token) is stored. The id is the sim's player id in the game world.
+  `
+  create table players (
+    id integer primary key,
+    display_name text not null,
+    token_hash text unique not null,
+    created_at integer not null,
+    last_seen integer
+  );
+  `,
 ];
 
 export interface WorldRow {
@@ -207,6 +217,36 @@ export class GameDb {
 
   snapshotTicks(worldId: number): number[] {
     return (this.q("select tick from snapshots where world_id = ? order by tick").all(worldId) as { tick: number }[]).map((r) => r.tick);
+  }
+
+  /** Create a player; returns its id (the sim's player_id). */
+  createPlayer(displayName: string, tokenHash: string): number {
+    const r = this.q("insert into players (display_name, token_hash, created_at, last_seen) values (?, ?, ?, ?)").run(
+      displayName, tokenHash, Date.now(), Date.now(),
+    );
+    return Number(r.lastInsertRowid);
+  }
+
+  playerByTokenHash(tokenHash: string): { id: number; displayName: string } | null {
+    const r = this.q("select id, display_name from players where token_hash = ?").get(tokenHash) as { id: number; display_name: string } | undefined;
+    return r ? { id: r.id, displayName: r.display_name } : null;
+  }
+
+  playerCount(): number {
+    return (this.q("select count(*) as n from players").get() as { n: number }).n;
+  }
+
+  touchPlayer(id: number): void {
+    this.q("update players set last_seen = ? where id = ?").run(Date.now(), id);
+  }
+
+  playerNames(ids: number[]): Record<number, string> {
+    const out: Record<number, string> = {};
+    for (const id of ids) {
+      const r = this.q("select display_name from players where id = ?").get(id) as { display_name: string } | undefined;
+      if (r) out[id] = r.display_name;
+    }
+    return out;
   }
 
   recordIncident(worldId: number, tick: number, details: unknown): void {

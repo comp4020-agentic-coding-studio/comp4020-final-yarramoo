@@ -3,7 +3,7 @@ import { unzlibSync, zlibSync } from "fflate";
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -20,13 +20,33 @@ export const S_PONG = 0x84;
 export const S_SNAPSHOT = 0x85;
 export const S_REQUEST_SNAPSHOT = 0x86;
 export const S_RESYNC = 0x87;
+/** `player u32, name utf8`: who a player id is. Render-only (labels); never state. */
+export const S_PLAYER_NAME = 0x88;
+export const MAX_NAME_CHARS = 24;
 
 /** Hash checkpoint spacing; snapshot ticks are multiples of it. */
 export const HASH_EVERY = 60;
 /** Uncompressed snapshot ceiling for the 512x512 sandbox (about 520 KB when every chunk is live). */
 export const MAX_SNAPSHOT_RAW = 1 << 20;
-/** Largest accepted frame of any kind: a SNAPSHOT_UPLOAD. Every other frame is capped far lower by the server. */
+/** A game world: 768 chunks x 8194 bytes = 6.3 MB, plus up to 1024 players and the pickups (about 70 KB). */
+export const MAX_SNAPSHOT_RAW_GAME = 7 << 20;
+/** Largest accepted SNAPSHOT_UPLOAD frame for a sandbox world. Every other frame is capped far lower by the server. */
 export const MAX_UPLOAD_FRAME = 1 << 20;
+/**
+ * Compressed game-world snapshot frame ceiling. Cell bytes are 0..14 materials and small counters, so a worst-case
+ * all-live world compresses at least 2:1 (about 3.3 MB); 4 MiB leaves headroom.
+ */
+export const MAX_UPLOAD_FRAME_GAME = 4 << 20;
+export const WORLD_SANDBOX = 0;
+export const WORLD_GAME = 1;
+/** HELLO flag: watch only (no avatar, no Join, no inputs). Phones use this in the game world (D-011). */
+export const HELLO_SPECTATE = 1;
+
+/** Snapshot size ceilings by world id (0 sandbox, 1 game): world kind decides how big a snapshot can be. */
+export const maxSnapshotRawFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_SNAPSHOT_RAW_GAME : MAX_SNAPSHOT_RAW);
+export const maxUploadFrameFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_UPLOAD_FRAME_GAME : MAX_UPLOAD_FRAME);
+/** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */
+export const MAX_SOCKET_PAYLOAD = Math.max(MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME);
 export const HASH_LEN = 32;
 export const TOKEN_LEN = 32;
 export const MAX_REASON_BYTES = 200;
@@ -41,7 +61,7 @@ export interface TickInput {
 }
 
 export type ClientMsg =
-  | { t: "hello"; version: number; buildHash: Uint8Array; token: Uint8Array; worldId: number }
+  | { t: "hello"; version: number; buildHash: Uint8Array; token: Uint8Array; worldId: number; flags: number }
   | { t: "input"; seq: number; kind: number; payload: Uint8Array }
   | { t: "ping"; ts: number }
   | { t: "hash"; tick: number; hash: bigint }
@@ -55,7 +75,8 @@ export type ServerMsg =
   | { t: "snapshot"; tick: number; data: Uint8Array }
   | { t: "request-snapshot"; tick: number }
   /** Followed by an optional SNAPSHOT and then every closed tick after it; `tick` is the last closed tick (the replay target). */
-  | { t: "resync"; tick: number; playersAtBase: number };
+  | { t: "resync"; tick: number; playersAtBase: number }
+  | { t: "player-name"; player: number; name: string };
 
 const te = new TextEncoder();
 const td = new TextDecoder("utf-8", { fatal: true });
@@ -64,14 +85,20 @@ function view(b: Uint8Array): DataView {
   return new DataView(b.buffer, b.byteOffset, b.byteLength);
 }
 
-export function encodeHello(buildHash: Uint8Array, worldId = 0, token: Uint8Array = new Uint8Array(TOKEN_LEN)): Uint8Array {
+export function encodeHello(
+  buildHash: Uint8Array,
+  worldId = 0,
+  token: Uint8Array = new Uint8Array(TOKEN_LEN),
+  flags = 0,
+): Uint8Array {
   if (buildHash.length !== HASH_LEN || token.length !== TOKEN_LEN) throw new Error("bad hello field length");
-  const b = new Uint8Array(1 + 1 + HASH_LEN + TOKEN_LEN + 4);
+  const b = new Uint8Array(1 + 1 + HASH_LEN + TOKEN_LEN + 4 + 1);
   b[0] = C_HELLO;
   b[1] = PROTOCOL_VERSION;
   b.set(buildHash, 2);
   b.set(token, 2 + HASH_LEN);
   view(b).setUint32(2 + HASH_LEN + TOKEN_LEN, worldId, true);
+  b[2 + HASH_LEN + TOKEN_LEN + 4] = flags;
   return b;
 }
 
@@ -154,6 +181,22 @@ export function encodeRequestSnapshot(tick: number): Uint8Array {
   return b;
 }
 
+/** Display name as the server sends it: trimmed, control characters removed, capped to MAX_NAME_CHARS. Never HTML. */
+export function cleanName(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const s = raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+  return Array.from(s).slice(0, MAX_NAME_CHARS).join("");
+}
+
+export function encodePlayerName(player: number, name: string): Uint8Array {
+  const n = te.encode(cleanName(name));
+  const b = new Uint8Array(5 + n.length);
+  b[0] = S_PLAYER_NAME;
+  view(b).setUint32(1, player, true);
+  b.set(n, 5);
+  return b;
+}
+
 export function encodeResync(tick: number, playersAtBase = 0): Uint8Array {
   const b = new Uint8Array(7);
   b[0] = S_RESYNC;
@@ -221,13 +264,14 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
   const v = view(b);
   switch (b[0]) {
     case C_HELLO: {
-      if (b.length !== 2 + HASH_LEN + TOKEN_LEN + 4) return null;
+      if (b.length !== 2 + HASH_LEN + TOKEN_LEN + 4 + 1) return null;
       return {
         t: "hello",
         version: b[1],
         buildHash: b.slice(2, 2 + HASH_LEN),
         token: b.slice(2 + HASH_LEN, 2 + HASH_LEN + TOKEN_LEN),
         worldId: v.getUint32(2 + HASH_LEN + TOKEN_LEN, true),
+        flags: b[2 + HASH_LEN + TOKEN_LEN + 4],
       };
     }
     case C_INPUT:
@@ -296,6 +340,13 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
     case S_RESYNC:
       if (b.length !== 7) return null;
       return { t: "resync", tick: v.getUint32(1, true), playersAtBase: v.getUint16(5, true) };
+    case S_PLAYER_NAME:
+      if (b.length < 5 || b.length > 5 + MAX_NAME_CHARS * 4) return null;
+      try {
+        return { t: "player-name", player: v.getUint32(1, true), name: td.decode(b.subarray(5)) };
+      } catch {
+        return null;
+      }
     default:
       return null;
   }

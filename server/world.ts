@@ -1,16 +1,21 @@
-// One sandbox world: connected clients, player ids, the closed-tick log, the tick clock, hash checks,
-// snapshots and persistence. Never steps the sim (invariant 11); the only sim use is SnapshotVerifier.restore.
+// One world (sandbox or game): connected clients, player ids, the closed-tick log, the tick clock, hash
+// checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
+// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
+import { GAME_H, GAME_W, maxPosJump, POS_ONE, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
-  decompressSnapshot,
+  encodePlayerName,
   encodeRequestSnapshot,
   encodeResync,
   encodeSnapshot,
   encodeTick,
   encodeWelcome,
   HASH_EVERY,
+  maxSnapshotRawFor,
   splitTickFrames,
   TICK_HZ,
+  WORLD_GAME,
+  WORLD_SANDBOX,
   type TickInput,
 } from "../shared/protocol.ts";
 import { TickClock, type ClosedTick } from "./clock.ts";
@@ -18,8 +23,12 @@ import type { GameDb } from "./db.ts";
 import type { SnapshotVerifier } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
-export const WORLD_KIND = 0;
-export const WORLD_ID = 0;
+/** The game world's seed. Fixed so every deploy regenerates the same world from the stored row. */
+export const GAME_SEED = 20261014n;
+export const SANDBOX_ID = 0;
+export const GAME_ID = 1;
+/** World 0 is the sandbox and world 1 the game world (HELLO's world_id picks one). */
+export const worldKindOf = (id: number): number | null => (id === SANDBOX_ID ? WORLD_SANDBOX : id === GAME_ID ? WORLD_GAME : null);
 /** With no verified snapshot the whole log stays in memory; this bounds it (about 55 minutes). */
 export const MAX_LOG_TICKS = 200_000;
 /** Drop a client whose socket send queue grows past this: it is not keeping up. */
@@ -41,10 +50,16 @@ export interface Peer {
 }
 
 interface Member {
+  /** Connection id: unique per connection. The sandbox uses it as the sim's player id too. */
   id: number;
+  /** The sim player id this connection controls; 0 for a spectator (no Join was stamped). */
+  playerId: number;
   peer: Peer;
+  lastPos: null;
   /** Connection order: lower means connected longer. */
   seq: number;
+  /** Display name, already trimmed and capped; render-only. */
+  name: string;
   /** HASH for ticks at or below this are ignored (they predate the client's current sim). */
   minHashTick: number;
   lastBadTick: number;
@@ -62,6 +77,7 @@ interface SnapshotRequest {
 }
 
 export interface WorldOptions {
+  id?: number;
   now: () => number;
   db?: GameDb;
   verifier?: SnapshotVerifier;
@@ -77,11 +93,15 @@ export interface WorldStats {
   resyncs: number;
   incidents: number;
   flushes: number;
+  posRejected: number;
+  /** Duration of the last snapshot verification (worker round trip), ms. */
+  lastVerifyMs: number;
 }
 
 export class World {
-  readonly seed = SANDBOX_SEED;
-  readonly kind = WORLD_KIND;
+  readonly id: number;
+  seed: bigint;
+  readonly kind: number;
   /** log[i] is the encoded TICK frame for tick logBase + 1 + i: only ticks after the latest verified snapshot. */
   readonly log: Uint8Array[] = [];
   logBase = 0;
@@ -89,8 +109,10 @@ export class World {
   snapshot: { tick: number; data: Uint8Array } | null = null;
   readonly members = new Map<number, Member>();
   readonly clock: TickClock;
-  readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0 };
+  readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0 };
   closing = false;
+  /** Test and telemetry hook: called after each closed tick has been broadcast. */
+  onTickClosed: ((tick: number) => void) | null = null;
 
   private readonly now: () => number;
   private readonly db?: GameDb;
@@ -111,9 +133,16 @@ export class World {
   private readonly truth = new Map<number, bigint>();
   private request: SnapshotRequest | null = null;
   private waitingUpload: { tick: number; memberId: number; hash: bigint; data: Uint8Array } | null = null;
+  /** True while a snapshot is being verified in the worker. */
+  verifying = false;
   private lastRequestTick = 0;
+  /** Last accepted Pos per sim player, kept across reconnects within this process (the baseline for plan 7.6). */
+  private readonly lastPosOf = new Map<number, { x: number; y: number; tick: number }>();
 
   constructor(opts: WorldOptions) {
+    this.id = opts.id ?? SANDBOX_ID;
+    this.kind = worldKindOf(this.id) ?? WORLD_SANDBOX;
+    this.seed = this.id === GAME_ID ? GAME_SEED : SANDBOX_SEED;
     this.now = opts.now;
     this.db = opts.db;
     this.verifier = opts.verifier;
@@ -122,7 +151,6 @@ export class World {
     this.say = opts.log ?? (() => {});
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
     this.lastFlush = opts.now();
-    if (this.db) this.loadFromDb(this.db);
   }
 
   get playerCount(): number {
@@ -135,31 +163,33 @@ export class World {
 
   // ---- cold start (plan 9.2, D-004) -------------------------------------------------------------
 
-  private loadFromDb(db: GameDb): void {
-    const row = db.getWorld(WORLD_ID);
+  /** Cold start: restore from the database. Async because verifying a snapshot under a new build uses the worker. */
+  async load(): Promise<void> {
+    if (this.db) await this.loadFromDb(this.db);
+  }
+
+  private async loadFromDb(db: GameDb): Promise<void> {
+    const row = db.getWorld(this.id);
     if (!row) {
-      db.createWorld(WORLD_ID, "sandbox", this.seed, this.simBuild);
+      db.createWorld(this.id, this.kind === WORLD_GAME ? "game" : "sandbox", this.seed, this.simBuild);
       return;
     }
+    this.seed = row.seed;
     this.nextPlayer = Math.max(1, row.nextPlayer);
-    let snap = db.latestSnapshot(WORLD_ID);
+    let snap = db.latestSnapshot(this.id);
     if (row.simBuild !== this.simBuild) {
       // New sim build (plan 9.3): the logged inputs cannot be replayed under new rules. Keep the snapshot if this
       // build can restore it, start a fresh log; otherwise start the world over.
       let ok = false;
       if (snap && this.verifier) {
-        try {
-          ok = this.verifier.hashOf(decompressSnapshot(snap.data))?.tick === snap.tick;
-        } catch {
-          ok = false;
-        }
+        ok = (await this.verifier.hashOf(snap.data, maxSnapshotRawFor(this.kind)))?.tick === snap.tick;
       }
       if (ok && snap) {
-        db.clearTickLog(WORLD_ID);
-        db.setWorldBuild(WORLD_ID, this.simBuild);
+        db.clearTickLog(this.id);
+        db.setWorldBuild(this.id, this.simBuild);
         this.say(`[world] sim build changed: kept snapshot at tick ${snap.tick}, dropped the old log`);
       } else {
-        db.resetWorld(WORLD_ID, this.simBuild);
+        db.resetWorld(this.id, this.simBuild);
         snap = null;
         this.say("[world] sim build changed and the snapshot cannot be restored: world reset");
       }
@@ -173,7 +203,7 @@ export class World {
     let net = 0;
     let rewrite = false;
     const frames: Uint8Array[] = [];
-    scan: for (const b of db.ticksAfter(WORLD_ID, base)) {
+    scan: for (const b of db.ticksAfter(this.id, base)) {
       const fs = splitTickFrames(b.data);
       if (!fs) {
         rewrite = true;
@@ -190,7 +220,7 @@ export class World {
         net += presenceDelta(f);
       }
     }
-    if (frames.length === 0 && db.ticksAfter(WORLD_ID, base).length > 0) rewrite = true;
+    if (frames.length === 0 && db.ticksAfter(this.id, base).length > 0) rewrite = true;
     this.log.push(...frames);
     this.snapshotOnline = Math.max(0, -net);
     this.online = 0;
@@ -198,7 +228,7 @@ export class World {
     this.lastRequestTick = base;
     if (rewrite) {
       this.say(`[world] tick_log was not contiguous after tick ${base}; kept ${frames.length} ticks`);
-      db.clearTickLog(WORLD_ID);
+      db.clearTickLog(this.id);
       if (frames.length) {
         this.pendingFirst = base + 1;
         this.pending = frames.slice();
@@ -223,6 +253,7 @@ export class World {
         this.members.delete(id);
       }
     }
+    this.onTickClosed?.(t.tick);
     // Everything below is after the broadcast and is bookkeeping only.
     for (const i of t.inputs) {
       if (i.kind === KIND_JOIN) this.online++;
@@ -250,8 +281,8 @@ export class World {
       o += f.length;
     }
     try {
-      this.db.appendTicks(WORLD_ID, this.pendingFirst, this.pendingFirst + this.pending.length - 1, this.simBuild, data);
-      this.db.setNextPlayer(WORLD_ID, this.nextPlayer);
+      this.db.appendTicks(this.id, this.pendingFirst, this.pendingFirst + this.pending.length - 1, this.simBuild, data);
+      this.db.setNextPlayer(this.id, this.nextPlayer);
       this.pending = [];
       this.stats.flushes++;
     } catch (e) {
@@ -263,17 +294,66 @@ export class World {
 
   /**
    * Admit a peer: WELCOME, then the latest verified snapshot (if any), then every closed tick after it, then
-   * live. All in one synchronous run, so no tick can fall between. Returns the player id.
+   * live. All in one synchronous run, so no tick can fall between. In the game world `playerId` is the stable
+   * id from the players table (the same person always controls the same entity); a spectator (`playerId` 0)
+   * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
-  join(peer: Peer): number {
+  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean } = {}): { conn: number; playerId: number } {
     this.clock.resume();
     this.clock.advance();
-    const id = this.nextPlayer++;
-    this.sendCatchUp(peer, (base) => encodeWelcome(id, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
-    const seq = this.nextSeq++;
-    this.members.set(id, { id, peer, seq, minHashTick: this.clock.lastClosed, lastBadTick: 0 });
-    this.stamp({ player: id, kind: KIND_JOIN, payload: new Uint8Array(0) });
-    return id;
+    const spectate = !!opts.spectate && this.kind === WORLD_GAME;
+    // One connection per game-world player: a second tab or a reload replaces the first. The old one is
+    // dropped without a Leave, because the Join stamped below keeps the entity active.
+    const prior = !spectate && this.kind === WORLD_GAME && opts.playerId ? this.connOf(opts.playerId) : null;
+    if (prior !== null) {
+      const old = this.members.get(prior);
+      this.members.delete(prior);
+      try {
+        old?.peer.close(4000, "replaced by a newer connection");
+      } catch {
+        // already gone
+      }
+    }
+    const playerId = spectate ? 0 : this.kind === WORLD_GAME ? (opts.playerId ?? 0) : this.nextPlayer++;
+    const conn = this.nextSeq++;
+    const names: [number, string][] = [];
+    for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
+    this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
+    for (const [id, name] of names) peer.send(encodePlayerName(id, name));
+    this.members.set(conn, {
+      id: conn,
+      playerId,
+      name: opts.name ?? "",
+      peer,
+      seq: conn,
+      lastPos: null,
+      minHashTick: this.clock.lastClosed,
+      lastBadTick: 0,
+    });
+    if (playerId) {
+      this.stamp({ player: playerId, kind: KIND_JOIN, payload: new Uint8Array(0) });
+      if (opts.name) this.broadcastName(conn, playerId, opts.name);
+    }
+    return { conn, playerId };
+  }
+
+  /** The connection currently controlling a game-world player, if any (a second tab or a reload replaces it). */
+  connOf(playerId: number): number | null {
+    for (const m of this.members.values()) if (m.playerId === playerId) return m.id;
+    return null;
+  }
+
+  /** Tell everyone else (render-only; never state) who just arrived. */
+  private broadcastName(conn: number, playerId: number, name: string): void {
+    const f = encodePlayerName(playerId, name);
+    for (const m of this.members.values()) {
+      if (m.id === conn) continue;
+      try {
+        m.peer.send(f);
+      } catch {
+        // a dead peer is dropped by its close handler
+      }
+    }
   }
 
   private sendCatchUp(peer: Peer, header: (playersAtBase: number) => Uint8Array): void {
@@ -283,11 +363,13 @@ export class World {
     for (const f of this.log) peer.send(f);
   }
 
-  leave(id: number): void {
-    if (!this.members.delete(id)) return;
-    this.stamp({ player: id, kind: KIND_LEAVE, payload: new Uint8Array(0) });
-    if (this.request?.memberId === id) this.request = null;
-    if (this.waitingUpload?.memberId === id) this.waitingUpload = null;
+  leave(conn: number): void {
+    const m = this.members.get(conn);
+    if (!m) return;
+    this.members.delete(conn);
+    if (m.playerId) this.stamp({ player: m.playerId, kind: KIND_LEAVE, payload: new Uint8Array(0) });
+    if (this.request?.memberId === conn) this.request = null;
+    if (this.waitingUpload?.memberId === conn) this.waitingUpload = null;
     if (this.members.size === 0) {
       // Last one out. The sim is not ours to snapshot and the client is gone, so nothing to ask: the
       // next cold start replays the log since the last snapshot. Close the Leave tick and persist it now.
@@ -298,6 +380,38 @@ export class World {
       this.waitingUpload = null;
       this.flush();
     }
+  }
+
+  /**
+   * Plan 7.6: accept a game-world Pos only if it stays within what the avatar controller and one knockback can
+   * cover since the last accepted Pos of that player. `payload` is the sim's Pos minus kind and player.
+   * The first Pos of a session (and the first after a respawn changes `life`) has no baseline: it is accepted
+   * if it is inside the world, because the server cannot read the entity's position without the sim.
+   */
+  acceptPos(conn: number, payload: Uint8Array): boolean {
+    const m = this.members.get(conn);
+    if (!m || !m.playerId || payload.length !== POS_PAYLOAD_LEN) return false;
+    const v = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const life = v.getUint16(0, true);
+    const x = v.getInt32(2, true);
+    const y = v.getInt32(6, true);
+    const facing = payload[10];
+    const bad = () => {
+      this.stats.posRejected++;
+      return false;
+    };
+    if (facing > 1 || x < 0 || y < 0 || x >= GAME_W * POS_ONE || y >= GAME_H * POS_ONE) return bad();
+    const openTick = this.clock.lastClosed + 1;
+    // Compared whatever `life` the client claims: `life` is the client's word, and trusting it would let a
+    // cheater dodge the check by changing it. (M5: a real respawn must reset this baseline.)
+    void life;
+    const last = this.lastPosOf.get(m.playerId);
+    if (last) {
+      const limit = maxPosJump(openTick - last.tick);
+      if (Math.abs(x - last.x) > limit || Math.abs(y - last.y) > limit) return bad();
+    }
+    this.lastPosOf.set(m.playerId, { x, y, tick: openTick });
+    return true;
   }
 
   stamp(input: TickInput): number {
@@ -379,7 +493,7 @@ export class World {
     const members = [...bad.keys()].map((id) => this.members.get(id)).filter((m): m is Member => !!m);
     this.stats.incidents++;
     // REQUEST_CHUNK_HASHES/CHUNK_HASHES to diff the diverging chunks is not built in this slice (D-043).
-    this.db?.recordIncident(WORLD_ID, tick, {
+    this.db?.recordIncident(this.id, tick, {
       players: [...(all ?? bad).keys()],
       divergent: [...bad.keys()],
       userAgents: Object.fromEntries(members.map((m) => [m.id, m.peer.userAgent ?? null])),
@@ -459,28 +573,32 @@ export class World {
     this.request = null;
     const reject = (why: string) => {
       this.stats.snapshotsRejected++;
-      this.say(`[world] snapshot ${tick} rejected: ${why}`);
+      this.say(`[world ${this.id}] snapshot ${tick} rejected: ${why}`);
     };
     if (!this.verifier || !this.db) return reject("no verifier");
     if (u.hash !== truth) return reject("uploader's claimed hash differs from the majority hash");
-    let raw: Uint8Array;
-    try {
-      raw = decompressSnapshot(u.data);
-    } catch {
-      return reject("does not decompress");
-    }
-    const got = this.verifier.hashOf(raw);
-    if (!got) return reject("sim refused to restore it");
-    if (got.tick !== tick) return reject("snapshot tick mismatch");
-    if (got.hash !== u.hash || got.hash !== truth) return reject("restored hash differs from the claimed and majority hash");
-    if (this.snapshot && tick <= this.snapshot.tick) return;
-    this.db.saveSnapshot(WORLD_ID, { tick, hash: truth, simBuild: this.simBuild, data: u.data });
-    this.log.splice(0, Math.max(0, tick - this.logBase));
-    this.logBase = tick;
-    this.snapshot = { tick, data: u.data };
-    this.snapshotOnline = this.onlineAt.get(tick) ?? 0;
-    this.stats.snapshotsAccepted++;
-    this.say(`[world] snapshot ${tick} verified: ${u.data.length} bytes compressed, ${raw.length} raw`);
+    // Decompress, restore and hash in a worker thread: restoring a game world regenerates it (about 400 ms),
+    // which on this thread would stall every closed tick. The tick clock keeps running while this awaits.
+    const t0 = this.now();
+    this.verifying = true;
+    void this.verifier
+      .hashOf(u.data, maxSnapshotRawFor(this.kind))
+      .then((got) => {
+        this.verifying = false;
+        this.stats.lastVerifyMs = this.now() - t0;
+        if (this.closing || !this.db) return;
+        if (!got) return reject("does not decompress, or the sim refused to restore it");
+        if (got.tick !== tick) return reject("snapshot tick mismatch");
+        if (got.hash !== u.hash || got.hash !== truth) return reject("restored hash differs from the claimed and majority hash");
+        if (this.snapshot && tick <= this.snapshot.tick) return;
+        this.db.saveSnapshot(this.id, { tick, hash: truth, simBuild: this.simBuild, data: u.data });
+        this.log.splice(0, Math.max(0, tick - this.logBase));
+        this.logBase = tick;
+        this.snapshot = { tick, data: u.data };
+        this.snapshotOnline = this.onlineAt.get(tick) ?? 0;
+        this.stats.snapshotsAccepted++;
+        this.say(`[world ${this.id}] snapshot ${tick} verified in ${this.stats.lastVerifyMs.toFixed(0)} ms: ${u.data.length} bytes compressed, ${got.rawLength} raw`);
+      });
   }
 }
 

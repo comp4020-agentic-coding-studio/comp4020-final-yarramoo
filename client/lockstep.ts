@@ -1,7 +1,7 @@
 // Playout buffer and apply loop (plan 7.1). No DOM, no worker APIs: shared by the worker and the Node tests.
 // The sim only ever advances through closed ticks from the server: push that tick's inputs in the listed
 // order, then step once. TypeScript writes sim state only through push_input (invariant 1).
-import { compressSnapshot, decompressSnapshot, HASH_EVERY, simInputBytes, type TickInput } from "../shared/protocol.ts";
+import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawFor, simInputBytes, WORLD_GAME, WORLD_SANDBOX, type TickInput } from "../shared/protocol.ts";
 import type { Sim } from "../shared/sim.ts";
 
 /** Target buffer depth, in ticks. */
@@ -43,7 +43,9 @@ export class Lockstep {
 
   /** Start from a server snapshot: replace the sim state (restore) and expect ticks from snapshot tick + 1. */
   loadSnapshot(compressed: Uint8Array, tick: number): void {
-    this.sim.restore(decompressSnapshot(compressed));
+    // The world's size (set by init before any snapshot arrives) tells which ceiling applies.
+    const kind = this.sim.width() * this.sim.height() > 512 * 512 ? WORLD_GAME : WORLD_SANDBOX;
+    this.sim.restore(decompressSnapshot(compressed, maxSnapshotRawFor(kind)));
     if (this.sim.tick() !== tick) throw new Error(`snapshot tick mismatch: ${this.sim.tick()} vs ${tick}`);
     this.queue.clear();
     this.received = tick;

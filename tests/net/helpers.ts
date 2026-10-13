@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
-import { encodePaint, KIND_PAINT } from "../../shared/inputs.ts";
+import { encodePaint, encodePos, KIND_PAINT, KIND_POS } from "../../shared/inputs.ts";
 import { decodeServer, encodeHash, encodeHello, encodeInput, encodeSnapshotUpload } from "../../shared/protocol.ts";
 import { loadSim, simBuildHash } from "../../shared/sim.ts";
 
@@ -26,11 +26,19 @@ export interface TestClient {
   /** Called instead of uploading when `uploads` is false, so a test can send something else. */
   onDue: ((tick: number, honest: { hash: bigint; data: Uint8Array }) => void) | null;
   paint(mat: number, x0: number, y0: number, x1: number, y1: number, r: number): void;
+  /** Send a Pos (cells, converted to 1/16) for the game world. */
+  move(xCells: number, yCells: number, facing?: number, life?: number): void;
+  /** Names the server told this client about, by player id. */
+  names: Map<number, string>;
   drain(): void;
   close(): void;
 }
 
-export async function connect(port: number, hashHex: string, opts: { uploads?: boolean; manual?: boolean } = {}): Promise<TestClient> {
+export async function connect(
+  port: number,
+  hashHex: string,
+  opts: { uploads?: boolean; manual?: boolean; world?: number; token?: Uint8Array; spectate?: boolean } = {},
+): Promise<TestClient> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { "user-agent": "vitest-client" } });
   ws.binaryType = "nodebuffer";
   let seq = 0;
@@ -46,6 +54,7 @@ export async function connect(port: number, hashHex: string, opts: { uploads?: b
     },
     hashes: new Map<number, bigint>(),
     playerId: 0,
+    names: new Map<number, string>(),
     counts: { ticks: 0, snapshots: 0, resyncs: 0, requests: 0 },
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
@@ -71,7 +80,7 @@ export async function connect(port: number, hashHex: string, opts: { uploads?: b
   };
 
   await new Promise<void>((ok, bad) => {
-    ws.on("open", () => ws.send(encodeHello(unhex(hashHex), 0)));
+    ws.on("open", () => ws.send(encodeHello(unhex(hashHex), opts.world ?? 0, opts.token, opts.spectate ? 1 : 0)));
     ws.on("error", bad);
     ws.on("message", (d: Buffer) => {
       const m = decodeServer(new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
@@ -102,6 +111,9 @@ export async function connect(port: number, hashHex: string, opts: { uploads?: b
           c.ls.push(m.tick, m.inputs);
           if (!opts.manual) c.ls.run(100000); // apply as fast as ticks arrive
           break;
+        case "player-name":
+          c.names.set(m.player, m.name);
+          break;
         case "reject":
           bad(new Error(m.reason));
           break;
@@ -110,6 +122,8 @@ export async function connect(port: number, hashHex: string, opts: { uploads?: b
   });
   c.paint = (mat, x0, y0, x1, y1, r) =>
     ws.send(encodeInput(++seq, KIND_PAINT, encodePaint(0, mat, x0, y0, x1, y1, r).subarray(5)));
+  c.move = (x, y, facing = 0, life = 0) =>
+    ws.send(encodeInput(++seq, KIND_POS, encodePos(0, life, Math.round(x * 16), Math.round(y * 16), facing).subarray(5)));
   c.drain = () => void c.ls.run(1_000_000);
   c.close = () => ws.close();
   return c;
@@ -125,6 +139,14 @@ export async function paintFor(clients: TestClient[], ms: number): Promise<void>
     i++;
     await sleep(30);
   }
+}
+
+/** Register a player over HTTP and return its token (32 bytes) and id. */
+export async function register(port: number, name: string): Promise<{ token: Uint8Array; id: number; name: string }> {
+  const r = await fetch(`http://127.0.0.1:${port}/api/players`, { method: "POST", body: JSON.stringify({ display_name: name }) });
+  if (!r.ok) throw new Error(`register failed: ${r.status}`);
+  const j = (await r.json()) as { token: string; player_id: number; display_name: string };
+  return { token: unhex(j.token), id: j.player_id, name: j.display_name };
 }
 
 export async function waitFor(cond: () => boolean, ms = 20000, what = "condition"): Promise<void> {

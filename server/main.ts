@@ -6,18 +6,24 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { WebSocketServer, type WebSocket } from "ws";
-import { KIND_PAINT } from "../shared/inputs.ts";
+import { KIND_CAST, KIND_PAINT, KIND_POS } from "../shared/inputs.ts";
+import { CAST_PAYLOAD_LEN, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
+  cleanName,
   decodeClient,
   encodePong,
   encodeReject,
-  MAX_UPLOAD_FRAME,
+  HELLO_SPECTATE,
+  maxUploadFrameFor,
+  MAX_SOCKET_PAYLOAD,
   PAINT_PAYLOAD_LEN,
   PROTOCOL_VERSION,
+  WORLD_GAME,
 } from "../shared/protocol.ts";
 import { GameDb } from "./db.ts";
+import { Identity } from "./identity.ts";
 import { SnapshotVerifier } from "./verify.ts";
-import { World, type Peer } from "./world.ts";
+import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");
@@ -46,12 +52,17 @@ code{background:#151a24;padding:1px 4px;border-radius:4px}nav{margin-bottom:1.5e
 /** README.md rendered to HTML on each request, so the page never lags the file. */
 function readmePage(): string {
   const body = marked.parse(readFileSync(join(ROOT, "README.md"), "utf8"), { async: false });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sandbox: README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the sandbox</a></nav>${body}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the game</a></nav>${body}</main></body></html>`;
 }
 
 export interface RunningServer {
   port: number;
+  /** The sandbox (world 0). */
   world: World;
+  /** The game world (world 1). */
+  game: World;
+  worlds: Map<number, World>;
+  identity: Identity;
   db: GameDb | null;
   stats: { droppedRate: number; rejected: number };
   close(): Promise<void>;
@@ -78,18 +89,62 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const say = opts.quiet ? () => {} : (m: string) => console.log(m);
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
-  const world = new World({
-    now: () => performance.now(),
-    db: db ?? undefined,
-    verifier: db ? new SnapshotVerifier(wasmPath) : undefined,
-    simBuild: hash.toString("hex"),
-    snapshotEveryTicks: opts.snapshotEveryTicks,
-    log: say,
-  });
+  const verifier = db ? new SnapshotVerifier(wasmPath) : undefined;
+  const mk = (id: number) =>
+    new World({
+      id,
+      now: () => performance.now(),
+      db: db ?? undefined,
+      verifier,
+      simBuild: hash.toString("hex"),
+      snapshotEveryTicks: opts.snapshotEveryTicks,
+      log: say,
+    });
+  const worlds = new Map<number, World>([[SANDBOX_ID, mk(SANDBOX_ID)], [GAME_ID, mk(GAME_ID)]]);
+  const world = worlds.get(SANDBOX_ID)!;
+  const game = worlds.get(GAME_ID)!;
+  for (const w of worlds.values()) await w.load();
+  const identity = new Identity(db);
   const stats = { droppedRate: 0, rejected: 0 };
 
   const http: Server = createServer((req, res) => {
     const path = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    if (path === "/api/players") {
+      if (req.method !== "POST") {
+        res.writeHead(405, { allow: "POST" }).end();
+        return;
+      }
+      // Body is a tiny JSON object; anything bigger is refused before it is parsed.
+      const chunks: Buffer[] = [];
+      let size = 0;
+      let dead = false;
+      req.on("data", (c: Buffer) => {
+        size += c.length;
+        if (size > 1024 && !dead) {
+          dead = true;
+          res.writeHead(413).end();
+          req.destroy();
+        } else if (!dead) chunks.push(c);
+      });
+      req.on("end", () => {
+        if (dead) return;
+        let name: unknown = "";
+        try {
+          name = (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { display_name?: unknown }).display_name;
+        } catch {
+          res.writeHead(400).end();
+          return;
+        }
+        const r = identity.register(name, performance.now());
+        if (!r) {
+          res.writeHead(429).end();
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(JSON.stringify({ token: Buffer.from(r.token).toString("hex"), player_id: r.id, display_name: r.name }));
+      });
+      return;
+    }
     if (path === "/readme") {
       res.writeHead(301, { location: "/readme/" }).end();
       return;
@@ -103,7 +158,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       }
       return;
     }
-    let file = normalize(join(clientDir, path === "/" ? "index.html" : path));
+    // The same client serves both worlds: "/" is the game world, "/sandbox" the sandbox (it reads its URL).
+    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" || path === "/sandbox/" ? "index.html" : path));
     if (file !== clientDir && !file.startsWith(clientDir + sep)) {
       res.writeHead(403).end();
       return;
@@ -121,9 +177,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
   });
 
-  // One cap for the socket, because ws checks it before we see the tag byte; onMessage then enforces
-  // MAX_FRAME_BYTES for everything except SNAPSHOT_UPLOAD.
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_UPLOAD_FRAME });
+  // One cap for the socket, because ws checks it before we see the tag byte: the largest upload of any world
+  // (a game snapshot). onMessage then enforces MAX_FRAME_BYTES for everything except SNAPSHOT_UPLOAD, and the
+  // world's own upload cap (sandbox 1 MiB) for uploads.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_SOCKET_PAYLOAD });
   http.on("upgrade", (req, socket, head) => {
     if ((req.url ?? "").split("?")[0] !== "/ws") {
       socket.destroy();
@@ -138,7 +195,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   function onConnection(ws: WebSocket, userAgent: string) {
-    let playerId = 0;
+    let joined: { world: World; conn: number; playerId: number } | null = null;
     let windowStart = performance.now();
     let inWindow = 0;
     const helloTimer = setTimeout(() => ws.close(1008, "no hello"), HELLO_TIMEOUT_MS);
@@ -151,24 +208,36 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
     ws.on("message", (data, isBinary) => {
       if (!isBinary) return ws.close(1003, "binary only");
-      if (world.closing) return;
       const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
       const msg = decodeClient(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
       if (!msg) return ws.close(1002, "bad frame");
-      if (msg.t !== "snapshot-upload" && buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
-
-      if (!playerId) {
+      if (!joined) {
         if (msg.t !== "hello") return ws.close(1002, "hello first");
+        if (buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
         clearTimeout(helloTimer);
+        const w = worlds.get(msg.worldId);
         if (msg.version !== PROTOCOL_VERSION) return reject(ws, "protocol version mismatch: new version, reload");
         if (!Buffer.from(msg.buildHash).equals(hash)) return reject(ws, "sim build mismatch: new version, reload");
-        if (msg.worldId !== 0) return reject(ws, "unknown world");
-        if (world.closing) return reject(ws, "server is shutting down");
-        if (world.full) return reject(ws, "world log is full; try again later");
-        playerId = world.join(peer);
-        console.log(`[server] player ${playerId} joined (${world.playerCount} online, tick ${world.clock.lastClosed})`);
+        if (!w || worldKindOf(msg.worldId) === null) return reject(ws, "unknown world");
+        if (w.closing) return reject(ws, "server is shutting down");
+        if (w.full) return reject(ws, "world log is full; try again later");
+        let playerId: number | undefined;
+        let name = "";
+        if (w.kind === WORLD_GAME && !(msg.flags & HELLO_SPECTATE)) {
+          const who = identity.resolve(msg.token);
+          if (!who) return reject(ws, "too many players registered");
+          playerId = who.id;
+          name = who.name;
+        }
+        const j = w.join(peer, { playerId, name, spectate: !!(msg.flags & HELLO_SPECTATE) });
+        joined = { world: w, conn: j.conn, playerId: j.playerId };
+        console.log(`[server] world ${w.id}: ${j.playerId ? `player ${j.playerId}` : "spectator"} joined (${w.playerCount} online, tick ${w.clock.lastClosed})`);
         return;
       }
+      const w = joined.world;
+      if (w.closing) return;
+      // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
+      if (msg.t === "snapshot-upload" ? buf.length > maxUploadFrameFor(w.kind) : buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
 
       switch (msg.t) {
         case "ping":
@@ -184,17 +253,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             stats.droppedRate++;
             return;
           }
+          if (w.kind === WORLD_GAME) {
+            // Game world: only Pos (validated) and Cast. Join/Leave are the server's; Paint is sandbox-only.
+            if (!joined.playerId) return void stats.rejected++; // spectators send nothing
+            if (msg.kind === KIND_POS && msg.payload.length === POS_PAYLOAD_LEN) {
+              if (!w.acceptPos(joined.conn, msg.payload)) return void stats.rejected++;
+            } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void stats.rejected++;
+            w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
+            return;
+          }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
           if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void stats.rejected++;
           // The player id is ours, never the client's.
-          world.stamp({ player: playerId, kind: msg.kind, payload: msg.payload });
+          w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
           return;
         }
         case "hash":
-          world.onHash(playerId, msg.tick, msg.hash);
+          w.onHash(joined.conn, msg.tick, msg.hash);
           return;
         case "snapshot-upload":
-          world.onUpload(playerId, msg.tick, msg.hash, msg.data);
+          w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);
           return;
         default:
           return ws.close(1002, "unexpected message");
@@ -202,15 +280,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     });
     ws.on("close", () => {
       clearTimeout(helloTimer);
-      if (playerId) {
-        world.leave(playerId);
-        console.log(`[server] player ${playerId} left (${world.playerCount} online)`);
+      if (joined) {
+        joined.world.leave(joined.conn);
+        console.log(`[server] world ${joined.world.id}: ${joined.playerId ? `player ${joined.playerId}` : "spectator"} left (${joined.world.playerCount} online)`);
       }
     });
     ws.on("error", () => ws.terminate());
   }
 
-  const timer = setInterval(() => world.tick(), TIMER_MS);
+  const timer = setInterval(() => {
+    for (const w of worlds.values()) w.tick();
+  }, TIMER_MS);
   let closed: Promise<void> | null = null;
   await new Promise<void>((ok) => http.listen(opts.port ?? 0, ok));
   const addr = http.address();
@@ -218,14 +298,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   return {
     port,
     world,
+    game,
+    worlds,
+    identity,
     db,
     stats,
     /** Shutdown (plan 9.3): stop inputs, close the open tick, flush tick_log, close the DB. Safe to call twice. */
     close: () =>
       (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
-        world.shutdown();
+        for (const w of worlds.values()) w.shutdown();
         db?.close();
+        void verifier?.close();
         for (const c of wss.clients) c.terminate();
         http.close(() => ok());
         http.closeAllConnections();
