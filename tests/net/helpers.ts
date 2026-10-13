@@ -23,6 +23,8 @@ export interface TestClient {
   /** When false the client does not answer REQUEST_SNAPSHOT. */
   uploads: boolean;
   lie: boolean;
+  /** Called instead of uploading when `uploads` is false, so a test can send something else. */
+  onDue: ((tick: number, honest: { hash: bigint; data: Uint8Array }) => void) | null;
   paint(mat: number, x0: number, y0: number, x1: number, y1: number, r: number): void;
   drain(): void;
   close(): void;
@@ -47,6 +49,7 @@ export async function connect(port: number, hashHex: string, opts: { uploads?: b
     counts: { ticks: 0, snapshots: 0, resyncs: 0, requests: 0 },
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
+    onDue: null,
   } as unknown as TestClient;
 
   const fresh = (target: number) => {
@@ -62,6 +65,7 @@ export async function connect(port: number, hashHex: string, opts: { uploads?: b
       if (r.snapshot) {
         wantAt = 0;
         if (c.uploads) ws.send(encodeSnapshotUpload(tick, r.snapshot.hash, r.snapshot.data));
+        else c.onDue?.(tick, r.snapshot);
       }
     };
   };
