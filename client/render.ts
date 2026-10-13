@@ -81,6 +81,8 @@ export interface Rect {
   r: number;
   g: number;
   b: number;
+  /** Opacity 0..1 (default 1). */
+  a?: number;
 }
 
 const RECT_VERT = `#version 300 es
@@ -95,9 +97,9 @@ void main() {
 }`;
 const RECT_FRAG = `#version 300 es
 precision mediump float;
-uniform vec3 uCol;
+uniform vec4 uCol;
 out vec4 outColor;
-void main() { outColor = vec4(uCol, 1.0); }`;
+void main() { outColor = uCol; }`;
 
 export class Renderer {
   private gl: WebGL2RenderingContext;
@@ -254,11 +256,14 @@ export class Renderer {
     gl.useProgram(this.rectProg);
     gl.uniform2f(this.rCam, cam.x, cam.y);
     gl.uniform2f(this.rView, cam.vw, cam.vh);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     for (const r of rects) {
       gl.uniform4f(this.rRect, r.x, r.y, r.w, r.h);
-      gl.uniform3f(this.rCol, r.r, r.g, r.b);
+      gl.uniform4f(this.rCol, r.r, r.g, r.b, r.a ?? 1);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
+    gl.disable(gl.BLEND);
     gl.useProgram(this.prog);
   }
 
