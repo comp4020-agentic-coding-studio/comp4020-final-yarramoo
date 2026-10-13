@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { marked } from "marked";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KIND_PAINT } from "../shared/inputs.ts";
 import {
@@ -37,6 +38,16 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
   ".ico": "image/x-icon",
 };
+
+const README_CSS = `:root{color-scheme:dark}body{margin:0;background:#0b0e14;color:#e6e9f0;font:17px/1.6 system-ui,sans-serif}
+main{max-width:68ch;margin:0 auto;padding:24px 16px 64px}a{color:#6ea8ff}h1,h2{line-height:1.2}h2{margin-top:2em;border-top:1px solid #2a3142;padding-top:.8em}
+code{background:#151a24;padding:1px 4px;border-radius:4px}nav{margin-bottom:1.5em}`;
+
+/** README.md rendered to HTML on each request, so the page never lags the file. */
+function readmePage(): string {
+  const body = marked.parse(readFileSync(join(ROOT, "README.md"), "utf8"), { async: false });
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sandbox: README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the sandbox</a></nav>${body}</main></body></html>`;
+}
 
 export interface RunningServer {
   port: number;
@@ -79,6 +90,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   const http: Server = createServer((req, res) => {
     const path = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    if (path === "/readme") {
+      res.writeHead(301, { location: "/readme/" }).end();
+      return;
+    }
+    if (path === "/readme/") {
+      try {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
+        res.end(readmePage());
+      } catch {
+        res.writeHead(404).end("not found");
+      }
+      return;
+    }
     let file = normalize(join(clientDir, path === "/" ? "index.html" : path));
     if (file !== clientDir && !file.startsWith(clientDir + sep)) {
       res.writeHead(403).end();
