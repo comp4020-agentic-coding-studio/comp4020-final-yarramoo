@@ -70,8 +70,8 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
       previews; HUD (`1bc6b0e`, `031f58a`, `9520446`; D-073 to D-077).
 - [x] Spell animation (`377cb18`, `9520446`): a cast flash, projectile trails, impact bursts. Also
       cosmetic, also renderer-only.
-- [ ] Touch: spectate the game world on phones (D-011).
-- [ ] Gate G2: N1 (three clients, ten minutes, jitter, a throttled CPU, zero
+- [x] Touch: spectate the game world on phones (D-011; built in M4a, `cc746dc`).
+- [x] Gate G2 run (results under "Gate G2: decision needed" below): N1 (three clients, ten minutes, jitter, a throttled CPU, zero
       mismatches) and P1 (worst-case step time p95 ≤ 8 ms).
       Measured 2026-10-14 (`docs/research/g2-results.md`): N1 PASS (36506 ticks, 0
       incidents, 0 resyncs, same final hash). P1 FAIL: worst case p95 9.0 ms
