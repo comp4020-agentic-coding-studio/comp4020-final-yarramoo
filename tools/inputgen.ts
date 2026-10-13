@@ -28,7 +28,10 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const MATS = [0, 1, 2, 3, 4, 5, 10];
+// Every paintable material, including Bedrock (the sim skips it) and the M1 set.
+const MATS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+// Pairs painted together so reactive materials meet: gunpowder by fire, lava by water, seed on dirt.
+const COMBOS: [number, number][] = [[13, 10], [14, 5], [3, 7], [6, 10], [13, 14]];
 const SIZE = 512;
 
 export function generate(opts: GenOptions): Script {
@@ -68,7 +71,13 @@ export function generate(opts: GenOptions): Script {
         if (rand() < 0.4) b.mat = MATS[int(0, MATS.length - 1)];
         const x1 = Math.min(SIZE - 1, Math.max(0, ox + int(-12, 12)));
         const y1 = Math.min(SIZE - 1, Math.max(0, oy + int(-12, 12)));
-        push(t, encodePaint(b.id, b.mat, ox, oy, x1, y1, int(1, 8)));
+        const r = int(1, 8);
+        push(t, encodePaint(b.id, b.mat, ox, oy, x1, y1, r));
+        if (rand() < 0.15) {
+          const [a, c] = COMBOS[int(0, COMBOS.length - 1)];
+          push(t, encodePaint(b.id, a, ox, oy, x1, y1, r));
+          push(t, encodePaint(b.id, c, ox + int(-4, 4), oy + int(-4, 4), x1 + int(-4, 4), y1 + int(-4, 4), int(1, 4)));
+        }
       }
     }
   }

@@ -18,6 +18,23 @@ pub const SALT_WATER_SIDE: u32 = 3;
 pub const SALT_FIRE_LIFE: u32 = 4;
 pub const SALT_FIRE_RISE: u32 = 5;
 pub const SALT_FIRE_DIR: u32 = 6;
+pub const SALT_FIRE_IGNITE: u32 = 7;
+pub const SALT_FIRE_SMOKE: u32 = 8;
+pub const SALT_SMOKE_LIFE: u32 = 9;
+pub const SALT_SMOKE_RISE: u32 = 10;
+pub const SALT_SMOKE_DIR: u32 = 11;
+pub const SALT_STEAM_LIFE: u32 = 12;
+pub const SALT_STEAM_RISE: u32 = 13;
+pub const SALT_STEAM_DIR: u32 = 14;
+pub const SALT_SEED_DIAG: u32 = 15;
+pub const SALT_SEED_GERM: u32 = 16;
+pub const SALT_SEED_HEIGHT: u32 = 17;
+pub const SALT_STEM_GROW: u32 = 18;
+pub const SALT_GUNPOWDER_DIAG: u32 = 19;
+pub const SALT_BLAST_RIM: u32 = 20;
+pub const SALT_LAVA_DIAG: u32 = 21;
+pub const SALT_LAVA_SIDE: u32 = 22;
+pub const SALT_LAVA_IGNITE: u32 = 23;
 
 #[cfg(test)]
 mod tests {
