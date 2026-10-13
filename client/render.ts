@@ -72,6 +72,33 @@ void main() {
   outColor = vec4(col * v, 1.0);
 }`;
 
+/** A coloured rectangle in cell coordinates (top-left x, y; width, height), drawn over the world. */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+const RECT_VERT = `#version 300 es
+uniform vec4 uRect;
+uniform vec2 uCam;
+uniform vec2 uView;
+void main() {
+  vec2 c = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));
+  vec2 cell = uRect.xy + c * uRect.zw;
+  vec2 p = (cell - uCam) / uView;
+  gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
+}`;
+const RECT_FRAG = `#version 300 es
+precision mediump float;
+uniform vec3 uCol;
+out vec4 outColor;
+void main() { outColor = vec4(uCol, 1.0); }`;
+
 export class Renderer {
   private gl: WebGL2RenderingContext;
   private matTex: WebGLTexture;
@@ -81,6 +108,11 @@ export class Renderer {
   private uCam: WebGLUniformLocation | null;
   private uView: WebGLUniformLocation | null;
   private prog: WebGLProgram;
+  private rectProg: WebGLProgram;
+  private rRect: WebGLUniformLocation | null;
+  private rCam: WebGLUniformLocation | null;
+  private rView: WebGLUniformLocation | null;
+  private rCol: WebGLUniformLocation | null;
   private cam: Camera = { x: 0, y: 0, vw: 1, vh: 1 };
   /** Size of the world the textures are allocated for (0 until `setWorld`). */
   private ww = 0;
@@ -110,6 +142,24 @@ export class Renderer {
     gl.bindVertexArray(gl.createVertexArray());
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     this.prog = prog;
+    const rp = gl.createProgram()!;
+    for (const [type, src] of [
+      [gl.VERTEX_SHADER, RECT_VERT],
+      [gl.FRAGMENT_SHADER, RECT_FRAG],
+    ] as const) {
+      const sh = gl.createShader(type)!;
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error("rect shader: " + gl.getShaderInfoLog(sh));
+      gl.attachShader(rp, sh);
+    }
+    gl.linkProgram(rp);
+    if (!gl.getProgramParameter(rp, gl.LINK_STATUS)) throw new Error("rect link: " + gl.getProgramInfoLog(rp));
+    this.rectProg = rp;
+    this.rRect = gl.getUniformLocation(rp, "uRect");
+    this.rCam = gl.getUniformLocation(rp, "uCam");
+    this.rView = gl.getUniformLocation(rp, "uView");
+    this.rCol = gl.getUniformLocation(rp, "uCol");
     this.matTex = this.makeTex(0, 1, 1);
     this.auxTex = this.makeTex(1, 1, 1);
     gl.uniform1i(gl.getUniformLocation(prog, "uMat"), 0);
@@ -171,9 +221,10 @@ export class Renderer {
    * megabytes a frame. Everything outside the window is stale on the GPU, which is fine: it is never
    * sampled until the camera moves there, and the next frame uploads it.
    */
-  draw(mat: Uint8Array, aux: Uint8Array, seconds: number, cam: Camera = this.cam) {
+  draw(mat: Uint8Array, aux: Uint8Array, seconds: number, cam: Camera = this.cam, rects: readonly Rect[] = []) {
     if (!this.ww) return;
     const gl = this.gl;
+    gl.useProgram(this.prog);
     const x0 = Math.max(0, Math.floor(cam.x) - 2);
     const y0 = Math.max(0, Math.floor(cam.y) - 2);
     const x1 = Math.min(this.ww, Math.ceil(cam.x + cam.vw) + 2);
@@ -194,6 +245,21 @@ export class Renderer {
     gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
     this.lastUploadCells = w * h;
     this.present(seconds, cam);
+    if (rects.length) this.drawRects(rects, cam);
+  }
+
+  /** Overlay rectangles (avatars, pickups) in the camera's cell space; nearest-neighbour like everything else. */
+  private drawRects(rects: readonly Rect[], cam: Camera) {
+    const gl = this.gl;
+    gl.useProgram(this.rectProg);
+    gl.uniform2f(this.rCam, cam.x, cam.y);
+    gl.uniform2f(this.rView, cam.vw, cam.vh);
+    for (const r of rects) {
+      gl.uniform4f(this.rRect, r.x, r.y, r.w, r.h);
+      gl.uniform3f(this.rCol, r.r, r.g, r.b);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    gl.useProgram(this.prog);
   }
 
   private present(seconds: number, cam: Camera) {

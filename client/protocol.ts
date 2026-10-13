@@ -1,4 +1,5 @@
 // Messages between main thread and worker.
+import type { Rect } from "./render.ts";
 export type NetState = "connecting" | "catching-up" | "live" | "reconnecting" | "rejected";
 
 export type ToWorker =
@@ -11,7 +12,19 @@ export type ToWorker =
       height: number;
       /** Dev: run a local single-player sim of this world kind instead of connecting (no networking). */
       local?: { kind: number; seed: string };
+      /** Which server world to join: 0 sandbox, 1 game. */
+      worldId: number;
+      /** The player token, 64 hex characters, or "" (spectators and the sandbox send none). */
+      token: string;
+      /** This player's own display name, for the label above their avatar. */
+      name: string;
+      /** Watch only: no avatar, no Join (phones in the game world, D-011). */
+      spectate: boolean;
     }
+  /** Held movement keys, for the avatar controller. */
+  | { type: "keys"; left: boolean; right: boolean; up: boolean }
+  /** Follow the avatar (or, for a spectator, the first other player) with the camera. */
+  | { type: "follow"; on: boolean }
   /** Client-only camera: the world window to draw, in cells. Never an input. */
   /** Dev (local mode only): switch chunk sleeping, to measure what it buys. */
   | { type: "sleep"; on: boolean }
@@ -25,7 +38,7 @@ export type FromWorker =
   | { type: "ready"; path: "worker-webgl2" | "main-thread-fallback" }
   | { type: "render-failed"; error: string }
   | { type: "world"; width: number; height: number; kind: number }
-  | { type: "frame"; mat: Uint8Array; aux: Uint8Array; tick: number }
+  | { type: "frame"; mat: Uint8Array; aux: Uint8Array; tick: number; rects: Rect[] }
   | { type: "stats"; tick: number; stepsPerSec: number; buffered: number; stepP50: number; stepP95: number; ranChunks: number; uploadCells: number }
   | {
       type: "net";
@@ -40,5 +53,15 @@ export type FromWorker =
       pingMs: number;
       /** Times the server told this client to resync after a hash disagreement. */
       resyncs: number;
+    }
+  /** Game world, about 30 Hz: who to draw labels for, where the camera is, and avatar state. */
+  | {
+      type: "players";
+      list: { id: number; name: string; x: number; y: number; me: boolean }[];
+      cam: { x: number; y: number };
+      /** The worker is steering the camera (avatar or followed player); otherwise the main thread pans freely. */
+      following: boolean;
+      energy: number;
+      energyMax: number;
     }
   | { type: "error"; error: string };

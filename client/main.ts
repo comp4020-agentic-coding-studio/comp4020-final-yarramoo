@@ -39,8 +39,41 @@ brush.oninput = () => {
 // Dev route: ?world=game runs a LOCAL single-player sim of the game world (no networking, the dev-only
 // wasm where Paint works). The networked path is untouched and stays on the sandbox.
 const params = new URLSearchParams(location.search);
+// The same client serves both worlds: "/sandbox" is world 0, everything else is the game world (world 1).
+const worldId = location.pathname.replace(/\/+$/, "") === "/sandbox" ? 0 : 1;
+const TOKEN_KEY = "sand.token";
+const NAME_KEY = "sand.name";
+const store = {
+  get: (k: string): string => {
+    try {
+      return localStorage.getItem(k) ?? "";
+    } catch {
+      return "";
+    }
+  },
+  set: (k: string, v: string) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      // private mode: the player lasts for this tab only
+    }
+  },
+  del: (k: string) => {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      // nothing stored
+    }
+  },
+};
+// A phone watches the game world; it does not play in it (D-011). ?spectate=1 forces it for testing.
+const spectate = worldId === 1 && (params.get("spectate") === "1" || (matchMedia("(pointer: coarse)").matches && innerWidth < 900));
+document.body.classList.toggle("game", worldId === 1);
 // Dev-only: the production build serves no sim-dev.wasm, so the route must not exist there.
 const localKind = import.meta.env.DEV && params.get("world") === "game" ? 1 : null;
+if (localKind === null) $("title").textContent = worldId === 1 ? "Game world" : "Sandbox";
+$("navGame").setAttribute("aria-current", worldId === 1 ? "page" : "false");
+$("navSandbox").setAttribute("aria-current", worldId === 0 ? "page" : "false");
 
 // The world and the camera. The camera is client-only state: it is never an input (invariant 9).
 let worldW = SANDBOX;
@@ -100,6 +133,8 @@ function attachPointer(c: HTMLCanvasElement) {
     };
   };
   const post = (kind: "down" | "move" | "up", e: PointerEvent) => {
+    // The game world has no painting: Paint is sandbox-only (the dev route aside).
+    if (worldKind !== 0 && localKind === null) return;
     const p = toCell(e);
     send({ type: "pointer", kind, x: p.x, y: p.y, mat: selected, radius });
   };
@@ -174,21 +209,48 @@ function attachPointer(c: HTMLCanvasElement) {
 
 // Keyboard pan (arrows / WASD, Shift for faster); Tab or O toggles the whole-world overview (game worlds).
 const held = new Set<string>();
+/** In the networked game world with an avatar, movement keys steer it; everywhere else they pan the camera. */
+const steersAvatar = () => worldId === 1 && !spectate && localKind === null;
+let following = true;
+function sendKeys() {
+  send({
+    type: "keys",
+    left: held.has("arrowleft") || held.has("a"),
+    right: held.has("arrowright") || held.has("d"),
+    up: held.has("arrowup") || held.has("w") || held.has(" "),
+  });
+}
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   const k = e.key.toLowerCase();
-  if (["arrowleft", "arrowright", "arrowup", "arrowdown", "w", "a", "s", "d"].includes(k)) {
+  if (["arrowleft", "arrowright", "arrowup", "arrowdown", "w", "a", "s", "d", " "].includes(k)) {
+    if (k === " " && !steersAvatar()) return;
     held.add(k);
     e.preventDefault();
+    if (steersAvatar()) sendKeys();
+    else if (worldId === 1 && !following) return;
+    else if (worldId === 1 && localKind === null) {
+      following = false;
+      send({ type: "follow", on: false });
+    }
   } else if (k === "o" && worldKind !== 0) {
     overview = !overview;
     applyCamera();
+  } else if (k === "f" && worldId === 1 && !steersAvatar() && localKind === null) {
+    following = true;
+    send({ type: "follow", on: true });
   }
 });
-addEventListener("keyup", (e) => held.delete(e.key.toLowerCase()));
-addEventListener("blur", () => held.clear());
+addEventListener("keyup", (e) => {
+  held.delete(e.key.toLowerCase());
+  if (steersAvatar()) sendKeys();
+});
+addEventListener("blur", () => {
+  held.clear();
+  if (steersAvatar()) sendKeys();
+});
 setInterval(() => {
-  if (!held.size || overview || worldKind === 0) return;
+  if (!held.size || overview || worldKind === 0 || steersAvatar()) return;
   const v = (held.has("shift") ? 6 : 3);
   const dx = (held.has("arrowright") || held.has("d") ? 1 : 0) - (held.has("arrowleft") || held.has("a") ? 1 : 0);
   const dy = (held.has("arrowdown") || held.has("s") ? 1 : 0) - (held.has("arrowup") || held.has("w") ? 1 : 0);
@@ -249,7 +311,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       startFallback("worker WebGL2 failed");
       break;
     case "frame":
-      fallback?.draw(m.mat, m.aux, performance.now() / 1000, camera);
+      fallback?.draw(m.mat, m.aux, performance.now() / 1000, camera, m.rects);
       break;
     case "world":
       worldW = m.width;
@@ -262,7 +324,10 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       }
       fallback?.setWorld(worldW, worldH);
       applyCamera();
-      if (m.kind !== 0) $("title").textContent = "Game world (local, single player)";
+      if (localKind !== null) $("title").textContent = "Game world (local, single player)";
+      break;
+    case "players":
+      onPlayers(m);
       break;
     case "stats":
       lastStats = m;
@@ -278,6 +343,61 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
   }
 };
+// Player labels and the levitation bar (DOM over the canvas; render-only, never an input).
+const labels = document.createElement("div");
+labels.id = "labels";
+stage.append(labels);
+const hud = document.createElement("div");
+hud.id = "hud";
+hud.hidden = true;
+hud.innerHTML = '<span>Levitate</span><div class="bar"><i></i></div>';
+stage.append(hud);
+const labelEls = new Map<number, HTMLSpanElement>();
+let lastPlayers: Extract<FromWorker, { type: "players" }> | null = null;
+
+function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
+  lastPlayers = m;
+  if (m.following && !overview) {
+    camera.x = m.cam.x;
+    camera.y = m.cam.y;
+    (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview };
+  }
+  placeLabels();
+  hud.hidden = !steersAvatar();
+  (hud.querySelector("i") as HTMLElement).style.width = `${Math.round((m.energy / m.energyMax) * 100)}%`;
+  (window as unknown as { __players: unknown }).__players = m.list;
+}
+
+function placeLabels() {
+  const m = lastPlayers;
+  if (!m) return;
+  const r = canvas.getBoundingClientRect();
+  const sr = stage.getBoundingClientRect();
+  const sx = r.width / camera.vw;
+  const sy = r.height / camera.vh;
+  const seen = new Set<number>();
+  for (const p of m.list) {
+    seen.add(p.id);
+    let el = labelEls.get(p.id);
+    if (!el) {
+      el = document.createElement("span");
+      labelEls.set(p.id, el);
+      labels.append(el);
+    }
+    el.textContent = p.name; // textContent: a name is never HTML
+    el.className = p.me ? "me" : "";
+    const x = r.left - sr.left + (p.x - camera.x) * sx;
+    const y = r.top - sr.top + (p.y - 10 - 2 - camera.y) * sy;
+    el.style.display = x < -40 || x > sr.width + 40 || y < -20 || y > sr.height + 20 ? "none" : "";
+    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+  }
+  for (const [id, el] of labelEls) {
+    if (!seen.has(id)) {
+      el.remove();
+      labelEls.delete(id);
+    }
+  }
+}
 let lastStats: Extract<FromWorker, { type: "stats" }> | null = null;
 let lastNet: Extract<FromWorker, { type: "net" }> | null = null;
 
@@ -289,11 +409,18 @@ function renderInfo() {
     case "connecting": status = "connecting"; break;
     case "reconnecting": status = "reconnecting"; break;
     case "catching-up": status = `${n.resyncs ? "resyncing" : "catching up"} ${Math.round(n.progress * 100)}%`; break;
-    case "rejected": status = n.reason.includes("reload") ? "new version, reload" : n.reason; break;
+    case "rejected":
+      status = n.reason.includes("reload") ? "new version, reload" : n.reason;
+      if (n.reason.includes("unknown token")) {
+        // The server's database was reset: this token means nothing now. Register again.
+        store.del(TOKEN_KEY);
+        location.reload();
+      }
+      break;
     default: status = `live · ${n.players} player${n.players === 1 ? "" : "s"}`;
   }
   info.textContent = `${status}${lastStats && n.state === "live" ? ` · tick ${lastStats.tick}` : ""}${
-    lastStats && localKind !== null
+    lastStats && (localKind !== null || params.has("stats"))
       ? ` · step p50 ${lastStats.stepP50.toFixed(2)} p95 ${lastStats.stepP95.toFixed(2)} ms · ${lastStats.ranChunks} chunks · ${Math.round(lastStats.uploadCells / 1000)}k cells uploaded`
       : ""
   }`;
@@ -309,21 +436,66 @@ worker.onerror = (e) => console.error("[worker] uncaught", e.message);
 const wasmUrl = new URL(localKind !== null ? "sim-dev.wasm" : "sim.wasm", document.baseURI).href;
 // Same origin as the page by default; ?server=host:port points a dev build at a separate server.
 const serverParam = new URLSearchParams(location.search).get("server");
+const httpBase = serverParam ? `${location.protocol}//${serverParam}` : "";
 const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${serverParam ?? location.host}/ws`;
-const { w, h } = layout();
 const local = localKind !== null ? { kind: localKind, seed: params.get("seed") ?? "1" } : undefined;
-if ("OffscreenCanvas" in window && "transferControlToOffscreen" in canvas) {
-  canvas.width = w;
-  canvas.height = h;
-  const off = canvas.transferControlToOffscreen();
-  send({ type: "init", wasmUrl, wsUrl, canvas: off, width: w, height: h, local }, [off]);
+
+/** Ask the server for a token for this display name (plan 8, 9.1). Resolves to the token and the cleaned name. */
+async function register(name: string): Promise<{ token: string; name: string }> {
+  const r = await fetch(`${httpBase}/api/players`, { method: "POST", body: JSON.stringify({ display_name: name }) });
+  if (!r.ok) throw new Error(r.status === 429 ? "The server is busy; try again in a minute." : `registration failed (${r.status})`);
+  const j = (await r.json()) as { token: string; display_name: string };
+  return { token: j.token, name: j.display_name };
+}
+
+function start(token: string, name: string) {
+  const { w, h } = layout();
+  const base = { wasmUrl, wsUrl, width: w, height: h, local, worldId, token, name, spectate };
+  if ("OffscreenCanvas" in window && "transferControlToOffscreen" in canvas) {
+    canvas.width = w;
+    canvas.height = h;
+    const off = canvas.transferControlToOffscreen();
+    send({ type: "init", ...base, canvas: off }, [off]);
+  } else {
+    send({ type: "init", ...base });
+    startFallback("no OffscreenCanvas");
+  }
+}
+
+// The sandbox and spectators need no identity; a game-world player needs a token, from the join form the first time.
+if (worldId === 1 && !spectate && localKind === null) {
+  const token = store.get(TOKEN_KEY);
+  if (/^[0-9a-f]{64}$/.test(token)) start(token, store.get(NAME_KEY));
+  else {
+    const dlg = $("join");
+    dlg.hidden = false;
+    const input = $<HTMLInputElement>("name");
+    input.focus();
+    $("joinForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const btn = $("joinForm").querySelector("button") as HTMLButtonElement;
+      btn.disabled = true;
+      register(input.value)
+        .then((r) => {
+          store.set(TOKEN_KEY, r.token);
+          store.set(NAME_KEY, r.name);
+          dlg.hidden = true;
+          start(r.token, r.name);
+        })
+        .catch((err) => {
+          btn.disabled = false;
+          note.hidden = false;
+          note.textContent = String(err.message ?? err);
+        });
+    });
+  }
 } else {
-  send({ type: "init", wasmUrl, wsUrl, width: w, height: h, local });
-  startFallback("no OffscreenCanvas");
+  start("", "");
 }
 
 new ResizeObserver(() => {
   const s = layout();
+  placeLabels();
   if (fallback) {
     fallback.resize(s.w, s.h);
   } else if (path) {

@@ -49,11 +49,12 @@ export class Identity {
   }
 
   /**
-   * HELLO's token -> a player. A known token gives its player; a missing (all zero) or unknown token gets a
-   * fresh player with a default name, which the client will not be able to come back to (it never learns the
-   * token), so the client registers first and only falls back to this when it has no usable token.
+   * HELLO's token -> a player. A known token gives its player. An all-zero (missing) token gets a fresh,
+   * unclaimable player with a default name (the client never learns a token for it, so it is for tests and
+   * odd clients). A non-zero token nobody holds (the database was reset) is refused (`"unknown"`), so the
+   * client re-registers instead of silently becoming a new player on every visit.
    */
-  resolve(token: Uint8Array): { id: number; name: string; fresh: boolean } | null {
+  resolve(token: Uint8Array): { id: number; name: string; fresh: boolean } | "unknown" | null {
     if (!isZero(token)) {
       const h = sha256Hex(token);
       const found = this.db ? this.db.playerByTokenHash(h) : this.byHash.get(h);
@@ -63,6 +64,7 @@ export class Identity {
         return { id: found.id, name, fresh: false };
       }
     }
+    if (!isZero(token)) return "unknown";
     if (this.count >= MAX_REGISTERED) return null;
     // A fresh player whose token nobody holds: random hash, so it can never be claimed.
     const name = DEFAULT_NAME;

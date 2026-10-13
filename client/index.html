@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Sandbox</title>
+  <title>Falling sand</title>
   <style>
     :root { color-scheme: dark; --bg: #0b0e14; --panel: #151a24; --line: #2a3142; --fg: #e6e9f0; --dim: #8a93a6; --accent: #6ea8ff; }
     * { box-sizing: border-box; }
@@ -25,15 +25,43 @@
     .brush input { flex: 1; max-width: 260px; height: 28px; }
     .brush output { min-width: 2ch; color: var(--fg); }
     #note { color: #ffb86e; font-size: 12px; padding: 2px 12px; }
+    header nav { display: flex; gap: 10px; font-size: 12px; }
+    header nav a { color: var(--dim); text-decoration: none; }
+    header nav a[aria-current="page"] { color: var(--fg); }
+    #stage { position: relative; }
+    #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    #labels span { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 3px; background: rgba(11,14,20,.72); color: #fff; white-space: nowrap; }
+    #labels span.me { background: rgba(110,168,255,.85); color: #0b0e14; }
+    #hud { position: absolute; left: 8px; bottom: 8px; width: 120px; pointer-events: none; font-size: 11px; color: var(--dim); }
+    #hud .bar { height: 6px; background: #1b2231; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+    #hud .bar i { display: block; height: 100%; width: 100%; background: #6ea8ff; }
+    #join { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgba(11,14,20,.88); }
+    #join form { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(92vw, 340px); display: grid; gap: 12px; }
+    #join[hidden] { display: none; }
+    #join h2 { margin: 0; font-size: 17px; }
+    #join p { margin: 0; color: var(--dim); font-size: 13px; }
+    #join input { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--fg); }
+    #join button { font: inherit; padding: 9px 12px; border-radius: 6px; border: 0; background: var(--accent); color: #0b0e14; font-weight: 600; cursor: pointer; }
+    body.game footer { display: none; }
+    body.game canvas { cursor: default; }
   </style>
 </head>
 <body>
   <header>
-    <h1 id="title">Sandbox</h1>
+    <h1 id="title">Game world</h1>
+    <nav aria-label="World"><a id="navGame" href="/">Game</a><a id="navSandbox" href="/sandbox">Sandbox</a></nav>
     <a class="readme" href="/readme/">README</a>
     <span class="info" id="info">starting</span>
   </header>
   <main><div id="stage"></div></main>
+  <div id="join" hidden>
+    <form id="joinForm" autocomplete="off">
+      <h2>Join the world</h2>
+      <p>Pick a name other players will see. It stays in this browser; clear site data and you are someone new.</p>
+      <input id="name" name="name" maxlength="24" placeholder="Your name" aria-label="Your name" />
+      <button type="submit">Play</button>
+    </form>
+  </div>
   <div id="note" hidden></div>
   <footer>
     <div id="palette" role="group" aria-label="Material"></div>

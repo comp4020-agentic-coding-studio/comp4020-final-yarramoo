@@ -159,7 +159,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return;
     }
     // The same client serves both worlds: "/" is the game world, "/sandbox" the sandbox (it reads its URL).
-    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" || path === "/sandbox/" ? "index.html" : path));
+    if (path === "/sandbox/") {
+      res.writeHead(301, { location: "/sandbox" }).end(); // the client's assets are relative to "/sandbox"
+      return;
+    }
+    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" ? "index.html" : path));
     if (file !== clientDir && !file.startsWith(clientDir + sep)) {
       res.writeHead(403).end();
       return;
@@ -225,6 +229,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         let name = "";
         if (w.kind === WORLD_GAME && !(msg.flags & HELLO_SPECTATE)) {
           const who = identity.resolve(msg.token);
+          if (who === "unknown") return reject(ws, "unknown token");
           if (!who) return reject(ws, "too many players registered");
           playerId = who.id;
           name = who.name;
