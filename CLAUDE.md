@@ -142,6 +142,10 @@ come into existence.
   --release -- -D warnings`; `cargo build --target wasm32-unknown-unknown
   --release` writes `target/wasm32-unknown-unknown/release/sim.wasm`, which must
   have zero imports.
+- **Determinism suite:** `pnpm test:determinism` (about 50 s) builds both
+  wasms and runs D1, D2 (Node, Chromium, Firefox, WebKit), D3, D6, D10 and D11.
+  It is separate from `pnpm check`, which needs a running server; run both
+  before committing anything in `sim/`, `shared/` or the input path.
 - **An input must not be able to cost unbounded work.** Every client runs every
   input, so one huge `Paint` freezes the whole room. The sim clamps paint
   endpoints to the world and the radius to `MAX_PAINT_RADIUS`; new input kinds
