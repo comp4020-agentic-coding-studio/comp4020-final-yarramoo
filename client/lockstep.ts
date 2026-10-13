@@ -1,7 +1,7 @@
 // Playout buffer and apply loop (plan 7.1). No DOM, no worker APIs: shared by the worker and the Node tests.
 // The sim only ever advances through closed ticks from the server: push that tick's inputs in the listed
 // order, then step once. TypeScript writes sim state only through push_input (invariant 1).
-import { simInputBytes, type TickInput } from "../shared/protocol.ts";
+import { compressSnapshot, decompressSnapshot, HASH_EVERY, simInputBytes, type TickInput } from "../shared/protocol.ts";
 import type { Sim } from "../shared/sim.ts";
 
 /** Target buffer depth, in ticks. */
@@ -39,6 +39,20 @@ export class Lockstep {
   /** 0..1 progress of the initial replay. */
   get progress(): number {
     return this.catchUpTarget === 0 ? 1 : Math.min(1, this.sim.tick() / this.catchUpTarget);
+  }
+
+  /** Start from a server snapshot: replace the sim state (restore) and expect ticks from snapshot tick + 1. */
+  loadSnapshot(compressed: Uint8Array, tick: number): void {
+    this.sim.restore(decompressSnapshot(compressed));
+    if (this.sim.tick() !== tick) throw new Error(`snapshot tick mismatch: ${this.sim.tick()} vs ${tick}`);
+    this.queue.clear();
+    this.received = tick;
+    if (tick > this.latestClosed) this.latestClosed = tick;
+  }
+
+  /** Snapshot the sim now, compressed for upload. Call exactly when sim.tick() is the requested tick. */
+  compressedSnapshot(): Uint8Array {
+    return compressSnapshot(this.sim.snapshot());
   }
 
   /** Accept a closed tick. Ticks must arrive contiguously from 1; a gap is a protocol error. */
@@ -91,4 +105,24 @@ export class Lockstep {
       if (!this.stepOne()) return;
     }
   }
+}
+
+/** Reaction to the sim reaching a tick: what the network layer should send. Shared by the worker and the tests. */
+export interface TickReactions {
+  hash?: bigint;
+  snapshot?: { hash: bigint; data: Uint8Array };
+}
+
+/**
+ * Called after each applied tick. Checkpoint hashes are sent only once live (past the replay target: the server
+ * ignores earlier ones), and a requested snapshot is taken exactly at its tick.
+ */
+export function reactToTick(ls: Lockstep, tick: number, wantSnapshotAt: number): TickReactions {
+  const out: TickReactions = {};
+  if (tick <= ls.catchUpTarget) return out;
+  if (tick % HASH_EVERY === 0) out.hash = ls.sim.stateHash();
+  if (tick === wantSnapshotAt) {
+    out.snapshot = { hash: out.hash ?? ls.sim.stateHash(), data: ls.compressedSnapshot() };
+  }
+  return out;
 }

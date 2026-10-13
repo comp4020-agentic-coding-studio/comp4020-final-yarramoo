@@ -37,6 +37,21 @@ export class TickClock {
     return Math.floor(((this.now() - this.t0) * this.hz) / 1000) + this.baseTick;
   }
 
+  /** Cold start: numbering continues from a restored world's last tick. Only valid before the first resume. */
+  setClosed(tick: number): void {
+    this.closed = tick;
+  }
+
+  /** Shutdown only: close whatever is open right now, even mid-tick, so nothing stamped is lost. */
+  closeNow(): void {
+    this.advance();
+    if (this.open.length === 0) return;
+    this.closed++;
+    const inputs = this.open;
+    this.open = [];
+    this.onClose({ tick: this.closed, inputs });
+  }
+
   /** Re-base t0 so numbering continues from the last closed tick. */
   resume(): void {
     if (!this.paused) return;

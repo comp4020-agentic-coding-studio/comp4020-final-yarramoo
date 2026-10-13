@@ -1,9 +1,17 @@
 // Owns the sim, the WebSocket and the playout buffer; steps only through closed ticks from the server,
 // and (when it can) renders with WebGL2 into an OffscreenCanvas.
 import { KIND_JOIN, KIND_LEAVE, KIND_PAINT, encodePaint } from "../shared/inputs.ts";
-import { PAINT_PAYLOAD_LEN, decodeServer, encodeHello, encodeInput, encodePing } from "../shared/protocol.ts";
+import {
+  PAINT_PAYLOAD_LEN,
+  decodeServer,
+  encodeHash,
+  encodeHello,
+  encodeInput,
+  encodePing,
+  encodeSnapshotUpload,
+} from "../shared/protocol.ts";
 import { loadSim, simBuildHash, type Sim } from "../shared/sim.ts";
-import { Lockstep } from "./lockstep.ts";
+import { Lockstep, reactToTick } from "./lockstep.ts";
 import { WORLD } from "./materials.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer } from "./render.ts";
@@ -32,6 +40,7 @@ let sendFrames = false;
 let ws: WebSocket | null = null;
 let ls: Lockstep | null = null;
 let myId = 0;
+let seedInfo: { seed: bigint; kind: number } | null = null;
 let players = 0;
 let net: NetState = "connecting";
 let attempt = 0;
@@ -40,6 +49,8 @@ let sentAt: number[] = []; // send times of my paints not yet seen applied
 let latencyMs = 0;
 let pingMs = 0;
 let rejected = "";
+let resyncs = 0;
+let wantSnapshotAt = 0;
 
 // Paint stroke assembly: a drag sends one segment per SEND_EVERY_MS from the last sent point.
 let anchor: { x: number; y: number } | null = null;
@@ -62,6 +73,7 @@ function postStatus() {
     progress: ls ? ls.progress : 0,
     latencyMs,
     pingMs,
+    resyncs,
   });
 }
 
@@ -103,7 +115,15 @@ function onPointer(m: Extract<ToWorker, { type: "pointer" }>) {
   flushStroke(false);
 }
 
-function onTickApplied(_tick: number, inputs: { player: number; kind: number }[]) {
+function onTickApplied(tick: number, inputs: { player: number; kind: number }[]) {
+  if (ls && ws && ws.readyState === WebSocket.OPEN) {
+    const r = reactToTick(ls, tick, wantSnapshotAt);
+    if (r.hash !== undefined) ws.send(encodeHash(tick, r.hash) as BufferSource);
+    if (r.snapshot) {
+      wantSnapshotAt = 0;
+      ws.send(encodeSnapshotUpload(tick, r.snapshot.hash, r.snapshot.data) as BufferSource);
+    }
+  }
   for (const i of inputs) {
     if (i.player === myId && i.kind === KIND_PAINT) {
       const t = sentAt.shift();
@@ -118,6 +138,18 @@ function countPresence(inputs: { kind: number }[]) {
     if (i.kind === KIND_JOIN) players++;
     else if (i.kind === KIND_LEAVE) players--;
   }
+}
+
+/** A fresh sim per connection or resync; it is restored from the snapshot (if any) and fast-forwarded. */
+function beginReplay(seed: bigint, worldKind: number, target: number, playersAtBase: number) {
+  const sim: Sim = loadSim(wasmBytes);
+  sim.init(seed, worldKind);
+  ls = new Lockstep(sim);
+  ls.catchUpTarget = target;
+  ls.onStepped = onTickApplied;
+  players = playersAtBase;
+  wantSnapshotAt = 0;
+  setNet(target > 0 ? "catching-up" : "live");
 }
 
 function connect() {
@@ -138,18 +170,30 @@ function connect() {
     if (!m) return sock.close();
     switch (m.t) {
       case "welcome": {
-        // A fresh sim instance per connection: discard everything and replay the log.
-        const sim: Sim = loadSim(wasmBytes);
-        sim.init(m.seed, m.worldKind);
-        ls = new Lockstep(sim);
-        ls.catchUpTarget = m.tick;
-        ls.onStepped = onTickApplied;
+        seedInfo = { seed: m.seed, kind: m.worldKind };
+        beginReplay(m.seed, m.worldKind, m.tick, m.playersAtBase);
         myId = m.playerId;
         attempt = 0;
-        setNet(m.tick > 0 ? "catching-up" : "live");
         pingTimer = setInterval(() => sock.send(encodePing(Math.round(performance.now()) >>> 0) as BufferSource), 2000);
         break;
       }
+      case "snapshot":
+        if (!ls) return sock.close();
+        try {
+          ls.loadSnapshot(m.data, m.tick);
+        } catch (err) {
+          console.error("[worker]", err);
+          return sock.close();
+        }
+        break;
+      case "resync":
+        if (!seedInfo) return sock.close();
+        resyncs++;
+        beginReplay(seedInfo.seed, seedInfo.kind, m.tick, m.playersAtBase);
+        break;
+      case "request-snapshot":
+        wantSnapshotAt = m.tick;
+        break;
       case "tick":
         if (!ls) return sock.close();
         try {

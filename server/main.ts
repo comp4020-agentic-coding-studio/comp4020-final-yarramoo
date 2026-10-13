@@ -10,9 +10,12 @@ import {
   decodeClient,
   encodePong,
   encodeReject,
+  MAX_UPLOAD_FRAME,
   PAINT_PAYLOAD_LEN,
   PROTOCOL_VERSION,
 } from "../shared/protocol.ts";
+import { GameDb } from "./db.ts";
+import { SnapshotVerifier } from "./verify.ts";
 import { World, type Peer } from "./world.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +41,7 @@ const MIME: Record<string, string> = {
 export interface RunningServer {
   port: number;
   world: World;
+  db: GameDb | null;
   stats: { droppedRate: number; rejected: number };
   close(): Promise<void>;
 }
@@ -46,10 +50,31 @@ export function buildHash(wasmPath = WASM_PATH): Buffer {
   return createHash("sha256").update(readFileSync(wasmPath)).digest();
 }
 
-export async function startServer(opts: { port?: number; wasmPath?: string; clientDir?: string } = {}): Promise<RunningServer> {
-  const hash = buildHash(opts.wasmPath);
+export interface ServerOptions {
+  port?: number;
+  wasmPath?: string;
+  clientDir?: string;
+  /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
+  dataDir?: string | null;
+  snapshotEveryTicks?: number;
+  quiet?: boolean;
+}
+
+export async function startServer(opts: ServerOptions = {}): Promise<RunningServer> {
+  const wasmPath = opts.wasmPath ?? WASM_PATH;
+  const hash = buildHash(wasmPath);
   const clientDir = opts.clientDir ?? CLIENT_DIR;
-  const world = new World(() => performance.now());
+  const say = opts.quiet ? () => {} : (m: string) => console.log(m);
+  const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
+  const db = dataDir === null ? null : new GameDb(dataDir);
+  const world = new World({
+    now: () => performance.now(),
+    db: db ?? undefined,
+    verifier: db ? new SnapshotVerifier(wasmPath) : undefined,
+    simBuild: hash.toString("hex"),
+    snapshotEveryTicks: opts.snapshotEveryTicks,
+    log: say,
+  });
   const stats = { droppedRate: 0, rejected: 0 };
 
   const http: Server = createServer((req, res) => {
@@ -72,13 +97,15 @@ export async function startServer(opts: { port?: number; wasmPath?: string; clie
     }
   });
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+  // One cap for the socket, because ws checks it before we see the tag byte; onMessage then enforces
+  // MAX_FRAME_BYTES for everything except SNAPSHOT_UPLOAD.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_UPLOAD_FRAME });
   http.on("upgrade", (req, socket, head) => {
     if ((req.url ?? "").split("?")[0] !== "/ws") {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws));
+    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, String(req.headers["user-agent"] ?? "").slice(0, 200)));
   });
 
   function reject(ws: WebSocket, reason: string) {
@@ -86,7 +113,7 @@ export async function startServer(opts: { port?: number; wasmPath?: string; clie
     ws.send(encodeReject(reason), () => ws.close(1008, "rejected"));
   }
 
-  function onConnection(ws: WebSocket) {
+  function onConnection(ws: WebSocket, userAgent: string) {
     let playerId = 0;
     let windowStart = performance.now();
     let inWindow = 0;
@@ -95,13 +122,16 @@ export async function startServer(opts: { port?: number; wasmPath?: string; clie
       send: (f) => ws.send(f, { binary: true }),
       buffered: () => ws.bufferedAmount,
       close: (code, reason) => ws.close(code, reason),
+      userAgent,
     };
 
     ws.on("message", (data, isBinary) => {
       if (!isBinary) return ws.close(1003, "binary only");
+      if (world.closing) return;
       const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
       const msg = decodeClient(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
       if (!msg) return ws.close(1002, "bad frame");
+      if (msg.t !== "snapshot-upload" && buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
 
       if (!playerId) {
         if (msg.t !== "hello") return ws.close(1002, "hello first");
@@ -109,6 +139,7 @@ export async function startServer(opts: { port?: number; wasmPath?: string; clie
         if (msg.version !== PROTOCOL_VERSION) return reject(ws, "protocol version mismatch: new version, reload");
         if (!Buffer.from(msg.buildHash).equals(hash)) return reject(ws, "sim build mismatch: new version, reload");
         if (msg.worldId !== 0) return reject(ws, "unknown world");
+        if (world.closing) return reject(ws, "server is shutting down");
         if (world.full) return reject(ws, "world log is full; try again later");
         playerId = world.join(peer);
         console.log(`[server] player ${playerId} joined (${world.playerCount} online, tick ${world.clock.lastClosed})`);
@@ -135,6 +166,12 @@ export async function startServer(opts: { port?: number; wasmPath?: string; clie
           world.stamp({ player: playerId, kind: msg.kind, payload: msg.payload });
           return;
         }
+        case "hash":
+          world.onHash(playerId, msg.tick, msg.hash);
+          return;
+        case "snapshot-upload":
+          world.onUpload(playerId, msg.tick, msg.hash, msg.data);
+          return;
         default:
           return ws.close(1002, "unexpected message");
       }
@@ -150,26 +187,35 @@ export async function startServer(opts: { port?: number; wasmPath?: string; clie
   }
 
   const timer = setInterval(() => world.tick(), TIMER_MS);
+  let closed: Promise<void> | null = null;
   await new Promise<void>((ok) => http.listen(opts.port ?? 0, ok));
   const addr = http.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;
   return {
     port,
     world,
+    db,
     stats,
+    /** Shutdown (plan 9.3): stop inputs, close the open tick, flush tick_log, close the DB. Safe to call twice. */
     close: () =>
-      new Promise<void>((ok) => {
+      (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
+        world.shutdown();
+        db?.close();
         for (const c of wss.clients) c.terminate();
         http.close(() => ok());
         http.closeAllConnections();
-      }),
+      })),
   };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT ?? 8080);
   const s = await startServer({ port });
+  setInterval(() => {
+    const rss = process.memoryUsage().rss;
+    if (rss > 200 * 1024 * 1024) console.warn(`[server] RSS ${(rss / 1048576).toFixed(0)} MB is over the 200 MB warning line`);
+  }, 30_000).unref();
   console.log(`[server] http://localhost:${s.port}/  build ${buildHash().toString("hex").slice(0, 12)}`);
   const stop = () => void s.close().then(() => process.exit(0));
   process.on("SIGINT", stop);

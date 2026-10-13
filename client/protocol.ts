@@ -24,5 +24,7 @@ export type FromWorker =
       /** Last own-paint latency: send to applied in the sim, ms. */
       latencyMs: number;
       pingMs: number;
+      /** Times the server told this client to resync after a hash disagreement. */
+      resyncs: number;
     }
   | { type: "error"; error: string };

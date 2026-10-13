@@ -157,7 +157,7 @@ function renderInfo() {
   switch (n.state) {
     case "connecting": status = "connecting"; break;
     case "reconnecting": status = "reconnecting"; break;
-    case "catching-up": status = `catching up ${Math.round(n.progress * 100)}%`; break;
+    case "catching-up": status = `${n.resyncs ? "resyncing" : "catching up"} ${Math.round(n.progress * 100)}%`; break;
     case "rejected": status = n.reason.includes("reload") ? "new version, reload" : n.reason; break;
     default: status = `live · ${n.players} player${n.players === 1 ? "" : "s"}`;
   }
