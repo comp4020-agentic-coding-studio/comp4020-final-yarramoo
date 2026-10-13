@@ -12,3 +12,7 @@ mise.local.toml
 *.pem
 .claude
 .data
+sim/target
+sim/target-canary
+tests/determinism/.cache
+deprecated
