@@ -157,3 +157,16 @@ fn lava_heap_levels_in_the_sandbox() {
     let spread = tops.iter().max().unwrap() - tops.iter().min().unwrap();
     assert!(spread <= 2, "lava surface still spans {spread} rows at tick 16000");
 }
+
+/// Every generated world gets its full set of pickup spots (plan 6.9: about 40 shallow, 25 deep). Deep
+/// pickups are the only source of Fire bolt and Bomb, so a short world is a weaker world. A tuning change
+/// once cut the search from 4000 tries to 400 and left 3 of 12 seeds short in the deep band.
+#[test]
+fn every_world_gets_its_full_set_of_pickups() {
+    for seed in 1..=12u64 {
+        let s = sim::sim::Sim::new(seed, 1).unwrap();
+        let shallow = s.pickups.iter().filter(|p| p.y < 800).count();
+        let deep = s.pickups.len() - shallow;
+        assert_eq!((shallow, deep), (40, 25), "seed {seed} has {shallow} shallow and {deep} deep pickups");
+    }
+}

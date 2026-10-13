@@ -445,7 +445,8 @@ fn pick_spots(g: &Grid, seed: u64) -> Vec<PickupSpot> {
     let mut out: Vec<PickupSpot> = Vec::new();
     for (band, &(y_lo, y_hi, want)) in TARGET_SPOTS.iter().enumerate() {
         let mut n = 0;
-        for k in 0..400u32 {
+        // 4000 tries, not 400: sparse deep caves need the room to find every spot (D-086).
+        for k in 0..4000u32 {
             if n == want {
                 break;
             }
