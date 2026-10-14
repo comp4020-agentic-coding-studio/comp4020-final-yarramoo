@@ -9,6 +9,14 @@ rocket-launch game with hidden roles. Neither had real-time play at its heart,
 and neither held my interest, so I moved on. Makers Wanted is preserved whole
 on the `social-builder` branch and under `deprecated/`.
 
+
+## Defining good
+Players should log in and see a shared world, however destroyed or beautified by previous 
+players. They should have a range of spells that interact with the simulated world and 
+other players. They should see effects in real time and one slow player should not 
+slow the simulation for any other players. Logging off and logging back in should 
+reveal a world that exists without the player. 
+
 ## The idea and the plan
 
 I settled on a multiplayer falling-sand world in the style of Noita: everyone
