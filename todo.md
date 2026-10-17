@@ -100,7 +100,9 @@ morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
 
 ### Unresolved, for a fresh look (14 Oct)
 
-- [ ] The join speed-up (`4ad1435`, D-088: restores reuse the generated world,
+- [x] (`5e417ed`, D-089) Not a restore bug: the test's cast period locked every
+      snapshot onto a bolt-free phase. The join speed-up stays.
+      The join speed-up (`4ad1435`, D-088: restores reuse the generated world,
       join path about 1170 ms -> 400 ms) is committed but NOT pushed. Its own
       checks pass: hit/miss/cold restores are bit-identical, compat DATA still
       restores the live sandbox exactly. But the M4b net test ("a third joins
