@@ -1,5 +1,6 @@
 // Lockstep server: tick clock, input sequencer, closed-tick broadcast, static client. Never steps the sim.
 import { createHash } from "node:crypto";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
@@ -439,10 +440,34 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const port = Number(process.env.PORT ?? 8080);
   s = await startServer({ port });
   const srv = s;
+  // process.minute: health once a minute. The RSS warning is this event at warn level.
+  const lag = monitorEventLoopDelay({ resolution: 20 });
+  lag.enable();
+  const lastTick = new Map<number, number>();
   setInterval(() => {
-    const rss = process.memoryUsage().rss;
-    if (rss > 200 * 1024 * 1024) srv.log.event("process.minute", { rss_mb: Math.round(rss / 1048576), warning: "rss over 200 MB" }, "warn");
-  }, 30_000).unref();
+    const mem = process.memoryUsage();
+    const rss = mem.rss / 1048576;
+    const f: Record<string, number | string> = {
+      rss_mb: Math.round(rss),
+      heap_mb: Math.round(mem.heapUsed / 1048576),
+      lag_p99_ms: Math.round(lag.percentile(99) / 1e4) / 100,
+      uptime_s: Math.round(process.uptime()),
+      dropped_rate: srv.stats.droppedRate,
+      rejected: srv.stats.rejected,
+      origin_refused: srv.stats.originRefused,
+      cap_refused: srv.stats.capRefused,
+    };
+    lag.reset();
+    for (const w of srv.worlds.values()) {
+      const last = w.clock.lastClosed;
+      f[`online_w${w.id}`] = w.playerCount;
+      f[`ticks_w${w.id}`] = last - (lastTick.get(w.id) ?? last);
+      lastTick.set(w.id, last);
+      for (const [k, v] of Object.entries(w.stats)) f[`${k}_w${w.id}`] = Math.round(v);
+    }
+    if (rss > 200) f.warning = "rss over 200 MB";
+    srv.log.event("process.minute", f, rss > 200 ? "warn" : "info");
+  }, 60_000).unref();
   srv.log.event("server.start", { port: srv.port, build: buildHash().toString("hex").slice(0, 12), protocol: PROTOCOL_VERSION, pid: process.pid, node: process.version });
   const stop = () => void srv.close().then(() => process.exit(0));
   process.on("SIGINT", stop);
