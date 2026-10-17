@@ -1,6 +1,7 @@
 // One world (sandbox or game): connected clients, player ids, the closed-tick log, the tick clock, hash
 // checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
 // (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
+import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
 import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
@@ -85,7 +86,7 @@ export interface WorldOptions {
   /** Hex sha256 of the sim build, stored with ticks and snapshots. */
   simBuild?: string;
   snapshotEveryTicks?: number;
-  log?: (msg: string) => void;
+  log?: EventLog;
 }
 
 export interface WorldStats {
@@ -120,7 +121,7 @@ export class World {
   private readonly verifier?: SnapshotVerifier;
   private readonly simBuild: string;
   private readonly snapshotEvery: number;
-  private readonly say: (m: string) => void;
+  private readonly elog: EventLog;
   private nextPlayer = 1;
   /** Members whose send failed or whose queue overflowed: they get a Leave once the tick being closed is done. */
   private readonly dropped: number[] = [];
@@ -152,9 +153,19 @@ export class World {
     this.verifier = opts.verifier;
     this.simBuild = opts.simBuild ?? "";
     this.snapshotEvery = opts.snapshotEveryTicks ?? SNAPSHOT_EVERY_TICKS;
-    this.say = opts.log ?? (() => {});
+    this.elog = opts.log ?? new EventLog({ quiet: true });
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
     this.lastFlush = opts.now();
+  }
+
+  /** Placeholder identity for logs until names arrive: the sim player id, else the connection. */
+  whoOf(m: Member): string {
+    return m.playerId ? `p${m.playerId}` : `c${m.id}`;
+  }
+
+  whoOfConn(conn: number): string {
+    const m = this.members.get(conn);
+    return m ? this.whoOf(m) : `c${conn}`;
   }
 
   get playerCount(): number {
@@ -191,11 +202,11 @@ export class World {
       if (ok && snap) {
         db.clearTickLog(this.id);
         db.setWorldBuild(this.id, this.simBuild);
-        this.say(`[world] sim build changed: kept snapshot at tick ${snap.tick}, dropped the old log`);
+        this.elog.event("world.build_changed", { world: this.id, kept_snapshot_tick: snap.tick, outcome: "kept_snapshot" }, "warn");
       } else {
         db.resetWorld(this.id, this.simBuild);
         snap = null;
-        this.say("[world] sim build changed and the snapshot cannot be restored: world reset");
+        this.elog.event("world.build_changed", { world: this.id, outcome: "reset" }, "warn");
       }
     }
     const base = snap ? snap.tick : 0;
@@ -233,7 +244,7 @@ export class World {
     this.clock.setClosed(base + frames.length);
     this.lastRequestTick = base;
     if (rewrite) {
-      this.say(`[world] tick_log was not contiguous after tick ${base}; kept ${frames.length} ticks`);
+      this.elog.event("world.log_repaired", { world: this.id, after_tick: base, kept_ticks: frames.length }, "warn");
       db.clearTickLog(this.id);
       if (frames.length) {
         this.pendingFirst = base + 1;
@@ -241,7 +252,7 @@ export class World {
       }
     }
     this.leaveOrphans(stillActive);
-    this.say(`[world] loaded: snapshot ${snap ? snap.tick : "none"}, ${frames.length} logged ticks, resuming at tick ${base + frames.length}`);
+    this.elog.event("world.loaded", { world: this.id, snapshot_tick: snap ? snap.tick : null, replayed_ticks: frames.length, tick: base + frames.length });
   }
 
   /**
@@ -254,7 +265,7 @@ export class World {
     for (const id of [...ids].sort((a, b) => a - b)) this.stamp({ player: id, kind: KIND_LEAVE, payload: new Uint8Array(0) });
     this.clock.closeNow();
     this.flush();
-    this.say(`[world ${this.id}] cold start: stamped Leave for ${ids.size} player(s) left active by a crash`);
+    this.elog.event("world.cold_start", { world: this.id, orphan_leaves: ids.size, tick: this.clock.lastClosed }, "warn");
   }
 
   // ---- tick close, broadcast, persistence ---------------------------------------------------------
@@ -332,7 +343,7 @@ export class World {
       this.pending = [];
       this.stats.flushes++;
     } catch (e) {
-      this.say(`[world] tick_log flush failed, will retry: ${String(e)}`);
+      this.elog.event("tick_log.flush_failed", { world: this.id, pending_ticks: this.pending.length, error: String(e) }, "error");
     }
   }
 
@@ -354,6 +365,7 @@ export class World {
     if (prior !== null) {
       const old = this.members.get(prior);
       this.members.delete(prior);
+      if (old) this.elog.event("replaced", { world: this.id, who: this.whoOf(old), conn: old.id });
       try {
         old?.peer.close(4000, "replaced by a newer connection");
       } catch {
@@ -542,12 +554,13 @@ export class World {
       m.lastBadTick = tick;
       this.resync(m);
     }
-    this.say(`[world] desync at tick ${tick}: players ${[...bad.keys()].join(",")} resynced`);
+    this.elog.event("desync", { world: this.id, tick, who: members.map((m) => this.whoOf(m)).join(","), agreeing: all ? all.size - bad.size : null, uas: members.map((m) => (m.peer.userAgent ?? "").slice(0, 40)).join("|") }, "warn");
   }
 
   /** Latest verified snapshot plus every closed tick after it, through the same path as a late join. */
   private resync(m: Member): void {
     this.stats.resyncs++;
+    this.elog.event("resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
     m.minHashTick = this.clock.lastClosed;
     for (const cp of this.checkpoints.values()) cp.hashes.delete(m.id);
     if (this.waitingUpload?.memberId === m.id) this.waitingUpload = null;
@@ -561,7 +574,7 @@ export class World {
     const last = this.clock.lastClosed;
     if (this.request) {
       if (last > this.request.tick + SNAPSHOT_GIVE_UP_TICKS) {
-        this.say(`[world] snapshot ${this.request.tick} never arrived; giving up`);
+        this.elog.event("snapshot.abandoned", { world: this.id, tick: this.request.tick, who: this.whoOfConn(this.request.memberId) }, "warn");
         this.request = null;
         this.waitingUpload = null;
       }
@@ -585,6 +598,7 @@ export class World {
     this.request = { tick, memberId: ref.id, at: this.now() };
     this.lastRequestTick = last;
     ref.peer.send(encodeRequestSnapshot(tick));
+    this.elog.event("snapshot.requested", { world: this.id, tick, from_tick: last, who: this.whoOf(ref) });
     return true;
   }
 
@@ -609,7 +623,7 @@ export class World {
     this.request = null;
     const reject = (why: string) => {
       this.stats.snapshotsRejected++;
-      this.say(`[world ${this.id}] snapshot ${tick} rejected: ${why}`);
+      this.elog.event("snapshot.rejected", { world: this.id, tick, reason: why }, "warn");
     };
     if (!this.verifier || !this.db) return reject("no verifier");
     if (u.hash !== truth) return reject("uploader's claimed hash differs from the majority hash");
@@ -633,7 +647,7 @@ export class World {
         this.snapshot = { tick, data: u.data };
         this.snapshotOnline = this.onlineAt.get(tick) ?? 0;
         this.stats.snapshotsAccepted++;
-        this.say(`[world ${this.id}] snapshot ${tick} verified in ${this.stats.lastVerifyMs.toFixed(0)} ms: ${u.data.length} bytes compressed, ${got.rawLength} raw`);
+        this.elog.event("snapshot.accepted", { world: this.id, tick, bytes: u.data.length, raw_bytes: got.rawLength, verify_ms: Math.round(this.stats.lastVerifyMs) });
       })
       .catch((e) => {
         // A failed save (disk full) is a lost snapshot, not a dead process: the log keeps growing and the

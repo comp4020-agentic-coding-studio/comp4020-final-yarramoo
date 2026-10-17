@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { startServer } from "../../server/main.ts";
 import { EventLog } from "../../server/log.ts";
+import { buildHashHex, connect, register, waitFor } from "./helpers.ts";
 
 function fake() {
   let mono = 0;
@@ -68,5 +70,66 @@ describe("EventLog", () => {
     expect(a.ipTag("203.0.113.7")).toBe(tag);
     expect(a.ipTag("203.0.113.8")).not.toBe(tag);
     expect(b.ipTag("203.0.113.7")).not.toBe(tag);
+  });
+});
+
+describe("events from a real server", () => {
+  const cleanups: (() => Promise<void> | void)[] = [];
+  afterEach(async () => {
+    for (const f of cleanups.splice(0).reverse()) await f();
+  });
+
+  it("logs join, leave and server.shutdown with the expected fields, and never a raw IP", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sand-log-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const s = await startServer({ port: 0, dataDir: dir, quiet: true });
+    cleanups.push(() => s.close());
+    const hex = await buildHashHex();
+    const a = await connect(s.port, hex);
+    const b = await connect(s.port, hex);
+    await waitFor(() => s.log.recent().filter((e) => e.ev === "join").length === 2);
+    const joins = s.log.recent().filter((e) => e.ev === "join");
+    expect(joins[0]).toMatchObject({ lvl: "info", world: 0, role: "painter", online: 1, who: `p${a.playerId}`, ua: "vitest-client" });
+    expect(joins[1]).toMatchObject({ world: 0, role: "painter", online: 2, who: `p${b.playerId}` });
+    expect(joins[0].ip_tag).toMatch(/^[0-9a-f]{6}$/);
+    expect(typeof joins[0].tick).toBe("number");
+    expect(new Date(joins[0].t as string).toISOString()).toBe(joins[0].t);
+
+    a.close();
+    await waitFor(() => s.log.recent().some((e) => e.ev === "leave"));
+    const leave = s.log.recent().find((e) => e.ev === "leave")!;
+    expect(leave).toMatchObject({ world: 0, role: "painter", online: 1, who: `p${a.playerId}` });
+    expect(leave.duration_s).toBeGreaterThanOrEqual(0);
+
+    b.close();
+    await s.close();
+    const shutdown = s.log.recent().find((e) => e.ev === "server.shutdown");
+    expect(shutdown).toBeDefined();
+    expect(shutdown!.lvl).toBe("info");
+
+    const all = JSON.stringify(s.log.recent());
+    expect(all).not.toContain("127.0.0.1");
+    expect(all).not.toMatch(/::1|::ffff/);
+  });
+
+  it("logs one cast per accepted Cast, hello.rejected with a reason, and no raw token", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sand-log-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const s = await startServer({ port: 0, dataDir: dir, quiet: true });
+    cleanups.push(() => s.close());
+    const hex = await buildHashHex();
+    const me = await register(s.port, "Ada");
+    const c = await connect(s.port, hex, { world: 1, token: me.token });
+    await waitFor(() => s.log.recent().some((e) => e.ev === "join"));
+    expect(s.log.recent().find((e) => e.ev === "join")).toMatchObject({ world: 1, role: "player", who: `p${me.id}` });
+    c.move(100, 100);
+    c.cast(1, 16384, 1);
+    await waitFor(() => s.log.recent().some((e) => e.ev === "cast"));
+    expect(s.log.recent().find((e) => e.ev === "cast")).toMatchObject({ world: 1, who: `p${me.id}`, spell: 1, angle: 16384 });
+    c.close();
+    await expect(connect(s.port, hex, { world: 1 })).rejects.toBeDefined();
+    await waitFor(() => s.log.recent().some((e) => e.ev === "hello.rejected"));
+    expect(s.log.recent().find((e) => e.ev === "hello.rejected")).toMatchObject({ lvl: "warn", reason: "unknown token", world: 1 });
+    expect(JSON.stringify(s.log.recent())).not.toContain(Buffer.from(me.token).toString("hex"));
   });
 });

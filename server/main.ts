@@ -21,7 +21,8 @@ import {
   WORLD_GAME,
 } from "../shared/protocol.ts";
 import { GameDb } from "./db.ts";
-import { Identity } from "./identity.ts";
+import { Identity, MAX_REGISTERED } from "./identity.ts";
+import { EventLog } from "./log.ts";
 import { SnapshotVerifier } from "./verify.ts";
 import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
 
@@ -67,6 +68,8 @@ export interface RunningServer {
   game: World;
   worlds: Map<number, World>;
   identity: Identity;
+  /** The structured event log: ring buffer, subscribers, stdout JSON lines. */
+  log: EventLog;
   verifier: SnapshotVerifier | undefined;
   db: GameDb | null;
   stats: { droppedRate: number; rejected: number; originRefused: number; capRefused: number };
@@ -98,7 +101,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const wasmPath = opts.wasmPath ?? WASM_PATH;
   const hash = buildHash(wasmPath);
   const clientDir = opts.clientDir ?? CLIENT_DIR;
-  const say = opts.quiet ? () => {} : (m: string) => console.log(m);
+  const log = new EventLog({ quiet: opts.quiet });
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
   const verifier = db ? new SnapshotVerifier(wasmPath, { timeoutMs: opts.verifyTimeoutMs, workerUrl: opts.verifierWorkerUrl }) : undefined;
@@ -110,13 +113,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       verifier,
       simBuild: hash.toString("hex"),
       snapshotEveryTicks: opts.snapshotEveryTicks,
-      log: say,
+      log,
     });
   const worlds = new Map<number, World>([[SANDBOX_ID, mk(SANDBOX_ID)], [GAME_ID, mk(GAME_ID)]]);
   const world = worlds.get(SANDBOX_ID)!;
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
-  const identity = new Identity(db, say);
+  const identity = new Identity(db, log);
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
@@ -141,6 +144,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       const origin = req.headers.origin;
       if (origin !== undefined && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}` && !allowedOrigins.has(origin)) {
         stats.originRefused++;
+        log.event("register.refused", { reason: "origin", origin: origin.slice(0, 80) }, "warn");
         res.writeHead(403).end("cross-origin registration refused");
         return;
       }
@@ -167,9 +171,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         }
         const r = identity.register(name, performance.now());
         if (!r) {
+          log.event("register.refused", { reason: identity.count >= MAX_REGISTERED ? "cap" : "rate" }, "warn");
           res.writeHead(429).end();
           return;
         }
+        log.event("player.registered", { player: r.id });
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         res.end(JSON.stringify({ token: Buffer.from(r.token).toString("hex"), player_id: r.id, display_name: r.name }));
       });
@@ -224,6 +230,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const ip = String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?");
     if ((connsByIp.get(ip) ?? 0) >= maxPerIp) {
       stats.capRefused++;
+      log.limited(`cap:${log.ipTag(ip)}`, 10_000, "register.refused", { reason: "cap", scope: "ws_per_ip", ip_tag: log.ipTag(ip) }, "warn");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nconnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -238,16 +245,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       else connsByIp.set(ip, n);
     };
     socket.on("close", release);
-    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, String(req.headers["user-agent"] ?? "").slice(0, 200)));
+    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, String(req.headers["user-agent"] ?? "").slice(0, 200), log.ipTag(ip)));
   });
 
-  function reject(ws: WebSocket, reason: string) {
+  function reject(ws: WebSocket, reason: string, fields: { world?: number; ipTag?: string } = {}) {
     stats.rejected++;
+    log.event("hello.rejected", { reason, world: fields.world, ip_tag: fields.ipTag }, "warn");
     ws.send(encodeReject(reason), () => ws.close(1008, "rejected"));
   }
 
-  function onConnection(ws: WebSocket, userAgent: string) {
-    let joined: { world: World; conn: number; playerId: number } | null = null;
+  function roleOf(w: World, playerId: number): string {
+    return w.kind === WORLD_GAME ? (playerId ? "player" : "spectator") : "painter";
+  }
+
+  /** An input the server refused: counted, and logged at most once per connection per 10 s. */
+  function badInput(w: World, conn: number, reason: string, kind: number): void {
+    stats.rejected++;
+    log.limited(`bad:${conn}`, 10_000, "input.rejected", { world: w.id, conn, who: w.whoOfConn(conn), reason, kind }, "warn");
+  }
+
+  function onConnection(ws: WebSocket, userAgent: string, ipTag: string) {
+    let joined: { world: World; conn: number; playerId: number; at: number } | null = null;
+    const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
     const helloTimer = setTimeout(() => ws.close(1008, "no hello"), HELLO_TIMEOUT_MS);
@@ -268,26 +287,36 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         if (buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
         clearTimeout(helloTimer);
         const w = worlds.get(msg.worldId);
-        if (msg.version !== PROTOCOL_VERSION) return reject(ws, "protocol version mismatch: new version, reload");
-        if (!Buffer.from(msg.buildHash).equals(hash)) return reject(ws, "sim build mismatch: new version, reload");
-        if (!w || worldKindOf(msg.worldId) === null) return reject(ws, "unknown world");
-        if (w.closing) return reject(ws, "server is shutting down");
-        if (w.full) return reject(ws, "world log is full; try again later");
+        if (msg.version !== PROTOCOL_VERSION) return rej("protocol version mismatch: new version, reload", msg.worldId);
+        if (!Buffer.from(msg.buildHash).equals(hash)) return rej("sim build mismatch: new version, reload", msg.worldId);
+        if (!w || worldKindOf(msg.worldId) === null) return rej("unknown world", msg.worldId);
+        if (w.closing) return rej("server is shutting down", msg.worldId);
+        if (w.full) return rej("world log is full; try again later", msg.worldId);
         if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
           stats.capRefused++;
-          return reject(ws, "world is full; try again later");
+          log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
+          return rej("world is full; try again later", msg.worldId);
         }
         let playerId: number | undefined;
         let name = "";
         if (w.kind === WORLD_GAME && !(msg.flags & HELLO_SPECTATE)) {
           const who = identity.resolve(msg.token);
-          if (who === "unknown") return reject(ws, "unknown token");
+          if (who === "unknown") return rej("unknown token", msg.worldId);
           playerId = who.id;
           name = who.name;
         }
         const j = w.join(peer, { playerId, name, spectate: !!(msg.flags & HELLO_SPECTATE) });
-        joined = { world: w, conn: j.conn, playerId: j.playerId };
-        console.log(`[server] world ${w.id}: ${j.playerId ? `player ${j.playerId}` : "spectator"} joined (${w.playerCount} online, tick ${w.clock.lastClosed})`);
+        joined = { world: w, conn: j.conn, playerId: j.playerId, at: Date.now() };
+        log.event("join", {
+          world: w.id,
+          who: j.playerId ? `p${j.playerId}` : `c${j.conn}`,
+          conn: j.conn,
+          role: roleOf(w, j.playerId),
+          online: w.playerCount,
+          tick: w.clock.lastClosed,
+          ip_tag: ipTag,
+          ua: userAgent.slice(0, 80),
+        });
         return;
       }
       const w = joined.world;
@@ -307,19 +336,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           }
           if (++inWindow > MAX_INPUTS_PER_SEC) {
             stats.droppedRate++;
+            log.limited(`rate:${joined.conn}`, 10_000, "input.rate_limited", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), limit: MAX_INPUTS_PER_SEC }, "warn");
             return;
           }
           if (w.kind === WORLD_GAME) {
             // Game world: only Pos (validated) and Cast. Join/Leave are the server's; Paint is sandbox-only.
-            if (!joined.playerId) return void stats.rejected++; // spectators send nothing
+            if (!joined.playerId) return void badInput(w, joined.conn, "spectator_input", msg.kind);
             if (msg.kind === KIND_POS && msg.payload.length === POS_PAYLOAD_LEN) {
-              if (!w.acceptPos(joined.conn, msg.payload)) return void stats.rejected++;
-            } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void stats.rejected++;
+              if (!w.acceptPos(joined.conn, msg.payload)) {
+                stats.rejected++;
+                log.limited(`pos:${joined.conn}`, 10_000, "pos.rejected", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), tick: w.clock.lastClosed }, "warn");
+                return;
+              }
+            } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
+            else {
+              const pv = new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength);
+              log.event("cast", { world: w.id, who: `p${joined.playerId}`, spell: msg.payload[0], angle: pv.getUint16(1, true), tick: w.clock.lastClosed });
+            }
             w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
             return;
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
-          if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void stats.rejected++;
+          if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
           // The player id is ours, never the client's.
           w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
           return;
@@ -334,11 +372,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           return ws.close(1002, "unexpected message");
       }
     });
-    ws.on("close", () => {
+    ws.on("close", (code) => {
       clearTimeout(helloTimer);
       if (joined) {
-        joined.world.leave(joined.conn);
-        console.log(`[server] world ${joined.world.id}: ${joined.playerId ? `player ${joined.playerId}` : "spectator"} left (${joined.world.playerCount} online)`);
+        const jw = joined.world;
+        jw.leave(joined.conn);
+        log.forget(`rate:${joined.conn}`);
+        log.forget(`pos:${joined.conn}`);
+        log.forget(`bad:${joined.conn}`);
+        log.event("leave", {
+          world: jw.id,
+          who: joined.playerId ? `p${joined.playerId}` : `c${joined.conn}`,
+          conn: joined.conn,
+          role: roleOf(jw, joined.playerId),
+          online: jw.playerCount,
+          tick: jw.clock.lastClosed,
+          duration_s: Math.round((Date.now() - joined.at) / 1000),
+          code,
+          ip_tag: ipTag,
+        });
       }
     });
     ws.on("error", () => ws.terminate());
@@ -357,6 +409,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     game,
     worlds,
     identity,
+    log,
     verifier,
     db,
     stats,
@@ -364,6 +417,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     close: () =>
       (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
+        log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });
         for (const w of worlds.values()) w.shutdown();
         db?.close();
         void verifier?.close();
@@ -377,18 +431,20 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   // Registered only when run as the server, so test runners keep their own (failing) unhandled-rejection reporting.
   // Logs the cause loudly, then rethrows so the process still exits and the platform restarts it.
+  let s: RunningServer | undefined;
   process.on("unhandledRejection", (e) => {
-    console.error("[server] UNHANDLED REJECTION", e);
+    s?.log.event("server.unhandled_rejection", { error: e instanceof Error ? (e.stack ?? e.message).slice(0, 500) : String(e) }, "error");
     throw e;
   });
   const port = Number(process.env.PORT ?? 8080);
-  const s = await startServer({ port });
+  s = await startServer({ port });
+  const srv = s;
   setInterval(() => {
     const rss = process.memoryUsage().rss;
-    if (rss > 200 * 1024 * 1024) console.warn(`[server] RSS ${(rss / 1048576).toFixed(0)} MB is over the 200 MB warning line`);
+    if (rss > 200 * 1024 * 1024) srv.log.event("process.minute", { rss_mb: Math.round(rss / 1048576), warning: "rss over 200 MB" }, "warn");
   }, 30_000).unref();
-  console.log(`[server] http://localhost:${s.port}/  build ${buildHash().toString("hex").slice(0, 12)}`);
-  const stop = () => void s.close().then(() => process.exit(0));
+  srv.log.event("server.start", { port: srv.port, build: buildHash().toString("hex").slice(0, 12), protocol: PROTOCOL_VERSION, pid: process.pid, node: process.version });
+  const stop = () => void srv.close().then(() => process.exit(0));
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 }

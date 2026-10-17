@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { cleanName, TOKEN_LEN } from "../shared/protocol.ts";
 import type { GameDb } from "./db.ts";
+import type { EventLog } from "./log.ts";
 
 /** Below the sim's MAX_PLAYERS (1024) so a registered player can always get an entity. */
 export const MAX_REGISTERED = 900;
@@ -22,11 +23,11 @@ export class Identity {
   private windowStart = 0;
   private inWindow = 0;
 
-  private readonly say?: (m: string) => void;
+  private readonly elog?: EventLog;
 
-  constructor(db: GameDb | null, say?: (m: string) => void) {
+  constructor(db: GameDb | null, log?: EventLog) {
     this.db = db;
-    this.say = say;
+    this.elog = log;
   }
 
   get count(): number {
@@ -42,7 +43,7 @@ export class Identity {
     if (++this.inWindow > MAX_CREATES_PER_MINUTE) return null;
     if (this.count >= MAX_REGISTERED) {
       const n = this.evictUnjoined(Date.now());
-      if (n) this.say?.(`[identity] at the registration cap: evicted ${n} registrations that never joined`);
+      if (n) this.elog?.event("identity.evicted", { evicted: n, reason: "registration cap" }, "warn");
       if (this.count >= MAX_REGISTERED) return null;
     }
     const name = cleanName(typeof rawName === "string" ? rawName : "") || DEFAULT_NAME;
