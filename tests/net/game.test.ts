@@ -333,7 +333,7 @@ describe("snapshots in the game world", () => {
   });
 
   it("M4b: two clients cast at each other, a third joins late with bolts in flight, and all agree on the state hash", async () => {
-    const s = await boot(tmp(), 120);
+    const s = await boot(tmp(), 60);
     const [ra, rb, rc] = [await register(s.port, "A"), await register(s.port, "B"), await register(s.port, "C")];
     const a = await connect(s.port, hex, { world: GAME, token: ra.token });
     const b = await connect(s.port, hex, { world: GAME, token: rb.token });
@@ -364,14 +364,26 @@ describe("snapshots in the game world", () => {
       b.move(pb.x / 16, pb.y / 16, 0);
       a.cast(n % 4 === 0 ? 1 : 0, aim, n & 0xffff);
       b.cast(0, 49152, n & 0xffff);
-    }, 100);
+    }, 117); // about 7 ticks: not a divisor of the snapshot cadence, see the snapshot loop below
     const stepper = setInterval(() => (a.ls.run(100000), b.ls.run(100000)), 4);
     cleanups.push(() => (clearInterval(shooter), clearInterval(stepper)));
-    await waitFor(() => s.game.stats.snapshotsAccepted >= 1, 30000, "a verified snapshot");
-    const snapTick = s.game.snapshot!.tick;
-    // C joins late, manually stepped so the restored state can be looked at before any tick is applied.
-    const c = await connect(s.port, hex, { world: GAME, token: rc.token, manual: true });
-    await waitFor(() => c.counts.snapshots === 1, 5000, "late-join snapshot");
+    // A Push bolt is in flight for only 8 ticks of each cast cycle, and snapshot ticks are multiples of 60. A
+    // shooter period that divides the snapshot cadence locks every snapshot onto the same phase of the cycle (at
+    // 100 ms every snapshot fell on a bolt-free tick; the sim was fine). A 7-tick period walks the phase, so
+    // rejoin C on each newly verified snapshot until one has bolts in it.
+    let snapTick = 0;
+    let c!: TestClient;
+    for (let attempt = 0, seenAccepted = 0; ; attempt++) {
+      expect(attempt, "snapshots tried before one had bolts in flight").toBeLessThan(10);
+      await waitFor(() => s.game.stats.snapshotsAccepted > seenAccepted, 30000, "a verified snapshot");
+      seenAccepted = s.game.stats.snapshotsAccepted;
+      snapTick = s.game.snapshot!.tick;
+      // C joins late, manually stepped so the restored state can be looked at before any tick is applied.
+      c = await connect(s.port, hex, { world: GAME, token: rc.token, manual: true });
+      await waitFor(() => c.counts.snapshots === 1, 5000, "late-join snapshot");
+      if (c.ls.sim.entities().some((e) => e.type === ENT_PROJECTILE)) break;
+      c.close();
+    }
     expect(c.ls.sim.entities().filter((e) => e.type === ENT_PROJECTILE).length, "bolts in flight in the snapshot").toBeGreaterThan(0);
     const cs = setInterval(() => c.ls.run(100000), 4);
     cleanups.push(() => clearInterval(cs));
