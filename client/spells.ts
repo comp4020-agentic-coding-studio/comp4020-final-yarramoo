@@ -1,5 +1,6 @@
 // Display and prediction data for the spells (plan 6.7). Numbers that mirror sim/src/tuning.rs are checked
 // against it by tests/net/spells-table.test.ts, so a balance change cannot silently desync the HUD or the ghost.
+import { SPELL_NAMES } from "../shared/names.ts";
 import { NUM_SPELLS } from "../shared/sim.ts";
 
 export interface SpellInfo {
@@ -16,12 +17,12 @@ export interface SpellInfo {
 }
 
 export const SPELLS: SpellInfo[] = [
-  { name: "Push", colour: [0.75, 0.9, 1], cooldown: 20, speed: 1280 / 256, gravity: 0, enabled: true },
-  { name: "Blast", colour: [1, 0.85, 0.45], cooldown: 90, speed: 0, gravity: 0, enabled: true },
-  { name: "Water", colour: [0.3, 0.55, 1], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
-  { name: "Rose", colour: [1, 0.45, 0.7], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
-  { name: "Fire", colour: [1, 0.55, 0.12], cooldown: 15, speed: 896 / 256, gravity: 4 / 256, enabled: false },
-  { name: "Bomb", colour: [0.8, 0.25, 0.25], cooldown: 60, speed: 640 / 256, gravity: 20 / 256, enabled: false },
+  { name: SPELL_NAMES[0], colour: [0.75, 0.9, 1], cooldown: 20, speed: 1280 / 256, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[1], colour: [1, 0.85, 0.45], cooldown: 90, speed: 0, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[2], colour: [0.3, 0.55, 1], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
+  { name: SPELL_NAMES[3], colour: [1, 0.45, 0.7], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
+  { name: SPELL_NAMES[4], colour: [1, 0.55, 0.12], cooldown: 15, speed: 896 / 256, gravity: 4 / 256, enabled: false },
+  { name: SPELL_NAMES[5], colour: [0.8, 0.25, 0.25], cooldown: 60, speed: 640 / 256, gravity: 20 / 256, enabled: false },
 ];
 if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with the sim");
 
