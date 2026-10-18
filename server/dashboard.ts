@@ -113,7 +113,7 @@ header{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline}.muted{colo
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}.card{background:#151a24;border:1px solid #2a3142;border-radius:8px;padding:10px 12px}
 .card h3{margin:0 0 6px;font-size:14px}dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:2px 10px}dt{color:#8b93a7}dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
 .box{overflow-x:auto;border:1px solid #2a3142;border-radius:8px}table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #1d2331}th{color:#8b93a7;font-weight:500}
-.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}select,input{background:#151a24;color:#e6e9f0;border:1px solid #2a3142;border-radius:6px;padding:4px 8px;font:inherit;max-width:100%}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}button{background:#3a1d22;color:#ffb3b3;border:1px solid #6b2a33;border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}select,input{background:#151a24;color:#e6e9f0;border:1px solid #2a3142;border-radius:6px;padding:4px 8px;font:inherit;max-width:100%}
 #feed{font:12px/1.45 ui-monospace,monospace;max-height:420px;overflow:auto;border:1px solid #2a3142;border-radius:8px;padding:6px 8px}#feed div{white-space:pre-wrap;word-break:break-all}
 .lvl-warn{color:#f0b429}.lvl-error{color:#ff6b6b}.lvl-debug{color:#8b93a7}[hidden]{display:none!important}`;
 
@@ -166,6 +166,19 @@ function connect(){
   es.addEventListener("backlog",(m)=>{feed.replaceChildren();for(const e of JSON.parse(m.data))addLog(e)});
   es.addEventListener("log",(m)=>addLog(JSON.parse(m.data)));
 }
+function status(msg,cls){const s=$("rstatus");s.textContent=msg;s.className=cls||"muted"}
+async function resetWorld(world,name){
+  if(!confirm("Reset the "+name+" world to its generated start? Everyone connected is disconnected and the world's history is deleted. Players and stats are kept."))return;
+  if(prompt('Type "'+name+'" to confirm the reset.')!==name){status("Reset cancelled.");return}
+  status("Resetting "+name+"...","warn");
+  try{
+    const r=await fetch("/api/admin/reset",{method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({world})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok)status("Reset "+name+" at "+new Date().toLocaleTimeString()+" (was at tick "+j.oldTick+").","ok");else status("Reset refused: HTTP "+r.status+(j.error?" "+j.error:""),"bad");
+  }catch(e){status("Reset failed: "+e,"bad")}
+}
+$("rsand").addEventListener("click",()=>resetWorld(0,"sandbox"));
+$("rgame").addEventListener("click",()=>resetWorld(1,"game"));
 connect();
 `;
 
@@ -176,6 +189,8 @@ function dashboardPage(build: string): string {
 <h2>Process</h2><div id="proc" class="card"></div>
 <section id="admin" hidden><h2>Connections (<span id="nconns">0</span>)</h2>
 <div class="box"><table><thead><tr><th>who</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
+<h2>Reset a world</h2><p class="muted">Returns one world to its generated start and disconnects everyone in it (they reconnect on their own). Players, names and stats are kept.</p>
+<div class="filters"><button id="rsand" type="button">Reset sandbox</button><button id="rgame" type="button">Reset game world</button><span id="rstatus" class="muted"></span></div>
 <h2>Events</h2><div class="filters"><select id="fworld"><option value="all">all worlds</option><option value="0">world 0</option><option value="1">world 1</option></select>
 <label><input type="checkbox" id="fwarn"> warnings and errors</label><input id="fwho" placeholder="who contains" aria-label="who contains"></div><div id="feed"></div></section>
 </main><script>${JS}</script></body></html>`;
