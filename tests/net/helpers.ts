@@ -23,6 +23,8 @@ export interface TestClient {
   /** When false the client does not answer REQUEST_SNAPSHOT. */
   uploads: boolean;
   lie: boolean;
+  /** The step p95 (ms) this client puts in its HASH frames. */
+  reportStepP95: number;
   /** Called instead of uploading when `uploads` is false, so a test can send something else. */
   onDue: ((tick: number, honest: { hash: bigint; data: Uint8Array }) => void) | null;
   paint(mat: number, x0: number, y0: number, x1: number, y1: number, r: number): void;
@@ -61,6 +63,7 @@ export async function connect(
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
     onDue: null,
+    reportStepP95: 1.5,
   } as unknown as TestClient;
 
   const fresh = (target: number) => {
@@ -72,7 +75,7 @@ export async function connect(
       if (ws.readyState !== WebSocket.OPEN) return;
       if (tick % 20 === 0) c.hashes.set(tick, c.ls.sim.stateHash()); // local record, for comparing clients
       const r = reactToTick(c.ls, tick, wantAt);
-      if (r.hash !== undefined) ws.send(encodeHash(tick, corrupt ? r.hash ^ 1n : r.hash));
+      if (r.hash !== undefined) ws.send(encodeHash(tick, corrupt ? r.hash ^ 1n : r.hash, c.reportStepP95, c.ls.buffered));
       if (r.snapshot) {
         wantAt = 0;
         if (c.uploads) ws.send(encodeSnapshotUpload(tick, r.snapshot.hash, r.snapshot.data));

@@ -23,7 +23,7 @@ import {
 } from "../shared/protocol.ts";
 import { TickClock, type ClosedTick } from "./clock.ts";
 import type { GameDb } from "./db.ts";
-import { InputCounts, type PlayerStats } from "./stats.ts";
+import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
 import type { SnapshotVerifier } from "./verify.ts";
 
@@ -70,6 +70,8 @@ export interface Member {
   visitorName: string;
   /** What this connection has sent, for input.summary and the leave summary. Read-only for everyone else. */
   counts: InputCounts;
+  /** Ping RTT and HASH timing for this connection (shared with main.ts's live entry). */
+  timing: ConnTiming;
   /** HASH for ticks at or below this are ignored (they predate the client's current sim). */
   minHashTick: number;
   lastBadTick: number;
@@ -108,6 +110,9 @@ export interface WorldStats {
   posRejected: number;
   /** Duration of the last snapshot verification (worker round trip), ms. */
   lastVerifyMs: number;
+  /** Checkpoints resolved with every reporter agreeing, and divergences found. */
+  hashPasses: number;
+  hashFails: number;
 }
 
 export class World {
@@ -121,7 +126,7 @@ export class World {
   snapshot: { tick: number; data: Uint8Array } | null = null;
   readonly members = new Map<number, Member>();
   readonly clock: TickClock;
-  readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0 };
+  readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 };
   closing = false;
   /** Test and telemetry hook: called after each closed tick has been broadcast. */
   onTickClosed: ((tick: number) => void) | null = null;
@@ -372,7 +377,7 @@ export class World {
    * id from the players table (the same person always controls the same entity); a spectator (`playerId` 0)
    * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
-  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts } {
+  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
     this.clock.resume();
     this.clock.advance();
     const spectate = !!opts.spectate && this.kind === WORLD_GAME;
@@ -396,6 +401,7 @@ export class World {
     this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
     for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
     const counts = new InputCounts();
+    const timing = new ConnTiming();
     const member: Member = {
       id: conn,
       playerId,
@@ -407,13 +413,14 @@ export class World {
       minHashTick: this.clock.lastClosed,
       lastBadTick: 0,
       counts,
+      timing,
     };
     this.members.set(conn, member);
     if (playerId) {
       this.stamp({ player: playerId, kind: KIND_JOIN, payload: new Uint8Array(0) });
       if (opts.name && this.kind === WORLD_GAME) this.broadcastName(conn, playerId, opts.name);
     }
-    return { conn, playerId, who: this.whoOf(member), counts };
+    return { conn, playerId, who: this.whoOf(member), counts, timing };
   }
 
   /** The connection currently controlling a game-world player, if any (a second tab or a reload replaces it). */
@@ -511,9 +518,12 @@ export class World {
 
   // ---- hash checks (plan 7.4) -----------------------------------------------------------------
 
-  onHash(memberId: number, tick: number, hash: bigint): void {
+  onHash(memberId: number, tick: number, hash: bigint, stepP95Ms?: number, buffered?: number): void {
     const m = this.members.get(memberId);
     if (!m || tick % HASH_EVERY !== 0 || tick <= m.minHashTick || tick > this.clock.lastClosed) return;
+    m.timing.lastHashTick = tick;
+    if (stepP95Ms !== undefined) m.timing.stepP95Ms = stepP95Ms;
+    if (buffered !== undefined) m.timing.buffered = buffered;
     const known = this.truth.get(tick);
     if (known !== undefined) {
       if (known !== hash) this.diverged(tick, known, new Map([[memberId, hash]]));
@@ -556,12 +566,14 @@ export class World {
     this.truth.delete(tick - 30 * HASH_EVERY);
     const bad = new Map([...cp.hashes].filter(([, h]) => h !== truth));
     if (bad.size) this.diverged(tick, truth, bad, cp.hashes);
+    else this.stats.hashPasses++;
     this.checkUpload(tick);
   }
 
   private diverged(tick: number, truth: bigint, bad: Map<number, bigint>, all?: Map<number, bigint>): void {
     const members = [...bad.keys()].map((id) => this.members.get(id)).filter((m): m is Member => !!m);
     this.stats.incidents++;
+    this.stats.hashFails++;
     // REQUEST_CHUNK_HASHES/CHUNK_HASHES to diff the diverging chunks is not built in this slice (D-043).
     this.db?.recordIncident(this.id, tick, {
       players: [...(all ?? bad).keys()],

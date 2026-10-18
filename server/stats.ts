@@ -82,6 +82,43 @@ export class PlayerStats {
   }
 }
 
+/** RTT samples kept per connection for its p95. */
+export const RTT_SAMPLES = 30;
+
+/**
+ * Network and timing figures for one connection. One object per connection, created by `World.join` and shared by
+ * the member (the world writes the HASH figures) and main.ts's live entry (the ping timer writes the RTT), so
+ * there is one source of truth. Never read by the sim.
+ */
+export class ConnTiming {
+  /** Latest ws ping round trip, ms. undefined until the first pong. */
+  rttMs: number | undefined;
+  private readonly rtts: number[] = [];
+  /** The tick of the last HASH this connection sent (undefined until its first, e.g. while catching up). */
+  lastHashTick: number | undefined;
+  /** The client's own step p95 (ms) and playout buffer length, as of its last HASH. */
+  stepP95Ms: number | undefined;
+  buffered: number | undefined;
+
+  addRtt(ms: number): void {
+    this.rttMs = ms;
+    this.rtts.push(ms);
+    if (this.rtts.length > RTT_SAMPLES) this.rtts.shift();
+  }
+
+  /** p95 of the last RTT_SAMPLES samples. */
+  rttP95(): number | undefined {
+    if (!this.rtts.length) return undefined;
+    const s = [...this.rtts].sort((a, b) => a - b);
+    return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
+  }
+
+  /** Ticks since the last HASH. Sawtooths up to HASH_EVERY; undefined until the first HASH. */
+  lag(lastClosed: number): number | undefined {
+    return this.lastHashTick === undefined ? undefined : lastClosed - this.lastHashTick;
+  }
+}
+
 /** What one connection has sent: a rolling window (reset by each input.summary) and the whole session. */
 export class InputCounts {
   readonly casts = new Map<string, number>();
@@ -112,6 +149,10 @@ export class InputCounts {
   reject(): void {
     this.rejected++;
     this.win.rejected++;
+  }
+  /** The current window without resetting it (for the dashboard). */
+  peekWindow(): { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number } {
+    return this.win;
   }
   /** The window since the last call, or null when the connection sent nothing in it. */
   takeWindow(): { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number } | null {

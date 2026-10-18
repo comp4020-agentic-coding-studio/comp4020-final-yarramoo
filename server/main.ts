@@ -1,7 +1,7 @@
 // Lockstep server: tick clock, input sequencer, closed-tick broadcast, static client. Never steps the sim.
 import { createHash } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,7 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
-import { PlayerStats, type InputCounts } from "./stats.ts";
+import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
   castStat,
   compactCounts,
@@ -76,6 +76,62 @@ function readmePage(): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the game</a></nav>${body}</main></body></html>`;
 }
 
+/** Per-connection figures for the dashboard: plain data, JSON-safe (undefined fields are omitted by JSON). */
+export interface ConnInfo {
+  world: number;
+  conn: number;
+  who: string;
+  role: string;
+  visitorId: number;
+  connectedS: number;
+  /** Server-measured ws ping round trip, ms. undefined until the first pong. */
+  rttMs?: number;
+  rttP95Ms?: number;
+  /** Closed tick minus the tick of the connection's last HASH. Sawtooths up to HASH_EVERY; undefined until its first HASH. */
+  tickLag?: number;
+  /** The client's own step p95 (ms) and playout buffer length, from its last HASH. */
+  stepP95Ms?: number;
+  buffered?: number;
+  /** Inputs in the current input.summary window (since the last summary). */
+  window: { casts: number; paints: number; pos: number; rejected: number };
+  /** Session totals. */
+  total: { casts: number; paints: number; pos: number; rejected: number; maxDepth: number; resyncs: number; posRejected: number };
+}
+
+export interface WorldSummary {
+  world: number;
+  online: number;
+  lastTick: number;
+  /** Closed ticks per second over the last 10 s (fewer samples right after start). */
+  ticksPerSec: number;
+  hashPasses: number;
+  hashFails: number;
+  resyncs: number;
+  snapshotsAccepted: number;
+  snapshotsRejected: number;
+  /** Compressed bytes and tick of the latest verified snapshot; 0 when none. */
+  snapshotBytes: number;
+  snapshotTick: number;
+  lastVerifyMs: number;
+  incidents: number;
+  flushes: number;
+  posRejected: number;
+}
+
+export interface ServerSummary {
+  worlds: WorldSummary[];
+  process: {
+    rssMb: number;
+    heapMb: number;
+    /** Event-loop delay p99 in ms since the monitor was last reset. */
+    lagP99Ms: number;
+    uptimeS: number;
+    /** game.db and its -wal on disk, bytes; undefined when there is no dataDir. */
+    dbBytes?: number;
+    walBytes?: number;
+  };
+}
+
 export interface RunningServer {
   port: number;
   /** The sandbox (world 0). */
@@ -91,6 +147,10 @@ export interface RunningServer {
   verifier: SnapshotVerifier | undefined;
   db: GameDb | null;
   stats: { droppedRate: number; rejected: number; originRefused: number; capRefused: number };
+  /** One row per joined connection. */
+  connections(): ConnInfo[];
+  /** Per-world and process figures. `resetLag` also restarts the event-loop histogram (process.minute does). */
+  summary(opts?: { resetLag?: boolean }): ServerSummary;
   close(): Promise<void>;
 }
 
@@ -116,6 +176,10 @@ export interface ServerOptions {
   /** input.summary period (tests shorten it). Default INPUT_SUMMARY_MS. */
   inputSummaryMs?: number;
 }
+
+/** ws ping period for the server-measured RTT. */
+const PING_MS = 2000;
+const round2 = (n: number | undefined) => (n === undefined ? undefined : Math.round(n * 100) / 100);
 
 export async function startServer(opts: ServerOptions = {}): Promise<RunningServer> {
   const wasmPath = opts.wasmPath ?? WASM_PATH;
@@ -284,12 +348,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     who: string;
     role: string;
     counts: InputCounts;
+    /** The same object the world's Member holds. */
+    timing: ConnTiming;
+    ws: WebSocket;
+    /** performance.now() of the outstanding ws ping, 0 when none. */
+    pingAt: number;
     at: number;
     finish(code: number): void;
   }
   /** Keyed `world:conn`: connection ids are per world, so a bare conn would collide across worlds. */
   const live = new Map<string, Live>();
   const liveKey = (worldId: number, conn: number) => `${worldId}:${conn}`;
+  const timingFields = (l: Live) => ({
+    rtt_p95_ms: round2(l.timing.rttP95()),
+    lag: l.timing.lag(l.world.clock.lastClosed),
+    step_p95_ms: round2(l.timing.stepP95Ms),
+  });
   const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number }) => ({
     world: l.world.id,
     who: l.who,
@@ -298,6 +372,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     paints: compactCounts(w.paints),
     pos: w.pos,
     rejected: w.rejected,
+    ...timingFields(l),
   });
   /** One timer over all connections (not one per connection): a summary for each that sent anything. */
   const summaryTimer = setInterval(() => {
@@ -306,6 +381,36 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       if (w) log.event("input.summary", summaryFields(l, w));
     }
   }, opts.inputSummaryMs ?? INPUT_SUMMARY_MS);
+  // One timer pings every joined socket; the pong handler times it. No protocol change: ws ping frames are
+  // answered by the browser itself, so this measures the network path, not the client's main thread or worker.
+  const pingTimer = setInterval(() => {
+    const t = performance.now();
+    for (const l of live.values()) {
+      if (l.ws.readyState !== l.ws.OPEN) continue;
+      l.pingAt = t;
+      try {
+        l.ws.ping();
+      } catch {
+        // closing; its close handler cleans up
+      }
+    }
+  }, PING_MS);
+  // Closed ticks sampled once a second, for ticks/s over the last 10 s.
+  const tickSamples = new Map<number, { t: number; tick: number }[]>();
+  const sampleTicks = () => {
+    const t = performance.now();
+    for (const w of worlds.values()) {
+      let a = tickSamples.get(w.id);
+      if (!a) tickSamples.set(w.id, (a = []));
+      a.push({ t, tick: w.clock.lastClosed });
+      while (a.length > 1 && t - a[0].t > 10_500) a.shift();
+    }
+  };
+  sampleTicks();
+  const sampleTimer = setInterval(sampleTicks, 1000);
+  // Shared by summary() and process.minute. Disabled in close().
+  const loopLag = monitorEventLoopDelay({ resolution: 20 });
+  loopLag.enable();
   // Stats are written in one transaction a second, never per input.
   const statsTimer = setInterval(() => playerStats.flush(), STATS_FLUSH_MS);
 
@@ -322,6 +427,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   function onConnection(ws: WebSocket, userAgent: string, ipTag: string) {
     let joined: { world: World; conn: number; playerId: number; visitorId: number; counts: InputCounts; at: number } | null = null;
+    ws.on("pong", () => {
+      if (!joined) return;
+      const l = live.get(liveKey(joined.world.id, joined.conn));
+      if (!l || !l.pingAt) return;
+      l.timing.addRtt(performance.now() - l.pingAt);
+      l.pingAt = 0;
+    });
     const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
@@ -373,6 +485,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           who: j.who,
           role: roleOf(w, j.playerId),
           counts: j.counts,
+          timing: j.timing,
+          ws,
+          pingAt: 0,
           at: me.at,
           finish: (code) => {
             if (!live.delete(liveKey(w.id, j.conn))) return;
@@ -398,6 +513,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               max_depth: j.counts.maxDepth,
               resyncs: j.counts.resyncs,
               pos_rejected: j.counts.posRejected,
+              ...timingFields(entry),
               ip_tag: ipTag,
             });
             const rest = j.counts.takeWindow();
@@ -476,7 +592,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           return;
         }
         case "hash":
-          w.onHash(joined.conn, msg.tick, msg.hash);
+          w.onHash(joined.conn, msg.tick, msg.hash, msg.stepP95, msg.buffered);
           return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);
@@ -496,6 +612,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     for (const w of worlds.values()) w.tick();
   }, TIMER_MS);
   let closed: Promise<void> | null = null;
+  const sum = (m: ReadonlyMap<string, number>) => {
+    let n = 0;
+    for (const v of m.values()) n += v;
+    return n;
+  };
+  const fileBytes = (path: string): number | undefined => {
+    try {
+      return statSync(path).size;
+    } catch {
+      return undefined;
+    }
+  };
   await new Promise<void>((ok) => http.listen(opts.port ?? 0, ok));
   const addr = http.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;
@@ -510,12 +638,72 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     verifier,
     db,
     stats,
+    connections: () =>
+      [...live.values()].map((l): ConnInfo => {
+        const win = l.counts.peekWindow();
+        return {
+          world: l.world.id,
+          conn: l.conn,
+          who: l.who,
+          role: l.role,
+          visitorId: l.visitorId,
+          connectedS: Math.round((Date.now() - l.at) / 100) / 10,
+          rttMs: round2(l.timing.rttMs),
+          rttP95Ms: round2(l.timing.rttP95()),
+          tickLag: l.timing.lag(l.world.clock.lastClosed),
+          stepP95Ms: l.timing.stepP95Ms,
+          buffered: l.timing.buffered,
+          window: { casts: sum(win.casts), paints: sum(win.paints), pos: win.pos, rejected: win.rejected },
+          total: { casts: sum(l.counts.casts), paints: sum(l.counts.paints), pos: l.counts.pos, rejected: l.counts.rejected, maxDepth: l.counts.maxDepth, resyncs: l.counts.resyncs, posRejected: l.counts.posRejected },
+        };
+      }),
+    summary: (o = {}) => {
+      const now = performance.now();
+      const mem = process.memoryUsage();
+      const out: ServerSummary = {
+        worlds: [...worlds.values()].map((w): WorldSummary => {
+          const a = tickSamples.get(w.id) ?? [];
+          const first = a[0];
+          const dt = first ? now - first.t : 0;
+          return {
+            world: w.id,
+            online: w.playerCount,
+            lastTick: w.clock.lastClosed,
+            ticksPerSec: first && dt >= 500 ? Math.round(((w.clock.lastClosed - first.tick) * 10_000) / dt) / 10 : 0,
+            hashPasses: w.stats.hashPasses,
+            hashFails: w.stats.hashFails,
+            resyncs: w.stats.resyncs,
+            snapshotsAccepted: w.stats.snapshotsAccepted,
+            snapshotsRejected: w.stats.snapshotsRejected,
+            snapshotBytes: w.snapshot?.data.length ?? 0,
+            snapshotTick: w.snapshot?.tick ?? 0,
+            lastVerifyMs: Math.round(w.stats.lastVerifyMs),
+            incidents: w.stats.incidents,
+            flushes: w.stats.flushes,
+            posRejected: w.stats.posRejected,
+          };
+        }),
+        process: {
+          rssMb: Math.round(mem.rss / 1048576),
+          heapMb: Math.round(mem.heapUsed / 1048576),
+          lagP99Ms: Math.round(loopLag.percentile(99) / 1e4) / 100,
+          uptimeS: Math.round(process.uptime()),
+          dbBytes: dataDir === null ? undefined : fileBytes(join(dataDir, "game.db")),
+          walBytes: dataDir === null ? undefined : fileBytes(join(dataDir, "game.db-wal")),
+        },
+      };
+      if (o.resetLag) loopLag.reset();
+      return out;
+    },
     /** Shutdown (plan 9.3): stop inputs, close the open tick, flush tick_log, close the DB. Safe to call twice. */
     close: () =>
       (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
         clearInterval(summaryTimer);
         clearInterval(statsTimer);
+        clearInterval(pingTimer);
+        clearInterval(sampleTimer);
+        loopLag.disable();
         log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });
         // Finish every session first (leave events, play_ms), then flush stats, then close the DB.
         for (const l of [...live.values()]) l.finish(1001);
@@ -542,32 +730,36 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   s = await startServer({ port });
   const srv = s;
   // process.minute: health once a minute. The RSS warning is this event at warn level.
-  const lag = monitorEventLoopDelay({ resolution: 20 });
-  lag.enable();
-  const lastTick = new Map<number, number>();
   setInterval(() => {
-    const mem = process.memoryUsage();
-    const rss = mem.rss / 1048576;
+    const sm = srv.summary({ resetLag: true });
     const f: Record<string, number | string> = {
-      rss_mb: Math.round(rss),
-      heap_mb: Math.round(mem.heapUsed / 1048576),
-      lag_p99_ms: Math.round(lag.percentile(99) / 1e4) / 100,
-      uptime_s: Math.round(process.uptime()),
+      rss_mb: sm.process.rssMb,
+      heap_mb: sm.process.heapMb,
+      lag_p99_ms: sm.process.lagP99Ms,
+      uptime_s: sm.process.uptimeS,
       dropped_rate: srv.stats.droppedRate,
       rejected: srv.stats.rejected,
       origin_refused: srv.stats.originRefused,
       cap_refused: srv.stats.capRefused,
     };
-    lag.reset();
-    for (const w of srv.worlds.values()) {
-      const last = w.clock.lastClosed;
-      f[`online_w${w.id}`] = w.playerCount;
-      f[`ticks_w${w.id}`] = last - (lastTick.get(w.id) ?? last);
-      lastTick.set(w.id, last);
-      for (const [k, v] of Object.entries(w.stats)) f[`${k}_w${w.id}`] = Math.round(v);
+    if (sm.process.dbBytes !== undefined) f.db_bytes = sm.process.dbBytes;
+    if (sm.process.walBytes !== undefined) f.wal_bytes = sm.process.walBytes;
+    for (const w of sm.worlds) {
+      f[`online_w${w.world}`] = w.online;
+      f[`tick_w${w.world}`] = w.lastTick;
+      f[`ticks_per_s_w${w.world}`] = w.ticksPerSec;
+      f[`hash_pass_w${w.world}`] = w.hashPasses;
+      f[`hash_fail_w${w.world}`] = w.hashFails;
+      f[`resyncs_w${w.world}`] = w.resyncs;
+      f[`snapshots_accepted_w${w.world}`] = w.snapshotsAccepted;
+      f[`snapshots_rejected_w${w.world}`] = w.snapshotsRejected;
+      f[`incidents_w${w.world}`] = w.incidents;
+      f[`flushes_w${w.world}`] = w.flushes;
+      f[`pos_rejected_w${w.world}`] = w.posRejected;
+      f[`verify_ms_w${w.world}`] = w.lastVerifyMs;
     }
-    if (rss > 200) f.warning = "rss over 200 MB";
-    srv.log.event("process.minute", f, rss > 200 ? "warn" : "info");
+    if (sm.process.rssMb > 200) f.warning = "rss over 200 MB";
+    srv.log.event("process.minute", f, sm.process.rssMb > 200 ? "warn" : "info");
   }, 60_000).unref();
   srv.log.event("server.start", { port: srv.port, build: buildHash().toString("hex").slice(0, 12), protocol: PROTOCOL_VERSION, pid: process.pid, node: process.version });
   const stop = () => void srv.close().then(() => process.exit(0));
