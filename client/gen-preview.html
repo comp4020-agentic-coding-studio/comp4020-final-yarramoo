@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generator preview (dev only)</title>
+<style>
+  body { margin: 0; padding: 16px; font: 14px system-ui, sans-serif; background: #0b0e14; color: #d8dce6; }
+  form { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  input { background: #1a1f2b; color: inherit; border: 1px solid #333a4a; padding: 4px 8px; width: 9em; }
+  button { padding: 4px 12px; }
+  main { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  canvas { image-rendering: pixelated; border: 1px solid #333a4a; max-width: 100%; }
+  pre { margin: 0; line-height: 1.5; }
+</style>
+</head>
+<body>
+<form id="f">
+  <label>Seed <input id="seed" value="1"></label>
+  <button>Generate</button>
+  <button type="button" id="prev">-1</button>
+  <button type="button" id="next">+1</button>
+  <span id="status"></span>
+</form>
+<main>
+  <canvas id="map" width="2048" height="1536"></canvas>
+  <pre id="out"></pre>
+</main>
+<script type="module" src="./gen-preview.ts"></script>
+</body>
+</html>
