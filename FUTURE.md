@@ -222,3 +222,7 @@ input as it reaches the server, not only for your own.
 
 - **Source:** the cast-preview work in M4b, where only the caster's own ghost hides the lockstep delay.
 - **Why:** other players see a bolt appear mid-air a round trip late; an early hint would smooth it. It needs the server to relay Cast before the tick closes, which touches the protocol.
+
+## Bag fade-out and per-bag lifetime (from M5 slice 4)
+
+Bags expire after 90 s but the view carries no `expires_at`, so the client cannot blink or fade a bag that is about to vanish. Adding the expiry tick to `ENT_BAG` would let the sprite flash in its last 10 s. Also worth doing: a spell-coloured breakdown of a bag's contents on hover, instead of only the total.
