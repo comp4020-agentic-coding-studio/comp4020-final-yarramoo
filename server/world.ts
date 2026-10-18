@@ -23,6 +23,8 @@ import {
 } from "../shared/protocol.ts";
 import { TickClock, type ClosedTick } from "./clock.ts";
 import type { GameDb } from "./db.ts";
+import { InputCounts, type PlayerStats } from "./stats.ts";
+import { STAT_RESYNCS } from "../shared/stats.ts";
 import type { SnapshotVerifier } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
@@ -66,6 +68,8 @@ export interface Member {
   visitorId: number;
   /** The registered display name, "" when anonymous. Logs only: players only ever see `name`. */
   visitorName: string;
+  /** What this connection has sent, for input.summary and the leave summary. Read-only for everyone else. */
+  counts: InputCounts;
   /** HASH for ticks at or below this are ignored (they predate the client's current sim). */
   minHashTick: number;
   lastBadTick: number;
@@ -91,6 +95,8 @@ export interface WorldOptions {
   simBuild?: string;
   snapshotEveryTicks?: number;
   log?: EventLog;
+  /** Per-player counters; the world bumps `resyncs`. Optional so a bare World works in unit tests. */
+  stats?: PlayerStats;
 }
 
 export interface WorldStats {
@@ -126,6 +132,7 @@ export class World {
   private readonly simBuild: string;
   private readonly snapshotEvery: number;
   private readonly elog: EventLog;
+  private readonly pstats?: PlayerStats;
   private nextPlayer = 1;
   /** Members whose send failed or whose queue overflowed: they get a Leave once the tick being closed is done. */
   private readonly dropped: number[] = [];
@@ -158,6 +165,7 @@ export class World {
     this.simBuild = opts.simBuild ?? "";
     this.snapshotEvery = opts.snapshotEveryTicks ?? SNAPSHOT_EVERY_TICKS;
     this.elog = opts.log ?? new EventLog({ quiet: true });
+    this.pstats = opts.stats;
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
     this.lastFlush = opts.now();
   }
@@ -359,7 +367,7 @@ export class World {
    * id from the players table (the same person always controls the same entity); a spectator (`playerId` 0)
    * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
-  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number } {
+  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts } {
     this.clock.resume();
     this.clock.advance();
     const spectate = !!opts.spectate && this.kind === WORLD_GAME;
@@ -382,7 +390,8 @@ export class World {
     for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
     this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
     for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
-    this.members.set(conn, {
+    const counts = new InputCounts();
+    const member: Member = {
       id: conn,
       playerId,
       name: this.kind === WORLD_GAME ? (opts.name ?? "") : "",
@@ -392,12 +401,14 @@ export class World {
       seq: conn,
       minHashTick: this.clock.lastClosed,
       lastBadTick: 0,
-    });
+      counts,
+    };
+    this.members.set(conn, member);
     if (playerId) {
       this.stamp({ player: playerId, kind: KIND_JOIN, payload: new Uint8Array(0) });
       if (opts.name && this.kind === WORLD_GAME) this.broadcastName(conn, playerId, opts.name);
     }
-    return { conn, playerId };
+    return { conn, playerId, who: this.whoOf(member), counts };
   }
 
   /** The connection currently controlling a game-world player, if any (a second tab or a reload replaces it). */
@@ -566,6 +577,8 @@ export class World {
   /** Latest verified snapshot plus every closed tick after it, through the same path as a late join. */
   private resync(m: Member): void {
     this.stats.resyncs++;
+    m.counts.resyncs++;
+    this.pstats?.bump(m.visitorId, STAT_RESYNCS);
     this.elog.event("resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
     m.minHashTick = this.clock.lastClosed;
     for (const cp of this.checkpoints.values()) cp.hashes.delete(m.id);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startServer } from "../../server/main.ts";
 import { EventLog } from "../../server/log.ts";
-import { buildHashHex, connect, register, waitFor } from "./helpers.ts";
+import { buildHashHex, connect, register, sleep, waitFor } from "./helpers.ts";
 
 function fake() {
   let mono = 0;
@@ -23,7 +23,7 @@ describe("EventLog", () => {
 
   it("keeps the newest ringSize events and recent(n) returns the tail, oldest first", () => {
     const { log } = fake();
-    for (let i = 0; i < 5; i++) log.event("cast", { i });
+    for (let i = 0; i < 5; i++) log.event("input.rejected", { i });
     expect(log.recent().map((e) => e.i)).toEqual([2, 3, 4]);
     expect(log.recent(2).map((e) => e.i)).toEqual([3, 4]);
   });
@@ -112,7 +112,7 @@ describe("events from a real server", () => {
     expect(all).not.toMatch(/::1|::ffff/);
   });
 
-  it("logs one cast per accepted Cast, hello.rejected with a reason, and no raw token", async () => {
+  it("logs hello.rejected with a reason, and no raw token", async () => {
     const dir = mkdtempSync(join(tmpdir(), "sand-log-"));
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     const s = await startServer({ port: 0, dataDir: dir, quiet: true });
@@ -124,8 +124,8 @@ describe("events from a real server", () => {
     expect(s.log.recent().find((e) => e.ev === "join")).toMatchObject({ world: 1, role: "player", who: `Ada#${me.id}` });
     c.move(100, 100);
     c.cast(1, 16384, 1);
-    await waitFor(() => s.log.recent().some((e) => e.ev === "cast"));
-    expect(s.log.recent().find((e) => e.ev === "cast")).toMatchObject({ world: 1, who: `Ada#${me.id}`, spell: 1, angle: 16384 });
+    await sleep(100);
+    expect(s.log.recent().some((e) => (e.ev as string) === "cast")).toBe(false); // input.summary carries casts
     c.close();
     await expect(connect(s.port, hex, { world: 1 })).rejects.toBeDefined();
     await waitFor(() => s.log.recent().some((e) => e.ev === "hello.rejected"));

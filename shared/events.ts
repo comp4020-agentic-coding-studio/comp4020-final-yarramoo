@@ -20,8 +20,7 @@ export const EVENT_NAMES = [
   "replaced",
   "dropped_slow",
   // Input
-  "cast",
-  "paint.summary",
+  "input.summary",
   "pos.rejected",
   "input.rate_limited",
   "input.rejected",

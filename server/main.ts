@@ -24,6 +24,19 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
+import { PlayerStats, type InputCounts } from "./stats.ts";
+import {
+  castStat,
+  compactCounts,
+  depthCells,
+  materialKey,
+  paintStat,
+  spellKey,
+  STAT_MAX_DEPTH,
+  STAT_PLAY_MS,
+  STAT_POS_REJECTED,
+  STAT_SESSIONS,
+} from "../shared/stats.ts";
 import { SnapshotVerifier } from "./verify.ts";
 import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
 
@@ -39,6 +52,8 @@ export const MAX_CONNS_PER_IP = 12;
 const MAX_FRAME_BYTES = 256;
 const TIMER_MS = 4;
 const HELLO_TIMEOUT_MS = 10_000;
+export const INPUT_SUMMARY_MS = 10_000;
+const STATS_FLUSH_MS = 1000;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -69,6 +84,8 @@ export interface RunningServer {
   game: World;
   worlds: Map<number, World>;
   identity: Identity;
+  /** Per-player counters, flushed to player_stats once a second and on shutdown. */
+  playerStats: PlayerStats;
   /** The structured event log: ring buffer, subscribers, stdout JSON lines. */
   log: EventLog;
   verifier: SnapshotVerifier | undefined;
@@ -96,6 +113,8 @@ export interface ServerOptions {
   allowedOrigins?: string[];
   maxConnsPerIp?: number;
   maxMembersPerWorld?: number;
+  /** input.summary period (tests shorten it). Default INPUT_SUMMARY_MS. */
+  inputSummaryMs?: number;
 }
 
 export async function startServer(opts: ServerOptions = {}): Promise<RunningServer> {
@@ -106,6 +125,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
   const verifier = db ? new SnapshotVerifier(wasmPath, { timeoutMs: opts.verifyTimeoutMs, workerUrl: opts.verifierWorkerUrl }) : undefined;
+  const playerStats = new PlayerStats(db, log);
   const mk = (id: number) =>
     new World({
       id,
@@ -115,6 +135,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       simBuild: hash.toString("hex"),
       snapshotEveryTicks: opts.snapshotEveryTicks,
       log,
+      stats: playerStats,
     });
   const worlds = new Map<number, World>([[SANDBOX_ID, mk(SANDBOX_ID)], [GAME_ID, mk(GAME_ID)]]);
   const world = worlds.get(SANDBOX_ID)!;
@@ -255,6 +276,39 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     ws.send(encodeReject(reason), () => ws.close(1008, "rejected"));
   }
 
+  /** Every joined connection, for the 10 s input.summary timer and the shutdown path. */
+  interface Live {
+    world: World;
+    conn: number;
+    visitorId: number;
+    who: string;
+    role: string;
+    counts: InputCounts;
+    at: number;
+    finish(code: number): void;
+  }
+  /** Keyed `world:conn`: connection ids are per world, so a bare conn would collide across worlds. */
+  const live = new Map<string, Live>();
+  const liveKey = (worldId: number, conn: number) => `${worldId}:${conn}`;
+  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number }) => ({
+    world: l.world.id,
+    who: l.who,
+    conn: l.conn,
+    casts: compactCounts(w.casts),
+    paints: compactCounts(w.paints),
+    pos: w.pos,
+    rejected: w.rejected,
+  });
+  /** One timer over all connections (not one per connection): a summary for each that sent anything. */
+  const summaryTimer = setInterval(() => {
+    for (const l of live.values()) {
+      const w = l.counts.takeWindow();
+      if (w) log.event("input.summary", summaryFields(l, w));
+    }
+  }, opts.inputSummaryMs ?? INPUT_SUMMARY_MS);
+  // Stats are written in one transaction a second, never per input.
+  const statsTimer = setInterval(() => playerStats.flush(), STATS_FLUSH_MS);
+
   function roleOf(w: World, playerId: number): string {
     return w.kind === WORLD_GAME ? (playerId ? "player" : "spectator") : "painter";
   }
@@ -262,11 +316,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   /** An input the server refused: counted, and logged at most once per connection per 10 s. */
   function badInput(w: World, conn: number, reason: string, kind: number): void {
     stats.rejected++;
+    live.get(liveKey(w.id, conn))?.counts.reject();
     log.limited(`bad:${conn}`, 10_000, "input.rejected", { world: w.id, conn, who: w.whoOfConn(conn), reason, kind }, "warn");
   }
 
   function onConnection(ws: WebSocket, userAgent: string, ipTag: string) {
-    let joined: { world: World; conn: number; playerId: number; at: number } | null = null;
+    let joined: { world: World; conn: number; playerId: number; visitorId: number; counts: InputCounts; at: number } | null = null;
     const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
@@ -308,10 +363,51 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         const visitorName = who === "unknown" ? "" : who.name;
         const gamePlayer = w.kind === WORLD_GAME && !spectating;
         const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
-        joined = { world: w, conn: j.conn, playerId: j.playerId, at: Date.now() };
+        const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, counts: j.counts, at: Date.now() };
+        joined = me;
+        playerStats.bump(visitorId, STAT_SESSIONS);
+        const entry: Live = {
+          world: w,
+          conn: j.conn,
+          visitorId,
+          who: j.who,
+          role: roleOf(w, j.playerId),
+          counts: j.counts,
+          at: me.at,
+          finish: (code) => {
+            if (!live.delete(liveKey(w.id, j.conn))) return;
+            w.leave(j.conn);
+            log.forget(`rate:${j.conn}`);
+            log.forget(`pos:${j.conn}`);
+            log.forget(`bad:${j.conn}`);
+            const ms = Date.now() - me.at;
+            playerStats.bump(visitorId, STAT_PLAY_MS, ms);
+            playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
+            // The line to read at the crit: one per session, with its totals.
+            log.event("leave", {
+              world: w.id,
+              who: j.who,
+              conn: j.conn,
+              role: entry.role,
+              online: w.playerCount,
+              tick: w.clock.lastClosed,
+              duration_s: Math.round(ms / 1000),
+              code,
+              casts: compactCounts(j.counts.casts),
+              paints: compactCounts(j.counts.paints),
+              max_depth: j.counts.maxDepth,
+              resyncs: j.counts.resyncs,
+              pos_rejected: j.counts.posRejected,
+              ip_tag: ipTag,
+            });
+            const rest = j.counts.takeWindow();
+            if (rest) log.event("input.summary", { ...summaryFields(entry, rest), final: true });
+          },
+        };
+        live.set(liveKey(w.id, j.conn), entry);
         log.event("join", {
           world: w.id,
-          who: w.whoOfConn(j.conn),
+          who: j.who,
           visitor: visitorId,
           name: visitorName || undefined,
           conn: j.conn,
@@ -340,6 +436,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           }
           if (++inWindow > MAX_INPUTS_PER_SEC) {
             stats.droppedRate++;
+            joined.counts.reject();
             log.limited(`rate:${joined.conn}`, 10_000, "input.rate_limited", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), limit: MAX_INPUTS_PER_SEC }, "warn");
             return;
           }
@@ -349,19 +446,29 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             if (msg.kind === KIND_POS && msg.payload.length === POS_PAYLOAD_LEN) {
               if (!w.acceptPos(joined.conn, msg.payload)) {
                 stats.rejected++;
+                joined.counts.reject();
+                joined.counts.posRejected++;
+                playerStats.bump(joined.visitorId, STAT_POS_REJECTED);
                 log.limited(`pos:${joined.conn}`, 10_000, "pos.rejected", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), tick: w.clock.lastClosed }, "warn");
                 return;
               }
+              // Pos payload after kind and player: life u16, x i32, y i32, facing u8.
+              const depth = depthCells(new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength).getInt32(6, true));
+              joined.counts.position(depth);
+              playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth);
             } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
             else {
-              const pv = new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength);
-              log.event("cast", { world: w.id, who: w.whoOfConn(joined.conn), spell: msg.payload[0], angle: pv.getUint16(1, true), tick: w.clock.lastClosed });
+              // Counted as an attempt (plan 10). Never one log line per cast: input.summary carries the counts.
+              joined.counts.cast(spellKey(msg.payload[0]));
+              playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
             }
             w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
             return;
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
           if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
+          joined.counts.paint(materialKey(msg.payload[0]));
+          playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
           // The player id is ours, never the client's.
           w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
           return;
@@ -378,25 +485,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     });
     ws.on("close", (code) => {
       clearTimeout(helloTimer);
-      if (joined) {
-        const jw = joined.world;
-        const leaverWho = jw.whoOfConn(joined.conn);
-        jw.leave(joined.conn);
-        log.forget(`rate:${joined.conn}`);
-        log.forget(`pos:${joined.conn}`);
-        log.forget(`bad:${joined.conn}`);
-        log.event("leave", {
-          world: jw.id,
-          who: leaverWho,
-          conn: joined.conn,
-          role: roleOf(jw, joined.playerId),
-          online: jw.playerCount,
-          tick: jw.clock.lastClosed,
-          duration_s: Math.round((Date.now() - joined.at) / 1000),
-          code,
-          ip_tag: ipTag,
-        });
-      }
+      if (joined) live.get(liveKey(joined.world.id, joined.conn))?.finish(code);
     });
     ws.on("error", () => ws.terminate());
   }
@@ -414,6 +503,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     game,
     worlds,
     identity,
+    playerStats,
     log,
     verifier,
     db,
@@ -422,8 +512,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     close: () =>
       (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
+        clearInterval(summaryTimer);
+        clearInterval(statsTimer);
         log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });
+        // Finish every session first (leave events, play_ms), then flush stats, then close the DB.
+        for (const l of [...live.values()]) l.finish(1001);
         for (const w of worlds.values()) w.shutdown();
+        playerStats.flush();
         db?.close();
         void verifier?.close();
         for (const c of wss.clients) c.terminate();

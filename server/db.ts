@@ -56,6 +56,15 @@ const MIGRATIONS: string[] = [
   `,
   // Review M4a S1: remember who actually joined, so registrations that never did can be evicted.
   `alter table players add column joined_at integer;`,
+  // Slice 2 (plan 9.1): per-player counters, keyed by the registered player id. Survives a world reset.
+  `
+  create table player_stats (
+    player_id integer references players(id),
+    stat text not null,
+    value integer not null default 0,
+    primary key (player_id, stat)
+  );
+  `,
 ];
 
 export interface WorldRow {
@@ -255,6 +264,25 @@ export class GameDb {
       if (r) out[id] = r.display_name;
     }
     return out;
+  }
+
+  /** Overwrite these absolute values in one transaction (PlayerStats keeps the running totals). */
+  upsertStats(rows: { playerId: number; stat: string; value: number }[]): void {
+    if (rows.length === 0) return;
+    this.db.exec("BEGIN");
+    try {
+      const s = this.q("insert into player_stats (player_id, stat, value) values (?, ?, ?) on conflict (player_id, stat) do update set value = excluded.value");
+      for (const r of rows) s.run(r.playerId, r.stat, r.value);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  loadStats(playerId: number): Record<string, number> {
+    const rows = this.q("select stat, value from player_stats where player_id = ?").all(playerId) as { stat: string; value: number }[];
+    return Object.fromEntries(rows.map((r) => [r.stat, r.value]));
   }
 
   recordIncident(worldId: number, tick: number, details: unknown): void {
