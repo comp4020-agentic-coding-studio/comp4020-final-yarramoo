@@ -191,7 +191,8 @@ export class World {
       }
     }
     if (frames.length === 0 && db.ticksAfter(WORLD_ID, base).length > 0) rewrite = true;
-    this.log.push(...frames);
+    // Not push(...frames): spreading ~130k+ ticks as arguments overflows the stack, and the app crashed on boot.
+    for (const f of frames) this.log.push(f);
     this.snapshotOnline = Math.max(0, -net);
     this.online = 0;
     this.clock.setClosed(base + frames.length);

@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { encodePaint, KIND_PAINT } from "../../shared/inputs.ts";
-import { compressSnapshot, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
+import { compressSnapshot, encodeSnapshotUpload, encodeTick, simInputBytes } from "../../shared/protocol.ts";
+import { GameDb } from "../../server/db.ts";
 import { loadSim, simBuildHash } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, paintFor, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
@@ -32,6 +33,32 @@ async function boot(dir: string, snapshotEveryTicks = 120): Promise<RunningServe
   return s;
 }
 const closeAll = (...cs: TestClient[]) => cs.forEach((c) => c.close());
+
+describe("cold start with a long log", () => {
+  it("boots with 150k logged ticks after the snapshot (push(...frames) overflowed the stack and crashed the live app)", async () => {
+    const dir = tmp();
+    await (await boot(dir)).close();
+    const db = new GameDb(dir);
+    const row = db.getWorld(0)!;
+    const N = 150_000;
+    const BATCH = 5_000;
+    for (let start = 1; start <= N; start += BATCH) {
+      const frames: Uint8Array[] = [];
+      for (let t = start; t < start + BATCH; t++) frames.push(encodeTick(t, []));
+      const data = new Uint8Array(frames.reduce((n, f) => n + f.length, 0));
+      let o = 0;
+      for (const f of frames) {
+        data.set(f, o);
+        o += f.length;
+      }
+      db.appendTicks(0, start, start + BATCH - 1, row.simBuild, data);
+    }
+    db.close();
+    const s = await boot(dir);
+    expect(s.world.clock.lastClosed).toBe(N);
+    expect(s.world.log.length).toBe(N);
+  }, 60_000);
+});
 
 describe("snapshots and restart", () => {
   it("restart: a new server on the same DATA_DIR restores the world, continues numbering, and a fresh client holds the exact pre-stop state", async () => {
