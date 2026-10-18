@@ -113,6 +113,8 @@ export interface WorldSummary {
   /** Compressed bytes and tick of the latest verified snapshot; 0 when none. */
   snapshotBytes: number;
   snapshotTick: number;
+  /** Closed ticks since the latest snapshot (or since tick 0): the log a joiner must replay. Equals log.length. */
+  ticksSinceSnapshot: number;
   lastVerifyMs: number;
   incidents: number;
   flushes: number;
@@ -753,6 +755,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             snapshotsRejected: w.stats.snapshotsRejected,
             snapshotBytes: w.snapshot?.data.length ?? 0,
             snapshotTick: w.snapshot?.tick ?? 0,
+            ticksSinceSnapshot: w.clock.lastClosed - (w.snapshot?.tick ?? w.logBase),
             lastVerifyMs: Math.round(w.stats.lastVerifyMs),
             incidents: w.stats.incidents,
             flushes: w.stats.flushes,
@@ -835,6 +838,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       f[`flushes_w${w.world}`] = w.flushes;
       f[`pos_rejected_w${w.world}`] = w.posRejected;
       f[`verify_ms_w${w.world}`] = w.lastVerifyMs;
+      f[`log_ticks_w${w.world}`] = w.ticksSinceSnapshot;
     }
     if (sm.process.rssMb > 200) f.warning = "rss over 200 MB";
     srv.log.event("process.minute", f, sm.process.rssMb > 200 ? "warn" : "info");

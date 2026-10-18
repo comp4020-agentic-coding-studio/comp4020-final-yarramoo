@@ -128,7 +128,7 @@ function renderSummary(s){
   for(const x of s.worlds){const c=document.createElement("div");c.className="card";const h=document.createElement("h3");h.textContent=x.world===0?"Sandbox (world 0)":"Game (world "+x.world+")";const dl=document.createElement("dl");
     row(dl,"online",x.online);row(dl,"tick",x.lastTick);row(dl,"ticks/s",x.ticksPerSec);row(dl,"hash passed",x.hashPasses,"ok");row(dl,"hash failed",x.hashFails,x.hashFails?"bad":"");
     row(dl,"resyncs",x.resyncs);row(dl,"snapshots ok / rejected",x.snapshotsAccepted+" / "+x.snapshotsRejected,x.snapshotsRejected?"warn":"");
-    row(dl,"last snapshot",(x.snapshotBytes/1024).toFixed(1)+" KB @ "+x.snapshotTick);row(dl,"last verify",x.lastVerifyMs+" ms");c.append(h,dl);w.append(c)}
+    row(dl,"last snapshot",(x.snapshotBytes/1024).toFixed(1)+" KB @ "+x.snapshotTick);row(dl,"last verify",x.lastVerifyMs+" ms");row(dl,"log since snapshot",x.ticksSinceSnapshot+" ticks",x.ticksSinceSnapshot>20000?"warn":"");c.append(h,dl);w.append(c)}
   const p=s.process,pc=$("proc");pc.replaceChildren();const dl=document.createElement("dl");
   row(dl,"RSS / 256 MB",p.rssMb+" MB",meter(p.rssMb,256,200));row(dl,"heap",p.heapMb+" MB");row(dl,"event-loop lag p99",p.lagP99Ms+" ms",p.lagP99Ms>50?"warn":"");
   if(p.dbBytes!=null){const t=p.dbBytes+(p.walBytes||0);row(dl,"db + wal / 1 GB",fmtMb(t),meter(t,1024*MB,700*MB))}

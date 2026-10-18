@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { SNAPSHOT_RETRY_TICKS } from "../../server/world.ts";
+import { GameDb } from "../../server/db.ts";
+import { encodeTick } from "../../shared/protocol.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, sleep, waitFor } from "./helpers.ts";
 
@@ -35,7 +37,7 @@ describe("who is asked for a snapshot", () => {
     const b = await connect(s.port, hex);
     await waitFor(() => s.world.stats.snapshotsAccepted >= 1, 30000, "a verified snapshot");
     expect(a.counts.requests).toBe(0);
-    expect(b.counts.requests).toBeGreaterThanOrEqual(1);
+    await waitFor(() => b.counts.requests >= 1, 3000, "b to receive a request");
     expect(requests(s).length).toBeGreaterThanOrEqual(1);
     a.close();
     b.close();
@@ -54,7 +56,7 @@ describe("who is asked for a snapshot", () => {
     cleanups.push(() => clearInterval(stepper));
     await waitFor(() => requests(s).length >= 1, 15000, "a request once live");
     expect(requests(s)[0]!.from_tick as number - at).toBeLessThanOrEqual(300);
-    expect(a.counts.requests).toBeGreaterThanOrEqual(1);
+    await waitFor(() => a.counts.requests >= 1, 3000, "the frame to arrive"); // the server logs before the socket delivers
     a.close();
   });
 });
@@ -92,5 +94,53 @@ describe("a log past the cap", () => {
     expect(long.every((e) => e.lvl === "warn")).toBe(true);
     a.close();
     b.close();
+  });
+});
+
+const summary = async (s: RunningServer) => ((await (await fetch(`http://127.0.0.1:${s.port}/api/summary`)).json()) as any).worlds[0];
+
+describe("recovery from a long log", () => {
+  it("a lone client replays 20,000 logged ticks, is asked once live, and ticksSinceSnapshot falls", async () => {
+    const dir = tmp();
+    await (await boot(dir)).close();
+    const db = new GameDb(dir);
+    const row = db.getWorld(0)!;
+    const N = 20_000;
+    for (let start = 1; start <= N; start += 5000) {
+      const frames: Uint8Array[] = [];
+      for (let t = start; t < start + 5000; t++) frames.push(encodeTick(t, []));
+      const data = new Uint8Array(frames.reduce((n, f) => n + f.length, 0));
+      let o = 0;
+      for (const f of frames) {
+        data.set(f, o);
+        o += f.length;
+      }
+      db.appendTicks(0, start, start + 4999, row.simBuild, data);
+    }
+    db.close();
+    const s = await boot(dir);
+    expect((await summary(s)).ticksSinceSnapshot).toBeGreaterThanOrEqual(N);
+    const c = await connect(s.port, hex);
+    await waitFor(() => s.world.stats.snapshotsAccepted >= 1, 60000, "a verified snapshot");
+    const after = await summary(s);
+    // An empty-tick log replays in well under a second here, so this passes on the old code too: it is a recovery
+    // smoke test. The old failure needs a log slow enough to replay (a heavy heap); see docs/research/snapshot-timing.md.
+    expect(after.snapshotTick).toBeGreaterThan(N);
+    expect(after.ticksSinceSnapshot).toBeLessThan(2000);
+    c.close();
+  }, 120_000);
+});
+
+describe("the log-length field", () => {
+  it("ticksSinceSnapshot grows with the clock and drops when a snapshot is accepted", async () => {
+    const s = await boot(tmp());
+    const c = await connect(s.port, hex);
+    const early = await summary(s);
+    expect(early.ticksSinceSnapshot).toBe(early.lastTick - early.snapshotTick);
+    await waitFor(() => s.world.stats.snapshotsAccepted >= 1, 30000, "a snapshot");
+    const after = await summary(s);
+    expect(after.snapshotTick).toBeGreaterThan(0);
+    expect(after.ticksSinceSnapshot).toBe(after.lastTick - after.snapshotTick);
+    c.close();
   });
 });
