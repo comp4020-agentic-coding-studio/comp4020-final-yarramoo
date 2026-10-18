@@ -1,5 +1,5 @@
 // Gate G2, test N1 (plan 12.2): three real Chromium clients, one real server, delay and jitter on every socket, one
-// client CPU-throttled 4x, bots playing for ten minutes. A script, not a test: run it with `pnpm soak:n1` after
+// client CPU-throttled 4x, bots playing for DURATION_S seconds (M5 combat: see bot()). A script, not a test: run it with `pnpm soak:n1` after
 // `pnpm build:client`. Env: SEED (default 20261014), DURATION_S (default 600), OUT (write the JSON summary there).
 //
 // Each client loads the page THROUGH its own proxy (same origin, so registration and the WebSocket are the real
@@ -182,13 +182,25 @@ function startProxy(upstreamPort: number, seed: number): Promise<{ port: number;
  * wraps the wasm `step` export to take 4x as long (it spins for 3x the measured step time). That models a 4x slower
  * core for the sim itself; it does not slow decoding, hashing, snapshots or anything else in the worker.
  */
-const SLOW_STEP_PREFIX = `(() => {
+const instrumentPrefix = (slow: boolean) => `(() => {
+  // Read-only counters on the sim's own events() output, per kind, once per sim step. Nothing here feeds the sim.
+  globalThis.__ev = { steps: 0, counts: {}, lastStep: -1 };
   const RealInstance = WebAssembly.Instance;
   WebAssembly.Instance = function (m, i) {
     const inst = new RealInstance(m, i);
     const ex = Object.assign({}, inst.exports);
     const step = inst.exports.step;
-    ex.step = () => { const t = performance.now(); const r = step(); const d = performance.now() - t; const end = performance.now() + 3 * d; while (performance.now() < end) {} return r; };
+    const events = inst.exports.events;
+    ex.step = () => { const t = performance.now(); const r = step(); ${slow ? "const d = performance.now() - t; const end = performance.now() + 3 * d; while (performance.now() < end) {}" : ""} globalThis.__ev.steps++; return r; };
+    ex.events = (p, max) => {
+      const n = events(p, max);
+      if (globalThis.__ev.lastStep !== globalThis.__ev.steps && inst.exports.width() > 512) {
+        globalThis.__ev.lastStep = globalThis.__ev.steps;
+        const u8 = new Uint8Array(inst.exports.memory.buffer);
+        for (let k = 0; k < n; k++) { const kind = u8[p + k * 17]; globalThis.__ev.counts[kind] = (globalThis.__ev.counts[kind] || 0) + 1; }
+      }
+      return n;
+    };
     return { exports: ex };
   };
 })();
@@ -196,7 +208,7 @@ const SLOW_STEP_PREFIX = `(() => {
 
 // ---- bots ----------------------------------------------------------------------------------------------------------
 
-interface BotStats { moves: number; casts: number; spell1: number; spell2: number }
+interface BotStats { moves: number; casts: number; bySpell: number[]; maxY: number; deepSamples: number; samples: number }
 
 /** Dispatch key events on window after blurring the join field (a focused <input> swallows them). */
 const keyOps = (page: Page, ops: [string, string][]) =>
@@ -205,20 +217,70 @@ const keyOps = (page: Page, ops: [string, string][]) =>
     for (const [type, key] of o) window.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }));
   }, ops);
 
+interface BotView { me: { x: number; y: number; dead: boolean } | null; others: { x: number; y: number; dead: boolean }[]; charges: number[]; cooldown: number[]; view: { x: number; y: number; vw: number; vh: number } | null; box: { x: number; y: number; w: number; h: number } }
+
+/** Read-only look at the page's own debug globals, as a player would see the HUD. */
+const readView = (page: Page): Promise<BotView | null> =>
+  page.evaluate(() => {
+    const w = window as any;
+    const list: any[] = w.__players ?? [];
+    const me = list.find((p) => p.me);
+    const r = document.querySelector("canvas")!.getBoundingClientRect();
+    return {
+      me: me ? { x: me.x, y: me.y, dead: !!me.dead } : null,
+      others: list.filter((p) => !p.me).map((p) => ({ x: p.x, y: p.y, dead: !!p.dead })),
+      charges: w.__spells?.charges ?? [],
+      cooldown: w.__spells?.cooldown ?? [],
+      view: w.__view ? { x: w.__view.x, y: w.__view.y, vw: w.__view.vw, vh: w.__view.vh } : null,
+      box: { x: r.left, y: r.top, w: r.width, h: r.height },
+    };
+  }).catch(() => null);
+
+const SURFACE_Y = 270;
+const DEEP_Y = 800;
+const WORLD_W = 2048;
+
+/**
+ * A bot plays through the real client controls: A/D/space key events for walking and levitating, digit keys to pick a
+ * spell, pointer down/move/up on the canvas to cast with aim. It sweeps the surface looking for a cave shaft and, once
+ * below the surface, wanders (biased downwards: space is held less) and casts whatever it has charges for at the
+ * nearest other player, or at random. What it reaches is measured from the pages' own sim events, not assumed.
+ */
 async function bot(page: Page, rng: () => number, stopAt: number, st: BotStats): Promise<void> {
   const held = new Set<string>();
   let nextMove = 0;
   let nextCast = performance.now() + 2000 + rng() * 2000;
+  let nextRead = 0;
   let spellKey = "1";
+  let bv: BotView | null = null;
+  let targetX = rng() * WORLD_W;
   while (performance.now() < stopAt) {
     const now = performance.now();
+    if (now >= nextRead) {
+      bv = await readView(page);
+      nextRead = now + 400;
+      if (bv?.me) {
+        st.samples++;
+        st.maxY = Math.max(st.maxY, bv.me.y);
+        if (bv.me.y >= DEEP_Y) st.deepSamples++;
+      }
+    }
     if (now >= nextMove) {
-      // New walking plan: a direction (or stand), sometimes holding jump/levitate.
       const want = new Set<string>();
-      const d = rng();
-      if (d < 0.4) want.add("a");
-      else if (d < 0.8) want.add("d");
-      if (rng() < 0.45) want.add(" ");
+      const y = bv?.me?.y ?? 0;
+      const x = bv?.me?.x ?? 0;
+      const underground = y > SURFACE_Y + 25;
+      if (!underground) {
+        // Surface: sweep toward a target x, re-picked on arrival (and now and then at random), hoping to fall into a shaft.
+        if (Math.abs(x - targetX) < 20 || rng() < 0.1) targetX = rng() * WORLD_W;
+        want.add(x < targetX ? "d" : "a");
+        if (rng() < 0.12) want.add(" ");
+      } else {
+        const d = rng();
+        if (d < 0.4) want.add("a");
+        else if (d < 0.8) want.add("d");
+        if (rng() < 0.2) want.add(" "); // levitate rarely: gravity does the descending
+      }
       const ops: [string, string][] = [];
       for (const k of held) if (!want.has(k)) ops.push(["keyup", k]);
       for (const k of want) if (!held.has(k)) ops.push(["keydown", k]);
@@ -226,34 +288,39 @@ async function bot(page: Page, rng: () => number, stopAt: number, st: BotStats):
       for (const k of want) held.add(k);
       if (ops.length) await keyOps(page, ops).catch(() => {});
       st.moves++;
-      nextMove = now + 300 + rng() * 1700;
+      nextMove = now + 300 + rng() * 1200;
     }
-    if (now >= nextCast) {
-      const k = rng() < 0.5 ? "1" : "2"; // Push or Blast
+    if (now >= nextCast && bv?.me && !bv.me.dead) {
+      // Pick among spells with charges (65535 is infinite) and no cooldown left; usually Push or Blast on the surface.
+      const ready: number[] = [];
+      for (let k = 0; k < 6; k++) if ((bv.charges[k] ?? 0) > 0 && (bv.cooldown[k] ?? 0) === 0) ready.push(k);
+      const pool = ready.length ? ready : [0, 1];
+      const idx = pool[Math.floor(rng() * pool.length)];
+      const k = String(idx + 1);
       if (k !== spellKey) {
         await keyOps(page, [["keydown", k], ["keyup", k]]).catch(() => {});
         spellKey = k;
       }
-      const box = await page.evaluate(() => {
-        const r = document.querySelector("canvas")!.getBoundingClientRect();
-        return { x: r.left, y: r.top, w: r.width, h: r.height };
-      }).catch(() => null);
-      if (box) {
-        const pt = () => [box.x + 4 + rng() * (box.w - 8), box.y + 4 + rng() * (box.h - 8)] as const;
-        const [x, y] = pt();
-        await page.mouse.move(x, y).catch(() => {});
-        await page.mouse.down().catch(() => {});
-        await sleep(80 + rng() * 500);
-        if (rng() < 0.5) {
-          const [x2, y2] = pt();
-          await page.mouse.move(x2, y2, { steps: 3 }).catch(() => {});
-          await sleep(50 + rng() * 200);
-        }
-        await page.mouse.up().catch(() => {});
-        st.casts++;
-        if (spellKey === "1") st.spell1++;
-        else st.spell2++;
+      const box = bv.box;
+      const rand = () => [box.x + 4 + rng() * (box.w - 8), box.y + 4 + rng() * (box.h - 8)] as const;
+      let [x, y] = rand();
+      const near = bv.others.filter((o) => !o.dead).sort((a, b) => Math.hypot(a.x - bv!.me!.x, a.y - bv!.me!.y) - Math.hypot(b.x - bv!.me!.x, b.y - bv!.me!.y))[0];
+      if (near && bv.view && rng() < 0.6 && Math.hypot(near.x - bv.me.x, near.y - bv.me.y) < 150) {
+        const sx = box.x + ((near.x - bv.view.x) / bv.view.vw) * box.w;
+        const sy = box.y + ((near.y - 5 - bv.view.y) / bv.view.vh) * box.h;
+        if (sx > box.x && sx < box.x + box.w && sy > box.y && sy < box.y + box.h) [x, y] = [sx, sy];
       }
+      await page.mouse.move(x, y).catch(() => {});
+      await page.mouse.down().catch(() => {});
+      await sleep(80 + rng() * 500);
+      if (rng() < 0.4) {
+        const [x2, y2] = rand();
+        await page.mouse.move(x2, y2, { steps: 3 }).catch(() => {});
+        await sleep(50 + rng() * 200);
+      }
+      await page.mouse.up().catch(() => {});
+      st.casts++;
+      st.bySpell[idx]++;
       nextCast = performance.now() + 400 + rng() * 2600;
     }
     await sleep(40);
@@ -273,10 +340,11 @@ async function main(): Promise<void> {
   let browser: Browser | null = null;
   const ctxs: BrowserContext[] = [];
   const pages: Page[] = [];
+  const workers: (import("playwright").Worker | null)[] = Array.from({ length: CLIENTS }, () => null);
   const errors: string[] = [];
   const t0 = performance.now();
   const samples: Sample[] = [];
-  const botStats: BotStats[] = Array.from({ length: CLIENTS }, () => ({ moves: 0, casts: 0, spell1: 0, spell2: 0 }));
+  const botStats: BotStats[] = Array.from({ length: CLIENTS }, () => ({ moves: 0, casts: 0, bySpell: [0, 0, 0, 0, 0, 0], maxY: 0, deepSamples: 0, samples: 0 }));
   let throttleNote = "";
   try {
     browser = await chromium.launch({ headless: true, args: ["--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks"] });
@@ -285,15 +353,14 @@ async function main(): Promise<void> {
       ctxs.push(ctx);
       const page = await ctx.newPage();
       pages.push(page);
-      if (i === THROTTLED) {
-        await page.route("**/assets/worker-*.js", async (route) => {
-          const r = await route.fetch();
-          await route.fulfill({ status: 200, contentType: "text/javascript", body: SLOW_STEP_PREFIX + (await r.text()) });
-        });
-      }
+      await page.route("**/assets/worker-*.js", async (route) => {
+        const r = await route.fetch();
+        await route.fulfill({ status: 200, contentType: "text/javascript", body: instrumentPrefix(i === THROTTLED) + (await r.text()) });
+      });
       page.on("websocket", (w) => { w.on("close", () => errors.push(`client ${i} ws closed`)); w.on("socketerror", (e) => errors.push(`client ${i} ws error ${e}`)); errors.push(`client ${i} ws opened ${w.url()}`); });
       page.on("requestfailed", (r) => errors.push(`client ${i} requestfailed ${r.url()} ${r.failure()?.errorText}`));
       page.on("pageerror", (e) => errors.push(`client ${i} pageerror: ${e.message}`));
+      page.on("worker", (w) => workers[i] = w);
       page.on("worker", (w) => w.on("console", (m) => { errors.push(`client ${i} worker ${m.type()}: ${m.text()}`); }));
       page.on("console", (m) => {
         if (m.type() === "error") errors.push(`client ${i} console.error: ${m.text()}`);
@@ -357,6 +424,14 @@ async function main(): Promise<void> {
       const v = await pages[i].evaluate(() => ({ net: (window as any).__net, stats: (window as any).__stats, players: (window as any).__players })).catch(() => null);
       finals.push(v);
     }
+    const EVN: Record<number, string> = { 2: "pickup", 8: "explode", 9: "death", 10: "bagPickup", 3: "cast", 7: "respawn" };
+    const evCounts = await Promise.all(workers.map(async (w) => {
+      const r = await w?.evaluate(() => (globalThis as any).__ev).catch(() => null);
+      const out: Record<string, number> = { pickup: 0, explode: 0, death: 0, bagPickup: 0, cast: 0, respawn: 0 };
+      for (const [k, n] of Object.entries(r?.counts ?? {})) if (EVN[+k]) out[EVN[+k]] = n as number;
+      return { ...out, stepsObserved: r?.steps ?? null };
+    }));
+    const combat = { perClientEventsSeenLive: evCounts, note: "counted in each page's worker from the sim's events() output (live ticks only, not replay), so a client that fast-forwarded sees fewer; the maximum per kind is the best estimate of what happened" , maxPerKind: Object.fromEntries(["pickup", "explode", "death", "bagPickup", "cast", "respawn"].map((k) => [k, Math.max(...evCounts.map((e) => (e as any)[k]))])) };
     const lastClosed = srv.game.clock.lastClosed;
     const incidents = srv.db!.incidents(1);
     const gw = srv.game as unknown as { truth: Map<number, bigint> };
@@ -390,6 +465,7 @@ async function main(): Promise<void> {
       stepP95Ms: f?.stats?.stepP95 ?? null,
       hashesSent: proxies[i].stats.hashSends,
       bot: botStats[i],
+      botReachedDeepBand: botStats[i].maxY >= DEEP_Y,
     }));
     const lagByClient = Array.from({ length: CLIENTS }, (_, i) => {
       const s = samples.filter((x) => x.client === i && x.lag >= 0);
@@ -415,6 +491,7 @@ async function main(): Promise<void> {
       serverStats: { game: srv.game.stats, sandbox: srv.world.stats, server: srv.stats },
       incidents: incidents.map((x) => ({ tick: x.tick, chunks: (x.details as any).chunks, divergent: (x.details as any).divergent, hashes: (x.details as any).hashes, userAgents: (x.details as any).userAgents })),
       finalSharedCheckpoint: { tick: finalShared, hashes: finalHashes },
+      combat,
       clients: perClient,
       lagByClient,
       network: proxies.map((p, i) => ({ client: i, connections: p.stats.connections, upFrames: p.stats.upFrames, downFrames: p.stats.downFrames, downMB: +(p.stats.downBytes / 1048576).toFixed(2) })),
