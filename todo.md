@@ -89,6 +89,21 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
     budget is separate ($6.90 of $30 spent). Client only and cosmetic, so no
     sim change. Check every change in the browser at 1x and 3x zoom.
 
+### Merge rehearsal (19 Oct morning)
+
+- **The merge would have crash-looped the live site. Fixed on `multa` (D-130, `e2851ed`).** On a sim-build
+  change, start-up waits on the verify worker before the server listens. The worker was unref'd, so Node
+  exited mid-wait (code 13). The real merged image now boots on data written by the deployed build: it kept
+  the snapshot at tick 1920, and all five routes returned 200.
+- **The real merge will conflict** in `server/world.ts`, `server/verify.ts` and
+  `tests/net/persistence.test.ts`: the two `main` hotfixes against multa's rewrite. Resolve all three to
+  multa's version (`git checkout --theirs`). The result is identical to multa and keeps both fixes.
+- **D-112 hotfix is live on `main` (`d1c43c5`).** Correction: on `main` the risk was the verifier failing to
+  load, not a timeout. `main` verifies synchronously.
+- **Fixed:** the cast glow (a tight pulse at the hand), the minimap tap (jumps to the nearest player), and
+  the explosion flash (a disc, not a square). Fire bolt, Bomb and bag were finally seen
+  (`docs/art/shots/after2-*.png`). The bag is still dim against rock.
+
 ### For the user to check (added overnight)
 
 - **A live risk on `main`, fixed on `multa` only (D-112, `bbd5d73`).** On any
