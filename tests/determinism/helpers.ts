@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generate } from "../../tools/inputgen.ts";
 import type { Script } from "../../tools/inputgen.ts";
+import { generateM5 } from "../../tools/inputgen-m5.ts";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const wasmPath = resolve(root, "sim/target/wasm32-unknown-unknown/release/sim.wasm");
@@ -40,6 +41,15 @@ export function gameScript(): { script: Script; path: string } {
 export function castScript(): { script: Script; path: string } {
   const path = resolve(root, "tests/determinism/.cache/script-game-cast.json");
   const script = generate({ seed: 7, bots: 3, ticks: 900, worldKind: 1 });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(script));
+  return { script, path };
+}
+
+/** M5 script: three bots collect Bomb and Fire bolt pickups, hit and kill each other, respawn and take a bag. Needs the built wasm. */
+export function m5Script(): { script: Script; path: string } {
+  const path = resolve(root, "tests/determinism/.cache/script-game-m5.json");
+  const script = generateM5(readWasm(wasmPath));
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(script));
   return { script, path };
