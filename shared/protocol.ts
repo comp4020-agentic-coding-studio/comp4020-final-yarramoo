@@ -292,6 +292,9 @@ export function splitTickFrames(b: Uint8Array): Uint8Array[] | null {
 
 /** TICK: tick u32, n u16, then n * (player u32, kind u8, len u16, payload). 7 bytes when empty. */
 export function encodeTick(tick: number, inputs: readonly TickInput[]): Uint8Array {
+  // The count is a u16. A wrapped count would make every client misparse the frame, and it is persisted: refuse it
+  // loudly rather than write it (the server caps client inputs per tick well below this; review catch-up N1).
+  if (inputs.length > 0xffff) throw new RangeError(`a tick cannot carry ${inputs.length} inputs`);
   let len = 7;
   for (const i of inputs) len += 7 + i.payload.length;
   const b = new Uint8Array(len);

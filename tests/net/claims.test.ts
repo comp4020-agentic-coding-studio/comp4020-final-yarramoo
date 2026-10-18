@@ -16,7 +16,7 @@ function rig(world = GAME_ID) {
   // These members are already caught up: say so, or the world's clock is held (D-122) and no tick closes.
   const add = (pid: number) => {
     const conn = w.join(peer(), { playerId: pid, name: `P${pid}`, visitorId: pid, visitorName: `P${pid}` }).conn;
-    w.onLive(conn);
+    w.onLive(conn, w.clock.lastClosed); // its replay target, which is its minHashTick
     return conn;
   };
   const advance = (ms: number) => {

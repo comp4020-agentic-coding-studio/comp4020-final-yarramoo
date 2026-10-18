@@ -533,6 +533,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   /** An input the server refused: counted, and logged at most once per connection per 10 s. */
+  /** A client input the world would not take (held, or the tick's input cap): counted, logged at most once per 10 s. */
+  function dropHeld(w: World, conn: number): void {
+    stats.droppedRate++;
+    log.limited(`held:${conn}`, 10_000, "input.rejected", { world: w.id, conn, who: w.whoOfConn(conn), reason: w.held ? "world_held" : "tick_full" }, "warn");
+  }
+
   function badInput(w: World, conn: number, reason: string, kind: number): void {
     stats.rejected++;
     live.get(liveKey(w.id, conn))?.counts.reject();
@@ -609,6 +615,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             log.forget(`rate:${j.conn}`);
             log.forget(`pos:${j.conn}`);
             log.forget(`bad:${j.conn}`);
+            log.forget(`held:${j.conn}`);
             const ms = Date.now() - me.at;
             playerStats.bump(visitorId, STAT_PLAY_MS, ms);
             if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
@@ -696,7 +703,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
               achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
             }
-            w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
+            if (!w.stampClient({ player: joined.playerId, kind: msg.kind, payload: msg.payload })) dropHeld(w, joined.conn);
             return;
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
@@ -704,7 +711,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           joined.counts.paint(materialKey(msg.payload[0]));
           playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
           // The player id is ours, never the client's.
-          w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
+          if (!w.stampClient({ player: joined.playerId, kind: msg.kind, payload: msg.payload })) dropHeld(w, joined.conn);
           return;
         }
         case "hash":
@@ -716,7 +723,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           w.onClaim(joined.conn, { tick: msg.tick, victim: msg.victim, killer: msg.killer, cause: msg.cause, bag: msg.bag });
           return;
         case "live":
-          w.onLive(joined.conn);
+          w.onLive(joined.conn, msg.tick);
           return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);

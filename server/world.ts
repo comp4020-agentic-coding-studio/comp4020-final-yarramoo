@@ -21,7 +21,7 @@ import {
   WORLD_SANDBOX,
   type TickInput,
 } from "../shared/protocol.ts";
-import { TickClock, type ClosedTick } from "./clock.ts";
+import { MAX_CLIENT_INPUTS_PER_TICK, TickClock, type ClosedTick } from "./clock.ts";
 import type { GameDb } from "./db.ts";
 import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
@@ -652,6 +652,18 @@ export class World {
     return this.clock.stamp(input);
   }
 
+  /**
+   * A client's own input (Pos, Cast, Paint). Dropped while the world is held: only members still replaying exist
+   * then, and a replaying client sends no play, so nothing real is lost, but a held clock would otherwise let one
+   * open tick collect minutes of input (review catch-up N1). Also capped per tick, so a TICK frame's u16 input
+   * count can never wrap. Join and Leave are the server's and go through `stamp`, uncapped.
+   */
+  stampClient(input: TickInput): boolean {
+    if (this.resetting || this.held || this.clock.openCount >= MAX_CLIENT_INPUTS_PER_TICK) return false;
+    this.clock.stamp(input);
+    return true;
+  }
+
   /** Called from the server's timer. */
   tick(): void {
     // A member whose send failed is left at once, not only at the next tick close, which a held clock never reaches.
@@ -743,10 +755,14 @@ export class World {
     }
   }
 
-  /** C_LIVE: this member finished catching up (D-122). */
-  onLive(memberId: number): void {
+  /**
+   * C_LIVE: this member finished catching up (D-122). `tick` is where it caught up to, which is its replay target:
+   * the `lastClosed` it was sent, which is exactly its `minHashTick`. A RESYNC raises `minHashTick`, so a LIVE that
+   * crossed one names a smaller tick; that one is stale and must not end a hold early (review catch-up N2).
+   */
+  onLive(memberId: number, tick: number): void {
     const m = this.members.get(memberId);
-    if (this.resetting || !m || m.live) return;
+    if (this.resetting || !m || m.live || tick < m.minHashTick) return;
     m.live = true;
     this.evaluateHold();
   }

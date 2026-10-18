@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { MAX_CLIENT_INPUTS_PER_TICK } from "../../server/clock.ts";
 import { GameDb } from "../../server/db.ts";
+import { EventLog } from "../../server/log.ts";
+import { World } from "../../server/world.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { KIND_JOIN, KIND_PAINT } from "../../shared/inputs.ts";
 import { decodeServer, encodeTick } from "../../shared/protocol.ts";
@@ -137,7 +140,12 @@ describe("a live player is never frozen by a joiner", () => {
     const at = s.world.clock.lastClosed;
     await sleep(200);
     expect(s.world.clock.lastClosed).toBe(at);
+    // This manual client never steps, so it never replays the RESYNC: a LIVE from it now names its old tick, which
+    // predates the resync and is stale (review catch-up N2). A real client sends LIVE once it reaches the new target.
     a.sendLive();
+    await sleep(200);
+    expect(s.world.held).toBe(true);
+    s.world.onLive([...s.world.members.keys()][0]!, at);
     await waitFor(() => s.world.clock.lastClosed > at + 10, 3000, "ticks after LIVE");
     a.close();
   }, 30_000);
@@ -165,26 +173,64 @@ describe("the safety valve", () => {
   }, 30_000);
 });
 
-describe("inputs stamped during a hold", () => {
-  it("all close in the first tick after release, in arrival order", async () => {
+describe("inputs during a hold", () => {
+  it("client inputs sent while held are dropped; the server's Join still lands in the first tick after release", async () => {
+    // Review catch-up N1: a held clock let one open tick collect minutes of input, past the TICK frame's u16
+    // count. Only members still replaying exist while held, and a replaying client sends no play, so the world
+    // takes none: nothing a person did is lost. Join and Leave are the server's and are never dropped.
     const N = 1000;
     const s = await boot(await seeded(N));
     const c = await connect(s.port, hex, { manual: true });
-    const ids = [11, 22, 33, 44];
-    for (const x of ids) c.paint(4, x, 100, x + 1, 100, 2);
+    for (const x of [11, 22, 33, 44]) c.paint(4, x, 100, x + 1, 100, 2);
     await sleep(300);
-    expect(s.world.clock.lastClosed).toBe(N); // held: nothing closed, the inputs wait in the open tick
+    expect(s.world.clock.lastClosed).toBe(N);
+    expect(s.world.clock.openCount).toBe(1); // only the server's Join waits in the open tick
+    expect(events(s, "input.rejected").some((e) => e.reason === "world_held")).toBe(true);
     finishReplay(c);
     await waitFor(() => s.world.clock.lastClosed > N + 5, 5000, "release");
     const frames = s.world.log.slice(N).map((f) => decodeServer(f)!);
-    const withInputs = frames.filter((f) => f.t === "tick" && f.inputs.length > 0) as { t: "tick"; tick: number; inputs: { kind: number; payload: Uint8Array }[] }[];
+    const withInputs = frames.filter((f) => f.t === "tick" && f.inputs.length > 0) as { t: "tick"; tick: number; inputs: { kind: number }[] }[];
     expect(withInputs).toHaveLength(1);
     expect(withInputs[0]!.tick).toBe(N + 1);
-    // Join first (stamped at connect), then the four paints in the order they were sent: payload byte 1 is x0 low byte.
-    expect(withInputs[0]!.inputs.map((i) => i.kind)).toEqual([KIND_JOIN, KIND_PAINT, KIND_PAINT, KIND_PAINT, KIND_PAINT]);
-    expect(withInputs[0]!.inputs.slice(1).map((i) => i.payload[1])).toEqual(ids);
+    expect(withInputs[0]!.inputs.map((i) => i.kind)).toEqual([KIND_JOIN]);
     c.close();
   }, 30_000);
+
+  it("a stale LIVE (for a tick below the member's replay start) does not end a hold", async () => {
+    // Review catch-up N2: a LIVE that crossed a RESYNC named a tick from before the replay it now has to do.
+    const N = 1000;
+    const s = await boot(await seeded(N));
+    const c = await connect(s.port, hex, { manual: true });
+    await sleep(200);
+    expect(s.world.held).toBe(true);
+    const conn = [...s.world.members.keys()][0]!; // the only member
+    s.world.onLive(conn, N - 1); // the member's replay target is N; a LIVE for N - 1 predates it
+    await sleep(300);
+    expect(s.world.held).toBe(true);
+    expect(s.world.clock.lastClosed).toBe(N);
+    s.world.onLive(conn, N); // reaching the target is a real LIVE
+    await waitFor(() => !s.world.held, 3000, "a real LIVE releases");
+    c.close();
+  }, 30_000);
+});
+
+describe("the per-tick input cap", () => {
+  it("a world takes at most MAX_CLIENT_INPUTS_PER_TICK client inputs in one tick, and Join and Leave always land", () => {
+    const w = new World({ id: 0, now: () => 0, log: new EventLog({ quiet: true }) });
+    w.clock.resume();
+    const input = { player: 1, kind: KIND_PAINT, payload: new Uint8Array(10) };
+    let took = 0;
+    for (let i = 0; i < MAX_CLIENT_INPUTS_PER_TICK + 50; i++) if (w.stampClient(input)) took++;
+    expect(took).toBe(MAX_CLIENT_INPUTS_PER_TICK);
+    w.stamp({ player: 1, kind: KIND_JOIN, payload: new Uint8Array(0) });
+    expect(w.clock.openCount).toBe(MAX_CLIENT_INPUTS_PER_TICK + 1);
+  });
+
+  it("encodeTick refuses a count its u16 field cannot hold, rather than writing a wrapped one", () => {
+    const one = { player: 1, kind: KIND_JOIN, payload: new Uint8Array(0) };
+    expect(() => encodeTick(1, new Array(0x10000).fill(one))).toThrow(RangeError);
+    expect(decodeServer(encodeTick(1, new Array(0xffff).fill(one)))).toMatchObject({ t: "tick" });
+  });
 });
 
 describe("recovery from a long log, end to end", () => {
