@@ -206,6 +206,8 @@ export class World {
   /** Last accepted Pos per sim player, kept across reconnects within this process (the baseline for plan 7.6). */
   private readonly lastPosOf = new Map<number, PosBaselines>();
   /** Open death claims by full key (`tick:victim:killer:cause:bag`), oldest first. */
+  /** Game-world player ids that have joined in this process: the only ids a death may name (D-119). Cleared by reset. */
+  private readonly seenPlayers = new Set<number>();
   private readonly claims = new Map<string, ClaimTally>();
   /** `tick:victim` of deaths already resolved, so a late or conflicting claim is not counted twice. Oldest first. */
   private readonly resolvedDeaths = new Map<string, string>();
@@ -496,6 +498,7 @@ export class World {
     };
     this.members.set(conn, member);
     if (playerId) {
+      if (this.kind === WORLD_GAME) this.seenPlayers.add(playerId);
       this.stamp({ player: playerId, kind: KIND_JOIN, payload: new Uint8Array(0) });
       if (opts.name && this.kind === WORLD_GAME) this.broadcastName(conn, playerId, opts.name);
     }
@@ -651,6 +654,7 @@ export class World {
       this.lastPosOf.clear();
       this.claims.clear();
       this.resolvedDeaths.clear();
+      this.seenPlayers.clear();
       Object.assign(this.stats, { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 });
       this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, members: victims.length }, "warn");
       return { oldTick, closed: victims.length };
@@ -754,7 +758,7 @@ export class World {
    * least ceil(eligible / 2) distinct connections send an identical claim. Eligible means connected and past its replay
    * target at that tick (the same test as HASH). A claim is a report, never a sim input (invariant 9).
    */
-  onClaim(memberId: number, d: ResolvedDeath): void {
+  onClaim(memberId: number, claimed: ResolvedDeath): void {
     const m = this.members.get(memberId);
     if (this.resetting || !m || this.kind !== WORLD_GAME) return;
     // Only a registered visitor may vote: an anonymous socket is free, a registration is rate limited (D-119).
@@ -771,6 +775,13 @@ export class World {
       this.elog.limited(`claim_rate:${memberId}`, 10_000, "input.rate_limited", { world: this.id, conn: memberId, who: this.whoOf(m), limit: CLAIMS_PER_WINDOW, what: "claim" }, "warn");
       return;
     }
+    // Only players this world has seen join can die or kill: a forged id must never reach player_stats (a foreign key).
+    if (!this.seenPlayers.has(claimed.victim)) {
+      this.elog.limited(`claim_unknown:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_unknown_player" }, "warn");
+      return;
+    }
+    // An unknown killer is not refused (the death is real) but is credited to nobody.
+    const d: ResolvedDeath = this.seenPlayers.has(claimed.killer) ? claimed : { ...claimed, killer: 0 };
     const last = this.clock.lastClosed;
     // A future tick cannot have happened yet; an old one, or one from before this client's replay target, is not a witness.
     if (d.tick > last || d.tick < last - CLAIM_WINDOW_TICKS || d.tick <= m.minHashTick || d.tick < 1) {

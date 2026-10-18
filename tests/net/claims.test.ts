@@ -65,10 +65,10 @@ describe("majority claim", () => {
     r.advance(2000);
     const tick = r.w.clock.lastClosed - 5;
     r.w.onClaim(p, death(tick, 1, 2));
-    r.w.onClaim(q, death(tick, 1, 9));
+    r.w.onClaim(q, death(tick, 1, 3));
     expect(r.resolved).toEqual([]);
-    r.w.onClaim(x, death(tick, 1, 9));
-    expect(r.resolved.map((d) => d.killer)).toEqual([9]);
+    r.w.onClaim(x, death(tick, 1, 3));
+    expect(r.resolved.map((d) => d.killer)).toEqual([3]);
   });
 
   it("a 1-1 tie of conflicting claims at need 1 is not resolved by the first arrival", () => {
@@ -165,7 +165,7 @@ describe("claim abuse", () => {
     const a = r.add(1);
     r.advance(2000);
     const last = r.w.clock.lastClosed;
-    for (let i = 0; i < 500; i++) r.w.onClaim(a, death(last - 1 - (i % 100), 100 + i));
+    for (let i = 0; i < 500; i++) r.w.onClaim(a, death(last - 1 - (i % 100), 1, 2, 5, i % 7));
     expect(r.resolved).toHaveLength(CLAIMS_PER_WINDOW);
     expect(r.log.recent().filter((e) => e.ev === "input.rate_limited")).toHaveLength(1);
   });
@@ -180,12 +180,12 @@ describe("claim abuse", () => {
     // Refill the rate window between batches so only the cap is under test.
     for (let i = 0; i < MAX_OPEN_CLAIMS + 20; i++) {
       if (i % CLAIMS_PER_WINDOW === 0) r.advance(10_000);
-      r.w.onClaim(a, death(r.w.clock.lastClosed - 1, 1000 + i));
+      r.w.onClaim(a, death(r.w.clock.lastClosed - 1, 1, 2, i % 256, Math.floor(i / 256)));
     }
     void last;
     // The oldest victim's tally is gone: two more votes for it can no longer resolve it.
     const m2 = [...r.w.members.keys()][1];
-    r.w.onClaim(m2, death(r.w.clock.lastClosed - 1, 1000));
+    r.w.onClaim(m2, death(r.w.clock.lastClosed - 1, 1, 2, 0, 0));
     expect(r.resolved).toEqual([]);
   });
 });
@@ -275,6 +275,38 @@ describe("anonymous and unregistered voters (review S1)", () => {
     const spec = r.w.join(peer(), { spectate: true, visitorId: 7, visitorName: "S" }).conn;
     r.advance(2000);
     r.w.onClaim(spec, death(r.w.clock.lastClosed - 5, 1, 0));
+    expect(r.resolved).toHaveLength(1);
+  });
+});
+
+describe("ids the world has not seen (review N1)", () => {
+  it("a quorum of real voters naming unknown or offline ids bumps no stats and grants nothing for them", () => {
+    const stats = new PlayerStats(null);
+    const given: string[] = [];
+    const ach = new Achievements(null, stats, new EventLog({ quiet: true }), (v, id) => given.push(`${v}:${id}`));
+    const r = rig();
+    r.w.onDeathResolved = (d) => ach.onDeath(d.victim, d.killer, d.cause, (v) => ({ name: `P${v}`, world: 1, tick: d.tick }));
+    const [a, b] = [r.add(1), r.add(2)];
+    r.advance(2000);
+    const tick = r.w.clock.lastClosed - 5;
+    for (const c of [a, b]) {
+      r.w.onClaim(c, death(tick, 999, 1)); // unknown victim: refused
+      r.w.onClaim(c, death(tick + 1, 1, 888)); // unknown killer: counted as no killer
+    }
+    expect(stats.get(999)).toEqual({});
+    expect(stats.get(888)).toEqual({});
+    expect(stats.get(1)).toEqual({ deaths: 1 });
+    expect(given).toEqual([]);
+  });
+  it("a player who joined and left can still be a victim, and a never-seen id cannot", () => {
+    const r = rig();
+    const a = r.add(1);
+    const gone = r.add(5);
+    r.w.leave(gone);
+    r.advance(2000);
+    r.w.onClaim(a, death(r.w.clock.lastClosed - 5, 5, 1));
+    expect(r.resolved).toEqual([{ tick: r.w.clock.lastClosed - 5, victim: 5, killer: 1, cause: 5, bag: 0 }]);
+    r.w.onClaim(a, death(r.w.clock.lastClosed - 4, 6, 1));
     expect(r.resolved).toHaveLength(1);
   });
 });
