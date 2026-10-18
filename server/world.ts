@@ -49,6 +49,8 @@ export const HASH_WAIT_MS = 2000;
 export const CLAIM_WINDOW_MS = 10_000;
 export const CLAIM_WINDOW_TICKS = 10 * TICK_HZ;
 export const MAX_OPEN_CLAIMS = 256;
+/** Open tallies are re-checked (leavers, timeouts) at most this often, not every 4 ms timer tick. */
+export const CLAIM_SWEEP_MS = 250;
 const MAX_RESOLVED_DEATHS = 1024;
 /** Per connection: at most this many CLAIM frames per CLAIM_RATE_MS (duplicates count). */
 export const CLAIMS_PER_WINDOW = 30;
@@ -208,6 +210,7 @@ export class World {
   /** Open death claims by full key (`tick:victim:killer:cause:bag`), oldest first. */
   /** Game-world player ids that have joined in this process: the only ids a death may name (D-119). Cleared by reset. */
   private readonly seenPlayers = new Set<number>();
+  private lastClaimSweep = 0;
   private readonly claims = new Map<string, ClaimTally>();
   /** `tick:victim` of deaths already resolved, so a late or conflicting claim is not counted twice. Oldest first. */
   private readonly resolvedDeaths = new Map<string, string>();
@@ -589,7 +592,10 @@ export class World {
       this.flush();
     }
     this.resolveDue(t);
-    this.sweepClaims(t);
+    if (t - this.lastClaimSweep >= CLAIM_SWEEP_MS) {
+      this.lastClaimSweep = t;
+      this.sweepClaims(t);
+    }
     this.maybeRequestSnapshot();
     this.checkLogLength();
   }

@@ -240,7 +240,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   };
   game.onDeathResolved = (d) => {
     const ctxOf = (id: number) => ({ name: nameOfVisitor(id), world: game.id, tick: d.tick });
-    log.event("claim.death", { world: game.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
+    // Rate limited: a client can make deaths resolve repeatedly. Stats still count every one.
+    log.limited("claim_death", 1000, "claim.death", { world: game.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
     achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
   };
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
