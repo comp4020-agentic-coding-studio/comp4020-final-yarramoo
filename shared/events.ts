@@ -39,6 +39,7 @@ export const EVENT_NAMES = [
   "world.cold_start",
   "world.build_changed",
   "world.log_repaired",
+  "world.log_long",
   "server.unhandled_rejection",
   // Later (M5/M6): reserved names only. Nothing emits these yet.
   "claim.death",

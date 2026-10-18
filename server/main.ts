@@ -166,6 +166,9 @@ export interface ServerOptions {
   /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
   dataDir?: string | null;
   snapshotEveryTicks?: number;
+  /** Override World's log-length warning and cap (tests). */
+  maxLogTicks?: number;
+  warnLogTicks?: number;
   /** Override the snapshot-verification timeout (tests). */
   verifyTimeoutMs?: number;
   verifierWorkerUrl?: URL;
@@ -201,6 +204,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       verifier,
       simBuild: hash.toString("hex"),
       snapshotEveryTicks: opts.snapshotEveryTicks,
+      maxLogTicks: opts.maxLogTicks,
+      warnLogTicks: opts.warnLogTicks,
       log,
       stats: playerStats,
     });
@@ -530,7 +535,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         if (!Buffer.from(msg.buildHash).equals(hash)) return rej("sim build mismatch: new version, reload", msg.worldId);
         if (!w || worldKindOf(msg.worldId) === null) return rej("unknown world", msg.worldId);
         if (w.closing) return rej("server is shutting down", msg.worldId);
-        if (w.full) return rej("world log is full; try again later", msg.worldId);
+        // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
         if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
           stats.capRefused++;
           log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");

@@ -34,8 +34,14 @@ export const SANDBOX_ID = 0;
 export const GAME_ID = 1;
 /** World 0 is the sandbox and world 1 the game world (HELLO's world_id picks one). */
 export const worldKindOf = (id: number): number | null => (id === SANDBOX_ID ? WORLD_SANDBOX : id === GAME_ID ? WORLD_GAME : null);
-/** With no verified snapshot the whole log stays in memory; this bounds it (about 55 minutes). */
+/**
+ * With no verified snapshot the whole log stays in memory (about 10 bytes per empty tick, so 200k is about 2 MB).
+ * Past this many ticks the world logs `world.log_long`. It no longer refuses joins: a joiner is the only way to get
+ * a snapshot taken and the log shortened (D-100).
+ */
 export const MAX_LOG_TICKS = 200_000;
+/** The first `world.log_long` warning. */
+export const WARN_LOG_TICKS = 100_000;
 /** Drop a client whose socket send queue grows past this: it is not keeping up. */
 export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 export const HASH_WAIT_MS = 2000;
@@ -98,6 +104,9 @@ export interface WorldOptions {
   /** Hex sha256 of the sim build, stored with ticks and snapshots. */
   simBuild?: string;
   snapshotEveryTicks?: number;
+  /** Override MAX_LOG_TICKS and WARN_LOG_TICKS (tests). */
+  maxLogTicks?: number;
+  warnLogTicks?: number;
   log?: EventLog;
   /** Per-player counters; the world bumps `resyncs`. Optional so a bare World works in unit tests. */
   stats?: PlayerStats;
@@ -140,6 +149,10 @@ export class World {
   private readonly verifier?: SnapshotVerifier;
   private readonly simBuild: string;
   private readonly snapshotEvery: number;
+  private readonly maxLogTicks: number;
+  private readonly warnLogTicks: number;
+  /** Which of the two log-length warnings (0 none, 1 warn level, 2 cap) have fired since the log last shrank. */
+  private logWarned = 0;
   private readonly elog: EventLog;
   private readonly pstats?: PlayerStats;
   private nextPlayer = 1;
@@ -175,6 +188,8 @@ export class World {
     this.verifier = opts.verifier;
     this.simBuild = opts.simBuild ?? "";
     this.snapshotEvery = opts.snapshotEveryTicks ?? SNAPSHOT_EVERY_TICKS;
+    this.maxLogTicks = opts.maxLogTicks ?? MAX_LOG_TICKS;
+    this.warnLogTicks = opts.warnLogTicks ?? WARN_LOG_TICKS;
     this.elog = opts.log ?? new EventLog({ quiet: true });
     this.pstats = opts.stats;
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
@@ -200,8 +215,22 @@ export class World {
     return this.members.size;
   }
 
+  /** Past the cap. Informational only: joins are still allowed, since a joiner is how a snapshot gets taken. */
   get full(): boolean {
-    return this.log.length >= MAX_LOG_TICKS;
+    return this.log.length >= this.maxLogTicks;
+  }
+
+  /** `world.log_long` once at the warn length and once at the cap, re-armed when a snapshot shortens the log. */
+  private checkLogLength(): void {
+    const n = this.log.length;
+    if (n < this.warnLogTicks) {
+      this.logWarned = 0;
+      return;
+    }
+    const level = n >= this.maxLogTicks ? 2 : 1;
+    if (level <= this.logWarned) return;
+    this.logWarned = level;
+    this.elog.limited(`log_long:${this.id}:${level}`, 60_000, "world.log_long", { world: this.id, log_ticks: n, limit: level === 2 ? "cap" : "warn", cap: this.maxLogTicks }, "warn");
   }
 
   // ---- cold start (plan 9.2, D-004) -------------------------------------------------------------
@@ -515,6 +544,7 @@ export class World {
     }
     this.resolveDue(t);
     this.maybeRequestSnapshot();
+    this.checkLogLength();
   }
 
   /** SIGTERM path: stop taking inputs, close the open tick, write everything. */

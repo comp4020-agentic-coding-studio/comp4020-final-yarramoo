@@ -77,3 +77,20 @@ describe("a lapsed request", () => {
     a.close();
   }, 60_000);
 });
+
+describe("a log past the cap", () => {
+  it("still accepts joins, and logs world.log_long at the warn length and at the cap", async () => {
+    const s = await startServer({ port: 0, dataDir: tmp(), snapshotEveryTicks: 1_000_000, maxLogTicks: 90, warnLogTicks: 40, quiet: true });
+    cleanups.push(() => s.close());
+    const a = await connect(s.port, hex, { manual: true });
+    await waitFor(() => s.world.log.length >= 100, 10000, "a log past the cap");
+    expect(s.world.full).toBe(true);
+    const b = await connect(s.port, hex, { manual: true }); // used to reject with "world log is full"
+    expect(b.playerId).toBeGreaterThanOrEqual(0);
+    const long = s.log.recent().filter((e) => e.ev === "world.log_long");
+    expect(long.map((e) => e.limit)).toEqual(["warn", "cap"]);
+    expect(long.every((e) => e.lvl === "warn")).toBe(true);
+    a.close();
+    b.close();
+  });
+});
