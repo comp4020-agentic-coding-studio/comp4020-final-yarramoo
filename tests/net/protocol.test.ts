@@ -27,7 +27,7 @@ const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
 describe("protocol codec", () => {
   it("round-trips HELLO, INPUT, PING", () => {
     const h = decodeClient(encodeHello(hash, 7));
-    expect(h).toMatchObject({ t: "hello", version: 3, worldId: 7, flags: 0 });
+    expect(h).toMatchObject({ t: "hello", version: 4, worldId: 7, flags: 0 });
     expect(h && h.t === "hello" && Array.from(h.buildHash)).toEqual(Array.from(hash));
     const payload = encodePaint(0, 4, -3, 5, 100, 200, 6).subarray(5);
     expect(payload.length).toBe(PAINT_PAYLOAD_LEN);
@@ -87,12 +87,19 @@ describe("protocol codec", () => {
   });
 
   it("round-trips HASH and SNAPSHOT_UPLOAD, including the top bit of the u64", () => {
-    expect(decodeClient(encodeHash(600, 0xfedcba9876543210n))).toEqual({ t: "hash", tick: 600, hash: 0xfedcba9876543210n });
+    expect(decodeClient(encodeHash(600, 0xfedcba9876543210n))).toEqual({ t: "hash", tick: 600, hash: 0xfedcba9876543210n, stepP95: 0, buffered: 0 });
+    expect(decodeClient(encodeHash(600, 5n, 1.234, 7))).toEqual({ t: "hash", tick: 600, hash: 5n, stepP95: 1.23, buffered: 7 });
+    // Clamped to the field widths, and never negative or NaN.
+    expect(decodeClient(encodeHash(1, 1n, 9999, 9999))).toMatchObject({ stepP95: 655.35, buffered: 255 });
+    expect(decodeClient(encodeHash(1, 1n, -3, -1))).toMatchObject({ stepP95: 0, buffered: 0 });
+    expect(decodeClient(encodeHash(1, 1n, NaN, NaN))).toMatchObject({ stepP95: 0, buffered: 0 });
+    // A v3 HASH (13 bytes) is refused.
+    expect(decodeClient(encodeHash(1, 1n).subarray(0, 13))).toBeNull();
     const data = Uint8Array.from({ length: 300 }, (_, i) => i * 7);
     const u = decodeClient(encodeSnapshotUpload(1800, 0x8000000000000001n, data));
     expect(u).toMatchObject({ t: "snapshot-upload", tick: 1800, hash: 0x8000000000000001n });
     expect(u && u.t === "snapshot-upload" && Array.from(u.data)).toEqual(Array.from(data));
-    expect(decodeClient(encodeHash(1, 1n).subarray(0, 12))).toBeNull();
+    expect(decodeClient(encodeHash(1, 1n).subarray(0, 15))).toBeNull();
     expect(decodeClient(encodeSnapshotUpload(1, 1n, new Uint8Array(0)).subarray(0, 13))).toBeNull();
   });
 

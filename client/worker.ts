@@ -187,12 +187,18 @@ function onPointer(m: Extract<ToWorker, { type: "pointer" }>) {
   flushStroke(false);
 }
 
+function stepP95Now(): number {
+  if (!stepTimes.length) return 0;
+  const sorted = [...stepTimes].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+}
+
 function onTickApplied(tick: number, inputs: { player: number; kind: number }[]) {
   // A Join of mine after the replay means the sim has (re)activated my entity: re-place the avatar on it.
   if (ls && !ls.fastForwarding) for (const i of inputs) if (i.player === myId && i.kind === KIND_JOIN) avatarReady = false;
   if (ls && ws && ws.readyState === WebSocket.OPEN) {
     const r = reactToTick(ls, tick, wantSnapshotAt);
-    if (r.hash !== undefined) ws.send(encodeHash(tick, r.hash) as BufferSource);
+    if (r.hash !== undefined) ws.send(encodeHash(tick, r.hash, stepP95Now(), ls.buffered) as BufferSource);
     if (r.snapshot) {
       wantSnapshotAt = 0;
       ws.send(encodeSnapshotUpload(tick, r.snapshot.hash, r.snapshot.data) as BufferSource);

@@ -3,7 +3,7 @@ import { unzlibSync, zlibSync } from "fflate";
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -64,7 +64,7 @@ export type ClientMsg =
   | { t: "hello"; version: number; buildHash: Uint8Array; token: Uint8Array; worldId: number; flags: number }
   | { t: "input"; seq: number; kind: number; payload: Uint8Array }
   | { t: "ping"; ts: number }
-  | { t: "hash"; tick: number; hash: bigint }
+  | { t: "hash"; tick: number; hash: bigint; stepP95: number; buffered: number }
   | { t: "snapshot-upload"; tick: number; hash: bigint; data: Uint8Array };
 
 export type ServerMsg =
@@ -148,11 +148,18 @@ export function encodePong(ts: number): Uint8Array {
   return b;
 }
 
-export function encodeHash(tick: number, hash: bigint): Uint8Array {
-  const b = new Uint8Array(13);
+/**
+ * HASH: tick u32, state hash u64, stepP95 u16 (hundredths of a ms, clamped), buffered u8 (playout buffer length,
+ * clamped). The last two are timing figures for the server's dashboard; the sim never sees them.
+ */
+export function encodeHash(tick: number, hash: bigint, stepP95Ms = 0, buffered = 0): Uint8Array {
+  const b = new Uint8Array(16);
   b[0] = C_HASH;
   view(b).setUint32(1, tick, true);
   view(b).setBigUint64(5, BigInt.asUintN(64, hash), true);
+  const hund = Math.round(stepP95Ms * 100);
+  view(b).setUint16(13, Number.isFinite(hund) ? Math.max(0, Math.min(65535, hund)) : 0, true);
+  b[15] = Number.isFinite(buffered) ? Math.max(0, Math.min(255, Math.floor(buffered))) : 0;
   return b;
 }
 
@@ -281,8 +288,8 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
       if (b.length !== 5) return null;
       return { t: "ping", ts: v.getUint32(1, true) };
     case C_HASH:
-      if (b.length !== 13) return null;
-      return { t: "hash", tick: v.getUint32(1, true), hash: v.getBigUint64(5, true) };
+      if (b.length !== 16) return null;
+      return { t: "hash", tick: v.getUint32(1, true), hash: v.getBigUint64(5, true), stepP95: v.getUint16(13, true) / 100, buffered: b[15] };
     case C_SNAPSHOT_UPLOAD:
       if (b.length < 14) return null;
       return { t: "snapshot-upload", tick: v.getUint32(1, true), hash: v.getBigUint64(5, true), data: b.slice(13) };
