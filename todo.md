@@ -92,6 +92,12 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
   Seen in a 375 px screenshot. Easy fixes if you agree: map the tap to the
   nearest player dot (and follow them, for a spectator), or keep the camera's
   depth and only move it sideways. Left as built until you've looked.
+- **The 30-minute soak passed but did not reach combat (`5dcda0c`).** 1807 of
+  1807 hash checks agreed, 0 resyncs, the same final hash on all three clients.
+  But the bots never got below y 609, so no deaths, bombs or bags happened live.
+  M5 combat sync is proven by the scripted cross-browser test (D-114: 4 deaths,
+  8 bombs, 206 gunpowder explosions, agreed in four engines), not by a soak. A
+  soak that really fights needs a test-only way to put bots in the deep band.
 
 ## Now
 
