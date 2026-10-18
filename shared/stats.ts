@@ -31,3 +31,13 @@ export const depthCells = (yFixed: number): number => Math.max(0, Math.floor(yFi
 export function compactCounts(m: ReadonlyMap<string, number>): string {
   return [...m].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, v]) => `${k}:${v}`).join(",");
 }
+
+/** The game world's depth bands, y in cells (plan 6.9). Mirrors SHALLOW_TOP and DEEP_TOP in sim/src/gen.rs, pinned by
+ *  tests/net/depth-bands.test.ts. The one TypeScript copy: the client renderer and the server's player page read it. */
+export const SHALLOW_TOP = 260;
+export const DEEP_TOP = 800;
+
+/** The band a depth (cells) is in, with the plan's names: above SHALLOW_TOP is the surface. */
+export function depthBand(y: number): "surface" | "shallow" | "deep" {
+  return y >= DEEP_TOP ? "deep" : y >= SHALLOW_TOP ? "shallow" : "surface";
+}

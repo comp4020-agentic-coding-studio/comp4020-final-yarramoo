@@ -25,11 +25,12 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
-import { createDashboard, DEEP_TOP, INDEX_MAX_ROWS, SHALLOW_TOP, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
+import { createDashboard, INDEX_MAX_ROWS, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
 import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
   castStat,
   compactCounts,
+  depthBand,
   depthCells,
   materialKey,
   paintStat,
@@ -292,7 +293,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       sessions: st[STAT_SESSIONS] ?? 0,
       playMs: st[STAT_PLAY_MS] ?? 0,
       maxDepth,
-      depthBand: maxDepth >= DEEP_TOP ? "deep" : maxDepth >= SHALLOW_TOP ? "mid" : maxDepth > 0 ? "shallow" : "surface",
+      depthBand: depthBand(maxDepth),
       kills: st[STAT_KILLS] ?? 0,
       deaths: st[STAT_DEATHS] ?? 0,
       casts: bucket("casts_"),

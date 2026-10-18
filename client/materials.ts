@@ -37,6 +37,5 @@ export function paletteTable(): number[] {
 export const SANDBOX = 512;
 /** What the camera shows of a world larger than the sandbox (plan 8). */
 export const GAME_VIEW = { w: 480, h: 270 };
-/** Depth bands of the game world, y in cells. Mirrors SHALLOW_TOP and DEEP_TOP in sim/src/gen.rs (pinned by a test). */
-export const SHALLOW_TOP = 260;
-export const DEEP_TOP = 800;
+/** Depth bands of the game world: one source in shared/stats.ts, pinned to sim/src/gen.rs. */
+export { DEEP_TOP, SHALLOW_TOP } from "../shared/stats.ts";

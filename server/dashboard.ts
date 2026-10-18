@@ -4,6 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LogEvent } from "../shared/events.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
+import type { depthBand } from "../shared/stats.ts";
 import type { EventLog } from "./log.ts";
 import type { ConnInfo, ServerSummary } from "./main.ts";
 
@@ -16,8 +17,6 @@ const KEEPALIVE_MS = 15_000;
 const BACKLOG = 200;
 
 /** Depth bands in cells, mirrored from client/materials.ts (the server may not import the client; a test pins them). */
-export const SHALLOW_TOP = 260;
-export const DEEP_TOP = 800;
 export const INDEX_PAGE_SIZE = 50;
 export const INDEX_MAX_ROWS = 200;
 
@@ -34,7 +33,7 @@ export interface PlayerDetail {
   sessions: number;
   playMs: number;
   maxDepth: number;
-  depthBand: "surface" | "shallow" | "mid" | "deep";
+  depthBand: ReturnType<typeof depthBand>;
   kills: number;
   deaths: number;
   casts: Record<string, number>;
