@@ -118,7 +118,11 @@ Budgeted from next week's allowance (resets Thu 15 Oct 9 am); the user decided
 on 14 Oct. Still open: whether it lands on `main` with the game world (merge
 `multa`) or on its own on top of the live sandbox.
 
-- [ ] Structured server logs: joins, leaves, desyncs, snapshots, rejects.
+- [x] Structured server logs: joins, leaves, desyncs, snapshots, rejects
+      (`9eecdab`..`33d3f1b`); names for every visitor, `player_stats`,
+      `input.summary` (`b220c64`..`85e4459`, review `docs/research/review-crit10.md`).
+- [ ] Before merging to `main`: build and boot the real Docker image (CI does
+      not run on `multa`; review S1 was a boot failure only the image shows).
 - [ ] Basic live dashboard at `/dashboard`: players online, tick rate,
       per-client lag and RTT, hash checks passed and failed, snapshot sizes,
       RSS against the 256 MB machine.
