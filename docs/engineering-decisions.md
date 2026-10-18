@@ -1,0 +1,547 @@
+# Engineering decisions and challenges
+
+This is a curated account of the decisions that shaped this project and the
+problems that cost the most time, and how each was reasoned about. It is a
+reading copy, not the record. [`DECISIONS.md`](DECISIONS.md) is the complete
+log (D-001 to D-101, one row per change) and stays the source of truth. Here I
+pick about a dozen and tell each as a short story, with links back to the rows,
+the research notes in [`research/`](research/) and the commits. Where a belief
+turned out wrong, the correction is kept in the text, because that is the part
+worth learning from.
+
+Numbers come from the repo and say where. "Measured" means a number in a
+research note or a D-row. "Inferred" means nobody checked it directly.
+Commit links use the same form as [`PROCESS.md`](../PROCESS.md).
+
+The game is a shared falling-sand world in the browser. The design is in
+[`plan.md`](plan.md); a diagram of the networking is in
+[`lockstep-networking.png`](lockstep-networking.png).
+
+## Contents
+
+Decisions
+1. [Server-paced deterministic lockstep](#1-server-paced-deterministic-lockstep)
+2. [A Rust simulation in WebAssembly, with hard rules](#2-a-rust-simulation-in-webassembly-with-hard-rules)
+3. [Counter-based randomness](#3-counter-based-randomness)
+4. [Every client simulates; the server only checks](#4-every-client-simulates-the-server-only-checks)
+5. [The networking: ticks, playout, protocol versions](#5-the-networking-ticks-playout-protocol-versions)
+6. [Persistence on a machine that stops when idle](#6-persistence-on-a-machine-that-stops-when-idle)
+7. [A determinism harness before any game code](#7-a-determinism-harness-before-any-game-code)
+8. [Chunk sleeping that must be invisible](#8-chunk-sleeping-that-must-be-invisible)
+9. [Identity and names](#9-identity-and-names)
+10. [Observability, the dashboard and admin reset](#10-observability-the-dashboard-and-admin-reset)
+
+Challenges
+11. [The live site went down on 18 October](#11-the-live-site-went-down-on-18-october)
+12. [Snapshot timing, and the correction](#12-snapshot-timing-and-the-correction)
+13. [The late-join test that failed after the world cache](#13-the-late-join-test-that-failed-after-the-world-cache)
+14. [Liquids "stuck in staircases"](#14-liquids-stuck-in-staircases)
+15. [Performance gate P1](#15-performance-gate-p1)
+16. [What independent reviews caught that tests missed](#16-what-independent-reviews-caught-that-tests-missed)
+
+---
+
+## 1. Server-paced deterministic lockstep
+
+**Context.** Everyone shares one destructible world of sand, water and fire,
+live, on one 256 MB shared-CPU Fly machine.
+
+**Decision.** Every browser runs the same simulation on the same ordered stream
+of inputs. The server stamps inputs with a tick number, closes ticks on its own
+clock and broadcasts them. It never steps the simulation.
+
+**Alternatives considered.** A server-side simulation. Syncing world state
+instead of inputs. Peer-to-peer, or rollback netcode.
+
+**Why.** A shared vCPU gets a small baseline share of a core and would be
+throttled by a 60 Hz world (plan section 3). A single explosion changes tens of
+thousands of cells, which rules out syncing state. Browsers are free compute.
+Lockstep is exactly consistent by construction, so a desync is always a bug,
+which hashes can detect and the input log can reproduce.
+
+**Cost / consequences.** Determinism is all-or-nothing. That one fact produced
+the next four entries: the sim's hard rules, counter-based randomness, the
+test harness before any game code, and a server that has to police clients
+without being able to run the sim. The out-of-scope list (plan section 16, and
+invariant 11 in `CLAUDE.md`) bans server stepping, P2P and rollback so a later
+session cannot quietly reopen the choice.
+
+**Evidence.** [plan.md section 3](plan.md); D-002, D-003 in
+[DECISIONS.md](DECISIONS.md); commit
+[`7a99056`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/7a99056)
+(the plan);
+[`bc033ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/bc033ad)
+(the plan conformed to the real course setup, such as 256 MB not 512).
+
+## 2. A Rust simulation in WebAssembly, with hard rules
+
+**Context.** Lockstep only works if every browser engine and CPU produces
+bit-identical results from the same inputs.
+
+**Decision.** The simulation is Rust compiled to `wasm32`. It follows rules
+that are enforced by tools, not by care:
+
+- No floating point, with `#![deny(clippy::float_arithmetic)]`; fixed point
+  instead. Floats are the classic source of cross-machine drift.
+- No host imports. CI asserts `WebAssembly.Module.imports(module)` is empty, so
+  the sim cannot read a clock, a random source or the JS engine.
+- No `HashMap` or `HashSet`, banned with clippy `disallowed-types`. Their
+  iteration order is not guaranteed.
+- Hash only fixed-width integers, never `usize`, which is 32-bit on wasm32 and
+  64-bit natively.
+- The ABI carries integers only, so aim angles and positions are quantised in
+  TypeScript before they become inputs.
+
+**Alternatives considered.** Writing the sim in TypeScript, which would make
+float and engine differences much harder to rule out. AssemblyScript or C.
+
+**Why.** Rust and its wasm target were already installed (D-006), and each rule
+removes a whole class of "works on my machine" bug. A rule that a linter checks
+cannot be forgotten by a worker agent at 2 am.
+
+**Cost / consequences.** Everything is integer arithmetic, including cave
+generation (a checked-in smoothstep table, D-051) and aim (a baked trig table,
+see the next entry). New input kinds must also bound their cost, because every
+client runs every input: an early commit clamped Paint so one huge stroke could
+not freeze the room.
+
+**Evidence.** Invariants 1 to 11 in `CLAUDE.md`; [plan.md section 4](plan.md);
+D-006, D-017, D-051;
+[`92ed2f0`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/92ed2f0)
+(sim skeleton),
+[`3094d25`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3094d25)
+(Paint clamp),
+[`e10ed73`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e10ed73)
+(byte layouts pinned before the Rust and TypeScript workers started).
+
+## 3. Counter-based randomness
+
+**Context.** Cells need random choices (which way water slides, whether fire
+spreads), and every client must make the same ones.
+
+**Decision.** `rng(seed, tick, x, y, salt)` is a pure function that mixes its
+five inputs. There is no stateful generator. Every distinct use gets its own
+salt constant. Aim uses a 1024-entry sine table generated by a script and
+checked in (D-075).
+
+**Alternatives considered.** A seeded stateful PRNG advanced in update order.
+
+**Why.** With a stateful generator, any change in the order cells are visited,
+or any skipped draw, shifts every later random number and the clients diverge.
+A counter-based draw depends only on where and when it is made, so ordering
+cannot matter. It also makes snapshots trivial: there is no generator state to
+save. The trig table avoids calling `sin`, which uses floats that can differ
+by platform. 1024 entries is 2 KB, against 128 KB for a full 16-bit
+table, and the aim resolution is about 0.35 degrees (D-075).
+
+**Cost / consequences.** Every random draw costs three mix rounds, and profiling
+later found draws that could not matter (entry 15). Long-range spells would
+need a finer table.
+
+**Evidence.** [plan.md section 6.3](plan.md); D-051, D-075, D-087;
+[`1bc6b0e`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/1bc6b0e)
+(projectiles and the baked trig table).
+
+## 4. Every client simulates; the server only checks
+
+**Context.** The server never steps the sim (invariant 11), but a client can
+drift, lie or upload a bad snapshot.
+
+**Decision.** The server checks without simulating:
+
+- Clients send a HASH every 60 ticks. The server takes the majority as truth
+  and resyncs any client that differs (D-038).
+- Snapshots are produced by clients. The server accepts one only when the
+  uploader's claim, the majority hash and an independent restore all agree
+  (D-040).
+- That restore runs in a `worker_threads` worker that decompresses, restores and
+  hashes but never steps (D-066).
+- Input validation is light: the server re-adds the player id to every input,
+  so a client cannot name another player (D-032), and Pos jumps are bounded.
+
+**Alternatives considered.** Trusting the first uploader. Restoring on the main
+thread. Server-side replay.
+
+**Why.** Restoring regenerates the world, and measured in D-066 a main-thread
+restore blocks for about 260 ms against a 16 ms tick clock. In the worker, a
+game snapshot verified in 381 ms while the worst gap between closed ticks was
+21 ms (measured, D-066).
+
+**Cost / consequences.** A world with one connected client has no majority, so
+its hashes become the truth and a drifted lone client could have a bad snapshot
+verified. I accepted that gap and logged it (D-045); determinism, tested in
+four engines, is what protects state, and the hash check bites once a second
+client is present.
+
+**Evidence.** D-038, D-040, D-045, D-066, D-071;
+[`fb59b10`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/fb59b10)
+(snapshots, hash checks, resync);
+[`43a1cab`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/43a1cab)
+(off-thread verify);
+[`ac44fc3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ac44fc3)
+(the lone-client gap logged).
+
+## 5. The networking: ticks, playout, protocol versions
+
+**Context.** Browsers at different speeds must apply the same ticks and still
+feel responsive.
+
+**Decision.**
+
+- Ticks are numbered from 1. Closed tick k is applied as "push its inputs, then
+  step", so `sim.tick() == k` afterwards. WELCOME carries the last closed tick,
+  which is the joiner's replay target (D-030).
+- The server clock runs only while players are connected. `stamp()` first
+  closes every tick that has passed, so a late timer cannot skip a tick or file
+  an input into one already gone (D-035).
+- The client holds a playout buffer: it holds when empty and rebuffers to two
+  ticks. Catch-up runs unthrottled in 12 ms slices per frame, rendering between
+  (D-034).
+- Protocol bumps: v1 (HELLO, INPUT, TICK), v2 (HASH, snapshots, RESYNC), v3
+  (spectator flag, player names), v4 (HASH carries step time and buffer depth).
+- Knockback is applied by the victim's own client when its sim reaches the tick.
+  The sim records who hit whom; the push itself is capped to the server's Pos
+  limit (D-076).
+
+**Alternatives considered.** Making knockback a sim effect on avatar position.
+A separate STATS frame instead of widening HASH (D-094).
+
+**Why.** Avatars are not lockstepped (each client predicts its own and sends
+Pos), so a victim's position is only known to its own client. Letting that
+client apply the push keeps avatar state out of the hash.
+
+**Cost / consequences.** A client that ignores a Knock is simply not pushed, and
+nothing validates it; that is acceptable for a co-op game. Bumping the protocol
+costs every open tab: after v4, an old tab gets "protocol version mismatch: new
+version, reload" and must refresh on every deploy (D-094).
+
+**Evidence.** D-030, D-032, D-034, D-035, D-036, D-064, D-076, D-094;
+[`a2d8367`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/a2d8367)
+(lockstep server),
+[`fcb3b58`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/fcb3b58)
+(protocol v4),
+[`9520446`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9520446)
+(client casting and knockback).
+
+## 6. Persistence on a machine that stops when idle
+
+**Context.** Fly stops the machine when nobody is connected, so a cold start is
+the normal path, not a crash path. A marker's next-day visit always takes it.
+
+**Decision.** SQLite (`node:sqlite`, WAL) on the `/data` volume. The world
+stores the latest verified snapshot plus the tick log after it. Start-up is
+"restore the snapshot, replay the log", and the first client to join does the
+replay, not the server. Migrations are an append-only array under
+`PRAGMA user_version`. The server shuts down on SIGTERM by closing the open
+tick and flushing the log.
+
+**Alternatives considered.** Fly Postgres, which is outside the course setup
+(D-002). Snapshotting the last player out (D-004's original plan).
+
+**Why.** One machine and one volume are all `fly.toml` allows. For the last
+player out, D-042 took the plan's own fallback: that client is gone before the
+server can ask, and a round trip plus a majority hash would delay the Leave.
+Replay is at most one interval, about 30 s of ticks.
+
+**Cost / consequences.** A new sim build cannot replay an old log under new
+rules (plan 9.3). On start-up with a changed build, D-041 drops the old log and
+keeps the snapshot if the new build can restore it, else resets the world. After
+crit 10 a reset is not allowed (D-014), so snapshot compatibility is tested
+against bytes the deployed build actually wrote: a committed fixture from the
+live sandbox (D-068). The restored world then plays forward under the new
+rules, which is why `compat.test.ts` separates a DATA claim (must hold forever)
+from a RULES claim (changes on purpose).
+
+**Evidence.** D-002, D-004, D-014, D-039, D-041, D-042, D-044, D-050, D-068,
+D-081; [plan.md section 9](plan.md);
+[`fb59b10`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/fb59b10)
+(snapshots and persistence),
+[`b9a03db`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b9a03db)
+(deploy-prep decisions).
+
+## 7. A determinism harness before any game code
+
+**Context.** Because determinism is all-or-nothing, the first milestone had no
+gameplay at all.
+
+**Decision.** Build the harness first. A seeded input generator drives the sim
+in Node, Chromium, Firefox, WebKit and native Rust, and the hash logs must
+agree. The tests are D1 (repeatable), D2 (cross-engine), D3 (native against
+wasm), D5 (snapshot round trip), D6 (step batching), D10 (the canary) and D11
+(static guards). D10 is a deliberately broken build that imports one host
+function returning an engine-dependent value; D2 must fail on it.
+
+**Alternatives considered.** Writing game features first and adding tests later.
+
+**Why.** A test that has never failed proves nothing. The canary shows the
+harness can see nondeterminism, and the input script exercises the sim (690
+paints, 30 of 30 distinct checkpoint hashes, D-020), so agreement is evidence
+rather than an idle world agreeing with itself.
+
+**Cost / consequences.** The suite takes about 50 s, so it is separate from
+`pnpm check` (D-019). D4, the cross-architecture run on an ARM device, was owed
+and never closed in the record: CI only runs once the repo is public, and a
+phone run was left for later (D-020).
+
+**Evidence.** D-015, D-019, D-020, [plan.md section 12](plan.md);
+[`4f8cca6`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/4f8cca6),
+[`81b8431`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/81b8431),
+[`d911c8f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d911c8f).
+
+## 8. Chunk sleeping that must be invisible
+
+**Context.** The world is 512 by 512 in the sandbox and larger in the game, and
+most of it is at rest.
+
+**Decision.** Each 64-cell chunk has an `awake` flag. A touched cell wakes its
+chunk and any neighbour within one cell of the shared edge. The flag clears
+before a chunk runs and is set again by a touch or by a volatile cell (fire,
+smoke, steam, seeds, lava, growing stems, primed gunpowder). The flag is scratch
+state, not hashed and not snapshotted. Invariant 8 says sleeping must be
+semantically invisible, and test D7 proves it by hashing runs with sleeping on
+and off.
+
+**Alternatives considered.** Running every chunk every tick, which is the
+worst-case baseline (D-053).
+
+**Why.** Sleeping is an optimisation, so it must not change results. If it did,
+a client that woke a chunk at a different time would desync.
+
+**Cost / consequences.** The first rule missed a case, which D5 (the snapshot
+round trip) caught by failing: a cell already moved by a neighbour this tick can
+change without a touch in its own chunk's run. Skipped-because-moved cells are
+now volatile too (D-054). In the generated world, 80 of 768
+chunks run at rest (D-057, measured).
+
+**Evidence.** D-053, D-054, D-057;
+[`3f68c14`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3f68c14),
+[`a104231`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/a104231),
+[`ab07e1a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ab07e1a).
+
+## 9. Identity and names
+
+**Context.** A player needs to come back as the same character, with their
+inventory, and the crit needs readable logs.
+
+**Decision.** `POST /api/players` returns a random 32-byte token and stores only
+its SHA-256. A known token maps to a database row whose id is the sim player id.
+A second connection with the same token replaces the first (close code 4000), so
+a reload recovers at once. Names are plain text, cleaned of control and bidi
+characters. Players only ever see the plain name; `name#id` exists in logs and
+database keys. Later, every visitor gets a name, and a sandbox painter or
+spectator with no token is accepted as anonymous (D-090).
+
+**Alternatives considered.** Rejecting a second connection. Using the
+registered id as the sandbox sim id, which would change the saved world.
+Refusing anonymous painters, which would break old tabs.
+
+**Why.** A stored hash means a database leak does not leak sessions. The id is
+the sim id so the entity returns without a lookup table.
+
+**Cost / consequences.** Anti-teleport was harder than it looked, see entry 16
+for the exploit. A zero token once minted a permanent player on every connect,
+so an unclaimable token no longer gets a player (D-069).
+
+**Evidence.** D-065, D-069, D-070, D-078, D-079, D-090;
+[`43a1cab`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/43a1cab),
+[`f3bf030`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f3bf030),
+[`2e9bdbf`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2e9bdbf).
+
+## 10. Observability, the dashboard and admin reset
+
+**Context.** Crit 10 has classmates use the URL while I read the logs, so the
+logs had to exist before it, not at the end (D-010).
+
+**Decision.** Every server action is a structured JSON event from a fixed
+catalogue; rate-limited where a client can repeat it. A per-connection
+`input.summary` every 10 s replaced per-cast lines, which a held mouse would
+have turned into 6 lines a second (D-092). RTT is timed by the server from a
+WebSocket ping (D-093). The dashboard has a public view (aggregates only, no
+names) and an admin view behind `ADMIN_TOKEN`. An admin can reset a world.
+
+**Alternatives considered.** Polling or WebSocket for the dashboard (SSE chosen,
+D-096). Timing the app-level ping.
+
+**Why.** An admin reset does not contradict D-014. D-014 forbids an accidental
+reset by a deploy that changes a format. D-097 is a deliberate wipe, for when
+classmates have wrecked a world. The reset updates the database first, so a
+failure rolls back and leaves memory untouched; and a generation counter makes a
+verification already running in the worker drop its result rather than save a
+pre-reset snapshot.
+
+**Cost / consequences.** D-098 puts `ADMIN_TOKEN` in `fly.toml` in a public repo
+because the user could not set a secret before crit 10. Anyone who reads the
+repo can open the admin view and reset a world. The decision record says so
+plainly and says to move it to a secret if the world starts to matter.
+
+**Evidence.** D-010, D-092 to D-098; [review-crit10.md](research/review-crit10.md),
+[review-crit10-reset.md](research/review-crit10-reset.md);
+[`9eecdab`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9eecdab),
+[`d088c4f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d088c4f),
+[`0ca9f5e`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/0ca9f5e).
+
+---
+
+## 11. The live site went down on 18 October
+
+**What happened.** The sandbox stopped serving. Every cold start threw
+`RangeError: Maximum call stack size exceeded` in `loadFromDb`, and Fly gave up
+after 10 restarts.
+
+**What we believed.** That a restart would restore the world, as it does on every
+idle stop. The record does not say what was believed before the crash.
+
+**What we found.** Start-up added the replayed log with `push(...frames)`.
+Spreading 130,000 or more frames as call arguments overflows V8's stack, and the
+sandbox's log since its last snapshot had grown past that. I reproduced it in
+the real Docker image on a seeded 150,000-tick log: unfixed, a RangeError and no
+HTTP; fixed, 150,000 ticks loaded and HTTP 200 (D-099).
+
+**What changed.** The log is appended one frame at a time. The fix went onto
+`main` first and then `multa`. Why the log had grown so long was not answered
+by D-099; entry 12 is that investigation.
+
+**Evidence.** D-099;
+[`2c70ceb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2c70ceb)
+(hotfix on `main`),
+[`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2).
+
+## 12. Snapshot timing, and the correction
+
+**What happened.** A log that should be short, because verified snapshots
+normally truncate it, had grown past 130,000 ticks. Research
+([snapshot-timing.md](research/snapshot-timing.md)) read the code and found the
+server asked the longest-connected client for a snapshot even while it was still
+replaying; the client could not answer in time, and the request was wasted. A
+lapsed request also did not retry for a full cycle.
+
+**What we believed.** That a long log could never recover: "never recovers" was
+the note's own heading. Four fixes followed (D-100): ask only a live member,
+retry 300 ticks after a lapse, show log length on the dashboard, and stop
+refusing joins on a full log.
+
+**What we found.** A side-by-side browser test on the same seeded sandbox (a lava
+heap and 20,000 logged ticks), old code `c895a35` against new `70355c5`, showed
+the old code was slow, not stuck. It recovered about 5 s after the client went
+live, at most about 43 s late. D-101 corrected the account. The likely cause of
+the 14 to 18 October gap is visitors leaving during a catch-up that ran for
+minutes; that is inferred, because visit lengths were not logged then.
+
+**What changed.** The 200,000-tick cap was a real trap: above it every join was
+refused, so no snapshot was possible at all. That fix stands. The note, the
+D-row and this entry all keep the correction visible. The real cures, pausing the
+clock for a lone catching-up visitor and snapshotting mid-replay, are in
+[FUTURE.md](../FUTURE.md) and not built.
+
+**Evidence.** D-100, D-101; [snapshot-timing.md](research/snapshot-timing.md);
+[`c895a35`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/c895a35),
+[`dbe8495`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/dbe8495),
+[`70355c5`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/70355c5),
+[`943cefc`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/943cefc).
+
+## 13. The late-join test that failed after the world cache
+
+**What happened.** After caching the generated world so a join did not generate
+twice (D-088, joins went from 1170 ms to 320 to 520 ms, measured in Node wasm),
+the M4b late-join net test failed. The cache stayed unpushed until it was
+explained.
+
+**What we believed.** That the cache altered restored entities, so snapshots
+with bolts in flight failed verification.
+
+**What we found.** That was false. The instrumented run showed one snapshot
+accepted and none rejected. A bolt exists for only 8 ticks of each 24-tick cast
+cycle, and every snapshot tick was a multiple of 120, so every snapshot landed
+on the same bolt-free phase. Rejoining re-fetched the same snapshot. Why the test
+had passed two runs in three before is not established.
+
+**What changed.** The test only: shooter period 117 ms so the phase walks, a
+60-tick cadence, and a rejoin on each new verified snapshot (D-089).
+
+**Evidence.** D-088, D-089; [d088-late-join.md](research/d088-late-join.md);
+[`4ad1435`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/4ad1435),
+[`5e417ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5e417ed).
+
+## 14. Liquids "stuck in staircases"
+
+**What happened.** From play, a lava heap looked like a staircase on chunk edges,
+48 rows high after 100 s.
+
+**What we believed.** That liquids were stuck, and a sleeping bug was ruled out
+(sleeping on and off gave identical results). D-081 made liquids slide sideways
+to a reach. Its test called `Grid::step_cells` directly in a smaller world.
+
+**What we found.** The browser still showed steps. Comparing against the deployed
+build showed it also levelled a large heap, just slowly: flat by about tick
+30,000 (8 minutes). The first test had read slow settling as stuck (D-082).
+
+**What changed.** The real problem was settling speed. Dispersion levels the same
+heap by tick 16,000 (4.4 minutes), about twice as fast, and the regression test
+now measures that on the real sandbox through `Sim::step`. A big lava heap still
+takes minutes, partly by design. The lesson: check a diagnosis against the artifact
+the user sees.
+
+**Evidence.** D-081, D-082;
+[`f48a500`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f48a500),
+[`42e167a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/42e167a).
+
+## 15. Performance gate P1
+
+**What happened.** The plan set a worst-case budget: step time p95 of at most
+8 ms with four players each lighting a fire and a flood. The G2 run found N1,
+the live multi-client soak, passing and P1 failing.
+
+**What we believed.** Measured, native p95 was 9.0 ms and 36.0 ms at 4x CPU
+throttle ([g2-results.md](research/g2-results.md)). The first reading blamed
+chunks that cannot sleep, with the flood the cause, and pointed at tuning sleep
+or moving liquids every other tick.
+
+**What we found.** Profiling a native benchmark showed the cell pass was over 95%
+of the step, and `liquid_move` drew its left/right rng for nearly every cell of a
+settled flood, where the draw cannot matter. D-087 draws only when both sides are
+open. Every state hash is unchanged, and p95 fell from 9.0 to 4.8 ms native and
+36 to 16 ms at 4x (measured, D-087).
+
+**What changed.** The profile was an honest improvement, but the 4x number is
+still over budget. The remaining option, liquids moving every other tick, would
+slow water for everyone, so it is a gameplay decision left to the user. Two
+limits are on record: the flood was painted with Paint, far more water than a
+spell can make, and a real phone was never measured.
+
+**Evidence.** D-080, D-087; [g2-results.md](research/g2-results.md);
+[`3111461`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3111461),
+[`3c5188a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3c5188a).
+
+## 16. What independent reviews caught that tests missed
+
+**What happened.** Slices that set structure were read cold by a fresh reviewer.
+Three findings show why.
+
+**What we found.**
+
+- **M3 S3, a snapshot buffer overrun.** `snapshot::size` ignored entity bytes,
+  so once entities existed, `snapshot_write` would overrun a buffer sized from
+  it, memory corruption in wasm. Every test passed because the sandbox had no
+  entities. Fixed with a size-equals-length test
+  ([review-m3.md](research/review-m3.md), D-061).
+- **M4b S1, a two-message teleport.** D-073 skipped the distance check on a
+  claimed `life + 1` and then adopted the claimed position as the baseline. A
+  second Pos with the real life passed against the moved baseline. D-078 keeps one
+  baseline per player and life, and a Pos never moves another life's baseline.
+  D-079 then widened the respawn window to three lives, because the first fix
+  locked out a player who died twice between Pos messages
+  ([review-m4b.md](research/review-m4b.md)).
+- **Crit 10 S1, an image that would not boot.** `shared/stats.ts` imported client
+  source that the runtime Docker stage does not copy. Tests run from the working
+  tree and could not see it. Names moved into `shared/`, and a test now checks
+  that `server/` and `shared/` never import from `client/`
+  ([review-crit10.md](research/review-crit10.md)).
+
+**What changed.** Each review's findings were checked against the code before
+being acted on, and the common cause is that tests run in a different place
+from where the system ships.
+
+**Evidence.** D-061, D-078, D-079; reviews as linked;
+[`d6f8921`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d6f8921),
+[`08b1dd7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/08b1dd7),
+[`e46c83f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e46c83f).
