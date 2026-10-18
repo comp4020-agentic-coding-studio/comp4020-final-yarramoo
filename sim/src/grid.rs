@@ -47,6 +47,10 @@ pub struct Grid {
     /// Scratch, not state: explosions queued during this tick's cell pass (plan 6.2 step 4).
     /// Primed Gunpowder lives in the grid (`aux == 1`), so leftovers beyond the cap are not lost.
     pending: Vec<(u32, u32)>,
+    /// Scratch, not state, like `awake` (D-054): the centres that really detonated in the last
+    /// `step_cells`, in queue order, for the damage pass. Cleared at the start of each `step_cells`,
+    /// never hashed or snapshotted, and never fed back into the grid.
+    pub explosions: Vec<(u32, u32)>,
 }
 
 /// Explosions resolved per tick. Bounds the per-tick cost of a chain (D-022).
@@ -73,6 +77,7 @@ impl Grid {
             vol_seen: false,
             ran_chunks: 0,
             pending: Vec::new(),
+            explosions: Vec::new(),
         }
     }
 
@@ -161,6 +166,7 @@ impl Grid {
     pub fn step_cells(&mut self, seed: u64, tick: u32) {
         self.moved.fill(0);
         self.pending.clear();
+        self.explosions.clear();
         let odd = tick & 1 == 1;
         self.ran_chunks = 0;
         for cy in (0..self.ch).rev() {
@@ -624,36 +630,43 @@ impl Grid {
         self.powder_move(x, y, seed, tick, SALT_GUNPOWDER_DIAG);
     }
 
-    /// Plan 6.2 step 4: resolve this tick's queued explosions in queue order.
+    /// Plan 6.2 step 4: resolve this tick's queued explosions in queue order. Each centre that really
+    /// detonates is also reported in `explosions` for the damage pass.
     fn resolve_explosions(&mut self, seed: u64, tick: u32) {
         let queue = core::mem::take(&mut self.pending);
-        let r = BLAST_RADIUS;
         for &(cx, cy) in &queue {
-            let (cx, cy) = (cx as i32, cy as i32);
             let ci = cy as usize * self.w + cx as usize;
             if self.mat[ci] != GUNPOWDER {
                 continue;
             }
-            for y in (cy - r).max(0)..=(cy + r).min(self.h as i32 - 1) {
-                for x in (cx - r).max(0)..=(cx + r).min(self.w as i32 - 1) {
-                    let d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
-                    if d2 > r * r {
-                        continue;
+            self.explosions.push((cx, cy));
+            self.carve(cx as i32, cy as i32, BLAST_RADIUS, seed, tick);
+        }
+    }
+
+    /// Clear the disc of radius `r` around (`cx`, `cy`): bedrock stays, Gunpowder other than the centre
+    /// cell is primed, everything else becomes Empty (or Fire on a third of the rim, by counter-based rng).
+    /// Work is bounded by the (2r+1)^2 box clamped to the world.
+    pub fn carve(&mut self, cx: i32, cy: i32, r: i32, seed: u64, tick: u32) {
+        let ci = cy as usize * self.w + cx as usize;
+        for y in (cy - r).max(0)..=(cy + r).min(self.h as i32 - 1) {
+            for x in (cx - r).max(0)..=(cx + r).min(self.w as i32 - 1) {
+                let d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+                if d2 > r * r {
+                    continue;
+                }
+                let i = y as usize * self.w + x as usize;
+                match self.mat[i] {
+                    BEDROCK => {}
+                    // Caught in the blast: primed, explodes on the next tick.
+                    GUNPOWDER if i != ci => {
+                        if self.aux[i] != 1 {
+                            self.set(i, GUNPOWDER, 1);
+                        }
                     }
-                    let i = y as usize * self.w + x as usize;
-                    match self.mat[i] {
-                        BEDROCK => {}
-                        // Caught in the blast: primed, explodes on the next tick.
-                        GUNPOWDER if i != ci => {
-                            if self.aux[i] != 1 {
-                                self.set(i, GUNPOWDER, 1);
-                            }
-                        }
-                        _ => {
-                            let rim = d2 > (r - 1) * (r - 1)
-                                && rng(seed, tick, x as u32, y as u32, SALT_BLAST_RIM) % 3 == 0;
-                            self.set(i, if rim { FIRE } else { EMPTY }, 0);
-                        }
+                    _ => {
+                        let rim = d2 > (r - 1) * (r - 1) && rng(seed, tick, x as u32, y as u32, SALT_BLAST_RIM) % 3 == 0;
+                        self.set(i, if rim { FIRE } else { EMPTY }, 0);
                     }
                 }
             }
