@@ -146,6 +146,14 @@ describe("dashboard", () => {
     expect((await sse(srv!.port)).status).toBe(503);
   });
 
+  it("a full public cap does not lock the admin out; admin has its own cap", async () => {
+    await start("secret");
+    for (let i = 0; i < 8; i++) expect((await sse(srv!.port)).status).toBe(200);
+    expect((await sse(srv!.port)).status).toBe(503);
+    for (let i = 0; i < 4; i++) expect((await sse(srv!.port, "?token=secret")).status).toBe(200);
+    expect((await sse(srv!.port, "?token=secret")).status).toBe(503);
+  });
+
   it("close() with open streams resolves promptly", async () => {
     await start("secret");
     const s = await sse(srv!.port, "?token=secret");

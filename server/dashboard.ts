@@ -6,7 +6,10 @@ import type { LogEvent } from "../shared/events.ts";
 import type { EventLog } from "./log.ts";
 import type { ConnInfo, ServerSummary } from "./main.ts";
 
+/** Public streams; a reload storm from viewers can't pile up timers past this. */
 export const MAX_STREAMS = 8;
+/** Admin streams have their own allowance, so a full public cap never locks the admin out. */
+export const MAX_ADMIN_STREAMS = 4;
 const SUMMARY_MS = 1000;
 const KEEPALIVE_MS = 15_000;
 const BACKLOG = 200;
@@ -26,6 +29,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest();
 export function createDashboard(deps: DashboardDeps) {
   const token = deps.adminToken ? sha(deps.adminToken) : null;
   const streams = new Map<ServerResponse, () => void>();
+  const adminStreams = new Set<ServerResponse>();
 
   /** Constant-time check over digests, so a length difference can't throw or leak. Disabled when no token is set. */
   const isAdmin = (req: IncomingMessage): boolean => {
@@ -37,11 +41,13 @@ export function createDashboard(deps: DashboardDeps) {
   };
 
   function stream(req: IncomingMessage, res: ServerResponse): void {
-    if (streams.size >= MAX_STREAMS) {
+    const admin = isAdmin(req);
+    const full = admin ? adminStreams.size >= MAX_ADMIN_STREAMS : streams.size - adminStreams.size >= MAX_STREAMS;
+    if (full) {
       res.writeHead(503, { "retry-after": "5" }).end("too many streams");
       return;
     }
-    const admin = isAdmin(req);
+    if (admin) adminStreams.add(res);
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" });
     const write = (chunk: string) => {
       if (!res.writableEnded) res.write(chunk);
@@ -64,6 +70,7 @@ export function createDashboard(deps: DashboardDeps) {
       clearInterval(ka);
       unsub?.();
       streams.delete(res);
+      adminStreams.delete(res);
     };
     streams.set(res, done);
     res.on("close", done);
