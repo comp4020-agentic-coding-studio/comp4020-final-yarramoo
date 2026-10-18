@@ -48,6 +48,12 @@ export class PlayerStats {
     return true;
   }
 
+  /** The in-memory totals if this visitor has been loaded (fresher than the DB until the next flush), else undefined. Never loads. */
+  peek(visitorId: number): Record<string, number> | undefined {
+    const m = this.totals.get(visitorId);
+    return m ? Object.fromEntries(m) : undefined;
+  }
+
   get(visitorId: number): Record<string, number> {
     return visitorId ? Object.fromEntries(this.of(visitorId)) : {};
   }

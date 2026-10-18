@@ -25,7 +25,7 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
-import { createDashboard } from "./dashboard.ts";
+import { createDashboard, DEEP_TOP, INDEX_MAX_ROWS, SHALLOW_TOP, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
 import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
   castStat,
@@ -34,12 +34,15 @@ import {
   materialKey,
   paintStat,
   spellKey,
+  STAT_DEATHS,
+  STAT_KILLS,
   STAT_MAX_DEPTH,
   STAT_PLAY_MS,
   STAT_POS_REJECTED,
   STAT_SESSIONS,
 } from "../shared/stats.ts";
 import { Achievements } from "./achievements.ts";
+import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
 import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
 
@@ -263,9 +266,54 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     summary: () => running.summary(),
     connections: () => running.connections(),
     recentAchievements: () => running.recentAchievements(),
+    playerDetail: (id) => playerDetail(id),
+    playerIndex: (limit, offset) => playerIndex(limit, offset),
     build: hash.toString("hex").slice(0, 12),
     adminToken: opts.adminToken ?? process.env.ADMIN_TOKEN,
   });
+
+  /** Admin player page data. Live in-memory totals win over the DB rows when this player has been loaded. */
+  function playerDetail(id: number): PlayerDetail | null {
+    const row = db?.playerRow(id);
+    if (!db || !row) return null;
+    const mem = playerStats.peek(id);
+    const st = mem ?? db.loadStats(id);
+    const bucket = (prefix: string) => Object.fromEntries(Object.entries(st).filter(([k, v]) => k.startsWith(prefix) && v > 0).map(([k, v]) => [k.slice(prefix.length), v]));
+    const maxDepth = st[STAT_MAX_DEPTH] ?? 0;
+    const earned = new Map(db.achievementRows(id).map((a) => [a.achievement, a]));
+    return {
+      id,
+      name: row.name,
+      who: `${row.name}#${id}`,
+      createdAt: row.createdAt,
+      lastSeen: row.lastSeen,
+      joinedAt: row.joinedAt,
+      statsSource: mem ? "memory" : "db",
+      sessions: st[STAT_SESSIONS] ?? 0,
+      playMs: st[STAT_PLAY_MS] ?? 0,
+      maxDepth,
+      depthBand: maxDepth >= DEEP_TOP ? "deep" : maxDepth >= SHALLOW_TOP ? "mid" : maxDepth > 0 ? "shallow" : "surface",
+      kills: st[STAT_KILLS] ?? 0,
+      deaths: st[STAT_DEATHS] ?? 0,
+      casts: bucket("casts_"),
+      paints: bucket("paints_"),
+      achievements: ACHIEVEMENTS.map((a) => {
+        const e = earned.get(a.id);
+        return { id: a.id, name: a.name, description: a.description, earned: !!e, earnedAt: e?.earnedAt ?? null, world: e?.worldId ?? null, tick: e?.tick ?? null };
+      }),
+      online: [...live.values()].filter((l) => l.visitorId === id).map((l) => ({ world: l.world.id, role: l.role })),
+    };
+  }
+
+  function playerIndex(limit: number, offset: number): { rows: PlayerIndexRow[]; total: number } {
+    if (!db) return { rows: [], total: 0 };
+    const total = Math.min(INDEX_MAX_ROWS, db.playerCount());
+    const rows = db.playerIndex(Math.max(0, Math.min(limit, total - offset)), offset).map((r): PlayerIndexRow => {
+      const mem = playerStats.peek(r.id);
+      return { id: r.id, who: `${r.name}#${r.id}`, lastSeen: r.lastSeen, playMs: mem?.[STAT_PLAY_MS] ?? r.playMs, kills: mem?.[STAT_KILLS] ?? r.kills, deaths: mem?.[STAT_DEATHS] ?? r.deaths, achievements: r.achievements };
+    });
+    return { rows, total };
+  }
 
   /** Same-origin rule as /api/players: no Origin (a script) passes, a browser page on another site does not. */
   const originOk = (req: IncomingMessage): boolean => {

@@ -3,6 +3,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LogEvent } from "../shared/events.ts";
+import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import type { EventLog } from "./log.ts";
 import type { ConnInfo, ServerSummary } from "./main.ts";
 
@@ -14,7 +15,48 @@ const SUMMARY_MS = 1000;
 const KEEPALIVE_MS = 15_000;
 const BACKLOG = 200;
 
+/** Depth bands in cells, mirrored from client/materials.ts (the server may not import the client; a test pins them). */
+export const SHALLOW_TOP = 260;
+export const DEEP_TOP = 800;
+export const INDEX_PAGE_SIZE = 50;
+export const INDEX_MAX_ROWS = 200;
+
+export interface PlayerDetail {
+  id: number;
+  name: string;
+  /** name#id: admin only. */
+  who: string;
+  createdAt: number;
+  lastSeen: number | null;
+  joinedAt: number | null;
+  /** "memory" when the live totals were loaded (fresher than the DB by up to the 1 s flush), else "db". */
+  statsSource: "memory" | "db";
+  sessions: number;
+  playMs: number;
+  maxDepth: number;
+  depthBand: "surface" | "shallow" | "mid" | "deep";
+  kills: number;
+  deaths: number;
+  casts: Record<string, number>;
+  paints: Record<string, number>;
+  achievements: { id: string; name: string; description: string; earned: boolean; earnedAt: number | null; world: number | null; tick: number | null }[];
+  online: { world: number; role: string }[];
+}
+export interface PlayerIndexRow {
+  id: number;
+  who: string;
+  lastSeen: number | null;
+  playMs: number;
+  kills: number;
+  deaths: number;
+  achievements: number;
+}
+
 export interface DashboardDeps {
+  /** Admin player page: null for an unknown id. */
+  playerDetail?(id: number): PlayerDetail | null;
+  /** Admin player index: one page of rows, plus how many are listed in all (capped). */
+  playerIndex?(limit: number, offset: number): { rows: PlayerIndexRow[]; total: number };
   log: EventLog;
   summary(): ServerSummary;
   connections(): ConnInfo[];
@@ -80,6 +122,36 @@ export function createDashboard(deps: DashboardDeps) {
     res.on("close", done);
   }
 
+  /** Admin-only player pages. 403 before anything else; a bad or unknown id is a bare 404 that echoes nothing. */
+  function playerRoute(req: IncomingMessage, res: ServerResponse, path: string): void {
+    if (!isAdmin(req)) {
+      res.writeHead(403, { "content-type": "text/plain", "cache-control": "no-store" }).end("forbidden");
+      return;
+    }
+    const q = new URL(req.url ?? "/", "http://x").searchParams;
+    const qs = req.headers.authorization || !q.get("token") ? "" : `?token=${encodeURIComponent(q.get("token")!)}`;
+    const notFound = () => res.writeHead(404, { "content-type": "text/plain", "cache-control": "no-store" }).end("not found");
+    if (path === "/dashboard/players") {
+      const raw = q.get("page") ?? "1";
+      const page = /^[1-9]\d{0,3}$/.test(raw) ? Number(raw) : 1;
+      const r = deps.playerIndex?.(INDEX_PAGE_SIZE, (page - 1) * INDEX_PAGE_SIZE) ?? { rows: [], total: 0 };
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(playersPage(r.rows, r.total, page, qs, q.get("token") ?? ""));
+      return;
+    }
+    const json = path.startsWith("/api/");
+    const idText = path.slice(path.lastIndexOf("/") + 1);
+    const detail = /^[1-9]\d{0,14}$/.test(idText) && path.split("/").length === (json ? 5 : 4) ? deps.playerDetail?.(Number(idText)) : null;
+    if (!detail) return void notFound();
+    if (json) {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(detail));
+    } else {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(playerPage(detail, qs));
+    }
+  }
+
   return {
     isAdmin,
     /** Returns true when it handled the request. */
@@ -91,6 +163,10 @@ export function createDashboard(deps: DashboardDeps) {
       }
       if (path === "/dashboard/stream") {
         stream(req, res);
+        return true;
+      }
+      if (path === "/dashboard/players" || path.startsWith("/dashboard/player/") || path.startsWith("/api/admin/player/")) {
+        playerRoute(req, res, path);
         return true;
       }
       if (path === "/api/summary") {
@@ -119,7 +195,9 @@ header{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline}.muted{colo
 .box{overflow-x:auto;border:1px solid #2a3142;border-radius:8px}table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #1d2331}th{color:#8b93a7;font-weight:500}
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}button{background:#3a1d22;color:#ffb3b3;border:1px solid #6b2a33;border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}select,input{background:#151a24;color:#e6e9f0;border:1px solid #2a3142;border-radius:6px;padding:4px 8px;font:inherit;max-width:100%}
 #feed{font:12px/1.45 ui-monospace,monospace;max-height:420px;overflow:auto;border:1px solid #2a3142;border-radius:8px;padding:6px 8px}#feed div{white-space:pre-wrap;word-break:break-all}
-.lvl-warn{color:#f0b429}.lvl-error{color:#ff6b6b}.lvl-debug{color:#8b93a7}[hidden]{display:none!important}`;
+.bars{display:grid;grid-template-columns:minmax(70px,auto) 1fr auto;gap:3px 8px;align-items:center}.bar{height:10px;background:#6ea8ff;border-radius:3px;min-width:2px}
+.off{opacity:.45}ul.ach{list-style:none;margin:0;padding:0;display:grid;gap:6px}ul.ach li{background:#151a24;border:1px solid #2a3142;border-radius:8px;padding:6px 10px}
+.pager{display:flex;gap:12px;margin-top:10px}.lvl-warn{color:#f0b429}.lvl-error{color:#ff6b6b}.lvl-debug{color:#8b93a7}[hidden]{display:none!important}`;
 
 const JS = `
 const $=(id)=>document.getElementById(id);
@@ -138,19 +216,20 @@ function renderSummary(s){
   if(p.dbBytes!=null){const t=p.dbBytes+(p.walBytes||0);row(dl,"db + wal / 1 GB",fmtMb(t),meter(t,1024*MB,700*MB))}
   pc.append(dl);$("uptime").textContent="up "+Math.floor(p.uptimeS/3600)+"h "+Math.floor(p.uptimeS/60)%60+"m "+p.uptimeS%60+"s";
 }
+function plink(id,text){const a=document.createElement("a");a.href="/dashboard/player/"+id+(token?"?token="+encodeURIComponent(token):"");a.textContent=text;return a}
 function renderConns(list){
   $("admin").hidden=false;const tb=$("conns");tb.replaceChildren();
   for(const c of list){const tr=document.createElement("tr");
     const cells=[c.who,c.kills+"/"+c.deaths,c.achievements,c.world,c.role,c.connectedS+"s",c.rttP95Ms==null?"-":c.rttP95Ms+" ms",c.tickLag==null?"-":c.tickLag,c.stepP95Ms==null?"-":c.stepP95Ms+" ms",c.buffered==null?"-":c.buffered,
       c.window.casts+"c "+c.window.paints+"p "+c.window.pos+"pos "+c.window.rejected+"rej",
       c.total.casts+"c "+c.total.paints+"p "+c.total.pos+"pos "+c.total.rejected+"rej "+c.total.resyncs+"rs"];
-    for(const v of cells){const td=document.createElement("td");td.textContent=String(v);tr.append(td)}tb.append(tr)}
+    cells.forEach((v,i)=>{const td=document.createElement("td");if(i===0&&c.visitorId)td.append(plink(c.visitorId,String(v)));else td.textContent=String(v);tr.append(td)});tb.append(tr)}
   $("nconns").textContent=list.length;
 }
 function renderAch(list){
   const tb=$("ach");tb.replaceChildren();
   for(const a of list){const tr=document.createElement("tr");
-    for(const v of [a.who,a.achievement,a.world==null?"-":a.world,a.tick==null?"-":a.tick,new Date(a.at).toLocaleString()]){const td=document.createElement("td");td.textContent=String(v);tr.append(td)}tb.append(tr)}
+    [a.who,a.achievement,a.world==null?"-":a.world,a.tick==null?"-":a.tick,new Date(a.at).toLocaleString()].forEach((v,i)=>{const td=document.createElement("td");const m=/#(\\d+)$/.exec(a.who);if(i===0&&m)td.append(plink(m[1],String(v)));else td.textContent=String(v);tr.append(td)});tb.append(tr)}
   if(!list.length){const tr=document.createElement("tr");const td=document.createElement("td");td.colSpan=5;td.className="muted";td.textContent="none yet";tr.append(td);tb.append(tr)}
 }
 const feed=$("feed"),MAXROWS=300;
@@ -190,6 +269,7 @@ async function resetWorld(world,name){
 }
 $("rsand").addEventListener("click",()=>resetWorld(0,"sandbox"));
 $("rgame").addEventListener("click",()=>resetWorld(1,"game"));
+$("plist").href="/dashboard/players"+(token?"?token="+encodeURIComponent(token):"");
 connect();
 `;
 
@@ -202,9 +282,80 @@ function dashboardPage(build: string): string {
 <div class="box"><table><thead><tr><th>who</th><th>k/d</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
 <h2>Recent achievements</h2>
 <div class="box"><table><thead><tr><th>who</th><th>achievement</th><th>world</th><th>tick</th><th>when</th></tr></thead><tbody id="ach"></tbody></table></div>
+<p><a id="plist" href="/dashboard/players">All players</a></p>
 <h2>Reset a world</h2><p class="muted">Returns one world to its generated start and disconnects everyone in it (they reconnect on their own). Players, names and stats are kept.</p>
 <div class="filters"><button id="rsand" type="button">Reset sandbox</button><button id="rgame" type="button">Reset game world</button><span id="rstatus" class="muted"></span></div>
 <h2>Events</h2><div class="filters"><select id="fworld"><option value="all">all worlds</option><option value="0">world 0</option><option value="1">world 1</option></select>
 <label><input type="checkbox" id="fwarn"> warnings and errors</label><input id="fwho" placeholder="who contains" aria-label="who contains"></div><div id="feed"></div></section>
 </main><script>${JS}</script></body></html>`;
+}
+
+const fmtDate = (ms: number | null) => (ms == null ? "never" : new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC");
+export function fmtDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+const shell = (title: string, body: string) =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}</main></body></html>`;
+
+function bars(title: string, m: Record<string, number>): string {
+  const rows = Object.entries(m).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  const max = rows[0]?.[1] || 1;
+  const inner = rows.length
+    ? `<div class="bars">${rows.map(([k, v]) => `<span>${esc(k)}</span><span><div class="bar" style="width:${Math.max(1, Math.round((v / max) * 100))}%"></div></span><span>${v}</span>`).join("")}</div>`
+    : `<span class="muted">none</span>`;
+  return `<div class="card"><h3>${esc(title)}</h3>${inner}</div>`;
+}
+
+export function playerPage(d: PlayerDetail, qs: string): string {
+  const dl = (rows: [string, string][]) => `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+  const earned = d.achievements.filter((a) => a.earned);
+  const ach = d.achievements
+    .map((a) =>
+      a.earned
+        ? `<li><strong>${esc(a.name)}</strong> <span class="muted">${esc(a.description)}</span><br><span class="ok">earned ${esc(fmtDate(a.earnedAt))}</span></li>`
+        : `<li class="off"><strong>${esc(a.name)}</strong> <span class="muted">${esc(a.description)}</span><br><span class="muted">not yet earned</span></li>`,
+    )
+    .join("");
+  const online = d.online.length ? d.online.map((o) => `online in world ${o.world} as ${o.role}`).join("; ") : "offline";
+  return shell(
+    `Player ${d.who}`,
+    `<header><h1>${esc(d.who)}</h1><a href="/dashboard/players${qs}">all players</a><a href="/dashboard${qs}">dashboard</a></header>
+<h2>Player</h2><div class="grid"><div class="card">${dl([
+      ["created", fmtDate(d.createdAt)],
+      ["last seen", fmtDate(d.lastSeen)],
+      ["joined the game world", d.joinedAt == null ? "no" : `yes, ${fmtDate(d.joinedAt)}`],
+      ["status", online],
+    ])}</div><div class="card">${dl([
+      ["sessions", String(d.sessions)],
+      ["play time", fmtDuration(d.playMs)],
+      ["deepest point", `${d.maxDepth} cells (${d.depthBand})`],
+      ["kills", String(d.kills)],
+      ["deaths", String(d.deaths)],
+      ["stats read from", d.statsSource === "memory" ? "live memory totals" : "database rows"],
+    ])}</div></div>
+<h2>Casts and paints</h2><div class="grid">${bars("Casts by spell", d.casts)}${bars("Paints by material", d.paints)}</div>
+<h2>Achievements (${earned.length} of ${d.achievements.length})</h2><ul class="ach">${ach}</ul>`,
+  );
+}
+
+export function playersPage(rows: PlayerIndexRow[], total: number, page: number, qs: string, token: string): string {
+  const pages = Math.max(1, Math.ceil(total / INDEX_PAGE_SIZE));
+  const link = (p: number) => `/dashboard/players?page=${p}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+  const tr = rows
+    .map(
+      (r) =>
+        `<tr><td><a href="/dashboard/player/${r.id}${qs}">${esc(r.who)}</a></td><td>${esc(fmtDate(r.lastSeen))}</td><td>${esc(fmtDuration(r.playMs))}</td><td>${r.kills}</td><td>${r.deaths}</td><td>${r.achievements}</td></tr>`,
+    )
+    .join("");
+  return shell(
+    "Players",
+    `<header><h1>Players</h1><span class="muted">${total} listed (newest ${INDEX_MAX_ROWS} by last seen), page ${page} of ${pages}</span><a href="/dashboard${qs}">dashboard</a></header>
+<div class="box"><table><thead><tr><th>who</th><th>last seen</th><th>play time</th><th>kills</th><th>deaths</th><th>ach.</th></tr></thead><tbody>${tr || '<tr><td colspan="6" class="muted">none</td></tr>'}</tbody></table></div>
+<div class="pager">${page > 1 ? `<a href="${esc(link(page - 1))}">&larr; newer</a>` : ""}${page < pages ? `<a href="${esc(link(page + 1))}">older &rarr;</a>` : ""}</div>`,
+  );
 }

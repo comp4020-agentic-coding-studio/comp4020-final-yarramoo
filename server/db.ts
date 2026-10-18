@@ -279,6 +279,33 @@ export class GameDb {
     }
   }
 
+  /** One registered player's row for the admin player page. */
+  playerRow(id: number): { id: number; name: string; createdAt: number; lastSeen: number | null; joinedAt: number | null } | null {
+    const r = this.q("select id, display_name, created_at, last_seen, joined_at from players where id = ?").get(id) as
+      | { id: number; display_name: string; created_at: number; last_seen: number | null; joined_at: number | null }
+      | undefined;
+    return r ? { id: r.id, name: r.display_name, createdAt: r.created_at, lastSeen: r.last_seen, joinedAt: r.joined_at } : null;
+  }
+
+  /** Awards with their dates, oldest first. */
+  achievementRows(playerId: number): { achievement: string; worldId: number | null; tick: number | null; earnedAt: number }[] {
+    const rows = this.q("select achievement, world_id, tick, earned_at from achievements where player_id = ? order by earned_at, achievement").all(playerId) as {
+      achievement: string; world_id: number | null; tick: number | null; earned_at: number;
+    }[];
+    return rows.map((r) => ({ achievement: r.achievement, worldId: r.world_id, tick: r.tick, earnedAt: r.earned_at }));
+  }
+
+  /** Registered players, newest last_seen first (never-seen last), for the admin index. */
+  playerIndex(limit: number, offset: number): { id: number; name: string; lastSeen: number | null; playMs: number; kills: number; deaths: number; achievements: number }[] {
+    const stat = (s: string) => `coalesce((select value from player_stats where player_id = p.id and stat = '${s}'), 0)`;
+    const rows = this.q(
+      `select p.id, p.display_name, p.last_seen, ${stat("play_ms")} as play_ms, ${stat("kills")} as kills, ${stat("deaths")} as deaths,
+         (select count(*) from achievements where player_id = p.id) as ach
+         from players p order by p.last_seen is null, p.last_seen desc, p.id desc limit ? offset ?`,
+    ).all(limit, offset) as { id: number; display_name: string; last_seen: number | null; play_ms: number; kills: number; deaths: number; ach: number }[];
+    return rows.map((r) => ({ id: r.id, name: r.display_name, lastSeen: r.last_seen, playMs: r.play_ms, kills: r.kills, deaths: r.deaths, achievements: r.ach }));
+  }
+
   playerNames(ids: number[]): Record<number, string> {
     const out: Record<number, string> = {};
     for (const id of ids) {
