@@ -10,6 +10,36 @@ submission noon Mon 9 Nov.
 
 ## Overnight run, 18–19 Oct (the user approved this at 22:15 Sun)
 
+### Summary (written 05:19 Mon 19 Oct, when the queue was finished)
+
+All 12 queue items are done and pushed to `multa`. Nothing was deployed and
+nothing was merged to `main`. Spend: $118 of the $150 stop line (started at
+$56), plus $0.50 of the separate image budget. Final checks: 242 net tests and
+40 cross-browser determinism tests green.
+
+- **M5** (damage, death, Fire bolt, Bomb, dropped bags, snapshot format 3, the
+  client effects, cross-browser coverage): D-102 to D-114.
+- **M6 achievements**: 6 counted by the server, 4 by majority claim (D-115 to
+  D-121).
+- **Pause the world while a lone visitor catches up** (D-122).
+- **Who's online, minimap, fading name tags** (D-123).
+- **Depth colours, texture and moss; a generator preview page** (D-124).
+- **30-minute soak**: passed, 1807/1807 hashes agreed, but never reached combat.
+- **Admin player page and index** (D-125).
+- **Which chunk diverged, recorded in each desync incident** (D-126).
+- **Catch-up progress card** (D-127).
+- **Art pass** (D-128).
+
+Independent reviews found and fixed, among others:
+
+- a timed-out check that could have wiped the live sandbox on a deploy (D-112);
+  this is **also live on `main`**, see below;
+- anonymous spectators who could out-vote players to forge deaths;
+- a tick input count that could wrap and corrupt the saved log;
+- a stream of 6 KB frames nobody had asked for.
+
+Read the list below first.
+
 **Stop line: $150 of $200** (the week resets Thu 22 Oct 9 am). Check
 `/comp4020:balance` before each slice and stop starting new work past $145.
 **No deploy and no merge to `main`.** All work stays on `multa`, pushed.
@@ -98,6 +128,13 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
   M5 combat sync is proven by the scripted cross-browser test (D-114: 4 deaths,
   8 bombs, 206 gunpowder explosions, agreed in four engines), not by a soak. A
   soak that really fights needs a test-only way to put bots in the deep band.
+- **The art pass (D-128, `3576619`): worth your eye.** At 3x the player now reads
+  as a hooded caster (hood, robe shading, belt) and explosions have a fire core,
+  rising embers and smoke (`docs/art/shots/after-*.png`). Two caveats: the cast
+  "hand glow" looks like scattered pale squares around the player rather than a
+  glow, and the before shots were taken at phone width so they are not a fair
+  side-by-side. Fire bolt, Bomb and bag visuals are still unseen (the dev route
+  gives no spell charges). Concept art and prompts: `docs/art/`.
 
 ## Now
 
