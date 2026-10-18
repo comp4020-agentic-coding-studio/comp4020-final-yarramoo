@@ -153,6 +153,9 @@ drift, lie or upload a bad snapshot.
 
 - Clients send a HASH every 60 ticks. The server takes the majority as truth
   and resyncs any client that differs (D-038).
+- On a divergence the server asks every reporter for its per-chunk hashes
+  (kept for the last 5 checkpoints) and records which chunks differ in the
+  incident, so a desync names where, not just who (D-126).
 - Snapshots are produced by clients. The server accepts one only when the
   uploader's claim, the majority hash and an independent restore all agree
   (D-040).

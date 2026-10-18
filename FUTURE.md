@@ -25,7 +25,7 @@ the last hour or day on `/dashboard` (players online, hash failures, RSS).
 - **Why:** a reader of the logs after the crit could see the session as a
   whole, not just whatever happened since the last cold start.
 
-## Which chunk diverged
+## Which chunk diverged (done, D-126)
 
 Build REQUEST_CHUNK_HASHES/CHUNK_HASHES (deferred in D-043), so a desync
 incident records the first diverging chunk, and show it on the admin dashboard.
@@ -177,7 +177,7 @@ J is a constant 2. The plan says adapted to jitter; the client already sees tick
 ## From M2b (persistence and snapshots)
 
 - **Snapshot the last player out.** The server could ask the departing client for a snapshot on a clean close (the socket's `close` event arrives after the tab is gone, so it needs a `beforeunload` hint or a heartbeat-driven "you're the last, upload now" push). Source: D-042. Worth it if cold-start replay of ~30 s is noticeable.
-- **CHUNK_HASHES diff for desync incidents.** Keep the last 5 chunk-hash arrays on the client and diff on request, so an incident names the diverging chunks. Source: D-043.
+- ~~**CHUNK_HASHES diff for desync incidents.** (done: D-126)~~ Keep the last 5 chunk-hash arrays on the client and diff on request, so an incident names the diverging chunks. Source: D-043.
 - **Server-side check of snapshot "reasonableness".** The majority-hash rule trusts that the majority's sim is right; a periodic deliberate-lie client in CI could run the bad-snapshot test against the deployed build.
 - **Per-player upload budget for SNAPSHOT_UPLOAD.** Unsolicited uploads are ignored cheaply, but a solicited client can upload once per request at up to 1 MiB; fine for co-op, worth rate-limiting if the URL is public.
 
