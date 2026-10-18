@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
 import { encodeCast, encodePaint, encodePos, KIND_CAST, KIND_PAINT, KIND_POS } from "../../shared/inputs.ts";
-import { decodeServer, encodeHash, encodeHello, encodeInput, encodeSnapshotUpload } from "../../shared/protocol.ts";
-import { loadSim, simBuildHash } from "../../shared/sim.ts";
+import { decodeServer, encodeClaim, encodeHash, encodeHello, encodeInput, encodeSnapshotUpload } from "../../shared/protocol.ts";
+import { EV_DEATH, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
 export const wasmBytes = new Uint8Array(readFileSync(WASM));
@@ -23,6 +23,8 @@ export interface TestClient {
   /** When false the client does not answer REQUEST_SNAPSHOT. */
   uploads: boolean;
   lie: boolean;
+  /** When true (default) the client sends a CLAIM for every EV_DEATH its sim emits past the replay target. */
+  claims: boolean;
   /** The step p95 (ms) this client puts in its HASH frames. */
   reportStepP95: number;
   /** Called instead of uploading when `uploads` is false, so a test can send something else. */
@@ -65,6 +67,7 @@ export async function connect(
     counts: { ticks: 0, snapshots: 0, resyncs: 0, requests: 0 },
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
+    claims: true,
     onDue: null,
     reportStepP95: 1.5,
   } as unknown as TestClient;
@@ -77,6 +80,10 @@ export async function connect(
     c.ls.onStepped = (tick) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (tick % 20 === 0) c.hashes.set(tick, c.ls.sim.stateHash()); // local record, for comparing clients
+      // Like the real client (D-120): one CLAIM per EV_DEATH past the replay target, never for a replayed tick.
+      if (c.claims && tick > c.ls.catchUpTarget && c.ls.sim.width() > 512) {
+        for (const e of c.ls.sim.events()) if (e.kind === EV_DEATH) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c));
+      }
       const r = reactToTick(c.ls, tick, wantAt);
       if (r.hash !== undefined) ws.send(encodeHash(tick, corrupt ? r.hash ^ 1n : r.hash, c.reportStepP95, c.ls.buffered));
       if (r.snapshot) {

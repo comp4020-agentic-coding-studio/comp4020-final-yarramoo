@@ -7,6 +7,9 @@ export const STAT_SESSIONS = "sessions";
 export const STAT_PLAY_MS = "play_ms";
 export const STAT_POS_REJECTED = "pos_rejected";
 export const STAT_RESYNCS = "resyncs";
+/** Credited kills and deaths, counted from majority CLAIMs about EV_DEATH (plan 10, D-120). */
+export const STAT_KILLS = "kills";
+export const STAT_DEATHS = "deaths";
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 

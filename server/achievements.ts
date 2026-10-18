@@ -2,7 +2,8 @@
 // achievements that watch that stat. Earned ids are cached per visitor (loaded from the database the first time the
 // visitor is touched), so a Pos or Cast input costs a couple of Set lookups once everything relevant is earned.
 // Never reads or writes sim state. Visitor 0 (anonymous) earns nothing.
-import { SERVER_ACHIEVEMENTS, type ServerAchievement } from "../shared/achievements.ts";
+import { BACK_FROM_THE_DEAD_DEATHS, FIRST_BLOOD_KILLS, FIVE_KILLS, SERVER_ACHIEVEMENTS, SHOVE_CAUSES, achievementById } from "../shared/achievements.ts";
+import { STAT_DEATHS, STAT_KILLS } from "../shared/stats.ts";
 import type { GameDb } from "./db.ts";
 import type { EventLog } from "./log.ts";
 import type { PlayerStats } from "./stats.ts";
@@ -47,11 +48,34 @@ export class Achievements {
     for (const a of SERVER_ACHIEVEMENTS) {
       if (have.has(a.id) || !stat.startsWith(a.on)) continue;
       totals ??= this.stats.get(visitorId);
-      if (a.check(totals)) this.award(visitorId, a, ctx);
+      if (a.check(totals)) this.grant(visitorId, a.id, ctx);
     }
   }
 
-  private award(visitorId: number, a: ServerAchievement, ctx: AwardContext): void {
+  /** Count one majority-agreed death (D-120): kills and deaths stats, then the four claim achievements. */
+  onDeath(victim: number, killer: number, cause: number, ctxOf: (visitorId: number) => AwardContext): void {
+    if (victim) {
+      this.stats.bump(victim, STAT_DEATHS);
+      if ((this.stats.get(victim)[STAT_DEATHS] ?? 0) >= BACK_FROM_THE_DEAD_DEATHS) this.grant(victim, "back_from_the_dead", ctxOf(victim));
+    }
+    if (killer && killer !== victim) {
+      this.stats.bump(killer, STAT_KILLS);
+      const kills = this.stats.get(killer)[STAT_KILLS] ?? 0;
+      if (kills >= FIRST_BLOOD_KILLS) this.grant(killer, "first_blood", ctxOf(killer));
+      if (kills >= FIVE_KILLS) this.grant(killer, "five_kills", ctxOf(killer));
+      if (SHOVE_CAUSES.includes(cause)) this.grant(killer, "shoved_to_doom", ctxOf(killer));
+    }
+  }
+
+  /** Award `id` once ever (cache, `insert or ignore`, then delivery to the earner's connections). Unknown ids are ignored. */
+  grant(visitorId: number, id: string, ctx: AwardContext): void {
+    const a = achievementById(id);
+    if (!visitorId || !a) return;
+    if (this.of(visitorId).has(id)) return;
+    this.award(visitorId, a, ctx);
+  }
+
+  private award(visitorId: number, a: { id: string }, ctx: AwardContext): void {
     const have = this.of(visitorId);
     have.add(a.id); // remembered even if the write fails, so one bad row cannot loop
     try {

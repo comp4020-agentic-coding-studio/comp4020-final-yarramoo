@@ -45,6 +45,14 @@ export const WARN_LOG_TICKS = 100_000;
 /** Drop a client whose socket send queue grows past this: it is not keeping up. */
 export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 export const HASH_WAIT_MS = 2000;
+/** A death claim is accepted for a tick at most this long ago, and an open tally is dropped after this long (D-121). */
+export const CLAIM_WINDOW_MS = 10_000;
+export const CLAIM_WINDOW_TICKS = 10 * TICK_HZ;
+export const MAX_OPEN_CLAIMS = 256;
+const MAX_RESOLVED_DEATHS = 1024;
+/** Per connection: at most this many CLAIM frames per CLAIM_RATE_MS (duplicates count). */
+export const CLAIMS_PER_WINDOW = 30;
+export const CLAIM_RATE_MS = 10_000;
 export const FLUSH_EVERY_MS = 1000;
 export const SNAPSHOT_EVERY_TICKS = 1800;
 /** A requested snapshot tick is at least this far ahead of the clock. */
@@ -83,6 +91,23 @@ export interface Member {
   /** HASH for ticks at or below this are ignored (they predate the client's current sim). */
   minHashTick: number;
   lastBadTick: number;
+  claimWindowStart: number;
+  claimsInWindow: number;
+}
+
+/** One death that a majority of eligible clients agreed on. Ids are sim player ids, which are visitor ids in the game world. */
+export interface ResolvedDeath {
+  tick: number;
+  victim: number;
+  killer: number;
+  cause: number;
+  bag: number;
+}
+
+interface ClaimTally {
+  death: ResolvedDeath;
+  votes: Set<number>;
+  firstAt: number;
 }
 
 interface Checkpoint {
@@ -141,6 +166,8 @@ export class World {
   closing = false;
   /** True for the duration of reset(): stamp, join, onHash and onUpload refuse. */
   resetting = false;
+  /** Called once per death a majority agreed on (the server turns it into stats and achievements). Never touches the sim. */
+  onDeathResolved: ((d: ResolvedDeath) => void) | null = null;
   /** Test and telemetry hook: called after each closed tick has been broadcast. */
   onTickClosed: ((tick: number) => void) | null = null;
 
@@ -178,6 +205,10 @@ export class World {
   private resetGen = 0;
   /** Last accepted Pos per sim player, kept across reconnects within this process (the baseline for plan 7.6). */
   private readonly lastPosOf = new Map<number, PosBaselines>();
+  /** Open death claims by full key (`tick:victim:killer:cause:bag`), oldest first. */
+  private readonly claims = new Map<string, ClaimTally>();
+  /** `tick:victim` of deaths already resolved, so a late or conflicting claim is not counted twice. Oldest first. */
+  private readonly resolvedDeaths = new Map<string, string>();
 
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
@@ -458,6 +489,8 @@ export class World {
       seq: conn,
       minHashTick: this.clock.lastClosed,
       lastBadTick: 0,
+      claimWindowStart: 0,
+      claimsInWindow: 0,
       counts,
       timing,
     };
@@ -499,6 +532,7 @@ export class World {
     if (this.request?.memberId === conn) this.request = null;
     if (this.waitingUpload?.memberId === conn) this.waitingUpload = null;
     if (this.members.size === 0) {
+      this.claims.clear();
       // Last one out. The sim is not ours to snapshot and the client is gone, so nothing to ask: the
       // next cold start replays the log since the last snapshot. Close the Leave tick and persist it now.
       this.clock.pause();
@@ -552,6 +586,7 @@ export class World {
       this.flush();
     }
     this.resolveDue(t);
+    this.sweepClaims(t);
     this.maybeRequestSnapshot();
     this.checkLogLength();
   }
@@ -614,6 +649,8 @@ export class World {
       this.verifying = false;
       this.lastRequestTick = 0;
       this.lastPosOf.clear();
+      this.claims.clear();
+      this.resolvedDeaths.clear();
       Object.assign(this.stats, { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 });
       this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, members: victims.length }, "warn");
       return { oldTick, closed: victims.length };
@@ -708,6 +745,100 @@ export class World {
     if (this.waitingUpload?.memberId === m.id) this.waitingUpload = null;
     if (this.request?.memberId === m.id) this.request = null;
     this.sendCatchUp(m.peer, (base) => encodeResync(this.clock.lastClosed, base));
+  }
+
+  // ---- death claims (plan 10, D-120/D-121) -------------------------------------------------------
+
+  /**
+   * One client's report of an EV_DEATH its sim emitted. The server never runs the sim, so it believes a death when at
+   * least ceil(eligible / 2) distinct connections send an identical claim. Eligible means connected and past its replay
+   * target at that tick (the same test as HASH). A claim is a report, never a sim input (invariant 9).
+   */
+  onClaim(memberId: number, d: ResolvedDeath): void {
+    const m = this.members.get(memberId);
+    if (this.resetting || !m || this.kind !== WORLD_GAME) return;
+    const t = this.now();
+    if (t - m.claimWindowStart >= CLAIM_RATE_MS) {
+      m.claimWindowStart = t;
+      m.claimsInWindow = 0;
+    }
+    if (++m.claimsInWindow > CLAIMS_PER_WINDOW) {
+      this.elog.limited(`claim_rate:${memberId}`, 10_000, "input.rate_limited", { world: this.id, conn: memberId, who: this.whoOf(m), limit: CLAIMS_PER_WINDOW, what: "claim" }, "warn");
+      return;
+    }
+    const last = this.clock.lastClosed;
+    // A future tick cannot have happened yet; an old one, or one from before this client's replay target, is not a witness.
+    if (d.tick > last || d.tick < last - CLAIM_WINDOW_TICKS || d.tick <= m.minHashTick || d.tick < 1) {
+      this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_tick", tick: d.tick, closed: last }, "warn");
+      return;
+    }
+    const key = `${d.tick}:${d.victim}:${d.killer}:${d.cause}:${d.bag}`;
+    const won = this.resolvedDeaths.get(`${d.tick}:${d.victim}`);
+    if (won !== undefined) {
+      if (won !== key) this.elog.limited("claim_dissent", 10_000, "claim.unresolved", { world: this.id, tick: d.tick, victim: d.victim, reason: "dissent", who: this.whoOf(m) }, "warn");
+      return;
+    }
+    let tally = this.claims.get(key);
+    if (!tally) {
+      if (this.claims.size >= MAX_OPEN_CLAIMS) this.claims.delete(this.claims.keys().next().value!);
+      this.claims.set(key, (tally = { death: { ...d }, votes: new Set(), firstAt: t }));
+    }
+    tally.votes.add(memberId); // a Set: the same connection voting again changes nothing
+    this.tryResolveClaim(key, tally);
+  }
+
+  /** Members that could have witnessed `tick`. */
+  private eligibleAt(tick: number): number {
+    let n = 0;
+    for (const m of this.members.values()) if (m.minHashTick < tick) n++;
+    return n;
+  }
+
+  /** Eligible voters in `tally` that are still connected (a leaver's vote is not counted). */
+  private liveVotes(tally: ClaimTally): number {
+    let n = 0;
+    for (const id of tally.votes) {
+      const m = this.members.get(id);
+      if (m && m.minHashTick < tally.death.tick) n++;
+    }
+    return n;
+  }
+
+  private tryResolveClaim(key: string, tally: ClaimTally): void {
+    const d = tally.death;
+    const need = Math.ceil(this.eligibleAt(d.tick) / 2);
+    const votes = this.liveVotes(tally);
+    if (need < 1 || votes < need) return;
+    // Conflicting claims for the same death mean someone desynced. Only a strictly larger group than every rival wins;
+    // a tie waits for the timeout and is then dropped. (With two eligible clients one vote is a majority, so the first
+    // claim wins; the dissenter is logged when its claim arrives.)
+    let rival = 0;
+    for (const [k, o] of this.claims) if (k !== key && o.death.tick === d.tick && o.death.victim === d.victim) rival = Math.max(rival, this.liveVotes(o));
+    if (rival >= votes) return;
+    const pair = `${d.tick}:${d.victim}`;
+    for (const [k, o] of this.claims) {
+      if (k !== key && o.death.tick === d.tick && o.death.victim === d.victim) {
+        this.claims.delete(k);
+        this.elog.limited("claim_conflict", 10_000, "claim.unresolved", { world: this.id, tick: d.tick, victim: d.victim, reason: "conflict", agreeing: votes, disagreeing: o.votes.size }, "warn");
+      }
+    }
+    this.claims.delete(key);
+    this.resolvedDeaths.set(pair, key);
+    if (this.resolvedDeaths.size > MAX_RESOLVED_DEATHS) this.resolvedDeaths.delete(this.resolvedDeaths.keys().next().value!);
+    this.onDeathResolved?.({ ...d });
+  }
+
+  /** Re-check open claims (members may have left, shrinking the quorum) and drop the ones that never reached it. */
+  private sweepClaims(t: number): void {
+    if (this.claims.size === 0) return;
+    for (const [key, tally] of [...this.claims]) {
+      if (!this.claims.has(key)) continue;
+      this.tryResolveClaim(key, tally);
+      if (this.claims.has(key) && t - tally.firstAt >= CLAIM_WINDOW_MS) {
+        this.claims.delete(key);
+        this.elog.limited("claim_unresolved", 10_000, "claim.unresolved", { world: this.id, tick: tally.death.tick, victim: tally.death.victim, votes: tally.votes.size, eligible: this.eligibleAt(tally.death.tick) }, "warn");
+      }
+    }
   }
 
   // ---- snapshots (plan 7.5) -----------------------------------------------------------------------

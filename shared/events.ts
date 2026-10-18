@@ -44,6 +44,7 @@ export const EVENT_NAMES = [
   // Later (M5/M6): reserved names only. Nothing emits these yet.
   "claim.death",
   "claim.kill",
+  "claim.unresolved",
   "achievement.awarded",
 ] as const;
 

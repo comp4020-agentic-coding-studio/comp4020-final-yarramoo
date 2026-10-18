@@ -230,6 +230,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const frame = encodeAchievement(id, tick);
     for (const l of live.values()) if (l.visitorId === visitorId && l.ws.readyState === l.ws.OPEN) l.ws.send(frame, { binary: true });
   });
+  // A majority-agreed death (D-120). Sim player ids are visitor ids in the game world (D-065).
+  const nameOfVisitor = (id: number): string => {
+    for (const m of game.members.values()) if (m.visitorId === id) return m.visitorName;
+    return db?.playerNames([id])[id] ?? "";
+  };
+  game.onDeathResolved = (d) => {
+    const ctxOf = (id: number) => ({ name: nameOfVisitor(id), world: game.id, tick: d.tick });
+    log.event("claim.death", { world: game.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
+    achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
+  };
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
@@ -688,6 +698,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         }
         case "hash":
           w.onHash(joined.conn, msg.tick, msg.hash, msg.stepP95, msg.buffered);
+          return;
+        case "claim":
+          // The sandbox has no deaths; a claim there is a bad client.
+          if (w.kind !== WORLD_GAME) return void badInput(w, joined.conn, "claim_in_sandbox", 0x06);
+          w.onClaim(joined.conn, { tick: msg.tick, victim: msg.victim, killer: msg.killer, cause: msg.cause, bag: msg.bag });
           return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);

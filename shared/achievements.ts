@@ -32,6 +32,13 @@ export const SPELUNKER_DEPTH = 800;
 
 const casts = (spell: number, n: number) => (s: StatMap) => (s[castStat(spell)] ?? 0) >= n;
 
+/** Claim thresholds (stat totals after the death being counted). */
+export const FIRST_BLOOD_KILLS = 1;
+export const FIVE_KILLS = 5;
+export const BACK_FROM_THE_DEAD_DEATHS = 10;
+/** `EV_DEATH.b` values for an environmental death (CAUSE_FIRE, CAUSE_LAVA, CAUSE_GUNPOWDER in shared/sim.ts). */
+export const SHOVE_CAUSES: readonly number[] = [6, 7, 8];
+
 export const ACHIEVEMENTS: readonly Achievement[] = [
   {
     id: "first_spell",
@@ -54,7 +61,7 @@ export const ACHIEVEMENTS: readonly Achievement[] = [
     check: (s) => (s[STAT_MAX_DEPTH] ?? 0) >= SPELUNKER_DEPTH,
   },
   { id: "first_blood", name: "First blood", description: "Get a credited kill", source: "claim" },
-  { id: "shoved_to_doom", name: "Shoved to their doom", description: "Kill with a Push or Blast", source: "claim" },
+  { id: "shoved_to_doom", name: "Shoved to their doom", description: "Get a credited kill on someone who dies to fire, lava or gunpowder", source: "claim" },
   { id: "five_kills", name: "Five kills", description: "Get 5 credited kills", source: "claim" },
   { id: "back_from_the_dead", name: "Back from the dead", description: "Die 10 times", source: "claim" },
 ];
