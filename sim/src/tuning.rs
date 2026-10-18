@@ -94,3 +94,14 @@ pub const BOMB_FUSE: u16 = 120;
 /// Bound on the work one tick can spend on bomb explosions (each carves about 1,018 cells). A bomb past
 /// the cap waits where it is and tries again next tick, in spawn order.
 pub const MAX_BOMB_EXPLOSIONS_PER_TICK: u32 = 8;
+
+// ---- dropped bags (M5 slice 3) -------------------------------------------------------------------------
+
+/// A bag holds the four finite spells (2 Water, 3 Rose, 4 Fire bolt, 5 Bomb): index k is spell `2 + k`.
+pub const BAG_SPELLS: usize = 4;
+/// Ticks a bag lasts: 90 s at 60 ticks a second.
+pub const BAG_LIFETIME: u32 = 5400;
+/// At most this many bags exist; a new one past the cap evicts the oldest (index 0) and its charges are lost.
+pub const MAX_BAGS: usize = 64;
+/// A drop within this many cells (Chebyshev: `max(|dx|, |dy|)`) of an existing bag merges into it.
+pub const BAG_MERGE_CELLS: i32 = 8;

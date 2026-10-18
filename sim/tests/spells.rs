@@ -351,10 +351,10 @@ fn hostile_projectile_sections_are_refused() {
     s.projectiles.push(Projectile { owner: 1, spell: 0, cast_seq: 0, x: 0, y: 0, vx: 0, vy: 0, age: 0 });
     let good = snapshot::write(&s);
     assert!(snapshot::restore(&good).is_ok());
-    // The projectile count sits 4 bytes before the first projectile, which is the end of the entity section.
+    // The projectile count sits 4 bytes before the first projectile; the (empty) bag count, 4 bytes, ends the section.
     let elen_at = 55;
     let elen = u32::from_le_bytes(good[elen_at..elen_at + 4].try_into().unwrap()) as usize;
-    let count_at = elen_at + 4 + elen - PROJECTILE_BYTES - 4;
+    let count_at = elen_at + 4 + elen - 4 - PROJECTILE_BYTES - 4;
     let mut bad = good.clone();
     bad[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(snapshot::restore(&bad).is_err());

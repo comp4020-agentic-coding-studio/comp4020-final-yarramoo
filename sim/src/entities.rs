@@ -129,11 +129,45 @@ impl Projectile {
     }
 }
 
+/// A dropped bag of a dead player's finite charges (M5 slice 3). State: hashed and snapshotted, kept in
+/// spawn order. `charges[k]` is spell `2 + k` (Water, Rose, Fire bolt, Bomb); never all zero.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bag {
+    /// The cell the bag occupies.
+    pub x: u16,
+    pub y: u16,
+    pub charges: [u16; BAG_SPELLS],
+    /// Removed when `tick >= expires_at`.
+    pub expires_at: u32,
+}
+
+pub const BAG_BYTES: usize = 2 + 2 + 2 * BAG_SPELLS + 4;
+
+impl Bag {
+    /// Total charges held, capped to u16 for the view and events.
+    pub fn total(&self) -> u16 {
+        self.charges.iter().map(|&c| u32::from(c)).sum::<u32>().min(u32::from(u16::MAX)) as u16
+    }
+
+    fn write(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.x.to_le_bytes());
+        v.extend_from_slice(&self.y.to_le_bytes());
+        for c in self.charges {
+            v.extend_from_slice(&c.to_le_bytes());
+        }
+        v.extend_from_slice(&self.expires_at.to_le_bytes());
+    }
+}
+
 /// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
-/// n_projectiles u32, projectiles (spawn order)`.
-pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile]) -> Vec<u8> {
+/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order)`. Players stay first:
+/// the server reads the player section at a fixed offset (`activePlayersIn`).
+pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag]) -> Vec<u8> {
     let mut v = Vec::with_capacity(
-        12 + players.len() * PLAYER_BYTES + pickups.len() * PICKUP_BYTES + projectiles.len() * PROJECTILE_BYTES,
+        16 + players.len() * PLAYER_BYTES
+            + pickups.len() * PICKUP_BYTES
+            + projectiles.len() * PROJECTILE_BYTES
+            + bags.len() * BAG_BYTES,
     );
     v.extend_from_slice(&(players.len() as u32).to_le_bytes());
     for p in players {
@@ -146,6 +180,10 @@ pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile]
     v.extend_from_slice(&(projectiles.len() as u32).to_le_bytes());
     for p in projectiles {
         p.write(&mut v);
+    }
+    v.extend_from_slice(&(bags.len() as u32).to_le_bytes());
+    for b in bags {
+        b.write(&mut v);
     }
     v
 }
@@ -175,7 +213,10 @@ impl R<'_> {
 
 /// Decode entity bytes against the freshly generated `pickups` (their identity must match; only
 /// `respawn_at` and `charges` are taken from the bytes). Hostile input fails cleanly, never panics.
-pub fn decode(b: &[u8], pickups: &mut [Pickup]) -> Result<(Vec<Player>, Vec<Projectile>), ()> {
+/// `w`, `h` are the world's size in cells: a bag outside it is refused.
+pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>);
+
+pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<Decoded, ()> {
     let mut r = R(b, 0);
     let np = r.u32().ok_or(())? as usize;
     // Compare in u64 so a crafted count cannot wrap a 32-bit usize.
@@ -188,7 +229,16 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup]) -> Result<(Vec<Player>, Vec<Proj
         return Err(());
     }
     let tail = u32::from_le_bytes(b[(fixed - 4) as usize..fixed as usize].try_into().map_err(|_| ())?) as usize;
-    if tail > MAX_PROJECTILES || fixed + (tail as u64) * (PROJECTILE_BYTES as u64) != b.len() as u64 {
+    if tail > MAX_PROJECTILES {
+        return Err(());
+    }
+    // The bag count follows the projectiles; it then fixes the exact total length.
+    let bag_at = fixed + (tail as u64) * (PROJECTILE_BYTES as u64);
+    if (b.len() as u64) < bag_at + 4 {
+        return Err(());
+    }
+    let nb = u32::from_le_bytes(b[bag_at as usize..bag_at as usize + 4].try_into().map_err(|_| ())?) as usize;
+    if nb > MAX_BAGS || bag_at + 4 + (nb as u64) * (BAG_BYTES as u64) != b.len() as u64 {
         return Err(());
     }
     let mut players: Vec<Player> = Vec::with_capacity(np);
@@ -249,7 +299,22 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup]) -> Result<(Vec<Player>, Vec<Proj
             age: r.u16().ok_or(())?,
         });
     }
-    Ok((players, projectiles))
+    if r.u32().ok_or(())? as usize != nb {
+        return Err(());
+    }
+    let mut bags = Vec::with_capacity(nb);
+    for _ in 0..nb {
+        let (x, y) = (r.u16().ok_or(())?, r.u16().ok_or(())?);
+        let mut charges = [0u16; BAG_SPELLS];
+        for c in charges.iter_mut() {
+            *c = r.u16().ok_or(())?;
+        }
+        if usize::from(x) >= w || usize::from(y) >= h || charges.iter().all(|&c| c == 0) {
+            return Err(());
+        }
+        bags.push(Bag { x, y, charges, expires_at: r.u32().ok_or(())? });
+    }
+    Ok((players, projectiles, bags))
 }
 
 // ---- render-only views (plan 6.11; invariant 9: nothing read from these may become an input) ----------

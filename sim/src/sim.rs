@@ -1,6 +1,6 @@
 //! The simulation instance: grid + tick + queued inputs.
 
-use crate::entities::{self, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
+use crate::entities::{self, Bag, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
@@ -38,6 +38,8 @@ pub struct Sim {
     pub pickups: Vec<Pickup>,
     /// Bolts in flight, in spawn order (game worlds only). State: hashed and snapshotted.
     pub projectiles: Vec<Projectile>,
+    /// Dropped bags, in spawn order (game worlds only; the sandbox has none). State: hashed and snapshotted.
+    pub bags: Vec<Bag>,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
     /// Cache of the generated world, so `restore` need not regenerate it. Not state.
@@ -61,7 +63,7 @@ impl Sim {
         if let Some(b) = base.filter(|b| b.seed == seed && b.world_kind == world_kind && b.mat.len() == w * h && b.aux.len() == w * h) {
             grid.mat.copy_from_slice(&b.mat);
             grid.aux.copy_from_slice(&b.aux);
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: b.pickups.clone(), projectiles: Vec::new(), events: Vec::new(), base: None });
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: b.pickups.clone(), projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: None });
         }
         if world_kind == 1 {
             let spots = crate::gen::generate(&mut grid, seed);
@@ -76,7 +78,7 @@ impl Sim {
                 })
                 .collect();
             let base = Base { seed, world_kind, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone() };
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), events: Vec::new(), base: Some(base) });
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: Some(base) });
         }
         for y in 0..h {
             for x in 0..w {
@@ -85,7 +87,7 @@ impl Sim {
                 }
             }
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), events: Vec::new(), base: None })
+        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: None })
     }
 
     /// 0 on success, negative if malformed (input is then dropped).
@@ -307,7 +309,7 @@ impl Sim {
         if self.world_kind == 0 {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups, &self.projectiles)
+        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags)
     }
 
     pub fn state_hash(&mut self) -> u64 {
