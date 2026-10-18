@@ -129,7 +129,15 @@ on 14 Oct. Still open: whether it lands on `main` with the game world (merge
       `ADMIN_TOKEN` (`d088c4f`..`b24cfc6`).
 - [x] Admin world reset, confirm-twice from the dashboard (`0ca9f5e`..`bec4938`,
       review `docs/research/review-crit10-reset.md`).
-- [ ] Set the secret: `fly secrets set ADMIN_TOKEN=...` (the user).
+- [x] Admin token in `fly.toml` (D-098, `cf20f44`).
+- [x] Live sandbox down 18 Oct (boot crash on a 130k+ tick log): hotfixed on
+      `main` (`2c70ceb`) and `multa` (`10247e2`), D-099. World restored from the
+      14 Oct snapshot; later paint lost. Snapshots verified again after deploy.
+- [ ] Stop the log outgrowing snapshots. Snapshots need a client connected for
+      a full cycle (1800 ticks); short visits on a long log never get there, and
+      each makes the next join slower. Options: request a snapshot as soon as a
+      client finishes catching up, or when the log passes a size. Watch
+      `/dashboard` "last snapshot" in the meantime.
 - [ ] Merge `multa` to `main` (deploys; ask first). After: `fly logs` shows JSON
       lines, `/dashboard` shows no names, the sandbox world from before the
       merge is still there.
