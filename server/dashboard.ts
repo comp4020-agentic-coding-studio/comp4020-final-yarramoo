@@ -141,7 +141,7 @@ function renderSummary(s){
 function renderConns(list){
   $("admin").hidden=false;const tb=$("conns");tb.replaceChildren();
   for(const c of list){const tr=document.createElement("tr");
-    const cells=[c.who,c.achievements,c.world,c.role,c.connectedS+"s",c.rttP95Ms==null?"-":c.rttP95Ms+" ms",c.tickLag==null?"-":c.tickLag,c.stepP95Ms==null?"-":c.stepP95Ms+" ms",c.buffered==null?"-":c.buffered,
+    const cells=[c.who,c.kills+"/"+c.deaths,c.achievements,c.world,c.role,c.connectedS+"s",c.rttP95Ms==null?"-":c.rttP95Ms+" ms",c.tickLag==null?"-":c.tickLag,c.stepP95Ms==null?"-":c.stepP95Ms+" ms",c.buffered==null?"-":c.buffered,
       c.window.casts+"c "+c.window.paints+"p "+c.window.pos+"pos "+c.window.rejected+"rej",
       c.total.casts+"c "+c.total.paints+"p "+c.total.pos+"pos "+c.total.rejected+"rej "+c.total.resyncs+"rs"];
     for(const v of cells){const td=document.createElement("td");td.textContent=String(v);tr.append(td)}tb.append(tr)}
@@ -199,7 +199,7 @@ function dashboardPage(build: string): string {
 <h2>Worlds</h2><div id="worlds" class="grid"></div>
 <h2>Process</h2><div id="proc" class="card"></div>
 <section id="admin" hidden><h2>Connections (<span id="nconns">0</span>)</h2>
-<div class="box"><table><thead><tr><th>who</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
+<div class="box"><table><thead><tr><th>who</th><th>k/d</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
 <h2>Recent achievements</h2>
 <div class="box"><table><thead><tr><th>who</th><th>achievement</th><th>world</th><th>tick</th><th>when</th></tr></thead><tbody id="ach"></tbody></table></div>
 <h2>Reset a world</h2><p class="muted">Returns one world to its generated start and disconnects everyone in it (they reconnect on their own). Players, names and stats are kept.</p>

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startServer, type RunningServer } from "../../server/main.ts";
+import { encodeClaim } from "../../shared/protocol.ts";
 import { buildHashHex, connect, register, sleep, waitFor } from "./helpers.ts";
 
 let hex: string;
@@ -69,5 +70,34 @@ describe("dashboard achievements", () => {
     expect(JSON.parse(api).achievementsToday).toBe(1);
     const page = await (await fetch(`http://127.0.0.1:${s.port}/dashboard`)).text();
     expect(page).not.toContain("Zorblax");
+  }, 20000);
+
+  it("admin sees kills/deaths per connection and claim.death in the feed; the public view sees neither name nor kill counts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sand-achd-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const s: RunningServer = await startServer({ port: 0, dataDir: dir, quiet: true, adminToken: "secret", inputSummaryMs: 100000 });
+    cleanups.push(() => s.close());
+    const k = await register(s.port, "Killer");
+    const v = await register(s.port, "Victim");
+    const gk = await connect(s.port, hex, { world: 1, token: k.token });
+    const gv = await connect(s.port, hex, { world: 1, token: v.token });
+    cleanups.push(() => gk.close(), () => gv.close());
+    gk.claims = false;
+    gv.claims = false;
+    await sleep(300);
+    const tick = s.game.clock.lastClosed - 1;
+    gk.ws.send(encodeClaim(tick, v.id, k.id, 6, 0)); // 1 of 2 eligible is a majority
+    await waitFor(() => s.playerStats.get(v.id).deaths === 1, 3000, "claim counted");
+    const admin = await readSse(s.port, "?token=secret", 1500);
+    const conns = JSON.parse(/event: conns\ndata: (.*)\n/.exec(admin)![1]) as { who: string; kills: number; deaths: number }[];
+    expect(conns.find((c) => c.who === `Killer#${k.id}`)).toMatchObject({ kills: 1, deaths: 0 });
+    expect(conns.find((c) => c.who === `Victim#${v.id}`)).toMatchObject({ kills: 0, deaths: 1 });
+    expect(admin).toContain("claim.death");
+    expect(admin).toContain(`Victim#${v.id}`);
+    const pub = await readSse(s.port, "", 1500);
+    expect(pub).not.toContain("Victim");
+    expect(pub).not.toContain("claim.death");
+    expect(pub).not.toContain('"kills"');
+    expect(await (await fetch(`http://127.0.0.1:${s.port}/api/summary`)).text()).not.toContain("kills");
   }, 20000);
 });

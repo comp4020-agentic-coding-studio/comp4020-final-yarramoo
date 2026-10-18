@@ -88,6 +88,9 @@ export interface ConnInfo {
   visitorId: number;
   /** Achievements this visitor has earned (admin only; 0 for anonymous). */
   achievements: number;
+  /** Credited kills and deaths from majority claims (admin only; 0 for anonymous). */
+  kills: number;
+  deaths: number;
   connectedS: number;
   /** Server-measured ws ping round trip, ms. undefined until the first pong. */
   rttMs?: number;
@@ -761,6 +764,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           role: l.role,
           visitorId: l.visitorId,
           achievements: achievements.earnedBy(l.visitorId).length,
+          kills: playerStats.get(l.visitorId).kills ?? 0,
+          deaths: playerStats.get(l.visitorId).deaths ?? 0,
           connectedS: Math.round((Date.now() - l.at) / 100) / 10,
           rttMs: round2(l.timing.rttMs),
           rttP95Ms: round2(l.timing.rttP95()),
