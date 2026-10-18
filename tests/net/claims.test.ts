@@ -240,3 +240,41 @@ describe("kills, deaths and the four claim achievements", () => {
     expect(h.given).toEqual([]);
   });
 });
+
+describe("anonymous and unregistered voters (review S1)", () => {
+  const anon = (r: ReturnType<typeof rig>) => r.w.join(peer(), { spectate: true }).conn;
+  it("5 anonymous spectators plus 1 honest player: their claims never resolve a death or raise the quorum", () => {
+    const r = rig();
+    const honest = r.add(1);
+    const spies = [anon(r), anon(r), anon(r), anon(r), anon(r)];
+    r.advance(2000);
+    const tick = r.w.clock.lastClosed - 5;
+    for (const s of spies) r.w.onClaim(s, death(tick, 1, 0));
+    expect(r.resolved).toEqual([]);
+    // The honest player alone is the whole electorate (quorum 1), unmoved by five sockets.
+    r.w.onClaim(honest, death(tick, 1, 0));
+    expect(r.resolved).toEqual([{ tick, victim: 1, killer: 0, cause: 5, bag: 0 }]);
+  });
+  it("one visitor on two connections votes once and is one eligible voter", () => {
+    const r = rig();
+    const tab1 = r.w.join(peer(), { playerId: 1, name: "A", visitorId: 1, visitorName: "A" }).conn;
+    const spec = r.w.join(peer(), { spectate: true, visitorId: 1, visitorName: "A" }).conn;
+    const b = r.add(2);
+    r.add(3);
+    r.advance(2000);
+    const tick = r.w.clock.lastClosed - 5;
+    r.w.onClaim(tab1, death(tick, 2, 0));
+    r.w.onClaim(spec, death(tick, 2, 0));
+    expect(r.resolved).toEqual([]); // 3 visitors, need 2, only visitor 1 has voted
+    r.w.onClaim(b, death(tick, 2, 0));
+    expect(r.resolved).toHaveLength(1);
+  });
+  it("a registered spectator still counts as a witness", () => {
+    const r = rig();
+    r.add(1);
+    const spec = r.w.join(peer(), { spectate: true, visitorId: 7, visitorName: "S" }).conn;
+    r.advance(2000);
+    r.w.onClaim(spec, death(r.w.clock.lastClosed - 5, 1, 0));
+    expect(r.resolved).toHaveLength(1);
+  });
+});

@@ -73,15 +73,21 @@ describe("two real clients, one kills the other", () => {
     b.close();
   }, 60000);
 
-  it("a spectator's claim counts as a witness, and a sandbox claim is refused", async () => {
+  it("a registered spectator's claim counts as a witness, an anonymous one does not, and a sandbox claim is refused", async () => {
     const s = await boot();
     const ana = await register(s.port, "Ana");
     const g = await connect(s.port, hex, { world: GAME, token: ana.token });
-    const spec = await connect(s.port, hex, { world: GAME, spectate: true });
+    const watcher = await register(s.port, "Watcher");
+    const spec = await connect(s.port, hex, { world: GAME, spectate: true, token: watcher.token });
+    const anon = await connect(s.port, hex, { world: GAME, spectate: true });
     await sleep(300);
-    // Only the spectator and Ana are connected (need 1 of 2): the spectator alone resolves a death.
     g.claims = false;
     const tick = s.game.clock.lastClosed - 1;
+    // An anonymous socket neither votes nor counts.
+    anon.ws.send(encodeClaim(tick, ana.id, 0, 7, 0));
+    await sleep(200);
+    expect(s.playerStats.get(ana.id).deaths ?? 0).toBe(0);
+    // Two registered visitors (need 1 of 2): the registered spectator alone resolves it.
     spec.ws.send(encodeClaim(tick, ana.id, 0, 7, 0));
     await waitFor(() => s.playerStats.get(ana.id).deaths === 1, 3000, "spectator claim counted");
     const sb = await connect(s.port, hex, { world: 0 });
@@ -93,6 +99,7 @@ describe("two real clients, one kills the other", () => {
     void EV_DEATH;
     g.close();
     spec.close();
+    anon.close();
     sb.close();
   }, 30000);
 });

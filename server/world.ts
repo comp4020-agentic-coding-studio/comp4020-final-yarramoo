@@ -757,6 +757,11 @@ export class World {
   onClaim(memberId: number, d: ResolvedDeath): void {
     const m = this.members.get(memberId);
     if (this.resetting || !m || this.kind !== WORLD_GAME) return;
+    // Only a registered visitor may vote: an anonymous socket is free, a registration is rate limited (D-119).
+    if (!m.visitorId) {
+      this.elog.limited(`claim_anon:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_anonymous" }, "warn");
+      return;
+    }
     const t = this.now();
     if (t - m.claimWindowStart >= CLAIM_RATE_MS) {
       m.claimWindowStart = t;
@@ -787,21 +792,21 @@ export class World {
     this.tryResolveClaim(key, tally);
   }
 
-  /** Members that could have witnessed `tick`. */
+  /** Registered visitors that could have witnessed `tick`, each counted once however many connections they hold. */
   private eligibleAt(tick: number): number {
-    let n = 0;
-    for (const m of this.members.values()) if (m.minHashTick < tick) n++;
-    return n;
+    const seen = new Set<number>();
+    for (const m of this.members.values()) if (m.visitorId && m.minHashTick < tick) seen.add(m.visitorId);
+    return seen.size;
   }
 
-  /** Eligible voters in `tally` that are still connected (a leaver's vote is not counted). */
+  /** Distinct, still-eligible visitors among `tally`'s voting connections. */
   private liveVotes(tally: ClaimTally): number {
-    let n = 0;
+    const seen = new Set<number>();
     for (const id of tally.votes) {
       const m = this.members.get(id);
-      if (m && m.minHashTick < tally.death.tick) n++;
+      if (m && m.visitorId && m.minHashTick < tally.death.tick) seen.add(m.visitorId);
     }
-    return n;
+    return seen.size;
   }
 
   private tryResolveClaim(key: string, tally: ClaimTally): void {
