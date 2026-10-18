@@ -193,8 +193,8 @@ J is a constant 2. The plan says adapted to jitter; the client already sees tick
 
 - **Server-side respawn allowance for Pos validation.** The server cannot see `Respawn`, so after M5 a teleport to the surface looks like a jump. Let the server read `Death` claims (or just widen the limit for a few ticks after one) so honest respawns are never rejected. Source: D-067.
 - **Cache the generated base world per (seed, kind).** Restore and `init` each regenerate (about 400 ms); the verify worker pays it on every upload and a joining client pays it twice. A 3 MB memcpy of the pristine `mat` removes both. Source: review-m3 S2, still open.
-- **A "who is online" list and a share-a-spot link.** The labels already know every active player; a side list with a "jump camera here" click is the spectate feature phones need (D-011) and helps markers find the second profile.
-- **Name tags that fade with distance, and a tiny minimap.** The world is 2048 wide and the view 480; two players can be many screens apart and never know. A strip along the top with a dot per player costs one DOM element each.
+- ~~**A "who is online" list and a share-a-spot link.** The labels already know every active player; a side list with a "jump camera here" click is the spectate feature phones need (D-011) and helps markers find the second profile. (done: D-123; the share-a-spot link is not built)~~
+- ~~**Name tags that fade with distance, and a tiny minimap.** The world is 2048 wide and the view 480; two players can be many screens apart and never know. A strip along the top with a dot per player costs one DOM element each. (done: D-123)~~
 - **Walking animation for the figures.** `pushFigure` is a static placeholder; leg swing and a lean while levitating need only the avatar's velocity, which the worker already has (todo: character animation).
 
 ## Aim assist and a visible cone for Blast
