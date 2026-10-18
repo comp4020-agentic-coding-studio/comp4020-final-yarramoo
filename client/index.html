@@ -49,12 +49,12 @@
     #spells .ch { display: block; color: var(--dim); font-variant-numeric: tabular-nums; }
     #spells .cd { position: absolute; left: 0; bottom: 0; width: 100%; height: 0; background: rgba(0,0,0,.55); }
     #spells .sw { position: absolute; left: 0; bottom: 0; width: 100%; height: 3px; border: 0; border-radius: 0; }
-    #join { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgba(11,14,20,.88); }
+    #join { position: fixed; inset: 0; z-index: 5; display: flex; overflow: auto; padding: 12px; box-sizing: border-box; align-items: center; justify-content: center; background: rgba(11,14,20,.88); }
     #join form { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(92vw, 340px); display: grid; gap: 12px; }
     #join[hidden] { display: none; }
     #join h2 { margin: 0; font-size: 17px; }
     #join p { margin: 0; color: var(--dim); font-size: 13px; }
-    #join input { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--fg); }
+    #join input { font: inherit; padding: 8px 10px; font-size: 16px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--fg); }
     #join button { font: inherit; padding: 9px 12px; border-radius: 6px; border: 0; background: var(--accent); color: #0b0e14; font-weight: 600; cursor: pointer; }
     body.game footer { display: none; }
     body.game canvas { cursor: crosshair; }
@@ -70,10 +70,10 @@
   <main><div id="stage"></div></main>
   <div id="join" hidden>
     <form id="joinForm" autocomplete="off">
-      <h2>Join the world</h2>
-      <p>Pick a name other players will see. It stays in this browser; clear site data and you are someone new.</p>
+      <h2>Pick a name</h2>
+      <p>Other players will see it. It stays in this browser; clear site data and you are someone new.</p>
       <input id="name" name="name" maxlength="24" placeholder="Your name" aria-label="Your name" />
-      <button type="submit">Play</button>
+      <button type="submit">Go</button>
     </form>
   </div>
   <div id="note" hidden></div>

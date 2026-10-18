@@ -589,8 +589,8 @@ function start(token: string, name: string) {
   }
 }
 
-// The sandbox and spectators need no identity; a game-world player needs a token, from the join form the first time.
-if (worldId === 1 && !spectate && localKind === null) {
+// Every visitor (painter, player, phone spectator) gets a name from the join form the first time; local dev skips it.
+if (localKind === null) {
   const token = store.get(TOKEN_KEY);
   if (/^[0-9a-f]{64}$/.test(token)) start(token, store.get(NAME_KEY));
   else {
