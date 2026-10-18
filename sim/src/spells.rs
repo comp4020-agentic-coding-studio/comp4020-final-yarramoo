@@ -16,6 +16,20 @@ pub const ROSE: u8 = 3;
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
 
+/// Floor square root, integer Newton. No floats (invariant 3).
+pub fn isqrt(n: u64) -> u32 {
+    if n < 2 {
+        return n as u32;
+    }
+    let mut x = n;
+    let mut y = x.div_ceil(2);
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x as u32
+}
+
 impl Player {
     /// Alive means able to act and be hit. Nothing can kill a player before M5, but the rule is already
     /// the one M5 needs (plan 6.8): health above zero and the respawn timer elapsed.
@@ -240,8 +254,98 @@ impl Sim {
         }
     }
 
-    /// Put a player back at the spawn point with a new `life` (plan 6.8). Nothing calls this from an input
-    /// yet: M5's death handling will. Public so tests can drive the respawn path.
+    /// Take `amount` health from the player at `victim_index`, saturating at 0. Only an alive player takes
+    /// damage (a corpse takes none). At 0 the player dies: `dead_until`, then `EV_DEATH` with the killer
+    /// (the last other hitter within `KILL_CREDIT_TICKS`, else 0) and `cause`.
+    pub(crate) fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
+        let tick = self.tick;
+        let p = &mut self.players[victim_index];
+        if !p.alive(tick) || amount == 0 {
+            return;
+        }
+        p.health = p.health.saturating_sub(amount);
+        if p.health > 0 {
+            return;
+        }
+        p.dead_until = tick.wrapping_add(DEATH_TICKS);
+        let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
+        let killer = if credited { p.last_hit_by } else { 0 };
+        // `c` is reserved: slice 3 sets it to 1 when the death dropped a bag.
+        self.events.push(Event { kind: EV_DEATH, player: p.id, a: killer as i32, b: i32::from(cause), c: 0 });
+    }
+
+    /// An explosion of radius `r` cells at (`cx`, `cy`): `EV_EXPLODE` once, then for each alive player in id
+    /// order, linear damage (`EXPLOSION_DAMAGE_MAX` at the centre, 0 at `r`) and knockback within 1.5 r.
+    /// A non-zero `owner` becomes the victim's last hitter unless the victim is the owner (gunpowder passes 0,
+    /// and credits nobody: invariant 11 forbids per-cell ownership). The grid carving is the caller's job.
+    pub fn explode_at(&mut self, cx: i32, cy: i32, r: i32, owner: u32, cause: u8) {
+        let tick = self.tick;
+        self.events.push(Event { kind: EV_EXPLODE, player: owner, a: cx, b: cy, c: r });
+        let kr = r * 3 / 2;
+        if r <= 0 {
+            return;
+        }
+        for i in 0..self.players.len() {
+            let t = &self.players[i];
+            if !t.alive(tick) {
+                continue;
+            }
+            // Distances in 1/16 cell, to the chest.
+            let (dx, dy) = (i64::from(t.x - cx * POS_ONE - POS_ONE / 2), i64::from(t.y - CHEST * POS_ONE - cy * POS_ONE - POS_ONE / 2));
+            let dist = isqrt((dx * dx + dy * dy) as u64) as i64;
+            let d = (dist >> POS_SHIFT) as i32;
+            if d >= kr {
+                continue;
+            }
+            let id = t.id;
+            if owner != 0 && id != owner {
+                self.players[i].last_hit_by = owner;
+                self.players[i].last_hit_tick = tick;
+            }
+            if d < r {
+                self.apply_damage(i, (EXPLOSION_DAMAGE_MAX * (r - d) / r) as u8, cause);
+            }
+            let mag = i64::from(KNOCK_EXPLOSION * (kr - d) / kr);
+            let (vx, vy) = if dist == 0 { (0, -mag) } else { (mag * dx / dist, mag * dy / dist) };
+            self.events.push(Event { kind: EV_KNOCK, player: id, a: vx as i32, b: vy as i32, c: owner as i32 });
+        }
+    }
+
+    /// Lava and fire contact for every active, alive player, in id order. Lava costs 1 HP on even ticks,
+    /// fire 1 HP when `(tick + id) % 6 == 0`; lava wins if both touch. Reads only the player's own hitbox,
+    /// which lies inside the awake region of an active player, so chunk sleeping cannot change the result.
+    pub(crate) fn hazard_scan(&mut self) {
+        let tick = self.tick;
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        for i in 0..self.players.len() {
+            let p = &self.players[i];
+            if !p.alive(tick) {
+                continue;
+            }
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            let (mut lava, mut fire) = (false, false);
+            for y in y0.max(0)..=y1.min(h - 1) {
+                for x in x0.max(0)..=x1.min(w - 1) {
+                    match self.grid.mat[(y * w + x) as usize] {
+                        LAVA => lava = true,
+                        FIRE => fire = true,
+                        _ => {}
+                    }
+                }
+            }
+            let id = p.id;
+            if lava {
+                if tick.is_multiple_of(2) {
+                    self.apply_damage(i, 1, CAUSE_LAVA);
+                }
+            } else if fire && tick.wrapping_add(id).is_multiple_of(6) {
+                self.apply_damage(i, 1, CAUSE_FIRE);
+            }
+        }
+    }
+
+    /// Put a player back at the spawn point with a new `life` (plan 6.8). Called by `update_entities` at
+    /// `dead_until`. Public so tests can drive the respawn path.
     pub fn respawn_player(&mut self, id: u32) {
         let Ok(k) = self.players.binary_search_by_key(&id, |p| p.id) else { return };
         let (x, y) = self.spawn_point(id);

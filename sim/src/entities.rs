@@ -266,6 +266,11 @@ pub const EV_KNOCK: u8 = 5;
 pub const EV_IMPACT: u8 = 6;
 /// A player was put back at the spawn point: a, b = x, y (1/16 cell), c = new life.
 pub const EV_RESPAWN: u8 = 7;
+/// An explosion: `player` = owner (0 for gunpowder), a, b = centre cell x, y, c = radius in cells.
+pub const EV_EXPLODE: u8 = 8;
+/// A player died: `player` = victim, a = killer (0 if none), b = cause (`CAUSE_*` or a spell id), c = 0
+/// (reserved: slice 3 sets it to 1 when a bag dropped).
+pub const EV_DEATH: u8 = 9;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;

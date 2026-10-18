@@ -65,3 +65,18 @@ pub const WATER_BURST_CELLS: usize = 60;
 pub const WATER_BURST_R2: i32 = 36;
 pub const SEED_BURST_CELLS: u32 = 8;
 pub const SEED_BURST_R: u32 = 3;
+
+// ---- damage, death and respawn (M5, plan 6.8) ----------------------------------------------------------
+
+/// Explosion damage at distance 0; falls off linearly to 0 at the radius.
+pub const EXPLOSION_DAMAGE_MAX: i32 = 60;
+/// Explosion knockback at distance 0 (1/16 cell per tick); falls off linearly to 0 at 1.5 radii.
+pub const KNOCK_EXPLOSION: i32 = 96;
+/// Ticks a dead player stays dead before the respawn.
+pub const DEATH_TICKS: u32 = 180;
+/// A hit counts toward a kill credit for this many ticks.
+pub const KILL_CREDIT_TICKS: u32 = 300;
+/// Cause codes carried by `EV_DEATH`: a spell id 0..=5 is that spell, then:
+pub const CAUSE_FIRE: u8 = 6;
+pub const CAUSE_LAVA: u8 = 7;
+pub const CAUSE_GUNPOWDER: u8 = 8;

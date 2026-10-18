@@ -99,6 +99,15 @@ impl Sim {
         }
     }
 
+    /// One tick, in this order (D-102):
+    /// 1. inputs
+    /// 2. `update_entities`: projectiles, then respawns, then pickups
+    /// 3. `refresh_active`
+    /// 4. `grid.step_cells`
+    /// 5. grid explosions -> `explode_at` (damage, knockback, `EV_EXPLODE`)
+    /// 6. hazard scan (lava, fire contact)
+    ///
+    /// Damage and death happen inside 5 and 6.
     pub fn step(&mut self) -> u32 {
         self.events.clear();
         let inputs = core::mem::take(&mut self.queue);
@@ -108,6 +117,14 @@ impl Sim {
         self.update_entities();
         self.refresh_active();
         self.grid.step_cells(self.seed, self.tick);
+        if self.world_kind != 0 {
+            let centres = core::mem::take(&mut self.grid.explosions);
+            for &(cx, cy) in &centres {
+                self.explode_at(cx as i32, cy as i32, crate::grid::BLAST_RADIUS, 0, CAUSE_GUNPOWDER);
+            }
+            self.grid.explosions = centres;
+            self.hazard_scan();
+        }
         #[cfg(feature = "canary")]
         {
             // Test D10: the only host import. Must make the build fail the zero-imports check.
@@ -161,7 +178,9 @@ impl Sim {
                     let p = &mut self.players[k];
                     // A stale `life` is ignored, so a dead avatar's old position cannot override a respawn.
                     // An inactive player is ignored too. Clamped to the world: the work stays bounded.
-                    if p.active && p.life == life {
+                    // A dead player (health 0) is ignored as well: the corpse stays where it fell, and a
+                    // client that keeps sending Pos while dead cannot move it before the respawn.
+                    if p.active && p.health > 0 && p.life == life {
                         p.x = x.clamp(0, (self.grid.w as i32 - 1) * POS_ONE);
                         p.y = y.clamp(0, (self.grid.h as i32 - 1) * POS_ONE);
                         p.facing = facing & 1;
@@ -219,11 +238,20 @@ impl Sim {
     /// so two players on one pickup resolve to the lower id.
     fn update_entities(&mut self) {
         self.update_projectiles();
+        let tick = self.tick;
+        // Respawns come first, in id order, whether or not the player is still active: a player who
+        // left while dead must not stay dead.
+        for k in 0..self.players.len() {
+            let p = &self.players[k];
+            if p.health == 0 && tick >= p.dead_until {
+                let id = p.id;
+                self.respawn_player(id);
+            }
+        }
         if self.pickups.is_empty() {
             return;
         }
-        let tick = self.tick;
-        for p in self.players.iter_mut().filter(|p| p.active) {
+        for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
             let (x0, y0, x1, y1) = p.hitbox_cells();
             for k in self.pickups.iter_mut() {
                 let (kx, ky) = (i32::from(k.x), i32::from(k.y));
