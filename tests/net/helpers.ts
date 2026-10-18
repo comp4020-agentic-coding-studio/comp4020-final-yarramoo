@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
 import { encodeCast, encodePaint, encodePos, KIND_CAST, KIND_PAINT, KIND_POS } from "../../shared/inputs.ts";
-import { decodeServer, encodeClaim, encodeHash, encodeHello, encodeInput, encodeSnapshotUpload } from "../../shared/protocol.ts";
+import { decodeServer, encodeClaim, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload } from "../../shared/protocol.ts";
 import { EV_DEATH, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
@@ -23,6 +23,10 @@ export interface TestClient {
   /** When false the client does not answer REQUEST_SNAPSHOT. */
   uploads: boolean;
   lie: boolean;
+  /** When true the client never sends LIVE (a client that is slow or hostile). Set before the replay finishes. */
+  holdLive: boolean;
+  /** Send LIVE now, at the sim's current tick. */
+  sendLive(): void;
   /** When true (default) the client sends a CLAIM for every EV_DEATH its sim emits past the replay target. */
   claims: boolean;
   /** The step p95 (ms) this client puts in its HASH frames. */
@@ -45,7 +49,7 @@ export interface TestClient {
 export async function connect(
   port: number,
   hashHex: string,
-  opts: { uploads?: boolean; manual?: boolean; world?: number; token?: Uint8Array; spectate?: boolean } = {},
+  opts: { uploads?: boolean; manual?: boolean; holdLive?: boolean; world?: number; token?: Uint8Array; spectate?: boolean } = {},
 ): Promise<TestClient> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { "user-agent": "vitest-client" } });
   ws.binaryType = "nodebuffer";
@@ -68,6 +72,7 @@ export async function connect(
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
     claims: true,
+    holdLive: opts.holdLive ?? false,
     onDue: null,
     reportStepP95: 1.5,
   } as unknown as TestClient;
@@ -84,6 +89,8 @@ export async function connect(
       if (c.claims && tick > c.ls.catchUpTarget && c.ls.sim.width() > 512) {
         for (const e of c.ls.sim.events()) if (e.kind === EV_DEATH) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c));
       }
+      // Like the real client: LIVE the moment the replay target is reached (D-122). `holdLive` lets a test withhold it.
+      if (tick === c.ls.catchUpTarget && !c.holdLive) ws.send(encodeLive(tick));
       const r = reactToTick(c.ls, tick, wantAt);
       if (r.hash !== undefined) ws.send(encodeHash(tick, corrupt ? r.hash ^ 1n : r.hash, c.reportStepP95, c.ls.buffered));
       if (r.snapshot) {
@@ -106,6 +113,7 @@ export async function connect(
           kind = m.worldKind;
           fresh(m.tick);
           c.playerId = m.playerId;
+          if (m.tick === 0 && !c.holdLive) ws.send(encodeLive(0));
           ok();
           break;
         case "snapshot":
@@ -116,6 +124,7 @@ export async function connect(
         case "resync":
           c.counts.resyncs++;
           fresh(m.tick);
+          if (m.tick === 0 && !c.holdLive) ws.send(encodeLive(0));
           break;
         case "request-snapshot":
           c.counts.requests++;
@@ -143,6 +152,7 @@ export async function connect(
   c.move = (x, y, facing = 0, life = 0) =>
     ws.send(encodeInput(++seq, KIND_POS, encodePos(0, life, Math.round(x * 16), Math.round(y * 16), facing).subarray(5)));
   c.cast = (spell, angle, castSeq) => ws.send(encodeInput(++seq, KIND_CAST, encodeCast(0, spell, angle, castSeq).subarray(5)));
+  c.sendLive = () => ws.send(encodeLive(c.ls.sim.tick()));
   c.drain = () => void c.ls.run(1_000_000);
   c.close = () => ws.close();
   return c;

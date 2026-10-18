@@ -7,6 +7,7 @@ import {
   encodeClaim,
   encodeHash,
   encodeHello,
+  encodeLive,
   encodeInput,
   encodePing,
   encodeSnapshotUpload,
@@ -209,6 +210,11 @@ function stepP95Now(): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
 }
 
+/** Tell the server this client has caught up, so it can stop holding the world's clock for it (D-122). */
+function sendLive() {
+  if (ls && ws && ws.readyState === WebSocket.OPEN) ws.send(encodeLive(ls.sim.tick()) as BufferSource);
+}
+
 function onTickApplied(tick: number, inputs: { player: number; kind: number }[]) {
   // A Join of mine after the replay means the sim has (re)activated my entity: re-place the avatar on it.
   if (ls && !ls.fastForwarding) for (const i of inputs) if (i.player === myId && i.kind === KIND_JOIN) avatarReady = false;
@@ -266,6 +272,7 @@ function beginReplay(seed: bigint, worldKind: number, target: number, playersAtB
   players = playersAtBase;
   wantSnapshotAt = 0;
   setNet(target > 0 ? "catching-up" : "live");
+  if (target === 0) sendLive(); // nothing to replay: live at once (after a reset or on a fresh world)
   send({ type: "world", width: sim.width(), height: sim.height(), kind: worldKind });
   renderer?.setWorld(sim.width(), sim.height());
 }
@@ -671,6 +678,7 @@ function frame(now: number) {
       if (!ls.fastForwarding) {
         acc = 0;
         setNet("live");
+        sendLive(); // same moment HASH starts to count (past the replay target); also after a resync or reconnect
       }
     } else {
       acc += dt;

@@ -90,7 +90,7 @@ describe("lockstep over the real server", () => {
     expect(server.stats.rejected).toBeGreaterThan(0);
     void sawPaint;
     a.close();
-    expect(PROTOCOL_VERSION).toBe(6);
+    expect(PROTOCOL_VERSION).toBe(7);
   });
 
   it("drops inputs over the rate limit and counts them", async () => {

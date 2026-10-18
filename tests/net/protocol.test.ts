@@ -9,6 +9,8 @@ import {
   encodeHash,
   PROTOCOL_VERSION,
   C_CLAIM,
+  C_LIVE,
+  encodeLive,
   encodeHello,
   encodeRequestSnapshot,
   encodeResync,
@@ -30,7 +32,7 @@ const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
 describe("protocol codec", () => {
   it("round-trips HELLO, INPUT, PING", () => {
     const h = decodeClient(encodeHello(hash, 7));
-    expect(h).toMatchObject({ t: "hello", version: 6, worldId: 7, flags: 0 });
+    expect(h).toMatchObject({ t: "hello", version: 7, worldId: 7, flags: 0 });
     expect(h && h.t === "hello" && Array.from(h.buildHash)).toEqual(Array.from(hash));
     const payload = encodePaint(0, 4, -3, 5, 100, 200, 6).subarray(5);
     expect(payload.length).toBe(PAINT_PAYLOAD_LEN);
@@ -133,7 +135,7 @@ describe("protocol codec", () => {
   });
 
   it("round-trips CLAIM at protocol v6 and refuses any other length", () => {
-    expect(PROTOCOL_VERSION).toBe(6);
+    expect(PROTOCOL_VERSION).toBe(7);
     expect(C_CLAIM).toBe(6);
     const f = encodeClaim(123456, 7, 9, 4, 1);
     expect(f.length).toBe(15);
@@ -144,16 +146,28 @@ describe("protocol codec", () => {
     expect(decodeClient(new Uint8Array(1000).fill(C_CLAIM))).toBeNull();
   });
 
+  it("round-trips LIVE and refuses any other length", () => {
+    expect(C_LIVE).toBe(7);
+    const f = encodeLive(123456);
+    expect(Array.from(f)).toEqual([7, 0x40, 0xe2, 0x01, 0x00]);
+    expect(decodeClient(f)).toEqual({ t: "live", tick: 123456 });
+    expect(decodeClient(encodeLive(0xffffffff))).toEqual({ t: "live", tick: 0xffffffff });
+    for (const n of [1, 2, 4]) expect(decodeClient(f.subarray(0, n))).toBeNull();
+    expect(decodeClient(new Uint8Array([...f, 0]))).toBeNull();
+    expect(decodeClient(new Uint8Array(1000).fill(C_LIVE))).toBeNull();
+  });
+
   it("never throws on random bytes, whatever the tag or length", () => {
     let x = 12345;
     const rnd = () => (x = (Math.imul(x, 1103515245) + 12345) >>> 0) / 4294967296;
     for (let k = 0; k < 5000; k++) {
       const b = new Uint8Array(Math.floor(rnd() * 40));
       for (let i = 0; i < b.length; i++) b[i] = Math.floor(rnd() * 256);
-      if (b.length && k % 2) b[0] = C_CLAIM;
+      if (b.length && k % 2) b[0] = k % 4 === 1 ? C_CLAIM : C_LIVE;
       expect(() => decodeClient(b)).not.toThrow();
       const m = decodeClient(b);
       if (m?.t === "claim") expect(b.length).toBe(15);
+      if (m?.t === "live") expect(b.length).toBe(5);
     }
   });
 });

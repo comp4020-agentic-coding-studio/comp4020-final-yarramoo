@@ -669,6 +669,9 @@ export class World {
     }
   }
 
+  /** C_LIVE: this member finished catching up (D-122). */
+  onLive(_memberId: number): void {}
+
   // ---- hash checks (plan 7.4) -----------------------------------------------------------------
 
   onHash(memberId: number, tick: number, hash: bigint, stepP95Ms?: number, buffered?: number): void {

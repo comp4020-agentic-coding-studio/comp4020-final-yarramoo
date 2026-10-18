@@ -710,6 +710,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           if (w.kind !== WORLD_GAME) return void badInput(w, joined.conn, "claim_in_sandbox", 0x06);
           w.onClaim(joined.conn, { tick: msg.tick, victim: msg.victim, killer: msg.killer, cause: msg.cause, bag: msg.bag });
           return;
+        case "live":
+          w.onLive(joined.conn);
+          return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);
           return;
