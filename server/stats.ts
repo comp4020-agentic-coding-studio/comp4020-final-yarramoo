@@ -38,13 +38,14 @@ export class PlayerStats {
     this.mark(visitorId, stat);
   }
 
-  /** Keep the largest value seen. */
-  max(visitorId: number, stat: string, v: number): void {
-    if (!visitorId) return;
+  /** Keep the largest value seen. Returns true when the stored value rose. */
+  max(visitorId: number, stat: string, v: number): boolean {
+    if (!visitorId) return false;
     const m = this.of(visitorId);
-    if (v <= (m.get(stat) ?? -Infinity)) return;
+    if (v <= (m.get(stat) ?? -Infinity)) return false;
     m.set(stat, v);
     this.mark(visitorId, stat);
+    return true;
   }
 
   get(visitorId: number): Record<string, number> {

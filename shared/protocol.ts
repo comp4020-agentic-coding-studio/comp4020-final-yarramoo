@@ -3,7 +3,7 @@ import { unzlibSync, zlibSync } from "fflate";
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -23,6 +23,9 @@ export const S_RESYNC = 0x87;
 /** `player u32, name utf8`: who a player id is. Render-only (labels); never state. */
 export const S_PLAYER_NAME = 0x88;
 export const MAX_NAME_CHARS = 24;
+/** `id_len u8, id utf8, tick u32`: you earned this achievement (to the earner only). Ids are short ASCII slugs. */
+export const S_ACHIEVEMENT = 0x89;
+export const MAX_ACHIEVEMENT_ID_BYTES = 32;
 
 /** Hash checkpoint spacing; snapshot ticks are multiples of it. */
 export const HASH_EVERY = 60;
@@ -76,7 +79,8 @@ export type ServerMsg =
   | { t: "request-snapshot"; tick: number }
   /** Followed by an optional SNAPSHOT and then every closed tick after it; `tick` is the last closed tick (the replay target). */
   | { t: "resync"; tick: number; playersAtBase: number }
-  | { t: "player-name"; player: number; name: string };
+  | { t: "player-name"; player: number; name: string }
+  | { t: "achievement"; id: string; tick: number };
 
 const te = new TextEncoder();
 const td = new TextDecoder("utf-8", { fatal: true });
@@ -201,6 +205,17 @@ export function encodePlayerName(player: number, name: string): Uint8Array {
   b[0] = S_PLAYER_NAME;
   view(b).setUint32(1, player, true);
   b.set(n, 5);
+  return b;
+}
+
+export function encodeAchievement(id: string, tick: number): Uint8Array {
+  const n = te.encode(id);
+  if (n.length === 0 || n.length > MAX_ACHIEVEMENT_ID_BYTES) throw new Error("achievement id length");
+  const b = new Uint8Array(1 + 1 + n.length + 4);
+  b[0] = S_ACHIEVEMENT;
+  b[1] = n.length;
+  b.set(n, 2);
+  view(b).setUint32(2 + n.length, tick >>> 0, true);
   return b;
 }
 
@@ -354,6 +369,16 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
       } catch {
         return null;
       }
+    case S_ACHIEVEMENT: {
+      if (b.length < 2) return null;
+      const n = b[1];
+      if (n === 0 || n > MAX_ACHIEVEMENT_ID_BYTES || b.length !== 2 + n + 4) return null;
+      try {
+        return { t: "achievement", id: td.decode(b.subarray(2, 2 + n)), tick: v.getUint32(2 + n, true) };
+      } catch {
+        return null;
+      }
+    }
     default:
       return null;
   }

@@ -20,6 +20,7 @@ import {
   PAINT_PAYLOAD_LEN,
   PROTOCOL_VERSION,
   WORLD_GAME,
+  encodeAchievement,
 } from "../shared/protocol.ts";
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
@@ -38,6 +39,7 @@ import {
   STAT_POS_REJECTED,
   STAT_SESSIONS,
 } from "../shared/stats.ts";
+import { Achievements } from "./achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
 import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
 
@@ -145,6 +147,7 @@ export interface RunningServer {
   identity: Identity;
   /** Per-player counters, flushed to player_stats once a second and on shutdown. */
   playerStats: PlayerStats;
+  achievements: Achievements;
   /** The structured event log: ring buffer, subscribers, stdout JSON lines. */
   log: EventLog;
   verifier: SnapshotVerifier | undefined;
@@ -216,6 +219,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
   const identity = new Identity(db, log);
+  // Delivery goes through `live` (declared below; only called from message handlers, after it exists).
+  const achievements = new Achievements(db, playerStats, log, (visitorId, id, tick) => {
+    const frame = encodeAchievement(id, tick);
+    for (const l of live.values()) if (l.visitorId === visitorId && l.ws.readyState === l.ws.OPEN) l.ws.send(frame, { binary: true });
+  });
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
@@ -504,7 +512,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   function onConnection(ws: WebSocket, userAgent: string, ipTag: string) {
-    let joined: { world: World; conn: number; playerId: number; visitorId: number; counts: InputCounts; at: number } | null = null;
+    let joined: { world: World; conn: number; playerId: number; visitorId: number; visitorName: string; counts: InputCounts; at: number } | null = null;
     ws.on("pong", () => {
       if (!joined) return;
       const l = live.get(liveKey(joined.world.id, joined.conn));
@@ -553,7 +561,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         const visitorId = who === "unknown" ? 0 : who.id;
         const visitorName = who === "unknown" ? "" : who.name;
         const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
-        const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, counts: j.counts, at: Date.now() };
+        const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
         joined = me;
         playerStats.bump(visitorId, STAT_SESSIONS);
         const entry: Live = {
@@ -651,12 +659,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               // Pos payload after kind and player: life u16, x i32, y i32, facing u8.
               const depth = depthCells(new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength).getInt32(6, true));
               joined.counts.position(depth);
-              playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth);
+              // Only a deeper maximum can newly satisfy Spelunker, so most Pos inputs stop here.
+              if (playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth)) achievements.onStat(joined.visitorId, STAT_MAX_DEPTH, { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
             } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
             else {
               // Counted as an attempt (plan 10). Never one log line per cast: input.summary carries the counts.
               joined.counts.cast(spellKey(msg.payload[0]));
               playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
+              achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
             }
             w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
             return;
@@ -712,6 +722,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     worlds,
     identity,
     playerStats,
+    achievements,
     log,
     verifier,
     db,

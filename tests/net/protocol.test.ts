@@ -27,7 +27,7 @@ const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
 describe("protocol codec", () => {
   it("round-trips HELLO, INPUT, PING", () => {
     const h = decodeClient(encodeHello(hash, 7));
-    expect(h).toMatchObject({ t: "hello", version: 4, worldId: 7, flags: 0 });
+    expect(h).toMatchObject({ t: "hello", version: 5, worldId: 7, flags: 0 });
     expect(h && h.t === "hello" && Array.from(h.buildHash)).toEqual(Array.from(hash));
     const payload = encodePaint(0, 4, -3, 5, 100, 200, 6).subarray(5);
     expect(payload.length).toBe(PAINT_PAYLOAD_LEN);

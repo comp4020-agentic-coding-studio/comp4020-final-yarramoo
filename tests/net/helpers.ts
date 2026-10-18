@@ -34,6 +34,8 @@ export interface TestClient {
   cast(spell: number, angle: number, seq: number): void;
   /** Names the server told this client about, by player id. */
   names: Map<number, string>;
+  /** Achievements the server sent this client, in order. */
+  achievements: { id: string; tick: number }[];
   drain(): void;
   close(): void;
 }
@@ -59,6 +61,7 @@ export async function connect(
     hashes: new Map<number, bigint>(),
     playerId: 0,
     names: new Map<number, string>(),
+    achievements: [] as { id: string; tick: number }[],
     counts: { ticks: 0, snapshots: 0, resyncs: 0, requests: 0 },
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
@@ -118,6 +121,9 @@ export async function connect(
           break;
         case "player-name":
           c.names.set(m.player, m.name);
+          break;
+        case "achievement":
+          c.achievements.push({ id: m.id, tick: m.tick });
           break;
         case "reject":
           bad(new Error(m.reason));
