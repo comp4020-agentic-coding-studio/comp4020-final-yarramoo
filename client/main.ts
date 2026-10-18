@@ -1,4 +1,5 @@
 // Main thread: DOM (palette, brush), pointer forwarding, and the main-thread render fallback.
+import { fadeAlpha, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { BAR, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
@@ -510,6 +511,9 @@ function renderSpellBar() {
     s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[s.spell].cooldown) * 100))}%`;
   });
 }
+/** Name tags: fully solid within FADE_NEAR cells of the view centre, fading to a floor by FADE_FAR. */
+const FADE_NEAR = 110;
+const FADE_FAR = 300;
 const labelEls = new Map<number, HTMLSpanElement>();
 let lastPlayers: Extract<FromWorker, { type: "players" }> | null = null;
 
@@ -521,6 +525,7 @@ function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
     (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview, zoom };
   }
   placeLabels();
+  socialTick(false);
   hud.hidden = !steersAvatar();
   spellBar.hidden = !steersAvatar() || !m.spells;
   renderSpellBar();
@@ -580,6 +585,8 @@ function placeLabels() {
   const sx = r.width / camera.vw;
   const sy = r.height / camera.vh;
   const seen = new Set<number>();
+  const cx = camera.x + camera.vw / 2;
+  const cy = camera.y + camera.vh / 2;
   for (const p of m.list) {
     seen.add(p.id);
     let el = labelEls.get(p.id);
@@ -614,6 +621,10 @@ function placeLabels() {
     const y = r.top - sr.top + (p.y - 10 - 2 - camera.y) * sy;
     el.style.display = x < -40 || x > sr.width + 40 || y < -20 || y > sr.height + 20 ? "none" : "";
     el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+    // Far labels fade so a crowded screen stays readable; yours and near ones stay solid.
+    const a = p.me ? 1 : fadeAlpha(Math.hypot(p.x - cx, p.y - cy), FADE_NEAR, FADE_FAR);
+    const op = a >= 1 ? "" : a.toFixed(2);
+    if (el.style.opacity !== op) el.style.opacity = op;
   }
   for (const [id, el] of labelEls) {
     if (!seen.has(id)) {
@@ -739,3 +750,132 @@ new ResizeObserver(() => {
   send({ type: "pointer", kind: "up", x, y, mat, radius: r });
 };
 (window as unknown as Record<string, unknown>).__setSleep = (on: boolean) => send({ type: "sleep", on });
+
+// Who's online and the minimap (game world only). Camera moves only: never an input (invariant 9, D-055).
+const miniEl = document.createElement("div");
+miniEl.id = "minimap";
+miniEl.hidden = true;
+miniEl.setAttribute("aria-label", "World minimap: click to move the camera");
+const miniView = document.createElement("div");
+miniView.className = "view";
+miniEl.append(miniView);
+stage.append(miniEl);
+const whoBtn = document.createElement("button");
+whoBtn.id = "whoBtn";
+whoBtn.type = "button";
+whoBtn.hidden = true;
+whoBtn.setAttribute("aria-expanded", "false");
+const whoEl = document.createElement("div");
+whoEl.id = "who";
+whoEl.hidden = true;
+stage.append(whoBtn, whoEl);
+const miniDots = new Map<number, HTMLElement>();
+let whoKey = "";
+let lastSocial = 0;
+
+/** Move the camera to `cx, cy` (cells, view top-left already computed). A spectator can follow a player instead. */
+function jumpCamera(x: number, y: number, followPlayer?: number) {
+  overview = false;
+  if (worldId === 1) {
+    if (spectate && followPlayer !== undefined) {
+      following = true;
+      send({ type: "follow", on: true, id: followPlayer });
+    } else if (localKind === null) {
+      following = false;
+      send({ type: "follow", on: false });
+    }
+  }
+  camera.x = x;
+  camera.y = y;
+  applyCamera();
+  socialTick(true);
+}
+
+function jumpTo(p: { id: number; x: number; y: number }) {
+  const vw = GAME_VIEW.w / zoom;
+  const vh = GAME_VIEW.h / zoom;
+  jumpCamera(p.x - vw / 2, p.y - 10 - vh / 2, p.id);
+}
+
+function setWho(open: boolean) {
+  whoEl.hidden = !open;
+  whoBtn.setAttribute("aria-expanded", String(open));
+  whoKey = "";
+  socialTick(true);
+}
+whoBtn.onclick = () => setWho(!!whoEl.hidden);
+whoEl.onclick = (e) => {
+  const b = (e.target as HTMLElement).closest("button");
+  const p = b && lastPlayers?.list.find((q) => q.id === Number(b.dataset.id));
+  if (p) jumpTo(p);
+};
+miniEl.addEventListener("pointerdown", (e) => {
+  const r = miniEl.getBoundingClientRect();
+  const px = e.clientX - r.left;
+  const vw = GAME_VIEW.w / zoom;
+  const vh = GAME_VIEW.h / zoom;
+  const py = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) * worldH;
+  jumpCamera(stripToCamera(px, r.width, worldW, vw), Math.max(0, Math.min(worldH - vh, py - vh / 2)));
+});
+
+/** Rebuild the list only when it changed, move the minimap a few times a second (not every frame). */
+function socialTick(force: boolean) {
+  const on = worldKind === 1;
+  miniEl.hidden = whoBtn.hidden = !on;
+  if (!on) {
+    whoEl.hidden = true;
+    return;
+  }
+  const now = performance.now();
+  if (!force && now - lastSocial < 250) return;
+  lastSocial = now;
+  const list = lastPlayers?.list ?? [];
+  whoBtn.textContent = `Who (${list.length})`;
+  whoBtn.setAttribute("aria-label", `Who is online: ${list.length}`);
+  const r = miniEl.getBoundingClientRect();
+  const seen = new Set<number>();
+  for (const p of list) {
+    seen.add(p.id);
+    let d = miniDots.get(p.id);
+    if (!d) {
+      d = document.createElement("i");
+      d.className = "dot";
+      miniEl.append(d);
+      miniDots.set(p.id, d);
+    }
+    d.className = "dot" + (p.me ? " me" : "") + (p.dead ? " dead" : "");
+    d.style.left = `${worldToStrip(p.x, worldW, r.width).toFixed(1)}px`;
+    d.style.top = `${worldToStrip(p.y, worldH, r.height).toFixed(1)}px`; // depth: deeper is lower in the strip
+  }
+  for (const [id, d] of miniDots) if (!seen.has(id)) (d.remove(), miniDots.delete(id));
+  const b = viewBracket(camera.x, camera.vw, worldW, r.width);
+  miniView.style.left = `${b.left.toFixed(1)}px`;
+  miniView.style.width = `${b.width.toFixed(1)}px`;
+  if (whoEl.hidden) return;
+  const sorted = sortPlayers(list);
+  const key = sorted.map((p) => `${p.id}\u0000${p.name}\u0000${p.me}\u0000${p.dead}`).join("\u0001");
+  if (key === whoKey) return;
+  whoKey = key;
+  whoEl.replaceChildren();
+  if (!sorted.length) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = "Nobody here yet";
+    whoEl.append(e);
+  }
+  for (const p of sorted) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.dataset.id = String(p.id);
+    row.className = p.dead ? "dead" : "";
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = p.name; // textContent: a name is never HTML
+    const st = document.createElement("span");
+    st.className = "st";
+    st.textContent = (p.me ? "you, " : "") + (p.dead ? "dead" : "alive");
+    row.append(nm, st);
+    whoEl.append(row);
+  }
+}
+setInterval(() => socialTick(false), 250);

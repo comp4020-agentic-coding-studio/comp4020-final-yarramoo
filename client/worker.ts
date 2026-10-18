@@ -91,6 +91,8 @@ let avatar: Avatar | null = null;
 let avatarReady = false;
 const keys = { left: false, right: false, up: false };
 let followCam = true;
+/** A spectator's chosen player to follow (camera only, never an input); null: the first other player. */
+let followId: number | null = null;
 let isFollowing = false;
 const camF = { x: 0, y: 0 };
 let avAcc = 0;
@@ -478,7 +480,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
 
   // Camera: the avatar, or for a spectator the first other player; the main thread pans freely otherwise.
   let following = false;
-  const target = avatar && avatarReady ? { x: avatar.x, y: avatar.y } : spectate && firstOther ? shown.get((firstOther as EntityView).id) ?? null : null;
+  const target = avatar && avatarReady ? { x: avatar.x, y: avatar.y } : spectate && firstOther ? (followId !== null ? shown.get(followId) : undefined) ?? shown.get((firstOther as EntityView).id) ?? null : null;
   if (followCam && target && cam.vw < w) {
     const tx = Math.max(0, Math.min(w - cam.vw, target.x - cam.vw / 2));
     const ty = Math.max(0, Math.min(h - cam.vh, target.y - BOX_H / 2 - cam.vh / 2));
@@ -816,6 +818,7 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "follow":
       followCam = m.on;
+      if (m.id !== undefined) followId = m.id;
       break;
   }
 };

@@ -29,7 +29,7 @@ export type ToWorker =
    */
   | { type: "cast"; spell: number; angle: number }
   /** Follow the avatar (or, for a spectator, the first other player) with the camera. */
-  | { type: "follow"; on: boolean }
+  | { type: "follow"; on: boolean; /** Spectator: follow this player rather than the first other one. Camera only. */ id?: number }
   /** Client-only camera: the world window to draw, in cells. Never an input. */
   /** Dev (local mode only): switch chunk sleeping, to measure what it buys. */
   | { type: "sleep"; on: boolean }
