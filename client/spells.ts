@@ -12,7 +12,7 @@ export interface SpellInfo {
   /** Launch speed and gravity in cells per tick (tuning.rs SPEED and GRAVITY_Q8 divided by 256). */
   speed: number;
   gravity: number;
-  /** The sim implements it (Fire bolt and Bomb arrive in M5). */
+  /** The sim implements it. */
   enabled: boolean;
 }
 
@@ -27,7 +27,7 @@ export const SPELLS: SpellInfo[] = [
 if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with the sim");
 
 /** Spell slots on the bar, in key order 1..4. */
-export const BAR: number[] = [0, 1, 2, 3];
+export const BAR: number[] = [0, 1, 2, 3, 4, 5];
 export const INFINITE = 0xffff;
 
 /** Aim angle as the sim wants it: u16, 65536 per turn, 0 along +x, growing towards +y (down the screen). */
@@ -35,3 +35,11 @@ export function quantiseAngle(dx: number, dy: number): number {
   const turns = Math.atan2(dy, dx) / (2 * Math.PI);
   return Math.round((turns - Math.floor(turns)) * 65536) & 0xffff;
 }
+
+// Sim constants the client mirrors (tests/net/spells-table.test.ts pins each to sim/src/tuning.rs).
+/** Ticks a player stays dead before the respawn (tuning.rs DEATH_TICKS). The client only counts down; the sim decides. */
+export const DEATH_TICKS = 180;
+/** Full health (tuning.rs HEALTH_MAX). */
+export const HEALTH_MAX = 100;
+/** Bomb blast radius in cells (tuning.rs BOMB_RADIUS); an explosion this big shakes the screen. */
+export const BOMB_RADIUS = 18;
