@@ -83,6 +83,12 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
   gunpowder), not the last hit. Recording the last hit would change the sim
   and the save format. It now means "a credited kill where the environment
   finished them off", and the in-game description says exactly that.
+- **Minimap taps on phones (D-123, `7ee9071`):** the strip is 22 px tall but
+  maps its height to the world's whole depth, so a tap below the very top lands
+  the camera deep in rock, and for a phone spectator it also stops following.
+  Seen in a 375 px screenshot. Easy fixes if you agree: map the tap to the
+  nearest player dot (and follow them, for a spectator), or keep the camera's
+  depth and only move it sideways. Left as built until you've looked.
 
 ## Now
 
