@@ -133,7 +133,7 @@ on 14 Oct. Still open: whether it lands on `main` with the game world (merge
 - [x] Live sandbox down 18 Oct (boot crash on a 130k+ tick log): hotfixed on
       `main` (`2c70ceb`) and `multa` (`10247e2`), D-099. World restored from the
       14 Oct snapshot; later paint lost. Snapshots verified again after deploy.
-- [ ] Stop the log outgrowing snapshots. Snapshots need a client connected for
+- [x] Stop the log outgrowing snapshots (D-100; `world.log_long` and `/dashboard` "log since snapshot" to watch; the first visitor must still stay through the catch-up, see FUTURE pause-on-join). Snapshots need a client connected for
       a full cycle (1800 ticks); short visits on a long log never get there, and
       each makes the next join slower. Options: request a snapshot as soon as a
       client finishes catching up, or when the log passes a size. Watch
