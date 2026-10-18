@@ -47,6 +47,14 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
     review.
 11. Catch-up as a real progress bar, and render every Nth tick during
     fast-forward. Client only.
+12. Art pass (the user asked, 23:30, if time and budget remain): improve the
+    pixel animations and effects for players, spells and the environment.
+    Sprites are hand-written 7x10 character grids in `client/fx.ts`, drawn
+    one cell per world cell, so a generated image can't be dropped in. Use
+    `/image-gen` for concept and reference art (palette, silhouettes, spell
+    looks), save it under `docs/art/`, then hand-reduce it to grids. Image
+    budget is separate ($6.90 of $30 spent). Client only and cosmetic, so no
+    sim change. Check every change in the browser at 1x and 3x zoom.
 
 ### For the user to check (added overnight)
 
