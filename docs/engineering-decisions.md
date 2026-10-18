@@ -620,3 +620,28 @@ sim changes. Bag expiry, bag merging and lava deaths are not in it yet.
 **Evidence.** D-114; [`2187a3d`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2187a3d),
 [`94290ce`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/94290ce),
 [`5b5de22`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5b5de22).
+
+## 19. An achievement the sim's outputs cannot express
+
+**What happened.** Plan 10 defined "Shoved to their doom" as a kill whose last hit
+was Push or Blast. Slice b awards kill achievements from a majority claim about
+`EV_DEATH`, so the rule had to be computed from what that event carries.
+
+**What we believed.** That `EV_DEATH.b` said what killed the victim and so what hit
+them last, since the plan was written as if it did.
+
+**What we found.** `b` is the cause of death. A player Pushed into lava dies with
+cause 7 (lava), not 0 (Push). The last-hit spell exists inside the sim's player
+entity but is never emitted, and the server cannot read it because it never runs
+the sim. Emitting it would change the sim, the entity bytes and the snapshot
+format, which is a much larger change than one achievement is worth.
+
+**What changed.** The achievement is redefined to what the event can honestly
+support: a credited kill on someone who dies to fire, lava or gunpowder. Its
+description says so, and D-120 records the departure from the plan.
+
+**Known limit.** A Fire bolt hit followed by a lava death also counts, and a Push
+that ends in a fall onto stone does not, because that death has no environmental
+cause. Exact semantics need the last-hit spell in the event.
+
+**Evidence.** D-118 to D-120; commit `89988b1`.
