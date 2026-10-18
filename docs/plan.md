@@ -258,7 +258,8 @@ Each distinct use of randomness gets its own `salt` constant.
 - **Death:** when health reaches 0, the player is dead for 180 ticks, then respawns at the surface spawn point with a rng-chosen horizontal offset. `life` is incremented and a `Respawn { player, x, y, life }` event is emitted.
   - Pos inputs carry `life`. The simulation **ignores Pos inputs with a stale `life`**, so a dead avatar's old position can't override the respawn.
 - **Kill credit (last-hit rule):** on death, if `last_hit_by != 0`, `last_hit_by != victim` and `tick - last_hit_tick <= 300`, emit `Death { victim, killer: last_hit_by, cause_spell }`. Otherwise emit `Death { victim, killer: 0, cause }`.
-- **Inventory is kept on death** (default; see section 14).
+- **Inventory is kept on death** (default; see section 14). M5 supersedes this with dropped bags.
+- **As built (M5 slice 1):** step order, damage and credit rules, the dead-state rules, cause codes and event layouts are in `docs/DECISIONS.md` D-102 to D-105.
 
 ### 6.9 World generation (deterministic, integer-only)
 
