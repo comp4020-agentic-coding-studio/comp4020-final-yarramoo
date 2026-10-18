@@ -77,6 +77,7 @@ export function createDashboard(deps: DashboardDeps) {
   }
 
   return {
+    isAdmin,
     /** Returns true when it handled the request. */
     handle(req: IncomingMessage, res: ServerResponse, path: string): boolean {
       if (path === "/dashboard") {

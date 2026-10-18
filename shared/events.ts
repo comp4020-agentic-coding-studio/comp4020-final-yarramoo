@@ -13,6 +13,7 @@ export const EVENT_NAMES = [
   // Identity
   "player.registered",
   "register.refused",
+  "admin.refused",
   // Connection
   "hello.rejected",
   "join",

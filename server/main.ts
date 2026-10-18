@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
@@ -224,6 +224,56 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     adminToken: opts.adminToken ?? process.env.ADMIN_TOKEN,
   });
 
+  /** Same-origin rule as /api/players: no Origin (a script) passes, a browser page on another site does not. */
+  const originOk = (req: IncomingMessage): boolean => {
+    const origin = req.headers.origin;
+    return origin === undefined || origin === `http://${req.headers.host}` || origin === `https://${req.headers.host}` || allowedOrigins.has(origin);
+  };
+
+  /** POST /api/admin/reset {world}: a deliberate reset of one world to its generated start (D-097). */
+  function adminReset(req: IncomingMessage, res: ServerResponse): void {
+    const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+    const refuse = (status: number, reason: string, body: string) => {
+      log.event("admin.refused", { action: "reset", reason, status, ip_tag: ipTag }, "warn");
+      res.writeHead(status, { "content-type": "text/plain" }).end(body);
+    };
+    if (req.method !== "POST") {
+      res.writeHead(405, { allow: "POST" }).end();
+      return;
+    }
+    if (!originOk(req)) return refuse(403, "origin", "cross-origin reset refused");
+    if (!dashboard.isAdmin(req)) return refuse(403, "not_admin", "forbidden");
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let dead = false;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > 1024 && !dead) {
+        dead = true;
+        refuse(413, "too_large", "body too large");
+        req.destroy();
+      } else if (!dead) chunks.push(c);
+    });
+    req.on("end", () => {
+      if (dead) return;
+      let id: unknown;
+      try {
+        id = (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { world?: unknown }).world;
+      } catch {
+        return refuse(400, "bad_body", "bad request");
+      }
+      const w = typeof id === "number" ? worlds.get(id) : undefined;
+      if (!w) return refuse(400, "unknown_world", "unknown world");
+      try {
+        const r = w.reset(`admin@${ipTag}`);
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(JSON.stringify({ ok: true, world: w.id, oldTick: r.oldTick }));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ ok: false, error: String(e) }));
+      }
+    });
+  }
+
   const http: Server = createServer((req, res) => {
     let path: string;
     try {
@@ -278,6 +328,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         res.end(JSON.stringify({ token: Buffer.from(r.token).toString("hex"), player_id: r.id, display_name: r.name }));
       });
+      return;
+    }
+    if (path === "/api/admin/reset") {
+      adminReset(req, res);
       return;
     }
     if (dashboard.handle(req, res, path)) return;
