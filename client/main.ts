@@ -773,6 +773,13 @@ new ResizeObserver(() => {
   send({ type: "pointer", kind: "down", x, y, mat, radius: r });
   send({ type: "pointer", kind: "up", x, y, mat, radius: r });
 };
+if (import.meta.env.DEV) {
+  // Dev route only: walk the local avatar onto the nearest pickup (4 = Fire bolt, 5 = Bomb) to see those visuals.
+  (window as unknown as Record<string, unknown>).__devGoto = (spell: number) => {
+    if (devAvatar) send({ type: "devgoto", spell });
+  };
+  (window as unknown as Record<string, unknown>).__devMe = () => lastPlayers?.list.find((p) => p.me) ?? null;
+}
 (window as unknown as Record<string, unknown>).__setSleep = (on: boolean) => send({ type: "sleep", on });
 
 // Who's online and the minimap (game world only). Camera moves only: never an input (invariant 9, D-055).

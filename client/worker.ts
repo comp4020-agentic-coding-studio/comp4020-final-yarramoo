@@ -806,6 +806,16 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       renderer = null;
       sendFrames = true;
       break;
+    case "devgoto":
+      // Dev route only (stripped from production builds): put the local controller on the nearest deep pickup of
+      // this spell. The avatar then reports it through the normal Pos path, as tools/inputgen-m5.ts does (D-114).
+      if (import.meta.env.DEV && localSim && avatar) {
+        const list = localSim.entities().filter((e) => e.type === ENT_PICKUP && e.sub === m.spell && e.active);
+        const me = localSim.entities().find((e) => e.type === ENT_PLAYER && e.id === myId);
+        list.sort((a, b) => Math.abs(a.x - (me?.x ?? 0)) + Math.abs(a.y - (me?.y ?? 0)) - (Math.abs(b.x - (me?.x ?? 0)) + Math.abs(b.y - (me?.y ?? 0))));
+        if (list[0]) avatar.teleport(list[0].x / 16, list[0].y / 16);
+      }
+      break;
     case "pointer":
       onPointer(m);
       break;

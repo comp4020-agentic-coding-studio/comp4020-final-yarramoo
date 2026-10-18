@@ -37,6 +37,7 @@ export type ToWorker =
   | { type: "resize"; width: number; height: number }
   /** Switch to sending frames to the main thread (render fallback). */
   | { type: "frames" }
+  | { type: "devgoto"; spell: number }
   | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number };
 
 export type FromWorker =
