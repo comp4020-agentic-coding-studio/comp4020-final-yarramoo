@@ -4,8 +4,10 @@ use crate::grid::{CHUNK, CHUNK_AREA};
 use crate::sim::Sim;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
-/// v2 adds entities. v1 (the sandbox snapshots already stored) has an empty entity section and still restores.
-pub const FORMAT_VERSION: u16 = 2;
+/// v2 added entities; v3 appends the bag section to them (D-110). v1 and v2 *sandbox* snapshots (the live
+/// sandbox's stored state) have an empty entity section and still restore. A v2 *game* snapshot is refused:
+/// its entities have no bag count. None was ever deployed (D-074), so nothing is lost.
+pub const FORMAT_VERSION: u16 = 3;
 const HEADER: usize = 4 + 2 + 32 + 8 + 1 + 4 + 2 + 2;
 
 pub fn write(s: &Sim) -> Vec<u8> {
@@ -56,7 +58,7 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     let u16_at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
     let u32_at = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
     let version = u16_at(4);
-    if version != FORMAT_VERSION && version != 1 {
+    if !(1..=FORMAT_VERSION).contains(&version) {
         return Err(());
     }
     let mut sd = [0u8; 8];
@@ -74,9 +76,10 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     o += 4;
     // The length must fit inside the buffer with room for the chunk count (checked without overflow).
     let eend = o.checked_add(elen).filter(|&e| e.checked_add(4).is_some_and(|x| x <= b.len())).ok_or(())?;
-    if version == 1 || kind == 0 {
-        if elen != 0 {
-            return Err(()); // v1 and sandbox snapshots have no entities
+    if version < FORMAT_VERSION || kind == 0 {
+        // v1, v2 and sandbox snapshots have no entity section; a v1/v2 game world is refused (see above).
+        if elen != 0 || (version < FORMAT_VERSION && kind != 0) {
+            return Err(());
         }
     } else {
         (s.players, s.projectiles, s.bags) = crate::entities::decode(&b[o..eend], &mut s.pickups, w, h)?;
