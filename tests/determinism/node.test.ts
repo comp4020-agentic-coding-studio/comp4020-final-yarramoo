@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compare } from "./compare.ts";
-import { castScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
+import { m5Missing } from "./m5-coverage.ts";
+import { castScript, m5Script, readWasm, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 
 const wasm = readWasm(wasmPath);
@@ -36,6 +37,33 @@ describe("Node determinism", () => {
     const one = run(wasm, cast, {}, { batching: { kind: "each" } });
     const seven = run(wasm, cast, {}, { batching: { kind: "batch", k: 7 } });
     const burst = run(wasm, cast, {}, { batching: { kind: "burst", at: 300, len: 400 } });
+    expect(compare(one, seven, ["each", "k=7"])).toBeNull();
+    expect(compare(one, burst, ["each", "burst"])).toBeNull();
+  });
+
+  // The M5 script: pickups, bombs, Fire bolts, damage, deaths, bags, respawn.
+  const m5 = m5Script().script;
+  it("M5 coverage: the script really collects, explodes, kills, respawns and returns to a bag", () => {
+    const r = run(wasm, m5, {}, { collectEvents: true });
+    expect(m5Missing(r.events!)).toEqual([]);
+  });
+
+  it("M5 coverage assertion fails on the old game script (no pickups, no deaths)", () => {
+    const old = run(wasm, cast, {}, { collectEvents: true });
+    const missing = m5Missing(old.events!);
+    expect(missing).toContain("EV_DEATH with a bag (c=1)");
+    expect(missing).toContain("EV_PICKUP of Bomb (5)");
+    expect(missing).toContain("EV_RESPAWN");
+  });
+
+  it("D1 with M5: two fresh instances agree", () => {
+    expect(compare(run(wasm, m5), run(readWasm(wasmPath), m5), ["run1", "run2"])).toBeNull();
+  });
+
+  it("D6 with M5: 1 step per call, 7 per call and a catch-up burst agree", () => {
+    const one = run(wasm, m5, {}, { batching: { kind: "each" } });
+    const seven = run(wasm, m5, {}, { batching: { kind: "batch", k: 7 } });
+    const burst = run(wasm, m5, {}, { batching: { kind: "burst", at: 60, len: 500 } });
     expect(compare(one, seven, ["each", "k=7"])).toBeNull();
     expect(compare(one, burst, ["each", "burst"])).toBeNull();
   });

@@ -3,7 +3,8 @@ import { chromium, firefox, webkit } from "playwright";
 import type { BrowserType } from "playwright";
 import type { Server } from "node:http";
 import { compare } from "./compare.ts";
-import { canaryPath, castScript, gameScript, readWasm, root, sharedScript, wasmPath } from "./helpers.ts";
+import { canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, wasmPath } from "./helpers.ts";
+import { m5Missing } from "./m5-coverage.ts";
 import { run } from "./run.ts";
 import type { RunResult } from "./run.ts";
 import { serve } from "./server.ts";
@@ -79,6 +80,19 @@ describe("cross-engine", () => {
     it(`D2 with casts: ${name} matches Node`, async () => {
       const out = await inBrowser(type, wasmPath, false, cast.path);
       expect(compare(castNode, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // D2 on the M5 script: damage, death, bombs, gunpowder chains and bags are identical in every engine.
+  const m5 = m5Script();
+  const m5Node = run(readWasm(wasmPath), m5.script, {}, { collectEvents: true });
+  it("M5 script covers pickups, bombs, deaths, respawn and bags (from the Node run)", () => {
+    expect(m5Missing(m5Node.events!)).toEqual([]);
+  });
+  for (const [name, type] of engines) {
+    it(`D2 with M5: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, m5.path);
+      expect(compare(m5Node, out.result, ["node", name])).toBeNull();
     });
   }
 
