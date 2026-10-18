@@ -9,6 +9,8 @@ import { compressSnapshot, encodeSnapshotUpload, encodeTick, simInputBytes } fro
 import { GameDb } from "../../server/db.ts";
 import { loadSim, simBuildHash } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
+import { SnapshotVerifier } from "../../server/verify.ts";
+import { World } from "../../server/world.ts";
 import { buildHashHex, connect, paintFor, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
 
 let hex: string;
@@ -58,6 +60,44 @@ describe("cold start with a long log", () => {
     expect(s.world.clock.lastClosed).toBe(N);
     expect(s.world.log.length).toBe(N);
   }, 60_000);
+});
+
+describe("a new sim build at start-up", () => {
+  /** A world with one verified snapshot, its stored build then renamed, as a deploy of a new sim would leave it. */
+  async function storedUnderOldBuild(): Promise<{ dir: string; tick: number }> {
+    const dir = tmp();
+    const s = await boot(dir, 60);
+    const a = await connect(s.port, hex);
+    await paintFor([a], 600);
+    await waitFor(() => s.world.stats.snapshotsAccepted >= 1, 20000, "a verified snapshot");
+    const tick = s.world.snapshot!.tick;
+    closeAll(a);
+    await s.close();
+    const db = new GameDb(dir);
+    db.setWorldBuild(0, "an-older-build");
+    db.close();
+    return { dir, tick };
+  }
+  const world = (db: GameDb, verifier: SnapshotVerifier) =>
+    new World({ now: () => performance.now(), db, verifier, simBuild: "the-new-build", log: () => {} });
+
+  it("a verifier that cannot run refuses to start and leaves the stored world alone (D-112, ported)", async () => {
+    const { dir, tick } = await storedUnderOldBuild();
+    const db = new GameDb(dir);
+    const broken = new SnapshotVerifier(join(dir, "game.db")); // not wasm: loading it fails
+    expect(() => world(db, broken)).toThrow(/not resetting/);
+    expect(db.latestSnapshot(0)?.tick).toBe(tick);
+    expect(db.getWorld(0)?.simBuild).toBe("an-older-build");
+    db.close();
+  });
+
+  it("a snapshot the new build can restore is kept", async () => {
+    const { dir, tick } = await storedUnderOldBuild();
+    const db = new GameDb(dir);
+    const w = world(db, new SnapshotVerifier(join(process.cwd(), "sim/target/wasm32-unknown-unknown/release/sim.wasm")));
+    expect(w.snapshot?.tick).toBe(tick);
+    db.close();
+  });
 });
 
 describe("snapshots and restart", () => {

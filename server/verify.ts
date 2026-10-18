@@ -13,12 +13,26 @@ export class SnapshotVerifier {
 
   /** Restore `raw` (canonical snapshot) and return {tick, hash}, or null if the sim refuses it. */
   hashOf(raw: Uint8Array): { tick: number; hash: bigint } | null {
+    const r = this.check(raw);
+    return r.kind === "ok" ? r.v : null;
+  }
+
+  /**
+   * Like `hashOf`, but tells a snapshot the sim refuses ("refused") apart from a verifier that could not run at all
+   * ("unavailable": the wasm failed to load, for example out of memory on the 256 MB machine). Start-up may only
+   * throw a world away for the first (D-014; ported from D-112 on `multa`).
+   */
+  check(raw: Uint8Array): { kind: "ok"; v: { tick: number; hash: bigint } } | { kind: "refused" } | { kind: "unavailable" } {
     try {
       this.sim ??= loadSim(this.bytes);
-      this.sim.restore(raw);
-      return { tick: this.sim.tick(), hash: this.sim.stateHash() };
     } catch {
-      return null;
+      return { kind: "unavailable" };
+    }
+    try {
+      this.sim.restore(raw);
+      return { kind: "ok", v: { tick: this.sim.tick(), hash: this.sim.stateHash() } };
+    } catch {
+      return { kind: "refused" };
     }
   }
 }

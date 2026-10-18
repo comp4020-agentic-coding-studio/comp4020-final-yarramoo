@@ -148,10 +148,18 @@ export class World {
       // build can restore it, start a fresh log; otherwise start the world over.
       let ok = false;
       if (snap && this.verifier) {
+        let raw: Uint8Array | null = null;
         try {
-          ok = this.verifier.hashOf(decompressSnapshot(snap.data))?.tick === snap.tick;
+          raw = decompressSnapshot(snap.data);
         } catch {
-          ok = false;
+          raw = null; // a snapshot that does not decompress is genuinely unreadable: refused
+        }
+        if (raw) {
+          // Only a snapshot this build refuses may cost the world. A verifier that could not run says nothing
+          // about the snapshot, so refuse to start and let the platform restart us with the volume untouched.
+          const r = this.verifier.check(raw);
+          if (r.kind === "unavailable") throw new Error("could not verify the stored snapshot under the new build; not resetting");
+          ok = r.kind === "ok" && r.v.tick === snap.tick;
         }
       }
       if (ok && snap) {
