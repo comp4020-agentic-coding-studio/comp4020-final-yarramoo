@@ -33,7 +33,7 @@ import {
   type SimEvent,
 } from "../shared/sim.ts";
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
-import { Particles, newPoseState, pushBag, pushBomb, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
+import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
@@ -456,7 +456,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     // A figure that has not moved takes its facing from the official record (others turn without walking).
     if (!isMe && Math.abs(ps.vx) < 0.05) ps.facingRight = e.sub === 1;
     if (isMe) ps.facingRight = avatar!.facing === 1;
-    if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, PLAYER_COLOURS[e.id % PLAYER_COLOURS.length]);
+    if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, PLAYER_COLOURS[e.id % PLAYER_COLOURS.length], ps.castCol);
     if (isMe && e.health > 0) rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
   }
   for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
@@ -535,6 +535,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       const ps = poses.get(e.player);
       if (ps) {
         ps.castUntil = now + 220;
+        ps.castCol = col;
         if (e.player !== myId) ps.facingRight = Math.cos(ang) >= 0;
       }
       if (e.player === myId) dropGhost(e.c);
@@ -580,8 +581,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
     } else {
       if (q.sub === 4) fx.fireTrail(x, y);
       else fx.trail(x, y, col);
-      rects.push({ x: Math.round(x) - 1, y: Math.round(y) - 1, w: 2, h: 2, r: col[0], g: col[1], b: col[2] });
-      rects.push({ x: Math.round(x) - 1, y: Math.round(y) - 1, w: 1, h: 1, r: 1, g: 1, b: 1 });
+      pushBolt(rects, x, y, col, q.sub === 4, now);
     }
   }
   // Ghosts: the same flight, predicted from the avatar's position at click time, drawn at once.
@@ -637,6 +637,7 @@ function onCast(spell: number, angle: number) {
   const ps = poses.get(myId);
   if (ps) {
     ps.castUntil = now + 220;
+    ps.castCol = SPELLS[spell]?.colour ?? [1, 1, 1];
     ps.facingRight = avatar.facing === 1;
   }
   // The ghost only when the HUD says the cast will go through (cosmetic; the input was sent regardless).
