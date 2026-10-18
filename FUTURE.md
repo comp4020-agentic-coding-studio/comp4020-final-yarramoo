@@ -4,6 +4,35 @@ Ideas worth keeping that aren't being built yet. Add one whenever it comes up,
 while developing or while looking at other sites. Say where it came from and
 why it might be worth doing. Nothing here is a commitment.
 
+## Dashboard history across restarts
+
+Write per-minute aggregates to plan 9.1's `metrics_minutely` table, and draw
+the last hour or day on `/dashboard` (players online, hash failures, RSS).
+
+- **Source:** crit 10 dashboard work, 2026-10-18. Today everything is in memory,
+  and Fly stops the machine when idle, so the dashboard only ever shows the
+  current run.
+- **Why:** a reader of the logs after the crit could see the session as a
+  whole, not just whatever happened since the last cold start.
+
+## Which chunk diverged
+
+Build REQUEST_CHUNK_HASHES/CHUNK_HASHES (deferred in D-043), so a desync
+incident records the first diverging chunk, and show it on the admin dashboard.
+
+- **Source:** the desync row in the crit 10 event catalogue, 2026-10-18.
+- **Why:** a `desync` event today says who diverged but not where, which leaves
+  a determinism bug with nothing to replay against.
+
+## A player page
+
+A per-player admin view: sessions, play time, casts by spell, deepest point,
+resyncs. Later, achievements.
+
+- **Source:** `player_stats` (D-091) collects all of it already, 2026-10-18.
+- **Why:** it is the obvious reader of those counters, and M6 achievements
+  need somewhere to show up.
+
 ## Workshops and classes
 
 Members post an in-person workshop or class: what skill, when, where (by

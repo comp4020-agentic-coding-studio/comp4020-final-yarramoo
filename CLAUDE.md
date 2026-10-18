@@ -181,3 +181,23 @@ come into existence.
   input, so one huge `Paint` freezes the whole room. The sim clamps paint
   endpoints to the world and the radius to `MAX_PAINT_RADIUS`; new input kinds
   need the same bound.
+
+## Server logging and identity
+
+- **Every server-side action logs through `log.event`** (`server/log.ts`) with a
+  name from the catalogue in `shared/events.ts`. No `console.*` in `server/`.
+  Anything a client can trigger repeatedly goes through `log.limited`, or one
+  client floods the ring the admin dashboard reads. Never log one line per
+  input: per-input counts go into `input.summary`.
+- **Never log a raw IP or a token.** Use `log.ipTag(ip)`.
+- **Players only ever see the plain name they chose.** `name#id` is for logs,
+  the database and the admin dashboard. The public `/dashboard` and
+  `/api/summary` show aggregates only.
+- **`server/` and `shared/` never import from `client/`.** The runtime image
+  copies only `server/` and `shared/`, so such an import passes every test and
+  crashes the deploy (review crit 10 S1). `tests/net/imports.test.ts` checks it.
+- **CI does not run on `multa`**, only on `main` and pull requests. Before a
+  merge, build and boot the real Docker image, or let a PR's CI run do it.
+- **Probe output from a passing vitest test is swallowed.** Write to a file
+  under `/tmp` instead of `console.log` when measuring something mid-test. A
+  test written to catch a bug must be shown red without the fix first.

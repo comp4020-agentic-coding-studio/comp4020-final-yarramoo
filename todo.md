@@ -123,9 +123,17 @@ on 14 Oct. Still open: whether it lands on `main` with the game world (merge
       `input.summary` (`b220c64`..`85e4459`, review `docs/research/review-crit10.md`).
 - [ ] Before merging to `main`: build and boot the real Docker image (CI does
       not run on `multa`; review S1 was a boot failure only the image shows).
-- [ ] Basic live dashboard at `/dashboard`: players online, tick rate,
-      per-client lag and RTT, hash checks passed and failed, snapshot sizes,
-      RSS against the 256 MB machine.
+- [x] RTT, tick lag and client step time per connection; protocol v4
+      (`fcb3b58`..`aeca628`).
+- [x] Live `/dashboard`: public totals, admin detail and event feed behind
+      `ADMIN_TOKEN` (`d088c4f`..`b24cfc6`).
+- [x] Admin world reset, confirm-twice from the dashboard (`0ca9f5e`..`bec4938`,
+      review `docs/research/review-crit10-reset.md`).
+- [ ] Set the secret: `fly secrets set ADMIN_TOKEN=...` (the user).
+- [ ] Merge `multa` to `main` (deploys; ask first). After: `fly logs` shows JSON
+      lines, `/dashboard` shows no names, the sandbox world from before the
+      merge is still there.
+- [ ] Rewrite PROCESS.md for crit 10 (the user's).
 
 ## Later (M5–M7)
 

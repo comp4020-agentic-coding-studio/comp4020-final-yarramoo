@@ -639,6 +639,8 @@ All achievements are defined in `shared/achievements.ts`. Tune the names freely.
 
 The server collects metrics in memory, streams them to `/dashboard` via SSE (protected by `DASHBOARD_TOKEN`), and writes per-minute aggregates to `metrics_minutely` for history charts. Basic metrics come in at M2 and the full dashboard at M6.
 
+**As built (crit 10, D-090 to D-097):** one `ADMIN_TOKEN` gates the dashboard's detail view and the admin reset; the public view shows aggregates only. Every server event is a JSON line from `server/log.ts`, named from the catalogue in `shared/events.ts`. Per-player counters live in `player_stats`, and per-minute history (`metrics_minutely`) is not built yet (see `FUTURE.md`).
+
 **Metrics:**
 
 - **Presence:** players online per world, joins and leaves
