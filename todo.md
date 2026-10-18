@@ -35,6 +35,18 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
 7. World feel: biome tints and cave shapes by depth, the generator preview
    page. Changes the game world's generation, which is safe only while it is
    undeployed.
+8. The 30-minute N1 soak (plan 13 M7, D12): three clients, jitter, one slowed
+   CPU, zero mismatches, with M5's damage, bombs and bags in play. Reuse
+   `tests/soak/` (G2's 10-minute harness). The plan requires it before
+   submission; the last run predates M5.
+9. Player page on the admin dashboard: sessions, play time, casts by spell,
+   deepest point, deaths, kills, achievements, all from `player_stats`.
+   Behind `ADMIN_TOKEN`.
+10. Which chunk diverged: REQUEST_CHUNK_HASHES/CHUNK_HASHES (D-043), so a
+    `desync` incident records the first diverging chunk. Protocol change,
+    review.
+11. Catch-up as a real progress bar, and render every Nth tick during
+    fast-forward. Client only.
 
 ### For the user to check (added overnight)
 
