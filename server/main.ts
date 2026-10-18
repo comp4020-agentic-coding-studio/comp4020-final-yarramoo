@@ -26,7 +26,7 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
-import { createDashboard, INDEX_MAX_ROWS, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
+import { createDashboard, INDEX_MAX_ROWS, type IncidentRow, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
 import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
   castStat,
@@ -261,6 +261,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
   const connsByIp = new Map<string, number>();
 
+  /** Admin dashboard rows: bounded fields only (the chunk list is already capped at 64 when it is recorded). */
+  function incidentRows(limit: number): IncidentRow[] {
+    return (db?.recentIncidents(limit) ?? []).map((r) => {
+      const d = r.details as { who?: string[]; chunks?: { status?: string; reason?: string; total?: number; first?: IncidentRow["first"]; grid?: IncidentRow["grid"]; list?: { index: number }[] } | null };
+      const c = d.chunks;
+      return {
+        id: r.id,
+        world: r.worldId,
+        tick: r.tick,
+        at: r.createdAt,
+        who: Array.isArray(d.who) ? d.who : [],
+        // Rows written before D-126 have `chunks: null`.
+        status: c?.status ?? "unavailable",
+        reason: c ? (c.reason ?? null) : "recorded_before_diagnosis",
+        total: c?.total ?? null,
+        first: c?.first ?? null,
+        grid: c?.grid ?? null,
+        chunks: (c?.list ?? []).map((x) => x.index),
+      };
+    });
+  }
+
   // Late-bound: the dashboard reads summary() and connections() from the object returned at the end.
   let running!: RunningServer;
   const dashboard = createDashboard({
@@ -268,6 +290,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     summary: () => running.summary(),
     connections: () => running.connections(),
     recentAchievements: () => running.recentAchievements(),
+    recentIncidents: (limit) => incidentRows(limit),
     playerDetail: (id) => playerDetail(id),
     playerIndex: (limit, offset) => playerIndex(limit, offset),
     build: hash.toString("hex").slice(0, 12),

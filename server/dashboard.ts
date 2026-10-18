@@ -15,6 +15,7 @@ export const MAX_ADMIN_STREAMS = 4;
 const SUMMARY_MS = 1000;
 const KEEPALIVE_MS = 15_000;
 const BACKLOG = 200;
+export const INCIDENT_ROWS = 10;
 
 /** Depth bands in cells, mirrored from client/materials.ts (the server may not import the client; a test pins them). */
 export const INDEX_PAGE_SIZE = 50;
@@ -51,7 +52,26 @@ export interface PlayerIndexRow {
   achievements: number;
 }
 
+/** One desync incident as the admin dashboard shows it: where it diverged, not only who (D-126). */
+export interface IncidentRow {
+  id: number;
+  world: number;
+  tick: number;
+  at: number;
+  who: string[];
+  /** pending (still collecting), ok, or unavailable (with `reason`). */
+  status: string;
+  reason: string | null;
+  total: number | null;
+  first: { index: number; cx: number; cy: number; x: number; y: number } | null;
+  grid: { cw: number; ch: number } | null;
+  /** Differing chunk indices, at most 64. */
+  chunks: number[];
+}
+
 export interface DashboardDeps {
+  /** Admin only: the newest desync incidents. */
+  recentIncidents?(limit: number): IncidentRow[];
   /** Admin player page: null for an unknown id. */
   playerDetail?(id: number): PlayerDetail | null;
   /** Admin player index: one page of rows, plus how many are listed in all (capped). */
@@ -100,6 +120,7 @@ export function createDashboard(deps: DashboardDeps) {
       if (admin) {
         send("conns", deps.connections());
         send("achievements", deps.recentAchievements());
+        send("incidents", deps.recentIncidents?.(INCIDENT_ROWS) ?? []);
       }
     };
     let unsub: (() => void) | undefined;
@@ -196,6 +217,7 @@ header{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline}.muted{colo
 #feed{font:12px/1.45 ui-monospace,monospace;max-height:420px;overflow:auto;border:1px solid #2a3142;border-radius:8px;padding:6px 8px}#feed div{white-space:pre-wrap;word-break:break-all}
 .bars{display:grid;grid-template-columns:minmax(70px,auto) 1fr auto;gap:3px 8px;align-items:center}.bar{height:10px;background:#6ea8ff;border-radius:3px;min-width:2px}
 .off{opacity:.45}ul.ach{list-style:none;margin:0;padding:0;display:grid;gap:6px}ul.ach li{background:#151a24;border:1px solid #2a3142;border-radius:8px;padding:6px 10px}
+.cgrid{display:grid;gap:1px;background:#2a3142;padding:1px;width:max-content;max-width:100%}.cgrid i{display:block;width:12px;height:12px;background:#151a24}.cgrid i.d{background:#ff6b6b}.cgrid i.f{outline:2px solid #f0b429;outline-offset:-2px}
 .pager{display:flex;gap:12px;margin-top:10px}.lvl-warn{color:#f0b429}.lvl-error{color:#ff6b6b}.lvl-debug{color:#8b93a7}[hidden]{display:none!important}`;
 
 const JS = `
@@ -231,6 +253,17 @@ function renderAch(list){
     [a.who,a.achievement,a.world==null?"-":a.world,a.tick==null?"-":a.tick,new Date(a.at).toLocaleString()].forEach((v,i)=>{const td=document.createElement("td");const m=/#(\\d+)$/.exec(a.who);if(i===0&&m)td.append(plink(m[1],String(v)));else td.textContent=String(v);tr.append(td)});tb.append(tr)}
   if(!list.length){const tr=document.createElement("tr");const td=document.createElement("td");td.colSpan=5;td.className="muted";td.textContent="none yet";tr.append(td);tb.append(tr)}
 }
+function renderInc(list){
+  const tb=$("inc");tb.replaceChildren();
+  for(const x of list){const tr=document.createElement("tr");
+    const where=x.first?"chunk "+x.first.index+" ("+x.first.cx+","+x.first.cy+") cells "+x.first.x+","+x.first.y:(x.status==="ok"?"hashes agree":"-");
+    [new Date(x.at).toLocaleTimeString(),x.world,x.tick,x.who.join(", "),x.status==="unavailable"?"unavailable: "+x.reason:x.status,where,x.total==null?"-":x.total].forEach((v)=>{const td=document.createElement("td");td.textContent=String(v);tr.append(td)});tb.append(tr)}
+  if(!list.length){const tr=document.createElement("tr");const td=document.createElement("td");td.colSpan=7;td.className="muted";td.textContent="none";tr.append(td);tb.append(tr)}
+  const g=$("incgrid");g.replaceChildren();const latest=list.find((x)=>x.status==="ok"&&x.grid);
+  $("incgridcap").textContent=latest?"Chunks of world "+latest.world+" at tick "+latest.tick+": red differ, outlined is the first.":"No incident with chunk detail yet.";
+  if(latest){g.style.gridTemplateColumns="repeat("+latest.grid.cw+",12px)";const bad=new Set(latest.chunks);
+    for(let i=0;i<latest.grid.cw*latest.grid.ch;i++){const c=document.createElement("i");if(bad.has(i))c.className="d"+(latest.first&&latest.first.index===i?" f":"");c.title="chunk "+i;g.append(c)}}
+}
 const feed=$("feed"),MAXROWS=300;
 function passes(e){
   const w=$("fworld").value;if(w!=="all"&&String(e.world)!==w)return false;
@@ -252,6 +285,7 @@ function connect(){
   es.addEventListener("summary",(m)=>renderSummary(JSON.parse(m.data)));
   es.addEventListener("conns",(m)=>renderConns(JSON.parse(m.data)));
   es.addEventListener("achievements",(m)=>renderAch(JSON.parse(m.data)));
+  es.addEventListener("incidents",(m)=>renderInc(JSON.parse(m.data)));
   es.addEventListener("backlog",(m)=>{feed.replaceChildren();for(const e of JSON.parse(m.data))addLog(e)});
   es.addEventListener("log",(m)=>addLog(JSON.parse(m.data)));
 }
@@ -281,6 +315,9 @@ function dashboardPage(build: string): string {
 <div class="box"><table><thead><tr><th>who</th><th>k/d</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
 <h2>Recent achievements</h2>
 <div class="box"><table><thead><tr><th>who</th><th>achievement</th><th>world</th><th>tick</th><th>when</th></tr></thead><tbody id="ach"></tbody></table></div>
+<h2>Desync incidents</h2>
+<div class="box"><table><thead><tr><th>when</th><th>world</th><th>tick</th><th>diverged</th><th>chunks</th><th>first diverging chunk</th><th>count</th></tr></thead><tbody id="inc"></tbody></table></div>
+<p id="incgridcap" class="muted"></p><div id="incgrid" class="cgrid"></div>
 <p><a id="plist" href="/dashboard/players">All players</a></p>
 <h2>Reset a world</h2><p class="muted">Returns one world to its generated start and disconnects everyone in it (they reconnect on their own). Players, names and stats are kept.</p>
 <div class="filters"><button id="rsand" type="button">Reset sandbox</button><button id="rgame" type="button">Reset game world</button><span id="rstatus" class="muted"></span></div>

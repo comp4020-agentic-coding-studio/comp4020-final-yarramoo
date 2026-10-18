@@ -356,3 +356,38 @@ describe("chunk diagnosis over the real server", () => {
     expect(MAX_CHUNK_COUNT).toBeGreaterThan(768);
   });
 });
+
+describe("admin dashboard incidents", () => {
+  it("shows the first diverging chunk and the count to an admin, and nothing to the public", async () => {
+    const s = await startServer({ port: 0, dataDir: tmp(), quiet: true, adminToken: "secret" });
+    cleanups.push(() => s.close());
+    s.db!.recordIncident(0, 600, {
+      who: ["Zorblax#7"],
+      chunks: { status: "ok", total: 2, grid: { cw: 8, ch: 8 }, first: { index: 3, cx: 3, cy: 0, x: 192, y: 0, w: 64, h: 64 }, list: [{ index: 3 }, { index: 40 }] },
+    });
+    s.db!.recordIncident(1, 660, { who: ["anon#c4"], chunks: null }); // a row from before D-126
+    const read = async (query: string) => {
+      const r = await fetch(`http://127.0.0.1:${s.port}/dashboard/stream${query}`);
+      const reader = r.body!.getReader();
+      let text = "";
+      const end = Date.now() + 3000;
+      while (Date.now() < end && !text.includes("event: incidents") && !text.includes("event: summary\n")) text += new TextDecoder().decode((await reader.read()).value);
+      await sleep(200);
+      reader.cancel();
+      return text;
+    };
+    const admin = await read("?token=secret");
+    const line = /event: incidents\ndata: (.*)/.exec(admin)?.[1];
+    expect(line).toBeTruthy();
+    const rows = JSON.parse(line!) as any[];
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ world: 0, tick: 600, who: ["Zorblax#7"], status: "ok", total: 2, chunks: [3, 40], first: { index: 3, cx: 3, cy: 0, x: 192, y: 0 } });
+    expect(rows[0]).toMatchObject({ world: 1, status: "unavailable", reason: "recorded_before_diagnosis", first: null, chunks: [] });
+    const pub = await read("");
+    expect(pub).not.toContain("event: incidents");
+    expect(pub).not.toContain("Zorblax");
+    const page = await (await fetch(`http://127.0.0.1:${s.port}/dashboard`)).text();
+    expect(page).toContain("Desync incidents");
+    expect(page).not.toContain("Zorblax");
+  });
+});
