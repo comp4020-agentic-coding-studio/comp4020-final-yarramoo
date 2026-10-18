@@ -205,7 +205,7 @@ on 14 Oct. Still open: whether it lands on `main` with the game world (merge
 
 ## Later (M5–M7)
 
-- [ ] Deep caves: Fire bolt, Bomb, lava and gunpowder damage, death, respawn,
+- [x] (M5, `e168df0`..`3a80398`, D-102..D-114) Deep caves: Fire bolt, Bomb, lava and gunpowder damage, death, respawn,
       last-hit kills.
 - [ ] Achievements and the full dashboard history.
 - [ ] Polish, soak tests, the final README and PROCESS rewrites (the user's).

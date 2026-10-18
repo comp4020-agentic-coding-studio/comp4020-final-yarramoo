@@ -39,6 +39,7 @@ Challenges
 15. [Performance gate P1](#15-performance-gate-p1)
 16. [What independent reviews caught that tests missed](#16-what-independent-reviews-caught-that-tests-missed)
 17. [Snapshot format 3 before any game snapshot exists](#17-snapshot-format-3-before-any-game-snapshot-exists)
+18. [A cross-browser check that tested nothing it named](#18-a-cross-browser-check-that-tested-nothing-it-named)
 
 ---
 
@@ -586,3 +587,36 @@ untouched (D-112).
 [`9c985bc`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9c985bc),
 [`b71a386`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b71a386).
 
+
+## 18. A cross-browser check that tested nothing it named
+
+**What happened.** M5 added damage, death, respawn, Fire bolt, Bomb and dropped
+bags (D-102 to D-113). The determinism suite had a game-world test called "D2
+with casts", run in Node, Chromium, Firefox and WebKit, and it stayed green
+through every M5 slice.
+
+**What we believed.** That the four engines were being compared on M5. The test
+named casts, the bots cast every spell, and it passed.
+
+**What we found.** Reading the script generator during M5's last slice showed
+the bots only ever wandered the surface and never collected a pickup. Every Fire
+bolt and Bomb cast was refused for lack of charges, so no bomb exploded and
+nobody died or dropped a bag. The four engines agreed on a game in which none of
+M5 happened. The test proved agreement, not coverage.
+
+**What changed.** A new M5 script (D-114) puts bots on deep pickups, has them
+bomb and burn each other, die, respawn and take their bags back. The test now
+asserts what happened before it trusts agreement: 8 bomb explosions, 206
+gunpowder explosions, 4 deaths (3 credited, 1 self-kill), 4 bags, 4 respawns and
+2 bag pickups (measured). The assertion is shown to fail on the old script. All
+four engines agreed on it, and snapshots taken mid-death, with bags present and
+with a bomb in flight restore exactly.
+
+**Known limit.** The M5 script is generated from the current sim on every run,
+because it reads where generation put the pickups. Engines are still compared on
+identical inputs, so agreement is real, but the script is not held fixed across
+sim changes. Bag expiry, bag merging and lava deaths are not in it yet.
+
+**Evidence.** D-114; [`2187a3d`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2187a3d),
+[`94290ce`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/94290ce),
+[`5b5de22`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5b5de22).
