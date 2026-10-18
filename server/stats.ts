@@ -51,7 +51,11 @@ export class PlayerStats {
     return visitorId ? Object.fromEntries(this.of(visitorId)) : {};
   }
 
-  /** Write every changed stat in one transaction. A failure keeps them dirty for the next flush. */
+  /**
+   * Write every changed stat in one transaction. If the batch fails, retry row by row so one bad row (an id whose
+   * player was deleted) cannot block everyone else's counters; rows that still fail stay dirty. Failures are
+   * logged at most once a minute.
+   */
   flush(): void {
     if (!this.db || this.dirty.size === 0) return;
     const rows: { playerId: number; stat: string; value: number }[] = [];
@@ -59,8 +63,21 @@ export class PlayerStats {
     try {
       this.db.upsertStats(rows);
       this.dirty.clear();
+      return;
     } catch (e) {
-      this.log?.event("tick_log.flush_failed", { what: "player_stats", rows: rows.length, error: String(e) }, "error");
+      const first = String(e);
+      let failed = 0;
+      for (const r of rows) {
+        try {
+          this.db.upsertStats([r]);
+          const d = this.dirty.get(r.playerId);
+          d?.delete(r.stat);
+          if (d?.size === 0) this.dirty.delete(r.playerId);
+        } catch {
+          failed++;
+        }
+      }
+      if (failed > 0) this.log?.limited("stats.flush", 60_000, "tick_log.flush_failed", { what: "player_stats", rows: rows.length, failed, error: first }, "error");
     }
   }
 }

@@ -382,7 +382,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             log.forget(`bad:${j.conn}`);
             const ms = Date.now() - me.at;
             playerStats.bump(visitorId, STAT_PLAY_MS, ms);
-            playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
+            if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
             // The line to read at the crit: one per session, with its totals.
             log.event("leave", {
               world: w.id,

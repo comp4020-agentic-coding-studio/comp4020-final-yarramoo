@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GameDb } from "../../server/db.ts";
+import { EventLog } from "../../server/log.ts";
+import { PlayerStats } from "../../server/stats.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, register, sleep, waitFor } from "./helpers.ts";
 
@@ -48,6 +50,23 @@ describe("migration 4", () => {
     db.upsertStats([{ playerId: 1, stat: "casts_push", value: 3 }]);
     db.upsertStats([{ playerId: 1, stat: "casts_push", value: 5 }]);
     expect(db.loadStats(1)).toEqual({ casts_push: 5 });
+    db.close();
+  });
+});
+
+describe("flush failures", () => {
+  it("one bad row does not block the others, and the failure is logged once", () => {
+    const dir = tmp();
+    const db = new GameDb(dir);
+    const id = db.createPlayer("Real", "h1");
+    const log = new EventLog({ quiet: true });
+    const ps = new PlayerStats(db, log);
+    ps.bump(id, "casts_push", 2);
+    ps.bump(9999, "casts_push", 1); // no such player: the foreign key refuses it
+    ps.flush();
+    ps.flush();
+    expect(db.loadStats(id)).toEqual({ casts_push: 2 });
+    expect(log.recent().filter((e) => e.ev === "tick_log.flush_failed")).toHaveLength(1);
     db.close();
   });
 });
