@@ -74,7 +74,7 @@ code{background:#151a24;padding:1px 4px;border-radius:4px}nav{margin-bottom:1.5e
 /** README.md rendered to HTML on each request, so the page never lags the file. */
 function readmePage(): string {
   const body = marked.parse(readFileSync(join(ROOT, "README.md"), "utf8"), { async: false });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the game</a></nav>${body}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the game</a> &middot; <a href="/dashboard">Dashboard</a></nav>${body}</main></body></html>`;
 }
 
 /** Per-connection figures for the dashboard: plain data, JSON-safe (undefined fields are omitted by JSON). */
