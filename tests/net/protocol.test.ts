@@ -5,7 +5,10 @@ import {
   decodeServer,
   compressSnapshot,
   decompressSnapshot,
+  encodeClaim,
   encodeHash,
+  PROTOCOL_VERSION,
+  C_CLAIM,
   encodeHello,
   encodeRequestSnapshot,
   encodeResync,
@@ -27,7 +30,7 @@ const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
 describe("protocol codec", () => {
   it("round-trips HELLO, INPUT, PING", () => {
     const h = decodeClient(encodeHello(hash, 7));
-    expect(h).toMatchObject({ t: "hello", version: 5, worldId: 7, flags: 0 });
+    expect(h).toMatchObject({ t: "hello", version: 6, worldId: 7, flags: 0 });
     expect(h && h.t === "hello" && Array.from(h.buildHash)).toEqual(Array.from(hash));
     const payload = encodePaint(0, 4, -3, 5, 100, 200, 6).subarray(5);
     expect(payload.length).toBe(PAINT_PAYLOAD_LEN);
@@ -127,5 +130,30 @@ describe("protocol codec", () => {
     const cat = new Uint8Array([...a, ...b]);
     expect(splitTickFrames(cat)?.map((f) => f.length)).toEqual([a.length, b.length]);
     expect(splitTickFrames(cat.subarray(0, cat.length - 1))).toBeNull();
+  });
+
+  it("round-trips CLAIM at protocol v6 and refuses any other length", () => {
+    expect(PROTOCOL_VERSION).toBe(6);
+    expect(C_CLAIM).toBe(6);
+    const f = encodeClaim(123456, 7, 9, 4, 1);
+    expect(f.length).toBe(15);
+    expect(decodeClient(f)).toEqual({ t: "claim", tick: 123456, victim: 7, killer: 9, cause: 4, bag: 1 });
+    expect(decodeClient(encodeClaim(0xffffffff, 0xffffffff, 0, 255, 255))).toEqual({ t: "claim", tick: 0xffffffff, victim: 0xffffffff, killer: 0, cause: 255, bag: 255 });
+    for (const n of [1, 5, 14]) expect(decodeClient(f.subarray(0, n))).toBeNull();
+    expect(decodeClient(new Uint8Array([...f, 0]))).toBeNull();
+    expect(decodeClient(new Uint8Array(1000).fill(C_CLAIM))).toBeNull();
+  });
+
+  it("never throws on random bytes, whatever the tag or length", () => {
+    let x = 12345;
+    const rnd = () => (x = (Math.imul(x, 1103515245) + 12345) >>> 0) / 4294967296;
+    for (let k = 0; k < 5000; k++) {
+      const b = new Uint8Array(Math.floor(rnd() * 40));
+      for (let i = 0; i < b.length; i++) b[i] = Math.floor(rnd() * 256);
+      if (b.length && k % 2) b[0] = C_CLAIM;
+      expect(() => decodeClient(b)).not.toThrow();
+      const m = decodeClient(b);
+      if (m?.t === "claim") expect(b.length).toBe(15);
+    }
   });
 });

@@ -3,7 +3,7 @@ import { unzlibSync, zlibSync } from "fflate";
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -12,6 +12,9 @@ export const C_INPUT = 0x02;
 export const C_PING = 0x03;
 export const C_HASH = 0x04;
 export const C_SNAPSHOT_UPLOAD = 0x05;
+/** `tick u32, victim u32, killer u32, cause u8, bag u8`: one EV_DEATH the client's sim emitted. A report, never an input. */
+export const C_CLAIM = 0x06;
+export const CLAIM_LEN = 15;
 // Server -> client tags
 export const S_WELCOME = 0x81;
 export const S_REJECT = 0x82;
@@ -68,7 +71,8 @@ export type ClientMsg =
   | { t: "input"; seq: number; kind: number; payload: Uint8Array }
   | { t: "ping"; ts: number }
   | { t: "hash"; tick: number; hash: bigint; stepP95: number; buffered: number }
-  | { t: "snapshot-upload"; tick: number; hash: bigint; data: Uint8Array };
+  | { t: "snapshot-upload"; tick: number; hash: bigint; data: Uint8Array }
+  | { t: "claim"; tick: number; victim: number; killer: number; cause: number; bag: number };
 
 export type ServerMsg =
   | { t: "welcome"; playerId: number; seed: bigint; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
@@ -174,6 +178,19 @@ export function encodeSnapshotUpload(tick: number, hash: bigint, data: Uint8Arra
   view(b).setUint32(1, tick, true);
   view(b).setBigUint64(5, BigInt.asUintN(64, hash), true);
   b.set(data, 13);
+  return b;
+}
+
+/** CLAIM: the fields of one EV_DEATH (plan 10). Fixed length. */
+export function encodeClaim(tick: number, victim: number, killer: number, cause: number, bag: number): Uint8Array {
+  const b = new Uint8Array(CLAIM_LEN);
+  const v = view(b);
+  b[0] = C_CLAIM;
+  v.setUint32(1, tick >>> 0, true);
+  v.setUint32(5, victim >>> 0, true);
+  v.setUint32(9, killer >>> 0, true);
+  b[13] = cause & 255;
+  b[14] = bag & 255;
   return b;
 }
 
@@ -308,6 +325,9 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
     case C_SNAPSHOT_UPLOAD:
       if (b.length < 14) return null;
       return { t: "snapshot-upload", tick: v.getUint32(1, true), hash: v.getBigUint64(5, true), data: b.slice(13) };
+    case C_CLAIM:
+      if (b.length !== CLAIM_LEN) return null;
+      return { t: "claim", tick: v.getUint32(1, true), victim: v.getUint32(5, true), killer: v.getUint32(9, true), cause: b[13], bag: b[14] };
     default:
       return null;
   }
