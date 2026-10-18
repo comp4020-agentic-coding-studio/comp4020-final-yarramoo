@@ -77,4 +77,6 @@ export type FromWorker =
     }
   /** A line for the death feed, already formatted from a plain-name death event. */
   | { type: "toast"; text: string }
+  /** The server says this player earned an achievement (by id; the main thread looks the text up). */
+  | { type: "achievement"; id: string }
   | { type: "error"; error: string };

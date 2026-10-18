@@ -3,7 +3,7 @@ import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { BAR, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
-
+import { formatAchievement } from "./toasts.ts";
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $("stage");
 const info = $("info");
@@ -408,6 +408,11 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     case "toast":
       addToast(m.text);
       break;
+    case "achievement": {
+      const text = formatAchievement(m.id);
+      if (text) addToast(text, true);
+      break;
+    }
     case "stats":
       lastStats = m;
       renderInfo();
@@ -461,8 +466,9 @@ bagLabels.id = "bags";
 stage.append(bagLabels);
 const TOAST_MAX = 5;
 const TOAST_MS = 6000;
-function addToast(text: string) {
+function addToast(text: string, achievement = false) {
   const el = document.createElement("div");
+  if (achievement) el.className = "ach";
   el.textContent = text; // textContent only: a name is never HTML
   toastsEl.append(el);
   while (toastsEl.children.length > TOAST_MAX) toastsEl.firstElementChild?.remove();

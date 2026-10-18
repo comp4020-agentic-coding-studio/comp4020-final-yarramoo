@@ -1,4 +1,5 @@
 // Death-feed text. Pure: the worker passes in a plain-name lookup (never `name#id`), render-only (invariant 9).
+import { achievementById } from "../shared/achievements.ts";
 import { CAUSE_FIRE, CAUSE_GUNPOWDER, CAUSE_LAVA } from "../shared/sim.ts";
 
 export interface DeathInfo {
@@ -44,4 +45,10 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
     text = `${v} died`;
   }
   return d.bagDropped ? `${text} and dropped their bag` : text;
+}
+
+/** Toast for an earned achievement. Name and description come from the shared table by id; wire text is never used. */
+export function formatAchievement(id: string): string | null {
+  const a = achievementById(id);
+  return a ? `Achievement: ${a.name} \u00b7 ${a.description}` : null;
 }

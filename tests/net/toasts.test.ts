@@ -42,3 +42,12 @@ describe("formatDeath", () => {
     expect(d(9, 8, 5)).not.toMatch(/#|\d/);
   });
 });
+
+describe("formatAchievement", () => {
+  it("takes the text from the shared table, never from the wire", async () => {
+    const { formatAchievement } = await import("../../client/toasts.ts");
+    expect(formatAchievement("waterworks")).toBe("Achievement: Waterworks · 100 Water casts");
+    expect(formatAchievement("first_spell")).toBe("Achievement: First spell · Cast any spell");
+    expect(formatAchievement("<img src=x onerror=alert(1)>")).toBeNull();
+  });
+});

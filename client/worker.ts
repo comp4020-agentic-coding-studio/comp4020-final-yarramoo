@@ -321,6 +321,9 @@ function connect() {
       case "player-name":
         names.set(m.player, m.name);
         break;
+      case "achievement":
+        send({ type: "achievement", id: m.id });
+        break;
       case "pong":
         pingMs = (performance.now() >>> 0) - m.ts;
         break;
