@@ -99,7 +99,7 @@ export function spriteFor(pose: Pose, t: number): string {
 }
 
 /** Push one sprite as runs of same-coloured cells. (px, py) is the feet centre in cells. */
-export function pushSprite(rects: Rect[], px: number, py: number, name: string, facingRight: boolean, body: RGB, glow: RGB = WHITE): void {
+export function pushSprite(rects: Rect[], px: number, py: number, name: string, facingRight: boolean, body: RGB, glow: RGB = WHITE, t = 0): void {
   const rows = S[name] ?? S.idle0;
   const pal = paletteOf(body);
   const x0 = Math.round(px) - 3;
@@ -117,11 +117,11 @@ export function pushSprite(rects: Rect[], px: number, py: number, name: string, 
     }
   }
   if (name === "cast") {
-    // A soft halo round the hand in the spell's colour.
+    // A tight pulsing glow: the hand cell's neighbour on the arm side, plus a faint one above it.
     const hx = x0 + (facingRight ? 6 : 0);
-    rects.push({ x: hx + (facingRight ? 1 : -1), y: y0 + 5, w: 1, h: 1, r: glow[0], g: glow[1], b: glow[2], a: 0.55 });
-    rects.push({ x: hx, y: y0 + 6, w: 1, h: 1, r: glow[0], g: glow[1], b: glow[2], a: 0.45 });
-    rects.push({ x: hx, y: y0 + 4, w: 1, h: 1, r: glow[0], g: glow[1], b: glow[2], a: 0.45 });
+    const k = 0.5 + 0.5 * Math.sin(t * 0.5);
+    rects.push({ x: hx + (facingRight ? 1 : -1), y: y0 + 5, w: 1, h: 1, r: glow[0], g: glow[1], b: glow[2], a: 0.3 + 0.35 * k });
+    rects.push({ x: hx, y: y0 + 4, w: 1, h: 1, r: glow[0], g: glow[1], b: glow[2], a: 0.1 + 0.2 * k });
   }
 }
 
@@ -241,10 +241,10 @@ export class Particles {
   /** A small flash where a bolt leaves the caster. */
   flash(x: number, y: number, angle: number, c: [number, number, number]): void {
     this.add({ x: x + Math.cos(angle) * 3, y: y + Math.sin(angle) * 3, vx: 0, vy: 0, life: 80, size: 3, r: 1, g: 1, b: 1, grav: 0 });
-    for (let i = 0; i < 6; i++) {
-      const a = angle + (this.rand() - 0.5) * 0.9;
-      const s = 0.04 + this.rand() * 0.05;
-      this.add({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 160, size: 1, r: c[0], g: c[1], b: c[2], grav: 0 });
+    for (let i = 0; i < 3; i++) {
+      const a = angle + (this.rand() - 0.5) * 0.6;
+      const s = 0.03 + this.rand() * 0.03;
+      this.add({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 110, size: 1, r: c[0], g: c[1], b: c[2], grav: 0 });
     }
   }
 
