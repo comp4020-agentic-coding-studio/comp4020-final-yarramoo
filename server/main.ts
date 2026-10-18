@@ -357,11 +357,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
         // anonymous resolve touches nothing in the database. Identity never reaches the sim.
         const spectating = !!(msg.flags & HELLO_SPECTATE);
-        const who = identity.resolve(msg.token);
-        if (who === "unknown" && w.kind === WORLD_GAME && !spectating) return rej("unknown token", msg.worldId);
+        const gamePlayer = w.kind === WORLD_GAME && !spectating;
+        const who = identity.resolve(msg.token, gamePlayer);
+        if (who === "unknown" && gamePlayer) return rej("unknown token", msg.worldId);
         const visitorId = who === "unknown" ? 0 : who.id;
         const visitorName = who === "unknown" ? "" : who.name;
-        const gamePlayer = w.kind === WORLD_GAME && !spectating;
         const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
         const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, counts: j.counts, at: Date.now() };
         joined = me;

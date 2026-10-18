@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startServer, type RunningServer } from "../../server/main.ts";
-import { buildHashHex, connect, register, sleep, waitFor } from "./helpers.ts";
+import { buildHashHex, connect, register, waitFor } from "./helpers.ts";
 
 let hex: string;
 beforeAll(async () => {
@@ -81,9 +81,30 @@ describe("names for every visitor", () => {
     const whos = joins(s).map((e) => e.who);
     expect(whos).toContain(`Sam#${a.id}`);
     expect(whos).toContain(`Sam#${b.id}`);
-    await sleep(10);
     ca.close();
     cb.close();
     cw.close();
+  });
+
+  it("a sandbox-only registration stays evictable, even with stats; a game player's does not", async () => {
+    const s = await boot(tmp());
+    const painter = await register(s.port, "Painter");
+    const player = await register(s.port, "Player");
+    const sb = await connect(s.port, hex, { world: 0, token: painter.token });
+    sb.paint(4, 100, 50, 140, 50, 6);
+    const g = await connect(s.port, hex, { world: GAME, token: player.token });
+    await waitFor(() => (s.playerStats.get(painter.id).paints_sand ?? 0) === 1, 3000, "paint counted");
+    sb.close();
+    g.close();
+    await waitFor(() => s.log.recent().filter((e) => e.ev === "leave").length === 2, 3000, "both left");
+    s.playerStats.flush();
+    expect(s.db!.loadStats(painter.id).paints_sand).toBe(1);
+    // The painter never joined the game: evicted along with its stats row. The game player stays.
+    expect(s.identity.evictUnjoined(Date.now() + 1000, 0)).toBe(1);
+    expect(s.db!.loadStats(painter.id)).toEqual({});
+    expect(s.db!.playerByTokenHash("x")).toBeNull();
+    const again = await connect(s.port, hex, { world: GAME, token: player.token });
+    expect(again.playerId).toBe(player.id);
+    again.close();
   });
 });

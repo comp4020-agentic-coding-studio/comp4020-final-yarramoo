@@ -65,13 +65,14 @@ export class Identity {
    * (a client must register via POST /api/players first, which is rate limited; a zero token used to mint a
    * permanent player per HELLO, review-m4a S1).
    */
-  resolve(token: Uint8Array): { id: number; name: string } | "unknown" {
+  resolve(token: Uint8Array, touch = false): { id: number; name: string } | "unknown" {
     if (isZero(token)) return "unknown";
     const h = sha256Hex(token);
     const found = this.db ? this.db.playerByTokenHash(h) : this.byHash.get(h);
     if (!found) return "unknown";
     const name = "displayName" in found ? found.displayName : found.name;
-    if (this.db) this.db.touchPlayer(found.id);
+    // Only a game-world player's HELLO counts as joining (D-069: joined means it owns a game entity).
+    if (this.db && touch) this.db.touchPlayer(found.id);
     return { id: found.id, name };
   }
 

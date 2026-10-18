@@ -254,7 +254,17 @@ export class GameDb {
 
   /** Delete registrations created before `cutoffMs` that never joined. Returns how many. */
   evictUnjoined(cutoffMs: number): number {
-    return Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
+    // Name-only registrations (sandbox painters, spectators) may have stats rows; the FK needs them gone first.
+    this.db.exec("BEGIN");
+    try {
+      this.q("delete from player_stats where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
+      const n = Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
+      this.db.exec("COMMIT");
+      return n;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
   }
 
   playerNames(ids: number[]): Record<number, string> {
