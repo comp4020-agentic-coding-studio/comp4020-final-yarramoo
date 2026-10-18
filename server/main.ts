@@ -24,6 +24,7 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
+import { createDashboard } from "./dashboard.ts";
 import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
   castStat,
@@ -175,6 +176,8 @@ export interface ServerOptions {
   maxMembersPerWorld?: number;
   /** input.summary period (tests shorten it). Default INPUT_SUMMARY_MS. */
   inputSummaryMs?: number;
+  /** Admin token for /dashboard. Default ADMIN_TOKEN. Unset or empty disables the admin view. */
+  adminToken?: string;
 }
 
 /** ws ping period for the server-measured RTT. */
@@ -210,6 +213,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
   const connsByIp = new Map<string, number>();
+
+  // Late-bound: the dashboard reads summary() and connections() from the object returned at the end.
+  let running!: RunningServer;
+  const dashboard = createDashboard({
+    log,
+    summary: () => running.summary(),
+    connections: () => running.connections(),
+    build: hash.toString("hex").slice(0, 12),
+    adminToken: opts.adminToken ?? process.env.ADMIN_TOKEN,
+  });
 
   const http: Server = createServer((req, res) => {
     let path: string;
@@ -267,6 +280,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       });
       return;
     }
+    if (dashboard.handle(req, res, path)) return;
     if (path === "/readme") {
       res.writeHead(301, { location: "/readme/" }).end();
       return;
@@ -627,7 +641,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   await new Promise<void>((ok) => http.listen(opts.port ?? 0, ok));
   const addr = http.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;
-  return {
+  running = {
     port,
     world,
     game,
@@ -704,6 +718,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         clearInterval(pingTimer);
         clearInterval(sampleTimer);
         loopLag.disable();
+        dashboard.closeAll();
         log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });
         // Finish every session first (leave events, play_ms), then flush stats, then close the DB.
         for (const l of [...live.values()]) l.finish(1001);
@@ -716,6 +731,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         http.closeAllConnections();
       })),
   };
+  return running;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
