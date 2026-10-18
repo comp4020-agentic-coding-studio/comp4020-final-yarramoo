@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { SNAPSHOT_RETRY_TICKS } from "../../server/world.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, sleep, waitFor } from "./helpers.ts";
 
@@ -56,4 +57,23 @@ describe("who is asked for a snapshot", () => {
     expect(a.counts.requests).toBeGreaterThanOrEqual(1);
     a.close();
   });
+});
+
+describe("a lapsed request", () => {
+  it("is retried about SNAPSHOT_RETRY_TICKS after it lapses, not a full cycle later", async () => {
+    const EVERY = 1800;
+    const s = await boot(tmp(), EVERY);
+    const a = await connect(s.port, hex, { uploads: false });
+    await waitFor(() => s.world.requestSnapshot(), 10000, "a live member to ask");
+    await waitFor(() => s.log.recent().some((e) => e.ev === "snapshot.abandoned"), 20000, "the lapse");
+    const lapsedAt = s.world.clock.lastClosed;
+    await waitFor(() => requests(s).length >= 2, 20000, "the retry");
+    const first = requests(s)[0]!.from_tick as number;
+    const second = requests(s)[1]!.from_tick as number;
+    // Lapse is at request tick + 600 (+ at most a few ticks of polling); the retry is SNAPSHOT_RETRY_TICKS after it.
+    expect(second - first).toBeLessThan(EVERY);
+    expect(second - lapsedAt).toBeGreaterThanOrEqual(SNAPSHOT_RETRY_TICKS - 60);
+    expect(second - lapsedAt).toBeLessThanOrEqual(SNAPSHOT_RETRY_TICKS + 60);
+    a.close();
+  }, 60_000);
 });

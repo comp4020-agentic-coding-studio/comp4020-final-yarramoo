@@ -45,6 +45,8 @@ export const SNAPSHOT_EVERY_TICKS = 1800;
 export const SNAPSHOT_LEAD_TICKS = 120;
 /** Give up on a snapshot request this many ticks after its tick. */
 const SNAPSHOT_GIVE_UP_TICKS = 600;
+/** After a lapsed request, ask again this many ticks later (not a full cycle). Capped at one cycle, at least one tick. */
+export const SNAPSHOT_RETRY_TICKS = 300;
 
 export interface Peer {
   send(frame: Uint8Array): void;
@@ -678,6 +680,8 @@ export class World {
         this.elog.event("snapshot.abandoned", { world: this.id, tick: this.request.tick, who: this.whoOfConn(this.request.memberId) }, "warn");
         this.request = null;
         this.waitingUpload = null;
+        // Retry soon, not after a whole cycle: a lapse says nothing about the next live member (D-100).
+        this.lastRequestTick = last - this.snapshotEvery + Math.max(1, Math.min(SNAPSHOT_RETRY_TICKS, this.snapshotEvery));
       }
       return;
     }
