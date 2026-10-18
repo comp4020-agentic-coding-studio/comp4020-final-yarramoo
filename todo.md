@@ -39,6 +39,9 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
    CPU, zero mismatches, with M5's damage, bombs and bags in play. Reuse
    `tests/soak/` (G2's 10-minute harness). The plan requires it before
    submission; the last run predates M5.
+   Done (harness `8a5918d`, results `docs/research/n1-30min.md`): passed, 1807/1807
+   hashes agree, but the bots never got below y 609, so no deaths, bombs or bags
+   were reached; M5 combat is not covered by it.
 9. Player page on the admin dashboard: sessions, play time, casts by spell,
    deepest point, deaths, kills, achievements, all from `player_stats`.
    Behind `ADMIN_TOKEN`.

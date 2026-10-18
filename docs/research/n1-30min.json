@@ -1,0 +1,250 @@
+{
+  "pass": true,
+  "criteria": {
+    "zeroIncidents": true,
+    "zeroWireMismatches": true,
+    "allClientsLiveAtEnd": true,
+    "throttledEndedLive": true,
+    "sameHashAtFinalSharedCheckpoint": true
+  },
+  "seed": 20261014,
+  "durationSec": 1800,
+  "actualRunSec": 1806,
+  "serverTicks": 108449,
+  "hashChecks": {
+    "serverCheckpointsResolved": 30,
+    "clientHashesSent": [
+      1807,
+      1807,
+      1807
+    ],
+    "ticksWithAllThreeReported": 1807,
+    "ticksAllAgree": 1807,
+    "wireMismatchTicks": []
+  },
+  "serverStats": {
+    "game": {
+      "snapshotsAccepted": 60,
+      "snapshotsRejected": 0,
+      "resyncs": 0,
+      "incidents": 0,
+      "flushes": 1802,
+      "posRejected": 0,
+      "lastVerifyMs": 20.086187000153586,
+      "hashPasses": 1807,
+      "hashFails": 0
+    },
+    "sandbox": {
+      "snapshotsAccepted": 0,
+      "snapshotsRejected": 0,
+      "resyncs": 0,
+      "incidents": 0,
+      "flushes": 0,
+      "posRejected": 0,
+      "lastVerifyMs": 0,
+      "hashPasses": 0,
+      "hashFails": 0
+    },
+    "server": {
+      "droppedRate": 0,
+      "rejected": 0,
+      "originRefused": 0,
+      "capRefused": 0
+    }
+  },
+  "incidents": [],
+  "finalSharedCheckpoint": {
+    "tick": 108420,
+    "hashes": [
+      "3bb4297de4c64516",
+      "3bb4297de4c64516",
+      "3bb4297de4c64516"
+    ]
+  },
+  "combat": {
+    "perClientEventsSeenLive": [
+      {
+        "pickup": 19,
+        "explode": 0,
+        "death": 0,
+        "bagPickup": 0,
+        "cast": 3249,
+        "respawn": 0,
+        "stepsObserved": 108433
+      },
+      {
+        "pickup": 19,
+        "explode": 0,
+        "death": 0,
+        "bagPickup": 0,
+        "cast": 3249,
+        "respawn": 0,
+        "stepsObserved": 108442
+      },
+      {
+        "pickup": 19,
+        "explode": 0,
+        "death": 0,
+        "bagPickup": 0,
+        "cast": 3249,
+        "respawn": 0,
+        "stepsObserved": 108433
+      }
+    ],
+    "note": "counted in each page's worker from the sim's events() output (live ticks only, not replay), so a client that fast-forwarded sees fewer; the maximum per kind is the best estimate of what happened",
+    "maxPerKind": {
+      "pickup": 19,
+      "explode": 0,
+      "death": 0,
+      "bagPickup": 0,
+      "cast": 3249,
+      "respawn": 0
+    }
+  },
+  "clients": [
+    {
+      "client": 0,
+      "throttled": false,
+      "finalState": "live",
+      "tick": 108401,
+      "ticksBehindServer": 48,
+      "resyncs": 0,
+      "reconnects": 0,
+      "playerSeen": true,
+      "stepP95Ms": 0.625,
+      "hashesSent": 1807,
+      "bot": {
+        "moves": 1862,
+        "casts": 847,
+        "bySpell": [
+          436,
+          335,
+          76,
+          0,
+          0,
+          0
+        ],
+        "maxY": 609,
+        "deepSamples": 0,
+        "samples": 3845
+      },
+      "botReachedDeepBand": false
+    },
+    {
+      "client": 1,
+      "throttled": false,
+      "finalState": "live",
+      "tick": 108410,
+      "ticksBehindServer": 39,
+      "resyncs": 0,
+      "reconnects": 0,
+      "playerSeen": true,
+      "stepP95Ms": 0.6142857074737549,
+      "hashesSent": 1807,
+      "bot": {
+        "moves": 1854,
+        "casts": 816,
+        "bySpell": [
+          461,
+          355,
+          0,
+          0,
+          0,
+          0
+        ],
+        "maxY": 239,
+        "deepSamples": 0,
+        "samples": 3815
+      },
+      "botReachedDeepBand": false
+    },
+    {
+      "client": 2,
+      "throttled": true,
+      "finalState": "live",
+      "tick": 108411,
+      "ticksBehindServer": 38,
+      "resyncs": 0,
+      "reconnects": 0,
+      "playerSeen": true,
+      "stepP95Ms": 2.5249999910593033,
+      "hashesSent": 1807,
+      "bot": {
+        "moves": 1835,
+        "casts": 830,
+        "bySpell": [
+          453,
+          329,
+          48,
+          0,
+          0,
+          0
+        ],
+        "maxY": 609,
+        "deepSamples": 0,
+        "samples": 3686
+      },
+      "botReachedDeepBand": false
+    }
+  ],
+  "lagByClient": [
+    {
+      "client": 0,
+      "samples": 359,
+      "maxLag": 41,
+      "meanLag": 22.92757660167131,
+      "nonLiveSamples": 0,
+      "maxStepP95": 0.7999999970197678
+    },
+    {
+      "client": 1,
+      "samples": 359,
+      "maxLag": 43,
+      "meanLag": 22.52367688022284,
+      "nonLiveSamples": 0,
+      "maxStepP95": 0.800000011920929
+    },
+    {
+      "client": 2,
+      "samples": 359,
+      "maxLag": 43,
+      "meanLag": 23.075208913649025,
+      "nonLiveSamples": 0,
+      "maxStepP95": 3.3250000029802322
+    }
+  ],
+  "network": [
+    {
+      "client": 0,
+      "connections": 1,
+      "upFrames": 26396,
+      "downFrames": 109417,
+      "downMB": 1.64
+    },
+    {
+      "client": 1,
+      "connections": 1,
+      "upFrames": 11665,
+      "downFrames": 109356,
+      "downMB": 1.64
+    },
+    {
+      "client": 2,
+      "connections": 1,
+      "upFrames": 25260,
+      "downFrames": 109357,
+      "downMB": 1.64
+    }
+  ],
+  "throttle": "Emulation.setCPUThrottlingRate{rate:4} on the page (main thread only), plus the worker's wasm step() wrapped to take 4x as long (CDP cannot throttle workers)",
+  "pageErrors": [
+    "client 0 worker log: [worker] render path: WebGL2 on OffscreenCanvas in worker",
+    "client 0 ws opened ws://127.0.0.1:57131/ws",
+    "client 1 worker log: [worker] render path: WebGL2 on OffscreenCanvas in worker",
+    "client 1 ws opened ws://127.0.0.1:57132/ws",
+    "client 2 worker log: [worker] render path: WebGL2 on OffscreenCanvas in worker",
+    "client 2 ws opened ws://127.0.0.1:57133/ws"
+  ],
+  "harnessProcessRssMB": 217,
+  "note": "harnessProcessRssMB is the Node process that hosts the server AND the proxies and the driver; Chromium runs separately."
+}
