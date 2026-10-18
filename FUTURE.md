@@ -34,7 +34,7 @@ incident records the first diverging chunk, and show it on the admin dashboard.
 - **Why:** a `desync` event today says who diverged but not where, which leaves
   a determinism bug with nothing to replay against.
 
-## A player page
+## A player page (done, D-125)
 
 A per-player admin view: sessions, play time, casts by spell, deepest point,
 resyncs. Later, achievements.
