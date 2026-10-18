@@ -13,7 +13,12 @@ function rig(world = GAME_ID) {
   const w = new World({ id: world, now: () => t, log });
   const resolved: ResolvedDeath[] = [];
   w.onDeathResolved = (d) => resolved.push(d);
-  const add = (pid: number) => w.join(peer(), { playerId: pid, name: `P${pid}`, visitorId: pid, visitorName: `P${pid}` }).conn;
+  // These members are already caught up: say so, or the world's clock is held (D-122) and no tick closes.
+  const add = (pid: number) => {
+    const conn = w.join(peer(), { playerId: pid, name: `P${pid}`, visitorId: pid, visitorName: `P${pid}` }).conn;
+    w.onLive(conn);
+    return conn;
+  };
   const advance = (ms: number) => {
     t += ms;
     w.tick();

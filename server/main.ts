@@ -122,6 +122,8 @@ export interface WorldSummary {
   snapshotTick: number;
   /** Closed ticks since the latest snapshot (or since tick 0): the log a joiner must replay. Equals log.length. */
   ticksSinceSnapshot: number;
+  /** The tick clock is held: every member is still catching up (D-122). */
+  held: boolean;
   lastVerifyMs: number;
   incidents: number;
   flushes: number;
@@ -183,6 +185,8 @@ export interface ServerOptions {
   /** Override World's log-length warning and cap (tests). */
   maxLogTicks?: number;
   warnLogTicks?: number;
+  /** Override World's CATCHUP_HOLD_MAX_MS (tests). */
+  catchupHoldMaxMs?: number;
   /** Override the snapshot-verification timeout (tests). */
   verifyTimeoutMs?: number;
   verifierWorkerUrl?: URL;
@@ -220,6 +224,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       snapshotEveryTicks: opts.snapshotEveryTicks,
       maxLogTicks: opts.maxLogTicks,
       warnLogTicks: opts.warnLogTicks,
+      catchupHoldMaxMs: opts.catchupHoldMaxMs,
       log,
       stats: playerStats,
     });
@@ -805,6 +810,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             snapshotsRejected: w.stats.snapshotsRejected,
             snapshotBytes: w.snapshot?.data.length ?? 0,
             snapshotTick: w.snapshot?.tick ?? 0,
+            held: w.held,
             ticksSinceSnapshot: w.clock.lastClosed - (w.snapshot?.tick ?? w.logBase),
             lastVerifyMs: Math.round(w.stats.lastVerifyMs),
             incidents: w.stats.incidents,

@@ -56,6 +56,11 @@ const MAX_RESOLVED_DEATHS = 1024;
 export const CLAIMS_PER_WINDOW = 30;
 export const CLAIM_RATE_MS = 10_000;
 export const FLUSH_EVERY_MS = 1000;
+/**
+ * The longest a member that never reports live can hold a world's clock (D-122). A world where nobody is live has
+ * no one playing, so this only ever delays an empty room; a hostile client costs at most this per connection.
+ */
+export const CATCHUP_HOLD_MAX_MS = 120_000;
 export const SNAPSHOT_EVERY_TICKS = 1800;
 /** A requested snapshot tick is at least this far ahead of the clock. */
 export const SNAPSHOT_LEAD_TICKS = 120;
@@ -92,6 +97,10 @@ export interface Member {
   timing: ConnTiming;
   /** HASH for ticks at or below this are ignored (they predate the client's current sim). */
   minHashTick: number;
+  /** False from join or resync until the client says C_LIVE (or sends a HASH past `minHashTick`). */
+  live: boolean;
+  /** When this member last began catching up (join or resync), for the hold's safety valve. */
+  catchupSince: number;
   lastBadTick: number;
   claimWindowStart: number;
   claimsInWindow: number;
@@ -134,6 +143,8 @@ export interface WorldOptions {
   /** Override MAX_LOG_TICKS and WARN_LOG_TICKS (tests). */
   maxLogTicks?: number;
   warnLogTicks?: number;
+  /** Override CATCHUP_HOLD_MAX_MS (tests). */
+  catchupHoldMaxMs?: number;
   log?: EventLog;
   /** Per-player counters; the world bumps `resyncs`. Optional so a bare World works in unit tests. */
   stats?: PlayerStats;
@@ -180,6 +191,8 @@ export class World {
   private readonly snapshotEvery: number;
   private readonly maxLogTicks: number;
   private readonly warnLogTicks: number;
+  private readonly holdMaxMs: number;
+  private heldSince: number | null = null;
   /** Which of the two log-length warnings (0 none, 1 warn level, 2 cap) have fired since the log last shrank. */
   private logWarned = 0;
   private readonly elog: EventLog;
@@ -226,6 +239,7 @@ export class World {
     this.snapshotEvery = opts.snapshotEveryTicks ?? SNAPSHOT_EVERY_TICKS;
     this.maxLogTicks = opts.maxLogTicks ?? MAX_LOG_TICKS;
     this.warnLogTicks = opts.warnLogTicks ?? WARN_LOG_TICKS;
+    this.holdMaxMs = opts.catchupHoldMaxMs ?? CATCHUP_HOLD_MAX_MS;
     this.elog = opts.log ?? new EventLog({ quiet: true });
     this.pstats = opts.stats;
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
@@ -249,6 +263,45 @@ export class World {
 
   get playerCount(): number {
     return this.members.size;
+  }
+
+  /** True while the tick clock is held because every member is still catching up (D-122). */
+  get held(): boolean {
+    return this.heldSince !== null;
+  }
+
+  /**
+   * Hold the clock while members exist, none is live, and at least one began catching up less than the safety
+   * valve ago. Pausing only delays when ticks close: inputs stamped meanwhile wait in the clock's open tick and
+   * close in arrival order on release, so nothing is dropped or reordered. Call after any change to membership
+   * or to a member's `live`, and from the timer while held (for the deadline).
+   */
+  private evaluateHold(): void {
+    const t = this.now();
+    let anyLive = false;
+    let deadline = 0;
+    for (const m of this.members.values()) {
+      if (m.live) anyLive = true;
+      else deadline = Math.max(deadline, m.catchupSince + this.holdMaxMs);
+    }
+    // While held the deadline is fixed at the hold's start, so a stream of reconnects cannot extend it.
+    const limit = this.heldSince !== null ? this.heldSince + this.holdMaxMs : deadline;
+    const want = this.members.size > 0 && !anyLive && t < limit;
+    if (want && this.heldSince === null) {
+      this.heldSince = t;
+      this.clock.pause();
+      this.elog.event("world.hold", { world: this.id, tick: this.clock.lastClosed, members: this.members.size });
+    } else if (!want && this.heldSince !== null) {
+      const ms = Math.round(t - this.heldSince);
+      this.heldSince = null;
+      const reason = this.members.size === 0 ? "empty" : anyLive ? "live" : "expired";
+      if (this.members.size > 0) {
+        this.clock.resume();
+        this.clock.advance();
+      }
+      this.elog.event("world.release", { world: this.id, tick: this.clock.lastClosed, ms, reason });
+      if (reason === "expired") this.elog.limited(`hold_expired:${this.id}`, 60_000, "world.hold_expired", { world: this.id, ms, max_ms: this.holdMaxMs }, "warn");
+    }
   }
 
   /** Past the cap. Informational only: joins are still allowed, since a joiner is how a snapshot gets taken. */
@@ -460,7 +513,10 @@ export class World {
    */
   join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
     if (this.resetting) throw new Error("world is resetting");
-    this.clock.resume();
+    // A newcomer is catching up, so with nobody live the world stays held: do not even start the clock (D-122).
+    let anyLive = false;
+    for (const m of this.members.values()) if (m.live) anyLive = true;
+    if (anyLive) this.clock.resume();
     this.clock.advance();
     const spectate = !!opts.spectate && this.kind === WORLD_GAME;
     // One connection per game-world player: a second tab or a reload replaces the first. The old one is
@@ -480,7 +536,7 @@ export class World {
     const conn = this.nextSeq++;
     const names: [number, string][] = [];
     for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
-    this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
+    const sentOk = this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
     for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
     const counts = new InputCounts();
     const timing = new ConnTiming();
@@ -493,6 +549,8 @@ export class World {
       peer,
       seq: conn,
       minHashTick: this.clock.lastClosed,
+      live: false,
+      catchupSince: this.now(),
       lastBadTick: 0,
       claimWindowStart: 0,
       claimsInWindow: 0,
@@ -500,10 +558,17 @@ export class World {
       timing,
     };
     this.members.set(conn, member);
+    // A peer that failed during the catch-up is left at the next timer pass; a held clock would never close a tick to find out.
+    if (!sentOk) this.dropped.push(conn);
     if (playerId) {
       if (this.kind === WORLD_GAME) this.seenPlayers.add(playerId);
       this.stamp({ player: playerId, kind: KIND_JOIN, payload: new Uint8Array(0) });
       if (opts.name && this.kind === WORLD_GAME) this.broadcastName(conn, playerId, opts.name);
+    }
+    this.evaluateHold();
+    if (this.heldSince === null) {
+      this.clock.resume();
+      this.clock.advance();
     }
     return { conn, playerId, who: this.whoOf(member), counts, timing };
   }
@@ -522,12 +587,14 @@ export class World {
     }
   }
 
-  private sendCatchUp(peer: Peer, header: (playersAtBase: number) => Uint8Array): void {
+  /** False when a send failed part-way: the peer is unusable. */
+  private sendCatchUp(peer: Peer, header: (playersAtBase: number) => Uint8Array): boolean {
     const base = this.snapshot ? (this.onlineAt.get(this.snapshot.tick) ?? this.snapshotOnline) : 0;
-    if (!this.trySend(peer, header(base))) return;
+    if (!this.trySend(peer, header(base))) return false;
     const sf = this.snapshotFrame();
-    if (sf && !this.trySend(peer, sf)) return;
-    for (const f of this.log) if (!this.trySend(peer, f)) return;
+    if (sf && !this.trySend(peer, sf)) return false;
+    for (const f of this.log) if (!this.trySend(peer, f)) return false;
+    return true;
   }
 
   leave(conn: number): void {
@@ -546,7 +613,10 @@ export class World {
       this.checkpoints.clear();
       this.request = null;
       this.waitingUpload = null;
+      this.evaluateHold(); // releases with reason "empty" if held; the pause above already applies
       this.flush();
+    } else {
+      this.evaluateHold();
     }
   }
 
@@ -584,6 +654,9 @@ export class World {
 
   /** Called from the server's timer. */
   tick(): void {
+    // A member whose send failed is left at once, not only at the next tick close, which a held clock never reaches.
+    while (this.dropped.length) this.leave(this.dropped.shift()!);
+    if (this.heldSince !== null) this.evaluateHold(); // the safety valve's deadline
     this.clock.advance();
     if (this.clock.isPaused) return;
     const t = this.now();
@@ -640,6 +713,7 @@ export class World {
       }
       this.resetGen++;
       this.clock.reset();
+      this.evaluateHold(); // no members now: ends any hold
       this.log.length = 0;
       this.logBase = 0;
       this.snapshot = null;
@@ -670,7 +744,12 @@ export class World {
   }
 
   /** C_LIVE: this member finished catching up (D-122). */
-  onLive(_memberId: number): void {}
+  onLive(memberId: number): void {
+    const m = this.members.get(memberId);
+    if (this.resetting || !m || m.live) return;
+    m.live = true;
+    this.evaluateHold();
+  }
 
   // ---- hash checks (plan 7.4) -----------------------------------------------------------------
 
@@ -678,6 +757,10 @@ export class World {
     const m = this.members.get(memberId);
     if (this.resetting || !m || tick % HASH_EVERY !== 0 || tick <= m.minHashTick || tick > this.clock.lastClosed) return;
     m.timing.lastHashTick = tick;
+    if (!m.live) {
+      m.live = true; // a HASH past minHashTick proves it replayed that far
+      this.evaluateHold();
+    }
     if (stepP95Ms !== undefined) m.timing.stepP95Ms = stepP95Ms;
     if (buffered !== undefined) m.timing.buffered = buffered;
     const known = this.truth.get(tick);
@@ -754,10 +837,13 @@ export class World {
     this.pstats?.bump(m.visitorId, STAT_RESYNCS);
     this.elog.event("resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
     m.minHashTick = this.clock.lastClosed;
+    m.live = false;
+    m.catchupSince = this.now();
+    this.evaluateHold(); // another live member keeps the clock running
     for (const cp of this.checkpoints.values()) cp.hashes.delete(m.id);
     if (this.waitingUpload?.memberId === m.id) this.waitingUpload = null;
     if (this.request?.memberId === m.id) this.request = null;
-    this.sendCatchUp(m.peer, (base) => encodeResync(this.clock.lastClosed, base));
+    if (!this.sendCatchUp(m.peer, (base) => encodeResync(this.clock.lastClosed, base))) this.dropped.push(m.id);
   }
 
   // ---- death claims (plan 10, D-120/D-121) -------------------------------------------------------

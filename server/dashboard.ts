@@ -130,7 +130,7 @@ function meter(v,max,warn){return v>=max?"bad":v>=warn?"warn":"ok"}
 function renderSummary(s){
   const w=$("worlds");w.replaceChildren();
   for(const x of s.worlds){const c=document.createElement("div");c.className="card";const h=document.createElement("h3");h.textContent=x.world===0?"Sandbox (world 0)":"Game (world "+x.world+")";const dl=document.createElement("dl");
-    row(dl,"online",x.online);row(dl,"tick",x.lastTick);row(dl,"ticks/s",x.ticksPerSec);row(dl,"hash passed",x.hashPasses,"ok");row(dl,"hash failed",x.hashFails,x.hashFails?"bad":"");
+    row(dl,"online",x.online);if(x.held)row(dl,"clock","held: waiting for a joiner to catch up","warn");row(dl,"tick",x.lastTick);row(dl,"ticks/s",x.ticksPerSec);row(dl,"hash passed",x.hashPasses,"ok");row(dl,"hash failed",x.hashFails,x.hashFails?"bad":"");
     row(dl,"resyncs",x.resyncs);row(dl,"snapshots ok / rejected",x.snapshotsAccepted+" / "+x.snapshotsRejected,x.snapshotsRejected?"warn":"");
     row(dl,"last snapshot",(x.snapshotBytes/1024).toFixed(1)+" KB @ "+x.snapshotTick);row(dl,"last verify",x.lastVerifyMs+" ms");row(dl,"log since snapshot",x.ticksSinceSnapshot+" ticks",x.ticksSinceSnapshot>20000?"warn":"");c.append(h,dl);w.append(c)}
   const p=s.process,pc=$("proc");pc.replaceChildren();const dl=document.createElement("dl");
