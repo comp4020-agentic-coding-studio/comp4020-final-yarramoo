@@ -4,6 +4,7 @@ import { KIND_CAST, KIND_JOIN, KIND_LEAVE, KIND_PAINT, KIND_POS, encodeCast, enc
 import {
   PAINT_PAYLOAD_LEN,
   decodeServer,
+  encodeClaim,
   encodeHash,
   encodeHello,
   encodeInput,
@@ -223,6 +224,9 @@ function onTickApplied(tick: number, inputs: { player: number; kind: number }[])
   if (ls && !ls.fastForwarding && ls.sim.width() > 512) {
     for (const e of ls.sim.events()) {
       if (e.kind === EV_DEATH && e.player === myId) myDeathTick = tick; // countdown display only
+      // A report to the server, never a sim input (invariant 9, D-120). Only past the replay target, like HASH (D-038):
+      // a replaying client would re-claim every old death. Spectators claim too: they run the same sim.
+      if (e.kind === EV_DEATH && ws && ws.readyState === WebSocket.OPEN && tick > ls.catchUpTarget) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c) as BufferSource);
       if (e.kind === EV_KNOCK && e.player === myId && knockIsFresh(tick, ls.latestClosed) && avatar && avatarReady && !spectate) avatar.knock(e.a, e.b);
       if (pendingEvents.length < 300) pendingEvents.push(e);
     }
