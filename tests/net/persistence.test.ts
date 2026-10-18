@@ -88,6 +88,27 @@ describe("a new sim build at start-up", () => {
     db.close();
   });
 
+  it("a real server process starts on a changed build: it does not exit while start-up waits on the verifier", async () => {
+    // Vitest keeps its own event loop alive, so this must be a separate `node server/main.ts`. With the verify
+    // worker unref'd and nothing else pending, Node exited mid-check (code 13) and a deploy crash-looped. Found by
+    // the merge rehearsal on the real image.
+    const { dir, tick } = await storedUnderOldBuild();
+    const { spawn } = await import("node:child_process");
+    const port = 20000 + Math.floor(Math.random() * 20000);
+    const child = spawn(process.execPath, ["server/main.ts"], { env: { ...process.env, DATA_DIR: dir, PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (b) => (out += b));
+    child.stderr.on("data", (b) => (out += b));
+    let exitCode: number | null = null;
+    child.on("exit", (c) => (exitCode = c));
+    cleanups.push(() => void child.kill("SIGKILL"));
+    await waitFor(() => exitCode !== null || out.includes('"ev":"server.start"'), 30000, "the server to start or exit");
+    expect(exitCode, out.slice(-600)).toBeNull();
+    expect(out).toContain('"outcome":"kept_snapshot"');
+    expect((await fetch(`http://127.0.0.1:${port}/readme/`)).status).toBe(200);
+    expect(out).toContain(`"kept_snapshot_tick":${tick}`);
+  }, 60_000);
+
   it("a snapshot the new build can restore is kept", async () => {
     const { dir, tick } = await storedUnderOldBuild();
     const s = await boot(dir);

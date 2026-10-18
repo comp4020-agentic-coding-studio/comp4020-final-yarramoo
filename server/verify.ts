@@ -44,6 +44,7 @@ export class SnapshotVerifier {
       const p = this.pending.get(m.id);
       if (!p) return;
       this.pending.delete(m.id);
+      this.holdWhilePending(w);
       // The worker answered: either it restored the snapshot, or this build refused it.
       p.resolve(m.ok ? { kind: "ok", v: { tick: m.tick!, hash: m.hash!, rawLength: m.rawLength! } } : { kind: "refused" });
     });
@@ -60,6 +61,17 @@ export class SnapshotVerifier {
     w.unref(); // an idle worker must not keep the process alive
     this.worker = w;
     return w;
+  }
+
+  /**
+   * A pending job must keep the process alive; an idle worker must not. Start-up awaits a check on a sim-build
+   * change before the HTTP server listens, and with the worker unref'd nothing else held the event loop, so Node
+   * exited mid-wait (exit code 13, "unsettled top-level await") and the deploy crash-looped. Found by a merge
+   * rehearsal on the real image; vitest keeps its own loop alive, so no test could see it.
+   */
+  private holdWhilePending(w: Worker): void {
+    if (this.pending.size > 0) w.ref();
+    else w.unref();
   }
 
   /** Decompress (capped at `maxRaw`), restore and hash. Null if the data is bad or the sim refuses it. */
@@ -91,6 +103,7 @@ export class SnapshotVerifier {
       }, this.timeoutMs);
       timer.unref();
       this.pending.set(id, { resolve: (v) => (clearTimeout(timer), resolve(v)) });
+      this.holdWhilePending(w);
       w.postMessage({ id, data: compressed, maxRaw });
     });
   }
