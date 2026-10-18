@@ -121,3 +121,42 @@ describe("admin player page", () => {
     }
   });
 });
+
+describe("admin player index", () => {
+  it("is admin only and links each player", async () => {
+    const s = await boot();
+    const id = s.db!.createPlayer("Ann", "h1");
+    expect((await get(s, "/dashboard/players")).status).toBe(403);
+    expect((await get(s, "/dashboard/players", "wrong")).status).toBe(403);
+    const html = await (await get(s, "/dashboard/players", "secret")).text();
+    expect(html).toContain(`href="/dashboard/player/${id}"`);
+    expect(html).toContain(`Ann#${id}`);
+  });
+
+  it("paginates 50 a page, newest last_seen first, capped at 200", async () => {
+    const s = await boot();
+    for (let i = 1; i <= 230; i++) s.db!.db.prepare("insert into players (display_name, token_hash, created_at, last_seen) values (?, ?, 1, ?)").run(`P${i}`, `h${i}`, i);
+    const page = async (q: string) => await (await get(s, `/dashboard/players${q}`, "secret")).text();
+    const names = (h: string) => [...h.matchAll(/>(P\d+#\d+)</g)].map((m) => m[1]);
+    const p1 = names(await page(""));
+    expect(p1).toHaveLength(50);
+    expect(p1[0]).toBe("P230#230");
+    expect(p1[49]).toBe("P181#181");
+    const p2 = names(await page("?page=2"));
+    expect(p2[0]).toBe("P180#180");
+    const p4 = await page("?page=4");
+    expect(names(p4)).toHaveLength(50);
+    expect(names(p4)[49]).toBe("P31#31");
+    expect(names(await page("?page=5"))).toHaveLength(0);
+    expect(await page("")).toContain("page 1 of 4");
+    expect(await page("?page=abc")).toContain("page 1 of 4");
+  });
+
+  it("escapes a hostile name", async () => {
+    const s = await boot();
+    s.db!.createPlayer("<script>alert(1)</script>", "h1");
+    const html = await (await get(s, "/dashboard/players", "secret")).text();
+    expect(html).not.toContain("<script");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+});
