@@ -8,9 +8,37 @@ with the commit that did it.
 Dates: crit 10 "Fly by instruments" Wed 21 Oct (live by Tue 20 Oct); final
 submission noon Mon 9 Nov.
 
-Overnight run, 13–14 Oct: aim to finish M4, keep going if budget allows, and
-stop by $185 of the $200 weekly budget so about $15 is left for Wednesday
-morning (crit 9 reflection). The budget resets Thu 15 Oct 9 am.
+## Overnight run, 18–19 Oct (the user approved this at 22:15 Sun)
+
+**Stop line: $150 of $200** (the week resets Thu 22 Oct 9 am). Check
+`/comp4020:balance` before each slice and stop starting new work past $145.
+**No deploy and no merge to `main`.** All work stays on `multa`, pushed.
+
+On anything that needs the user: take the more reversible option, record it in
+`docs/DECISIONS.md`, add a line under "For the user to check" below, and keep
+going. Gameplay-feel numbers get a sensible default the user can retune.
+
+Queue, in order (each item: Sonnet workers in sequence, a review for anything on
+the input path, snapshot format, protocol or ABI, the full gate per commit):
+
+1. M5 slice 3: bags + snapshot format 3 (running at 22:15).
+2. M5 slice 4: client (health bar, death toast, bag sprite, explosion and fire
+   effects). Check it in two browser contexts.
+3. M5 slice 5: cross-browser coverage that really produces deaths, bags, bombs.
+4. M6 achievements: the server-counted ones from `player_stats` first, then
+   kills and deaths by the plan 10 majority CLAIM (protocol bump, review).
+   Toasts in game, a list on the admin dashboard.
+5. Pause the world while a lone visitor catches up (`FUTURE.md`; protocol
+   bump, review).
+6. Social and spectate: a who's-online list with jump-camera-here, a minimap
+   strip, distance-faded name tags. Client only.
+7. World feel: biome tints and cave shapes by depth, the generator preview
+   page. Changes the game world's generation, which is safe only while it is
+   undeployed.
+
+### For the user to check (added overnight)
+
+- (nothing yet)
 
 ## Now
 
