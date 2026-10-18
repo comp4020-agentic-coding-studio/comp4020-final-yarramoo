@@ -38,6 +38,7 @@ Challenges
 14. [Liquids "stuck in staircases"](#14-liquids-stuck-in-staircases)
 15. [Performance gate P1](#15-performance-gate-p1)
 16. [What independent reviews caught that tests missed](#16-what-independent-reviews-caught-that-tests-missed)
+17. [Snapshot format 3 before any game snapshot exists](#17-snapshot-format-3-before-any-game-snapshot-exists)
 
 ---
 
@@ -545,3 +546,36 @@ from where the system ships.
 [`d6f8921`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d6f8921),
 [`08b1dd7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/08b1dd7),
 [`e46c83f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e46c83f).
+
+## 17. Snapshot format 3 before any game snapshot exists
+
+**Context.** Dropped bags (M5 slice 3) add a section to the entity bytes, which
+are inside every game snapshot and the state hash. The live sandbox is the one
+world with real stored data: a v2 snapshot with an empty entity section, which
+D-014 says may never be reset.
+
+**Decision.** Bump the format to 3 in this slice, append the bag section after
+the projectiles so players stay first, and make the compatibility rule depend
+on the world kind: a sandbox snapshot of version 1 to 3 restores, a game-world
+snapshot below 3 is refused.
+
+**Alternatives considered.** Keep v2 and make the bag section optional at the
+tail (a length check would have to tell "no bags" from "old layout"). Bump later,
+when the client lands.
+
+**Why.** The bump is free only while no game snapshot has been deployed
+(D-074). After the game ships, the same change needs a migration or a reset,
+and the reset is forbidden. The sandbox's stored state hash does not include the
+header, so stamping new sandbox snapshots v3 changes no hash, and the
+`compat.test.ts` DATA claim still passes against the fixture from the deployed build.
+
+**Cost / consequences.** Every later change to the entity layout must bump the
+version again and state which older kinds still restore. A refused game
+snapshot falls back to log replay on the server, which is already the path for
+a corrupt row.
+
+**Evidence.** D-014, D-074, D-109, D-110, D-111;
+[`17166cf`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/17166cf),
+[`9c985bc`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9c985bc),
+[`b71a386`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b71a386).
+
