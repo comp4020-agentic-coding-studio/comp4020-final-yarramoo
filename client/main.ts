@@ -1,6 +1,6 @@
 // Main thread: DOM (palette, brush), pointer forwarding, and the main-thread render fallback.
 import { etaText, replayRate, type Sample } from "./catchup.ts";
-import { fadeAlpha, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
+import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { BAR, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
@@ -836,10 +836,11 @@ whoEl.onclick = (e) => {
 miniEl.addEventListener("pointerdown", (e) => {
   const r = miniEl.getBoundingClientRect();
   const px = e.clientX - r.left;
-  const vw = GAME_VIEW.w / zoom;
-  const vh = GAME_VIEW.h / zoom;
-  const py = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) * worldH;
-  jumpCamera(stripToCamera(px, r.width, worldW, vw), Math.max(0, Math.min(worldH - vh, py - vh / 2)));
+  const py = e.clientY - r.top;
+  // Jump to (and, for a spectator, follow) the player nearest the tap; with nobody, slide sideways and keep depth.
+  const near = nearestPlayer(lastPlayers?.list ?? [], px, py, worldW, worldH, r.width, r.height);
+  if (near) return jumpTo(near);
+  jumpCamera(stripToCamera(px, r.width, worldW, GAME_VIEW.w / zoom), camera.y);
 });
 
 /** Rebuild the list only when it changed, move the minimap a few times a second (not every frame). */

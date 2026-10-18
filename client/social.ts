@@ -41,6 +41,19 @@ export function stripToCamera(px: number, size: number, worldSize: number, viewS
   return clamp(c - viewSize / 2, 0, Math.max(0, worldSize - viewSize));
 }
 
+/** The player whose dot is nearest a tap on the strip, measured in strip pixels (the strip shows depth too). Ties go to the lower id. */
+export function nearestPlayer<T extends { id: number; x: number; y: number }>(
+  list: readonly T[], px: number, py: number, worldW: number, worldH: number, stripW: number, stripH: number,
+): T | null {
+  let best: T | null = null;
+  let bd = Infinity;
+  for (const p of list) {
+    const d = Math.hypot(worldToStrip(p.x, worldW, stripW) - px, worldToStrip(p.y, worldH, stripH) - py);
+    if (d < bd || (d === bd && best && p.id < best.id)) (best = p, bd = d);
+  }
+  return best;
+}
+
 /** Label opacity by distance from the view centre: 1 within `near`, `min` beyond `far`, linear between. */
 export function fadeAlpha(dist: number, near: number, far: number, min = 0.15): number {
   if (dist <= near) return 1;
