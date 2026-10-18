@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
 import { encodeCast, encodePaint, encodePos, KIND_CAST, KIND_PAINT, KIND_POS } from "../../shared/inputs.ts";
-import { decodeServer, encodeClaim, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload } from "../../shared/protocol.ts";
+import { decodeServer, encodeChunkHashes, encodeClaim, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
 import { EV_DEATH, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
@@ -29,6 +29,16 @@ export interface TestClient {
   sendLive(): void;
   /** When true (default) the client sends a CLAIM for every EV_DEATH its sim emits past the replay target. */
   claims: boolean;
+  /** Diagnosis traffic: ticks the server asked chunk hashes for, in order, and what this client answered with. */
+  chunkRequests: number[];
+  /** When false the client ignores REQUEST_CHUNK_HASHES (a slow or hostile client). */
+  answerChunks: boolean;
+  /**
+   * Test only: push a small Paint into THIS client's sim and nowhere else (it never goes through the server), so its
+   * state hash and the hash of the chunk containing (x, y) differ. A raw memory write would not do: the sim only
+   * rehashes chunks it knows were touched.
+   */
+  localPaint(mat: number, x: number, y: number, r: number): void;
   /** The step p95 (ms) this client puts in its HASH frames. */
   reportStepP95: number;
   /** Called instead of uploading when `uploads` is false, so a test can send something else. */
@@ -75,6 +85,8 @@ export async function connect(
     holdLive: opts.holdLive ?? false,
     onDue: null,
     reportStepP95: 1.5,
+    chunkRequests: [] as number[],
+    answerChunks: true,
   } as unknown as TestClient;
 
   const fresh = (target: number) => {
@@ -126,6 +138,10 @@ export async function connect(
           fresh(m.tick);
           if (m.tick === 0 && !c.holdLive) ws.send(encodeLive(0));
           break;
+        case "request-chunk-hashes":
+          c.chunkRequests.push(m.tick);
+          if (c.answerChunks) ws.send(encodeChunkHashes(m.tick, c.ls.chunkHashesAt(m.tick) ?? new BigUint64Array(0)));
+          break;
         case "request-snapshot":
           c.counts.requests++;
           wantAt = m.tick;
@@ -153,6 +169,7 @@ export async function connect(
     ws.send(encodeInput(++seq, KIND_POS, encodePos(0, life, Math.round(x * 16), Math.round(y * 16), facing).subarray(5)));
   c.cast = (spell, angle, castSeq) => ws.send(encodeInput(++seq, KIND_CAST, encodeCast(0, spell, angle, castSeq).subarray(5)));
   c.sendLive = () => ws.send(encodeLive(c.ls.sim.tick()));
+  c.localPaint = (mat, x, y, r) => void c.ls.sim.pushInput(simInputBytes({ player: c.playerId, kind: KIND_PAINT, payload: encodePaint(0, mat, x, y, x, y, r).subarray(5) }));
   c.drain = () => void c.ls.run(1_000_000);
   c.close = () => ws.close();
   return c;

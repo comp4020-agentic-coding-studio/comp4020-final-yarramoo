@@ -5,6 +5,7 @@ import {
   PAINT_PAYLOAD_LEN,
   decodeServer,
   encodeClaim,
+  encodeChunkHashes,
   encodeHash,
   encodeHello,
   encodeLive,
@@ -320,6 +321,10 @@ function connect() {
         break;
       case "request-snapshot":
         wantSnapshotAt = m.tick;
+        break;
+      case "request-chunk-hashes":
+        // A diagnosis (D-126): the server wants this checkpoint's per-chunk hashes. An empty reply says it has left the ring.
+        if (ls) sock.send(encodeChunkHashes(m.tick, ls.chunkHashesAt(m.tick) ?? new BigUint64Array(0)) as BufferSource);
         break;
       case "tick":
         if (!ls) return sock.close();
