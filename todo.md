@@ -50,7 +50,12 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
 
 ### For the user to check (added overnight)
 
-- (nothing yet)
+- **A live risk on `main`, fixed on `multa` only (D-112, `bbd5d73`).** On any
+  deploy that changes the sim build, the live server resets the sandbox if
+  checking its stored snapshot merely times out. A cold verify worker on the
+  256 MB machine could do that. Not deployed overnight, per your rule. It ships
+  with the merge, or as a small hotfix to `main` (like `2c70ceb`) if you want it
+  sooner: your call.
 
 ## Now
 
