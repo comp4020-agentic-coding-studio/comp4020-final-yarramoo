@@ -537,6 +537,8 @@ export class World {
     try {
       try {
         this.db?.resetWorld(this.id, this.simBuild);
+        // Persist the id counter now, so a crash before the next flush cannot hand out a pre-reset id again.
+        this.db?.setNextPlayer(this.id, this.nextPlayer);
       } catch (e) {
         this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, outcome: "failed", error: String(e) }, "error");
         throw e;

@@ -233,8 +233,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   /** POST /api/admin/reset {world}: a deliberate reset of one world to its generated start (D-097). */
   function adminReset(req: IncomingMessage, res: ServerResponse): void {
     const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+    // Limited per address: an unauthenticated loop of POSTs must not push real events out of the ring.
     const refuse = (status: number, reason: string, body: string) => {
-      log.event("admin.refused", { action: "reset", reason, status, ip_tag: ipTag }, "warn");
+      log.limited(`admin:${ipTag}`, 10_000, "admin.refused", { action: "reset", reason, status, ip_tag: ipTag }, "warn");
       res.writeHead(status, { "content-type": "text/plain" }).end(body);
     };
     if (req.method !== "POST") {
@@ -242,7 +243,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return;
     }
     if (!originOk(req)) return refuse(403, "origin", "cross-origin reset refused");
-    if (!dashboard.isAdmin(req)) return refuse(403, "not_admin", "forbidden");
+    // Header only: a token in the query string of a destructive request ends up in logs and history.
+    if (!String(req.headers.authorization ?? "").startsWith("Bearer ") || !dashboard.isAdmin(req)) return refuse(403, "not_admin", "forbidden");
     const chunks: Buffer[] = [];
     let size = 0;
     let dead = false;
@@ -266,6 +268,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       if (!w) return refuse(400, "unknown_world", "unknown world");
       try {
         const r = w.reset(`admin@${ipTag}`);
+        tickSamples.delete(w.id); // pre-reset tick numbers would make ticks/s hugely negative for 10 s
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         res.end(JSON.stringify({ ok: true, world: w.id, oldTick: r.oldTick }));
       } catch (e) {

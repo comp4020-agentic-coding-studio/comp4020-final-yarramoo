@@ -39,6 +39,9 @@ const closeCode = (c: TestClient) => new Promise<number>((ok) => c.ws.once("clos
 
 /** A fresh sim fed the server's current log: the state any correct client must reach. */
 function replayLog(w: World, seed: bigint, kind: number) {
+  // The log only holds ticks after the latest verified snapshot; replaying it from a fresh world is valid only
+  // while no snapshot has been taken. A snapshot landing mid-test used to make this compare the wrong ticks.
+  if (w.logBase !== 0 || w.snapshot) throw new Error(`replayLog needs the full log, but it starts after tick ${w.logBase}`);
   const sim = loadSim(wasmBytes);
   sim.init(seed, kind);
   const at = new Map<number, bigint>();
@@ -55,7 +58,8 @@ const solidCells = (c: TestClient) => c.ls.sim.matView().reduce((n, v) => n + (v
 
 describe("World.reset", () => {
   it("sandbox: both clients get 4001, rejoin at tick 0 with the pre-reset paint gone, and agree again", async () => {
-    const s = await boot(tmp());
+    // No snapshots in this test: the reference replay below needs the whole post-reset log from tick 1.
+    const s = await boot(tmp(), { snapshotEveryTicks: 1_000_000 });
     const a = await connect(s.port, hex);
     const b = await connect(s.port, hex);
     await paintFor([a, b], 1200);
@@ -243,7 +247,11 @@ describe("POST /api/admin/reset", () => {
     expect((await reset(s, 0, {})).status).toBe(403);
     expect((await reset(s, 0, { authorization: "Bearer wrong" })).status).toBe(403);
     expect((await reset(s, 0, { authorization: `Basic ${TOKEN}` })).status).toBe(403);
-    expect(s.log.recent().filter((e) => e.ev === "admin.refused" && e.lvl === "warn").length).toBe(3);
+    // A token in the query string is refused on this POST: header only.
+    expect((await fetch(`http://127.0.0.1:${s.port}/api/admin/reset?token=${TOKEN}`, { method: "POST", body: JSON.stringify({ world: 0 }) })).status).toBe(403);
+    // Refusals from one address are rate-limited, so a loop of POSTs can't flood the event ring.
+    for (let i = 0; i < 20; i++) await reset(s, 0, { authorization: "Bearer wrong" });
+    expect(s.log.recent().filter((e) => e.ev === "admin.refused").length).toBe(1);
     expect(s.log.recent().some((e) => e.ev === "world.reset")).toBe(false);
     const open = await boot(tmp(), { adminToken: "" });
     expect((await reset(open, 0, { authorization: "Bearer " })).status).toBe(403);
@@ -276,6 +284,20 @@ describe("POST /api/admin/reset", () => {
     expect(s.log.recent().some((e) => e.ev === "world.reset")).toBe(false);
     const same = await reset(s, 0, { authorization: `Bearer ${TOKEN}`, origin: `http://127.0.0.1:${s.port}` });
     expect(same.status).toBe(200);
+  });
+
+  it("ticks/s reads the post-reset rate, not one skewed by pre-reset samples", async () => {
+    const s = await boot(tmp());
+    const a = await connect(s.port, hex);
+    await waitFor(() => s.world.clock.lastClosed > 200, 10000, "ticks");
+    await sleep(1100); // let the 1 s sampler record pre-reset tick numbers
+    expect((await reset(s, 0)).status).toBe(200);
+    const c = await connect(s.port, hex);
+    // Without clearing the samples on reset this read about 7, 13, 17 (pre-reset ticks in the window).
+    await sleep(1800);
+    expect(s.summary().worlds.find((w) => w.world === 0)!.ticksPerSec).toBeGreaterThan(40);
+    a.close();
+    c.close();
   });
 
   it("an admin-tagged world.reset is logged with who asked", async () => {
