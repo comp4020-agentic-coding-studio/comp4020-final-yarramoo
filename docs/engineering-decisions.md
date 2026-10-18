@@ -570,9 +570,16 @@ header, so stamping new sandbox snapshots v3 changes no hash, and the
 `compat.test.ts` DATA claim still passes against the fixture from the deployed build.
 
 **Cost / consequences.** Every later change to the entity layout must bump the
-version again and state which older kinds still restore. A refused game
-snapshot falls back to log replay on the server, which is already the path for
-a corrupt row.
+version again and state which older kinds still restore. A stored game snapshot
+the new build refuses resets that world on start-up; it does not replay the old
+log, which cannot run under new rules anyway.
+
+**Correction (review M5 slice 3).** This entry first said a refused snapshot
+"falls back to log replay". Tracing `loadFromDb` showed it resets. The same
+review found a worse, older bug on that path: a verification that merely timed
+out was treated as a refusal, so a slow worker during a deploy could have reset
+the live sandbox. Start-up now refuses to run instead and leaves the volume
+untouched (D-112).
 
 **Evidence.** D-014, D-074, D-109, D-110, D-111;
 [`17166cf`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/17166cf),

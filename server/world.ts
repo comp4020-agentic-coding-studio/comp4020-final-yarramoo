@@ -253,8 +253,17 @@ export class World {
       // New sim build (plan 9.3): the logged inputs cannot be replayed under new rules. Keep the snapshot if this
       // build can restore it, start a fresh log; otherwise start the world over.
       let ok = false;
-      if (snap && this.verifier) {
-        ok = (await this.verifier.hashOf(snap.data, maxSnapshotRawFor(this.kind)))?.tick === snap.tick;
+      if (snap) {
+        // Only a snapshot this build refuses may cost the world. A verification that never finished (a cold
+        // worker timing out on a busy 256 MB machine, a crash, no verifier) says nothing about the snapshot,
+        // so refuse to start and let the platform restart us with the volume untouched (D-014, review M5
+        // slice 3 N2). Before this, a timeout here reset the live sandbox.
+        const r = this.verifier ? await this.verifier.check(snap.data, maxSnapshotRawFor(this.kind)) : { kind: "unavailable" as const };
+        if (r.kind === "unavailable") {
+          this.elog.event("world.build_changed", { world: this.id, outcome: "verify_unavailable", snapshot_tick: snap.tick }, "error");
+          throw new Error(`world ${this.id}: could not verify the stored snapshot under the new build; not resetting`);
+        }
+        ok = r.kind === "ok" && r.v.tick === snap.tick;
       }
       if (ok && snap) {
         db.clearTickLog(this.id);

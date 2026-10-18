@@ -13,8 +13,11 @@ export interface Verified {
   rawLength: number;
 }
 
+export type CheckResult = { kind: "ok"; v: Verified } | { kind: "refused" } | { kind: "unavailable" };
+const UNAVAILABLE: CheckResult = { kind: "unavailable" };
+
 interface Pending {
-  resolve: (v: Verified | null) => void;
+  resolve: (v: CheckResult) => void;
 }
 
 export class SnapshotVerifier {
@@ -41,14 +44,15 @@ export class SnapshotVerifier {
       const p = this.pending.get(m.id);
       if (!p) return;
       this.pending.delete(m.id);
-      p.resolve(m.ok ? { tick: m.tick!, hash: m.hash!, rawLength: m.rawLength! } : null);
+      // The worker answered: either it restored the snapshot, or this build refused it.
+      p.resolve(m.ok ? { kind: "ok", v: { tick: m.tick!, hash: m.hash!, rawLength: m.rawLength! } } : { kind: "refused" });
     });
     const dead = () => {
       if (this.worker === w) this.worker = null;
       // A crashed worker fails its outstanding jobs; the next call starts a fresh one.
       for (const [id, p] of this.pending) {
         this.pending.delete(id);
-        p.resolve(null);
+        p.resolve(UNAVAILABLE);
       }
     };
     w.on("error", dead);
@@ -60,7 +64,16 @@ export class SnapshotVerifier {
 
   /** Decompress (capped at `maxRaw`), restore and hash. Null if the data is bad or the sim refuses it. */
   hashOf(compressed: Uint8Array, maxRaw: number): Promise<Verified | null> {
-    if (this.closed) return Promise.resolve(null);
+    return this.check(compressed, maxRaw).then((r) => (r.kind === "ok" ? r.v : null));
+  }
+
+  /**
+   * Like `hashOf`, but tells a snapshot this build refuses ("refused": the worker ran and could not restore it)
+   * apart from a verification that never finished ("unavailable": timeout, crash, closed). Start-up must only
+   * throw a world away for the first: a slow worker on a busy machine is no reason to reset (D-014).
+   */
+  check(compressed: Uint8Array, maxRaw: number): Promise<CheckResult> {
+    if (this.closed) return Promise.resolve(UNAVAILABLE);
     return new Promise((resolve) => {
       const id = this.nextId++;
       const w = this.start();
@@ -72,7 +85,7 @@ export class SnapshotVerifier {
         if (this.worker === w) this.worker = null;
         for (const [k, p] of this.pending) {
           this.pending.delete(k);
-          p.resolve(null);
+          p.resolve(UNAVAILABLE);
         }
         void w.terminate();
       }, this.timeoutMs);
@@ -88,7 +101,7 @@ export class SnapshotVerifier {
     this.worker = null;
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
-      p.resolve(null);
+      p.resolve(UNAVAILABLE);
     }
     await w?.terminate();
   }

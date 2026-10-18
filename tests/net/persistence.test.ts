@@ -60,6 +60,53 @@ describe("cold start with a long log", () => {
   }, 60_000);
 });
 
+describe("a new sim build at start-up", () => {
+  /** A sandbox with one verified snapshot, then the server stopped and its stored build renamed (a deploy). */
+  async function storedUnderOldBuild(): Promise<{ dir: string; tick: number }> {
+    const dir = tmp();
+    const s = await boot(dir, 60);
+    const a = await connect(s.port, hex);
+    await paintFor([a], 600);
+    await waitFor(() => s.world.stats.snapshotsAccepted >= 1, 20000, "a verified snapshot");
+    const tick = s.world.snapshot!.tick;
+    closeAll(a);
+    await s.close();
+    const db = new GameDb(dir);
+    db.setWorldBuild(0, "an-older-build");
+    db.close();
+    return { dir, tick };
+  }
+
+  it("a hung verifier refuses to start and leaves the stored world alone (review M5 slice 3 N2)", async () => {
+    const { dir, tick } = await storedUnderOldBuild();
+    await expect(
+      startServer({ port: 0, dataDir: dir, quiet: true, verifyTimeoutMs: 300, verifierWorkerUrl: new URL("./hang-worker.ts", import.meta.url) }),
+    ).rejects.toThrow(/not resetting/);
+    const db = new GameDb(dir);
+    expect(db.latestSnapshot(0)?.tick).toBe(tick);
+    expect(db.getWorld(0)?.simBuild).toBe("an-older-build");
+    db.close();
+  });
+
+  it("a snapshot the new build can restore is kept", async () => {
+    const { dir, tick } = await storedUnderOldBuild();
+    const s = await boot(dir);
+    expect(s.world.snapshot?.tick).toBe(tick);
+    expect(s.log.recent().some((e) => e.ev === "world.build_changed" && e.outcome === "kept_snapshot")).toBe(true);
+  });
+
+  it("a snapshot the new build refuses still resets the world", async () => {
+    const { dir } = await storedUnderOldBuild();
+    const db = new GameDb(dir);
+    const snap = db.latestSnapshot(0)!;
+    db.saveSnapshot(0, { tick: snap.tick + 60, hash: 0n, simBuild: "an-older-build", data: new Uint8Array([1, 2, 3]) });
+    db.close();
+    const s = await boot(dir);
+    expect(s.world.snapshot).toBeNull();
+    expect(s.log.recent().some((e) => e.ev === "world.build_changed" && e.outcome === "reset")).toBe(true);
+  });
+});
+
 describe("snapshots and restart", () => {
   it("restart: a new server on the same DATA_DIR restores the world, continues numbering, and a fresh client holds the exact pre-stop state", async () => {
     const dir = tmp();
