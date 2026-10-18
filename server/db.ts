@@ -361,10 +361,24 @@ export class GameDb {
     return (this.q("select count(*) as n from achievements where earned_at >= ?").get(sinceMs) as { n: number }).n;
   }
 
-  recordIncident(worldId: number, tick: number, details: unknown): void {
-    this.q("insert into desync_incidents (world_id, tick, details, created_at) values (?, ?, ?, ?)").run(
+  /** Returns the new row's id, so a later diagnosis can fill in its `chunks` (D-126). */
+  recordIncident(worldId: number, tick: number, details: unknown): number {
+    const r = this.q("insert into desync_incidents (world_id, tick, details, created_at) values (?, ?, ?, ?)").run(
       worldId, tick, JSON.stringify(details), Date.now(),
     );
+    return Number(r.lastInsertRowid);
+  }
+
+  updateIncident(id: number, details: unknown): void {
+    this.q("update desync_incidents set details = ? where id = ?").run(JSON.stringify(details), id);
+  }
+
+  /** Newest first, across worlds (the admin dashboard). */
+  recentIncidents(limit: number): { id: number; worldId: number; tick: number; createdAt: number; details: Record<string, unknown> }[] {
+    const rows = this.q("select id, world_id, tick, details, created_at from desync_incidents order by id desc limit ?").all(limit) as {
+      id: number; world_id: number; tick: number; details: string; created_at: number;
+    }[];
+    return rows.map((r) => ({ id: r.id, worldId: r.world_id, tick: r.tick, createdAt: r.created_at, details: JSON.parse(r.details) }));
   }
 
   incidents(worldId: number): { tick: number; details: Record<string, unknown> }[] {

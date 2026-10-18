@@ -5,7 +5,11 @@ import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
 import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
+  CHUNK_CELLS,
+  chunkCountFor,
+  chunkGridFor,
   decompressSnapshot,
+  encodeRequestChunkHashes,
   encodePlayerName,
   MAX_SNAPSHOT_RAW_GAME,
   encodeRequestSnapshot,
@@ -56,6 +60,16 @@ const MAX_RESOLVED_DEATHS = 1024;
 export const CLAIMS_PER_WINDOW = 30;
 export const CLAIM_RATE_MS = 10_000;
 export const FLUSH_EVERY_MS = 1000;
+/** Chunk diagnosis of a desync (D-126): how long to wait for replies, how many may be open, and the request budget. */
+export const CHUNK_DIAG_WAIT_MS = 3000;
+export const MAX_OPEN_DIAGNOSES = 4;
+export const DIAG_WINDOW_MS = 60_000;
+export const MAX_DIAGS_PER_WINDOW = 6;
+/** At most this many members are asked per incident (divergent first, then the longest-connected agreeing ones). */
+export const MAX_DIAG_ASKED = 16;
+export const MAX_DIAG_DIVERGENT_ASKED = 8;
+/** The incident row lists at most this many differing chunks; `total` still counts them all. */
+export const MAX_CHUNKS_RECORDED = 64;
 /**
  * The longest a member that never reports live can hold a world's clock (D-122). A world where nobody is live has
  * no one playing, so this only ever delays an empty room; a hostile client costs at most this per connection.
@@ -126,6 +140,17 @@ interface Checkpoint {
   firstAt: number;
 }
 
+/** One open chunk diagnosis: who was asked for their chunk hashes at `tick`, and what came back. */
+interface Diagnosis {
+  tick: number;
+  incidentId: number | null;
+  details: Record<string, unknown>;
+  startedAt: number;
+  asked: Map<number, { divergent: boolean; who: string; seq: number }>;
+  /** null: the member said the tick is no longer in its ring buffer (or sent the wrong number of hashes). */
+  replies: Map<number, BigUint64Array | null>;
+}
+
 interface SnapshotRequest {
   tick: number;
   memberId: number;
@@ -162,6 +187,8 @@ export interface WorldStats {
   /** Checkpoints resolved with every reporter agreeing, and divergences found. */
   hashPasses: number;
   hashFails: number;
+  /** CHUNK_HASHES frames nobody asked for (wrong tick, wrong sender, duplicate, nothing open). */
+  chunkUnsolicited?: number;
 }
 
 export class World {
@@ -210,6 +237,10 @@ export class World {
   private pendingFirst = 0;
   private lastFlush = 0;
   private readonly checkpoints = new Map<number, Checkpoint>();
+  /** Open chunk diagnoses by checkpoint tick (D-126). Bounded by MAX_OPEN_DIAGNOSES and a per-window budget. */
+  private readonly diagnoses = new Map<number, Diagnosis>();
+  private diagWindowStart = 0;
+  private diagsInWindow = 0;
   private readonly truth = new Map<number, bigint>();
   private request: SnapshotRequest | null = null;
   private waitingUpload: { tick: number; memberId: number; hash: bigint; data: Uint8Array } | null = null;
@@ -677,6 +708,7 @@ export class World {
       this.flush();
     }
     this.resolveDue(t);
+    this.sweepDiagnoses(t);
     if (t - this.lastClaimSweep >= CLAIM_SWEEP_MS) {
       this.lastClaimSweep = t;
       this.sweepClaims(t);
@@ -738,6 +770,7 @@ export class World {
       this.pendingFirst = 0;
       this.lastFlush = this.now();
       this.checkpoints.clear();
+      this.diagnoses.clear();
       this.truth.clear();
       this.request = null;
       this.waitingUpload = null;
@@ -829,21 +862,170 @@ export class World {
     const members = [...bad.keys()].map((id) => this.members.get(id)).filter((m): m is Member => !!m);
     this.stats.incidents++;
     this.stats.hashFails++;
-    // REQUEST_CHUNK_HASHES/CHUNK_HASHES to diff the diverging chunks is not built in this slice (D-043).
-    this.db?.recordIncident(this.id, tick, {
+    const details: Record<string, unknown> = {
       players: [...(all ?? bad).keys()],
       divergent: [...bad.keys()],
+      who: members.map((m) => this.whoOf(m)),
       userAgents: Object.fromEntries(members.map((m) => [m.id, m.peer.userAgent ?? null])),
       build: this.simBuild,
       truth: truth.toString(16),
       hashes: Object.fromEntries([...(all ?? bad)].map(([id, h]) => [id, h.toString(16)])),
-      chunks: null,
-    });
+      chunks: { status: "pending" },
+    };
+    // A client compared against a truth that is already known has no agreeing peer to diff against (D-126).
+    if (!all) details.chunks = { status: "unavailable", reason: "no_reference" };
+    const incidentId = this.db?.recordIncident(this.id, tick, details) ?? null;
+    // Requests first, then the resync, in one synchronous run: a client replays from scratch on RESYNC and that
+    // empties its chunk-hash ring, so it must see the request before the RESYNC. Neither waits for any reply.
+    if (all) this.startDiagnosis(tick, incidentId, details, all, bad);
     for (const m of members) {
       m.lastBadTick = tick;
       this.resync(m);
     }
     this.elog.event("desync", { world: this.id, tick, who: members.map((m) => this.whoOf(m)).join(","), agreeing: all ? all.size - bad.size : null, uas: members.map((m) => (m.peer.userAgent ?? "").slice(0, 40)).join("|") }, "warn");
+  }
+
+  // ---- chunk diagnosis (plan 6.10, D-126) ----------------------------------------------------------
+
+  /** Ask the reporters of a diverged checkpoint for their per-chunk hashes. Never delays or blocks the resync. */
+  private startDiagnosis(tick: number, incidentId: number | null, details: Record<string, unknown>, all: Map<number, bigint>, bad: Map<number, bigint>): void {
+    const skip = (reason: string): void => {
+      details.chunks = { status: "unavailable", reason };
+      if (incidentId !== null) this.db?.updateIncident(incidentId, details);
+      this.elog.limited(`diag_skipped:${this.id}`, 10_000, "desync.diag_skipped", { world: this.id, tick, reason }, "warn");
+    };
+    const t = this.now();
+    if (t - this.diagWindowStart >= DIAG_WINDOW_MS) {
+      this.diagWindowStart = t;
+      this.diagsInWindow = 0;
+    }
+    if (this.diagnoses.has(tick)) return skip("duplicate");
+    if (this.diagnoses.size >= MAX_OPEN_DIAGNOSES) return skip("too_many_open");
+    if (this.diagsInWindow >= MAX_DIAGS_PER_WINDOW) return skip("rate_limited");
+    const reporters = [...all.keys()].map((id) => this.members.get(id)).filter((m): m is Member => !!m);
+    const divergent = reporters.filter((m) => bad.has(m.id)).sort((a, b) => a.seq - b.seq).slice(0, MAX_DIAG_DIVERGENT_ASKED);
+    const agreeing = reporters.filter((m) => !bad.has(m.id)).sort((a, b) => a.seq - b.seq).slice(0, MAX_DIAG_ASKED - divergent.length);
+    if (!divergent.length || !agreeing.length) return skip("no_peers");
+    this.diagsInWindow++;
+    const d: Diagnosis = { tick, incidentId, details, startedAt: t, asked: new Map(), replies: new Map() };
+    const frame = encodeRequestChunkHashes(tick);
+    for (const m of [...divergent, ...agreeing]) {
+      if (this.trySend(m.peer, frame)) d.asked.set(m.id, { divergent: bad.has(m.id), who: this.whoOf(m), seq: m.seq });
+      else this.dropped.push(m.id);
+    }
+    if (d.asked.size) this.diagnoses.set(tick, d);
+    else skip("no_peers");
+  }
+
+  /**
+   * C_CHUNK_HASHES: a reply to REQUEST_CHUNK_HASHES. Anything unasked (no open diagnosis for that tick, a member that was
+   * not asked, a second reply) is ignored without work, counted, and logged at most once a few seconds. A count of 0, or
+   * a count that is not the world's chunk count, marks the member's array unavailable.
+   */
+  onChunkHashes(memberId: number, tick: number, hashes: BigUint64Array): void {
+    const d = this.diagnoses.get(tick);
+    if (this.resetting || !d || !d.asked.has(memberId) || d.replies.has(memberId)) {
+      this.stats.chunkUnsolicited = (this.stats.chunkUnsolicited ?? 0) + 1;
+      this.elog.limited(`chunk_unsolicited:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOfConn(memberId), reason: "chunk_hashes_unsolicited", tick }, "warn");
+      return;
+    }
+    d.replies.set(memberId, hashes.length === chunkCountFor(this.kind) ? hashes : null);
+    this.maybeFinish(d, this.now());
+  }
+
+  private sweepDiagnoses(t: number): void {
+    for (const d of [...this.diagnoses.values()]) this.maybeFinish(d, t);
+  }
+
+  private maybeFinish(d: Diagnosis, t: number): void {
+    const timedOut = t - d.startedAt >= CHUNK_DIAG_WAIT_MS;
+    let waiting = false;
+    for (const id of d.asked.keys()) if (this.members.has(id) && !d.replies.has(id)) waiting = true;
+    if (waiting && !timedOut) return;
+    this.diagnoses.delete(d.tick);
+    const grid = chunkGridFor(this.kind);
+    const base = { tick: d.tick, grid, asked: d.asked.size, answered: [...d.replies.values()].filter((r) => r !== null).length };
+    const unavailable = (reason: string): void => this.finishDiagnosis(d, { status: "unavailable", reason, ...base }, null);
+    // The reference: the array most agreeing members sent; a tie goes to the group with the longest-connected sender.
+    const groups = new Map<string, { n: number; best: number; arr: BigUint64Array }>();
+    for (const [id, arr] of d.replies) {
+      const a = d.asked.get(id);
+      if (!arr || !a || a.divergent) continue;
+      const key = Array.from(arr, (x) => x.toString(36)).join(",");
+      const g = groups.get(key) ?? { n: 0, best: Number.MAX_SAFE_INTEGER, arr };
+      g.n++;
+      g.best = Math.min(g.best, a.seq);
+      groups.set(key, g);
+    }
+    let ref: { n: number; best: number; arr: BigUint64Array } | null = null;
+    for (const g of groups.values()) if (!ref || g.n > ref.n || (g.n === ref.n && g.best < ref.best)) ref = g;
+    if (!ref) return unavailable("no_reference");
+    const diff = new Map<number, Set<number>>(); // index -> divergent member ids that differ there
+    const byPlayer: Record<string, { who: string; count: number; first: number | null }> = {};
+    let usable = 0;
+    let missing = false;
+    for (const [id, a] of d.asked) {
+      if (!a.divergent) continue;
+      const arr = d.replies.get(id);
+      if (!arr) {
+        if (!d.replies.has(id)) missing = true;
+        continue;
+      }
+      usable++;
+      let count = 0;
+      let first: number | null = null;
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i] === ref.arr[i]) continue;
+        count++;
+        first ??= i;
+        (diff.get(i) ?? diff.set(i, new Set()).get(i)!).add(id);
+      }
+      byPlayer[id] = { who: a.who, count, first };
+    }
+    if (!usable) return unavailable(missing ? "timeout" : "ring_miss");
+    const indices = [...diff.keys()].sort((a, b) => a - b);
+    const rect = (i: number) => {
+      const cx = i % grid.cw;
+      const cy = Math.floor(i / grid.cw);
+      return { index: i, cx, cy, x: cx * CHUNK_CELLS, y: cy * CHUNK_CELLS, w: CHUNK_CELLS, h: CHUNK_CELLS };
+    };
+    this.finishDiagnosis(
+      d,
+      {
+        status: "ok",
+        ...base,
+        total: indices.length,
+        first: indices.length ? rect(indices[0]) : null,
+        list: indices.slice(0, MAX_CHUNKS_RECORDED).map(rect),
+        truncated: indices.length > MAX_CHUNKS_RECORDED,
+        byPlayer,
+        ...(indices.length === 0 ? { note: "chunk hashes agree: the difference is in entities or the tick" } : {}),
+      },
+      indices,
+    );
+  }
+
+  private finishDiagnosis(d: Diagnosis, chunks: Record<string, unknown>, indices: number[] | null): void {
+    d.details.chunks = chunks;
+    if (d.incidentId !== null) this.db?.updateIncident(d.incidentId, d.details);
+    const first = chunks.first as { index: number; cx: number; cy: number } | null | undefined;
+    this.elog.limited(
+      `desync_chunks:${this.id}`,
+      2000,
+      "desync.chunks",
+      {
+        world: this.id,
+        tick: d.tick,
+        who: (d.details.who as string[]).join(","),
+        status: chunks.status as string,
+        reason: (chunks.reason as string | undefined) ?? undefined,
+        first_chunk: first ? first.index : null,
+        first_cx: first ? first.cx : null,
+        first_cy: first ? first.cy : null,
+        count: indices ? indices.length : null,
+      },
+      "warn",
+    );
   }
 
   /** Latest verified snapshot plus every closed tick after it, through the same path as a late join. */

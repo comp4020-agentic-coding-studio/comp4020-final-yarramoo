@@ -15,6 +15,7 @@ import {
   encodePong,
   encodeReject,
   HELLO_SPECTATE,
+  maxChunkHashesFrameFor,
   maxUploadFrameFor,
   MAX_SOCKET_PAYLOAD,
   PAINT_PAYLOAD_LEN,
@@ -710,7 +711,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // A replaced tab (same token, newer connection) stays open until its socket closes; it must not stamp or count.
       if (!w.hasMember(joined.conn)) return;
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
-      if (msg.t === "snapshot-upload" ? buf.length > maxUploadFrameFor(w.kind) : buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
+      const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.kind) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.kind) : MAX_FRAME_BYTES;
+      if (buf.length > frameCap) return ws.close(1009, "frame too large");
 
       switch (msg.t) {
         case "ping":
@@ -773,6 +775,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           return;
         case "live":
           w.onLive(joined.conn, msg.tick);
+          return;
+        case "chunk-hashes":
+          w.onChunkHashes(joined.conn, msg.tick, msg.hashes);
           return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);

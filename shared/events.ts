@@ -28,6 +28,8 @@ export const EVENT_NAMES = [
   // Consistency
   "desync",
   "resync",
+  "desync.chunks",
+  "desync.diag_skipped",
   "hash.minute",
   "snapshot.requested",
   "snapshot.accepted",
