@@ -56,6 +56,13 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
   256 MB machine could do that. Not deployed overnight, per your rule. It ships
   with the merge, or as a small hotfix to `main` (like `2c70ceb`) if you want it
   sooner: your call.
+- **M5 visuals not yet seen in a browser:** the bag sprite, the pickup flash, a
+  bomb in flight, the Fire bolt trail, the screen shake and another player's
+  health bar. The data behind them is proven: a Node run of the real wasm
+  picked up Bomb and Fire bolt, threw both, died in lava, dropped a 13-charge
+  bag, respawned and took it back (every event and entity record as the client
+  reads them). The health bar, death overlay, toast, gunpowder explosion and
+  phone layout were seen. Worth two minutes of your eyes in the game world.
 
 ## Now
 
