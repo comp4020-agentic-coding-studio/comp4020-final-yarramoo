@@ -18,6 +18,7 @@ export interface DashboardDeps {
   log: EventLog;
   summary(): ServerSummary;
   connections(): ConnInfo[];
+  recentAchievements(): { who: string; achievement: string; world: number | null; tick: number | null; at: number }[];
   /** Short build hash shown in the header. */
   build: string;
   /** Unset or empty disables the admin view. */
@@ -55,7 +56,10 @@ export function createDashboard(deps: DashboardDeps) {
     const send = (event: string, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     const tick = () => {
       send("summary", deps.summary());
-      if (admin) send("conns", deps.connections());
+      if (admin) {
+        send("conns", deps.connections());
+        send("achievements", deps.recentAchievements());
+      }
     };
     let unsub: (() => void) | undefined;
     if (admin) {
@@ -130,18 +134,24 @@ function renderSummary(s){
     row(dl,"resyncs",x.resyncs);row(dl,"snapshots ok / rejected",x.snapshotsAccepted+" / "+x.snapshotsRejected,x.snapshotsRejected?"warn":"");
     row(dl,"last snapshot",(x.snapshotBytes/1024).toFixed(1)+" KB @ "+x.snapshotTick);row(dl,"last verify",x.lastVerifyMs+" ms");row(dl,"log since snapshot",x.ticksSinceSnapshot+" ticks",x.ticksSinceSnapshot>20000?"warn":"");c.append(h,dl);w.append(c)}
   const p=s.process,pc=$("proc");pc.replaceChildren();const dl=document.createElement("dl");
-  row(dl,"RSS / 256 MB",p.rssMb+" MB",meter(p.rssMb,256,200));row(dl,"heap",p.heapMb+" MB");row(dl,"event-loop lag p99",p.lagP99Ms+" ms",p.lagP99Ms>50?"warn":"");
+  row(dl,"achievements today",s.achievementsToday);row(dl,"RSS / 256 MB",p.rssMb+" MB",meter(p.rssMb,256,200));row(dl,"heap",p.heapMb+" MB");row(dl,"event-loop lag p99",p.lagP99Ms+" ms",p.lagP99Ms>50?"warn":"");
   if(p.dbBytes!=null){const t=p.dbBytes+(p.walBytes||0);row(dl,"db + wal / 1 GB",fmtMb(t),meter(t,1024*MB,700*MB))}
   pc.append(dl);$("uptime").textContent="up "+Math.floor(p.uptimeS/3600)+"h "+Math.floor(p.uptimeS/60)%60+"m "+p.uptimeS%60+"s";
 }
 function renderConns(list){
   $("admin").hidden=false;const tb=$("conns");tb.replaceChildren();
   for(const c of list){const tr=document.createElement("tr");
-    const cells=[c.who,c.world,c.role,c.connectedS+"s",c.rttP95Ms==null?"-":c.rttP95Ms+" ms",c.tickLag==null?"-":c.tickLag,c.stepP95Ms==null?"-":c.stepP95Ms+" ms",c.buffered==null?"-":c.buffered,
+    const cells=[c.who,c.achievements,c.world,c.role,c.connectedS+"s",c.rttP95Ms==null?"-":c.rttP95Ms+" ms",c.tickLag==null?"-":c.tickLag,c.stepP95Ms==null?"-":c.stepP95Ms+" ms",c.buffered==null?"-":c.buffered,
       c.window.casts+"c "+c.window.paints+"p "+c.window.pos+"pos "+c.window.rejected+"rej",
       c.total.casts+"c "+c.total.paints+"p "+c.total.pos+"pos "+c.total.rejected+"rej "+c.total.resyncs+"rs"];
     for(const v of cells){const td=document.createElement("td");td.textContent=String(v);tr.append(td)}tb.append(tr)}
   $("nconns").textContent=list.length;
+}
+function renderAch(list){
+  const tb=$("ach");tb.replaceChildren();
+  for(const a of list){const tr=document.createElement("tr");
+    for(const v of [a.who,a.achievement,a.world==null?"-":a.world,a.tick==null?"-":a.tick,new Date(a.at).toLocaleString()]){const td=document.createElement("td");td.textContent=String(v);tr.append(td)}tb.append(tr)}
+  if(!list.length){const tr=document.createElement("tr");const td=document.createElement("td");td.colSpan=5;td.className="muted";td.textContent="none yet";tr.append(td);tb.append(tr)}
 }
 const feed=$("feed"),MAXROWS=300;
 function passes(e){
@@ -163,6 +173,7 @@ function connect(){
   es.onerror=()=>{$("conn").textContent="reconnecting...";$("conn").className="warn"};
   es.addEventListener("summary",(m)=>renderSummary(JSON.parse(m.data)));
   es.addEventListener("conns",(m)=>renderConns(JSON.parse(m.data)));
+  es.addEventListener("achievements",(m)=>renderAch(JSON.parse(m.data)));
   es.addEventListener("backlog",(m)=>{feed.replaceChildren();for(const e of JSON.parse(m.data))addLog(e)});
   es.addEventListener("log",(m)=>addLog(JSON.parse(m.data)));
 }
@@ -188,7 +199,9 @@ function dashboardPage(build: string): string {
 <h2>Worlds</h2><div id="worlds" class="grid"></div>
 <h2>Process</h2><div id="proc" class="card"></div>
 <section id="admin" hidden><h2>Connections (<span id="nconns">0</span>)</h2>
-<div class="box"><table><thead><tr><th>who</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
+<div class="box"><table><thead><tr><th>who</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
+<h2>Recent achievements</h2>
+<div class="box"><table><thead><tr><th>who</th><th>achievement</th><th>world</th><th>tick</th><th>when</th></tr></thead><tbody id="ach"></tbody></table></div>
 <h2>Reset a world</h2><p class="muted">Returns one world to its generated start and disconnects everyone in it (they reconnect on their own). Players, names and stats are kept.</p>
 <div class="filters"><button id="rsand" type="button">Reset sandbox</button><button id="rgame" type="button">Reset game world</button><span id="rstatus" class="muted"></span></div>
 <h2>Events</h2><div class="filters"><select id="fworld"><option value="all">all worlds</option><option value="0">world 0</option><option value="1">world 1</option></select>

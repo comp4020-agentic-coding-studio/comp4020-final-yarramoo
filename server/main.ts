@@ -86,6 +86,8 @@ export interface ConnInfo {
   who: string;
   role: string;
   visitorId: number;
+  /** Achievements this visitor has earned (admin only; 0 for anonymous). */
+  achievements: number;
   connectedS: number;
   /** Server-measured ws ping round trip, ms. undefined until the first pong. */
   rttMs?: number;
@@ -125,6 +127,8 @@ export interface WorldSummary {
 
 export interface ServerSummary {
   worlds: WorldSummary[];
+  /** Achievements awarded since local midnight, a bare count: the public view shows no names. */
+  achievementsToday: number;
   process: {
     rssMb: number;
     heapMb: number;
@@ -155,6 +159,8 @@ export interface RunningServer {
   stats: { droppedRate: number; rejected: number; originRefused: number; capRefused: number };
   /** One row per joined connection. */
   connections(): ConnInfo[];
+  /** The newest awards with `name#id`, for the admin dashboard only. */
+  recentAchievements(limit?: number): { who: string; achievement: string; world: number | null; tick: number | null; at: number }[];
   /** Per-world and process figures. `resetLag` also restarts the event-loop histogram (process.minute does). */
   summary(opts?: { resetLag?: boolean }): ServerSummary;
   close(): Promise<void>;
@@ -235,6 +241,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     log,
     summary: () => running.summary(),
     connections: () => running.connections(),
+    recentAchievements: () => running.recentAchievements(),
     build: hash.toString("hex").slice(0, 12),
     adminToken: opts.adminToken ?? process.env.ADMIN_TOKEN,
   });
@@ -727,6 +734,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     verifier,
     db,
     stats,
+    recentAchievements: (limit = 30) =>
+      (db?.recentAchievements(limit) ?? []).map((r) => ({ who: `${r.name}#${r.playerId}`, achievement: r.achievement, world: r.worldId, tick: r.tick, at: r.earnedAt })),
     connections: () =>
       [...live.values()].map((l): ConnInfo => {
         const win = l.counts.peekWindow();
@@ -736,6 +745,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           who: l.who,
           role: l.role,
           visitorId: l.visitorId,
+          achievements: achievements.earnedBy(l.visitorId).length,
           connectedS: Math.round((Date.now() - l.at) / 100) / 10,
           rttMs: round2(l.timing.rttMs),
           rttP95Ms: round2(l.timing.rttP95()),
@@ -749,7 +759,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     summary: (o = {}) => {
       const now = performance.now();
       const mem = process.memoryUsage();
+      const midnight = new Date();
+      midnight.setHours(0, 0, 0, 0);
       const out: ServerSummary = {
+        achievementsToday: db ? db.achievementsSince(midnight.getTime()) : 0,
         worlds: [...worlds.values()].map((w): WorldSummary => {
           const a = tickSamples.get(w.id) ?? [];
           const first = a[0];
