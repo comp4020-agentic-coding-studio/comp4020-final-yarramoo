@@ -21,8 +21,8 @@ export const SPELLS: SpellInfo[] = [
   { name: SPELL_NAMES[1], colour: [1, 0.85, 0.45], cooldown: 90, speed: 0, gravity: 0, enabled: true },
   { name: SPELL_NAMES[2], colour: [0.3, 0.55, 1], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
   { name: SPELL_NAMES[3], colour: [1, 0.45, 0.7], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
-  { name: SPELL_NAMES[4], colour: [1, 0.55, 0.12], cooldown: 15, speed: 896 / 256, gravity: 4 / 256, enabled: false },
-  { name: SPELL_NAMES[5], colour: [0.8, 0.25, 0.25], cooldown: 60, speed: 640 / 256, gravity: 20 / 256, enabled: false },
+  { name: SPELL_NAMES[4], colour: [1, 0.55, 0.12], cooldown: 15, speed: 896 / 256, gravity: 4 / 256, enabled: true },
+  { name: SPELL_NAMES[5], colour: [0.8, 0.25, 0.25], cooldown: 60, speed: 640 / 256, gravity: 20 / 256, enabled: true },
 ];
 if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with the sim");
 

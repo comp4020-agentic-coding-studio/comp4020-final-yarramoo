@@ -45,8 +45,8 @@ pub const OWNER_GRACE: u16 = 10;
 pub const PROJ_MAX_SPEED: i32 = 8 * PROJ_ONE;
 pub const MAX_SUBSTEPS: i32 = 8;
 
-/// Spells the sim implements so far; Fire bolt and Bomb arrive with M5 (their casts are refused).
-pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, false, false];
+/// Spells the sim implements; a disabled spell's cast is refused.
+pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true];
 /// Ticks between casts of the same spell.
 pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60];
 /// Launch speed, 1/256 cell per tick (Push 5 cells a tick; Water and Rose are lobbed slower).
@@ -80,3 +80,17 @@ pub const KILL_CREDIT_TICKS: u32 = 300;
 pub const CAUSE_FIRE: u8 = 6;
 pub const CAUSE_LAVA: u8 = 7;
 pub const CAUSE_GUNPOWDER: u8 = 8;
+
+// ---- Fire bolt and Bomb (M5 slice 2, plan 6.7) ---------------------------------------------------------
+
+/// Fire bolt: the disc of this radius (cells) around the impact is set alight (Empty and gas cells only).
+pub const FIRE_BOLT_RADIUS: i32 = 3;
+/// Fire bolt: health taken by a direct hit on a player.
+pub const FIRE_BOLT_DAMAGE: u8 = 20;
+/// Bomb: blast radius in cells; `carve` clears the disc and `explode_at` damages inside it.
+pub const BOMB_RADIUS: i32 = 18;
+/// Bomb: ticks of flight after which it explodes in mid-air (must stay below `PROJ_MAX_AGE`).
+pub const BOMB_FUSE: u16 = 120;
+/// Bound on the work one tick can spend on bomb explosions (each carves about 1,018 cells). A bomb past
+/// the cap waits where it is and tries again next tick, in spawn order.
+pub const MAX_BOMB_EXPLOSIONS_PER_TICK: u32 = 8;

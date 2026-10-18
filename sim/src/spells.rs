@@ -12,6 +12,8 @@ pub const PUSH: u8 = 0;
 pub const BLAST: u8 = 1;
 pub const WATER_SPELL: u8 = 2;
 pub const ROSE: u8 = 3;
+pub const FIRE_BOLT: u8 = 4;
+pub const BOMB: u8 = 5;
 
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
@@ -150,8 +152,9 @@ impl Sim {
             .collect();
         let mut qs = core::mem::take(&mut self.projectiles);
         let mut gone = Vec::with_capacity(qs.len());
+        let mut bombs = 0u32;
         for q in qs.iter_mut() {
-            gone.push(!self.step_projectile(q, &boxes));
+            gone.push(!self.step_projectile(q, &boxes, &mut bombs));
         }
         let mut i = 0;
         qs.retain(|_| {
@@ -163,17 +166,29 @@ impl Sim {
 
     /// One tick of one bolt: gravity, then at most `MAX_SUBSTEPS` integer sub-steps of at most one cell.
     /// Returns false when the bolt is gone.
-    fn step_projectile(&mut self, q: &mut Projectile, boxes: &[Box5]) -> bool {
+    /// `bombs` counts the bomb explosions so far this tick; at `MAX_BOMB_EXPLOSIONS_PER_TICK` a bomb that
+    /// would explode keeps its position and velocity, ages one tick, and tries again next tick.
+    fn step_projectile(&mut self, q: &mut Projectile, boxes: &[Box5], bombs: &mut u32) -> bool {
         q.age += 1;
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        if q.spell == BOMB && q.age >= BOMB_FUSE {
+            // The fuse comes before the age-out, so a bomb never vanishes silently.
+            if *bombs >= MAX_BOMB_EXPLOSIONS_PER_TICK {
+                return true;
+            }
+            *bombs += 1;
+            self.impact(q, (q.x >> PROJ_SHIFT, q.y >> PROJ_SHIFT), None);
+            return false;
+        }
         if q.age > PROJ_MAX_AGE {
             return false;
         }
         let s = usize::from(q.spell);
+        let vy0 = q.vy;
         q.vy = (q.vy + GRAVITY_Q8[s]).clamp(-PROJ_MAX_SPEED, PROJ_MAX_SPEED);
         q.vx = q.vx.clamp(-PROJ_MAX_SPEED, PROJ_MAX_SPEED);
         let n = ((q.vx.abs().max(q.vy.abs()) + PROJ_ONE - 1) / PROJ_ONE).clamp(1, MAX_SUBSTEPS);
         let (x0, y0) = (q.x, q.y);
-        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
         let mut free = (x0 >> PROJ_SHIFT, y0 >> PROJ_SHIFT);
         for k in 1..=n {
             let (cx, cy) = ((x0 + q.vx * k / n) >> PROJ_SHIFT, (y0 + q.vy * k / n) >> PROJ_SHIFT);
@@ -184,11 +199,17 @@ impl Sim {
                 if (id == q.owner && q.age <= OWNER_GRACE) || cx < bx0 || cx > bx1 || cy < by0 || cy > by1 {
                     continue;
                 }
+                if q.spell == BOMB && !self.bomb_may_explode(q, vy0, bombs) {
+                    return true;
+                }
                 self.impact(q, (cx, cy), Some(id));
                 return false;
             }
             let m = self.grid.mat[(cy * w + cx) as usize];
             if m != EMPTY && !is_gas(m) {
+                if q.spell == BOMB && !self.bomb_may_explode(q, vy0, bombs) {
+                    return true;
+                }
                 self.impact(q, free, None);
                 return false;
             }
@@ -196,6 +217,16 @@ impl Sim {
         }
         q.x = x0 + q.vx;
         q.y = y0 + q.vy;
+        true
+    }
+
+    /// Takes one of this tick's bomb explosions, or (cap reached) puts the bolt's velocity back so it waits.
+    fn bomb_may_explode(&self, q: &mut Projectile, vy0: i32, bombs: &mut u32) -> bool {
+        if *bombs >= MAX_BOMB_EXPLOSIONS_PER_TICK {
+            q.vy = vy0;
+            return false;
+        }
+        *bombs += 1;
         true
     }
 
@@ -209,8 +240,50 @@ impl Sim {
             }
             WATER_SPELL => self.burst_water(at),
             ROSE => self.burst_seeds(at),
+            FIRE_BOLT => {
+                self.ignite(at);
+                if let Some(v) = hit {
+                    self.fire_bolt_hit(v, q.owner);
+                }
+            }
+            BOMB => {
+                self.grid.carve(at.0, at.1, BOMB_RADIUS, self.seed, self.tick);
+                self.explode_at(at.0, at.1, BOMB_RADIUS, q.owner, BOMB);
+            }
             _ => {}
         }
+    }
+
+    /// Set Fire in every Empty or gas cell within `FIRE_BOLT_RADIUS` of `at`. Solids, liquids and Bedrock
+    /// are never touched. At most 29 cells are written.
+    fn ignite(&mut self, at: (i32, i32)) {
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let r = FIRE_BOLT_RADIUS;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let (x, y) = (at.0 + dx, at.1 + dy);
+                if dx * dx + dy * dy > r * r || x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                let m = self.grid.mat[i];
+                if m == EMPTY || is_gas(m) {
+                    self.grid.set(i, FIRE, 0);
+                }
+            }
+        }
+    }
+
+    /// A Fire bolt that struck a player: `FIRE_BOLT_DAMAGE`, and the owner becomes the last hitter unless
+    /// it is their own bolt (never self, as in `explode_at`). Last-hit goes first so a kill is credited.
+    fn fire_bolt_hit(&mut self, victim: u32, owner: u32) {
+        let tick = self.tick;
+        let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) else { return };
+        if victim != owner {
+            self.players[k].last_hit_by = owner;
+            self.players[k].last_hit_tick = tick;
+        }
+        self.apply_damage(k, FIRE_BOLT_DAMAGE, FIRE_BOLT);
     }
 
     /// Fill up to `WATER_BURST_CELLS` Empty cells of the disc around `at`, the impact row and the rows above it
