@@ -116,25 +116,21 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
   gunpowder), not the last hit. Recording the last hit would change the sim
   and the save format. It now means "a credited kill where the environment
   finished them off", and the in-game description says exactly that.
-- **Minimap taps on phones (D-123, `7ee9071`):** the strip is 22 px tall but
-  maps its height to the world's whole depth, so a tap below the very top lands
-  the camera deep in rock, and for a phone spectator it also stops following.
-  Seen in a 375 px screenshot. Easy fixes if you agree: map the tap to the
-  nearest player dot (and follow them, for a spectator), or keep the camera's
-  depth and only move it sideways. Left as built until you've looked.
+- **Minimap taps on phones (D-129):** fixed as you decided. A tap jumps to the
+  player nearest it on the strip (a spectator follows them); with nobody there
+  it moves sideways and keeps its depth. Shot: `docs/art/shots/after2-minimap-phone.png`.
 - **The 30-minute soak passed but did not reach combat (`5dcda0c`).** 1807 of
   1807 hash checks agreed, 0 resyncs, the same final hash on all three clients.
   But the bots never got below y 609, so no deaths, bombs or bags happened live.
   M5 combat sync is proven by the scripted cross-browser test (D-114: 4 deaths,
   8 bombs, 206 gunpowder explosions, agreed in four engines), not by a soak. A
   soak that really fights needs a test-only way to put bots in the deep band.
-- **The art pass (D-128, `3576619`): worth your eye.** At 3x the player now reads
-  as a hooded caster (hood, robe shading, belt) and explosions have a fire core,
-  rising embers and smoke (`docs/art/shots/after-*.png`). Two caveats: the cast
-  "hand glow" looks like scattered pale squares around the player rather than a
-  glow, and the before shots were taken at phone width so they are not a fair
-  side-by-side. Fire bolt, Bomb and bag visuals are still unseen (the dev route
-  gives no spell charges). Concept art and prompts: `docs/art/`.
+- **The art pass (D-128), second look:** the cast glow is now a tight pulsing
+  cell at the hand plus three short sparks (`after2-cast-3x.png`; at 3x it is
+  small, a warm dot at the hand). Fire bolt, bomb in flight, bomb explosion and
+  a dropped bag were all seen at 3x via the dev-only `__devGoto` hook
+  (`after2-*.png`). Concept art and prompts: `docs/art/`. Still rough: the bag
+  is a dim sprite with a count, easy to miss against rock.
 
 ## Now
 
