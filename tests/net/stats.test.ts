@@ -124,7 +124,7 @@ describe("player stats", () => {
 
 describe("input.summary and the leave summary", () => {
   it("emits periodic summaries with counts, a final one on leave, and no per-cast events", async () => {
-    const s = await boot(tmp(), 150);
+    const s = await boot(tmp(), 400);
     const me = await register(s.port, "Sum");
     const g = await connect(s.port, hex, { world: GAME, token: me.token });
     g.move(100, 100);
@@ -134,8 +134,8 @@ describe("input.summary and the leave summary", () => {
     await sleep(120);
     g.cast(2, 100, 3);
     await waitFor(() => s.log.recent().some((e) => e.ev === "input.summary"), 3000, "a periodic summary");
+    // Move and leave straight after a periodic summary, well inside the next 400 ms window, so the final one is non-empty.
     g.move(100, 130);
-    await sleep(100);
     g.close();
     await waitFor(() => s.log.recent().some((e) => e.ev === "leave"), 3000, "leave");
     const ev = s.log.recent();
@@ -151,14 +151,15 @@ describe("input.summary and the leave summary", () => {
       tally[k] = (tally[k] ?? 0) + Number(n);
     }
     expect(tally).toEqual({ push: 1, water: 2 });
-    // (Whether the leave-time summary exists depends on the timer; the painter test below pins it.)
+    // The final window is emitted synchronously on leave, right after the leave event.
+    expect(ev.at(-1)).toMatchObject({ ev: "input.summary", final: true });
     const leave = ev.find((e) => e.ev === "leave")!;
     expect(leave).toMatchObject({ who: `Sum#${me.id}`, casts: "push:1,water:2", max_depth: 130, resyncs: 0, pos_rejected: 0 });
     expect(leave.duration_s).toBeDefined();
     expect(leave.paints).toBe("");
   });
 
-  it("counts a sandbox painter's paints by material and a rejected Pos", async () => {
+  it("counts a sandbox painter's paints by material", async () => {
     const s = await boot(tmp(), 100000);
     const me = await register(s.port, "Pat");
     const sb = await connect(s.port, hex, { world: 0, token: me.token });
@@ -170,5 +171,38 @@ describe("input.summary and the leave summary", () => {
     await waitFor(() => s.log.recent().some((e) => e.ev === "leave"), 3000, "leave");
     expect(s.log.recent().find((e) => e.ev === "leave")).toMatchObject({ role: "painter", paints: "sand:2,water:1", casts: "" });
     expect(s.log.recent().find((e) => e.ev === "input.summary")).toMatchObject({ paints: "sand:2,water:1", final: true });
+  });
+
+  it("counts a rejected Pos (a teleport) in the leave summary, summary and stats", async () => {
+    const s = await boot(tmp(), 100000);
+    const me = await register(s.port, "Tele");
+    const g = await connect(s.port, hex, { world: GAME, token: me.token });
+    g.move(100, 100);
+    await sleep(100);
+    g.move(1500, 1400); // far beyond what one avatar can cover
+    await sleep(150);
+    g.close();
+    await waitFor(() => s.log.recent().some((e) => e.ev === "leave"), 3000, "leave");
+    expect(s.log.recent().find((e) => e.ev === "leave")).toMatchObject({ pos_rejected: 1 });
+    expect(s.log.recent().find((e) => e.ev === "input.summary")).toMatchObject({ pos: 1, rejected: 1 });
+    expect(s.playerStats.get(me.id).pos_rejected).toBe(1);
+  });
+
+  it("a replaced tab cannot stamp inputs or bump stats, and its leave is logged once", async () => {
+    const s = await boot(tmp(), 100000);
+    const me = await register(s.port, "Twice");
+    const a = await connect(s.port, hex, { world: GAME, token: me.token });
+    const b = await connect(s.port, hex, { world: GAME, token: me.token });
+    await waitFor(() => a.ws.readyState === a.ws.CLOSED, 5000, "first closed");
+    const before = s.playerStats.get(me.id).casts_push ?? 0;
+    a.cast(0, 100, 1); // sent on the old socket: ignored (or already closed)
+    b.move(100, 100);
+    await sleep(100);
+    b.cast(0, 100, 1);
+    await sleep(100);
+    expect((s.playerStats.get(me.id).casts_push ?? 0) - before).toBe(1);
+    b.close();
+    await waitFor(() => s.log.recent().filter((e) => e.ev === "leave").length === 2, 3000, "two leaves");
+    expect(s.log.recent().filter((e) => e.ev === "leave")).toHaveLength(2);
   });
 });

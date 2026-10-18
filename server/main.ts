@@ -421,6 +421,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       }
       const w = joined.world;
       if (w.closing) return;
+      // A replaced tab (same token, newer connection) stays open until its socket closes; it must not stamp or count.
+      if (!w.hasMember(joined.conn)) return;
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
       if (msg.t === "snapshot-upload" ? buf.length > maxUploadFrameFor(w.kind) : buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
 

@@ -180,6 +180,11 @@ export class World {
     return m ? this.whoOf(m) : `anon#c${conn}`;
   }
 
+  /** Whether this connection is still a member (a replaced tab is not, though its socket lingers until closed). */
+  hasMember(conn: number): boolean {
+    return this.members.has(conn);
+  }
+
   get playerCount(): number {
     return this.members.size;
   }
