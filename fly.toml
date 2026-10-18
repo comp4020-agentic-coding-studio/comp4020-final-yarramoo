@@ -30,6 +30,10 @@ dockerfile = "Dockerfile"
 
 [env]
 PORT = "8080"
+# Unlocks /dashboard?token=... (names, event feed, world reset). Public in this
+# repo by choice (D-098): the app holds no private data, and a reset is the
+# worst anyone can do with it. A Fly secret of the same name overrides it.
+ADMIN_TOKEN = "w-9dwbvsOY0f"
 
 [http_service]
 internal_port = 8080
