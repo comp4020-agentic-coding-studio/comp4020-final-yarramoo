@@ -153,6 +153,8 @@ function postStatus() {
     playerId: myId,
     reason: rejected,
     progress: ls ? ls.progress : 0,
+    tick: ls ? ls.simTick : 0,
+    target: ls ? ls.catchUpTarget : 0,
     latencyMs,
     pingMs,
     resyncs,

@@ -1,4 +1,5 @@
 // Main thread: DOM (palette, brush), pointer forwarding, and the main-thread render fallback.
+import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
@@ -9,6 +10,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const stage = $("stage");
 const info = $("info");
 const note = $("note");
+const catchupCard = $("catchup");
+const catchupSamples: Sample[] = [];
 
 let selected = 4;
 let radius = 4;
@@ -420,6 +423,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
     case "net":
       lastNet = m;
+      renderCatchup(m);
       renderInfo();
       break;
     case "error":
@@ -636,6 +640,26 @@ function placeLabels() {
 let lastStats: Extract<FromWorker, { type: "stats" }> | null = null;
 let lastNet: Extract<FromWorker, { type: "net" }> | null = null;
 
+function renderCatchup(n: Extract<FromWorker, { type: "net" }>) {
+  const on = n.state === "catching-up";
+  catchupCard.hidden = !on;
+  if (!on) {
+    catchupSamples.length = 0;
+    return;
+  }
+  const now = performance.now();
+  const lastS = catchupSamples[catchupSamples.length - 1];
+  if (lastS && n.tick < lastS.tick) catchupSamples.length = 0; // a resync restarted the replay
+  catchupSamples.push({ ms: now, tick: n.tick });
+  while (catchupSamples.length > 40) catchupSamples.shift();
+  const pct = Math.round(n.progress * 100);
+  $("catchupTitle").textContent = n.resyncs ? "Resyncing…" : "Catching up with the world…";
+  $("catchupFill").style.width = `${pct}%`;
+  $("catchupBar").setAttribute("aria-valuenow", String(pct));
+  $("catchupTicks").textContent = `${n.tick.toLocaleString()} of ${n.target.toLocaleString()} ticks`;
+  $("catchupEta").textContent = `Time left: ${etaText(n.target - n.tick, replayRate(catchupSamples))}`;
+}
+
 function renderInfo() {
   const n = lastNet;
   if (!n) return;
@@ -643,7 +667,7 @@ function renderInfo() {
   switch (n.state) {
     case "connecting": status = "connecting"; break;
     case "reconnecting": status = "reconnecting"; break;
-    case "catching-up": status = `${n.resyncs ? "resyncing" : "catching up"} ${Math.round(n.progress * 100)}%`; break;
+    case "catching-up": status = n.resyncs ? "resyncing" : "catching up"; break;
     case "rejected":
       status = n.reason.includes("reload") ? "new version, reload" : n.reason;
       if (n.reason.includes("unknown token")) {

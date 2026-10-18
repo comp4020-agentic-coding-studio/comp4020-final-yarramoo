@@ -53,6 +53,9 @@ export type FromWorker =
       reason: string;
       /** 0..1 replay progress while catching up. */
       progress: number;
+      /** Sim tick and replay target while catching up (display only). */
+      tick: number;
+      target: number;
       /** Last own-paint latency: send to applied in the sim, ms. */
       latencyMs: number;
       pingMs: number;
