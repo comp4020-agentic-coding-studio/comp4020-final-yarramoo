@@ -389,7 +389,7 @@ fn views_carry_bolts_and_spell_state() {
     push(&mut s, encode_cast(1, 0, RIGHT, 5));
     s.step();
     let mut out = vec![0u8; 80 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, s.tick, &mut out, 80);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, s.tick, &mut out, 80);
     let last = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
     assert_eq!((last[0], u32::from_le_bytes(last[1..5].try_into().unwrap()), last[6]), (ENT_PROJECTILE, 1, 0));
     assert_eq!(u16::from_le_bytes(last[15..17].try_into().unwrap()), 5);

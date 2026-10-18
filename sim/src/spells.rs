@@ -343,8 +343,95 @@ impl Sim {
         p.dead_until = tick.wrapping_add(DEATH_TICKS);
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
-        // `c` is reserved: slice 3 sets it to 1 when the death dropped a bag.
-        self.events.push(Event { kind: EV_DEATH, player: p.id, a: killer as i32, b: i32::from(cause), c: 0 });
+        let (id, px, py) = (p.id, p.x, p.y);
+        // The victim's finite charges (spells 2..=5) leave with the death; Push and Blast stay.
+        let mut taken = [0u16; BAG_SPELLS];
+        for (k, t) in taken.iter_mut().enumerate() {
+            let c = &mut p.charges[2 + k];
+            if *c != INFINITE {
+                *t = *c;
+                *c = 0;
+            }
+        }
+        let dropped = taken.iter().any(|&c| c != 0);
+        if dropped {
+            let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+            let cell = ((px >> POS_SHIFT).clamp(0, w - 1), ((py >> POS_SHIFT) - 1).clamp(0, h - 1));
+            self.drop_bag(cell, taken);
+        }
+        self.events.push(Event { kind: EV_DEATH, player: id, a: killer as i32, b: i32::from(cause), c: i32::from(dropped) });
+    }
+
+    /// Put `charges` on the ground at `cell`. Merge rule: the first bag in vector order within
+    /// `BAG_MERGE_CELLS` (Chebyshev distance, `max(|dx|, |dy|)`) takes them (saturating at `INFINITE - 1`)
+    /// and its timer restarts. Otherwise a new bag is appended; at `MAX_BAGS` the oldest (index 0) is evicted
+    /// first and its charges are lost.
+    fn drop_bag(&mut self, cell: (i32, i32), charges: [u16; BAG_SPELLS]) {
+        let expires_at = self.tick.wrapping_add(BAG_LIFETIME);
+        let near = self
+            .bags
+            .iter()
+            .position(|b| (i32::from(b.x) - cell.0).abs().max((i32::from(b.y) - cell.1).abs()) <= BAG_MERGE_CELLS);
+        if let Some(i) = near {
+            let b = &mut self.bags[i];
+            for (c, add) in b.charges.iter_mut().zip(charges) {
+                *c = c.saturating_add(add).min(INFINITE - 1);
+            }
+            b.expires_at = expires_at;
+            return;
+        }
+        if self.bags.len() >= MAX_BAGS {
+            self.bags.remove(0);
+        }
+        self.bags.push(Bag { x: cell.0 as u16, y: cell.1 as u16, charges, expires_at });
+    }
+
+    /// Bags, once a tick (after respawns, before spell pickups): expire, then fall one cell, then be taken.
+    /// At most `MAX_BAGS` of them, and only a few cell reads each.
+    ///
+    /// Sleep invisibility: a bag far from every player sits in a chunk that may be asleep. The fall reads
+    /// the cell below but never writes a cell, and a sleeping chunk's cells are by definition unchanged
+    /// this tick, so the cell read is the same whether or not that chunk ran. The bag's own state lives
+    /// in `Sim.bags`, outside the grid, so it advances identically with sleeping on or off.
+    pub(crate) fn update_bags(&mut self) {
+        if self.bags.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        self.bags.retain(|b| tick < b.expires_at);
+        let (w, h) = (self.grid.w, self.grid.h);
+        for b in self.bags.iter_mut() {
+            let (x, y) = (usize::from(b.x), usize::from(b.y));
+            if y + 1 < h {
+                let m = self.grid.mat[(y + 1) * w + x];
+                if m == EMPTY || is_gas(m) {
+                    b.y += 1;
+                }
+            }
+        }
+        // Pickup: players by id, bags in order, so two players on one bag resolve to the lower id.
+        for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            let mut i = 0;
+            while i < self.bags.len() {
+                let b = &self.bags[i];
+                let (bx, by) = (i32::from(b.x), i32::from(b.y));
+                if bx < x0 || bx > x1 || by < y0 || by > y1 {
+                    i += 1;
+                    continue;
+                }
+                let b = self.bags.remove(i);
+                let mut total = 0u32;
+                for (k, &add) in b.charges.iter().enumerate() {
+                    let c = &mut p.charges[2 + k];
+                    if *c != INFINITE {
+                        *c = c.saturating_add(add).min(INFINITE - 1);
+                    }
+                    total += u32::from(add);
+                }
+                self.events.push(Event { kind: EV_BAG_PICKUP, player: p.id, a: bx, b: by, c: total.min(u32::from(u16::MAX)) as i32 });
+            }
+        }
     }
 
     /// An explosion of radius `r` cells at (`cx`, `cy`): `EV_EXPLODE` once, then for each alive player in id

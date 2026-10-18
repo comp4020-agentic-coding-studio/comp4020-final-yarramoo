@@ -103,7 +103,7 @@ impl Sim {
 
     /// One tick, in this order (D-102):
     /// 1. inputs
-    /// 2. `update_entities`: projectiles, then respawns, then pickups
+    /// 2. `update_entities`: projectiles, then respawns, then bags (expire, fall, take), then pickups
     /// 3. `refresh_active`
     /// 4. `grid.step_cells`
     /// 5. grid explosions -> `explode_at` (damage, knockback, `EV_EXPLODE`)
@@ -250,6 +250,7 @@ impl Sim {
                 self.respawn_player(id);
             }
         }
+        self.update_bags();
         if self.pickups.is_empty() {
             return;
         }

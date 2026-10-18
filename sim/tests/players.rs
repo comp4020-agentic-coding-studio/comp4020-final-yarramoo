@@ -277,7 +277,7 @@ fn entity_and_event_views() {
     push(&mut s, encode_join(5));
     s.step();
     let mut out = vec![0u8; 4 * sim::entities::ENTITY_BYTES];
-    let n = sim::entities::write_view(&s.players, &s.pickups, &s.projectiles, s.tick, &mut out, 4);
+    let n = sim::entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, s.tick, &mut out, 4);
     assert_eq!(n, 4);
     assert_eq!(out[0], sim::entities::ENT_PLAYER);
     assert_eq!(u32::from_le_bytes(out[1..5].try_into().unwrap()), 5);

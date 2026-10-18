@@ -32,6 +32,13 @@ export const EV_CAST_REJECTED = 4;
 export const EV_KNOCK = 5;
 export const EV_IMPACT = 6;
 export const EV_RESPAWN = 7;
+export const EV_EXPLODE = 8;
+export const EV_DEATH = 9;
+export const EV_BAG_PICKUP = 10;
+/** Cause of a death (`EV_DEATH.b`): a spell id 0..5 is that spell, then these. */
+export const CAUSE_FIRE = 6;
+export const CAUSE_LAVA = 7;
+export const CAUSE_GUNPOWDER = 8;
 /** Why a cast was refused (`CastRejected.b`). */
 export const REJECT_SPELL = 1;
 export const REJECT_CHARGES = 2;
@@ -45,6 +52,8 @@ export interface SimEvent {
    * Spawn: x, y (1/16 cell), life. Pickup: pickup id, spell, charges. Cast: spell, angle, cast_seq.
    * CastRejected: spell, reason, cast_seq. Knock: vx, vy (1/16 cell per tick), attacker. Impact (`player` = owner):
    * cell x, y, spell. Respawn: x, y (1/16 cell), new life.
+   * Explode (`player` = owner, 0 for gunpowder): centre cell x, y, radius. Death (`player` = victim): killer (0 if none), cause
+   * (`CAUSE_*` or a spell id), 1 if a bag dropped else 0. BagPickup (`player` = taker): the bag's cell x, y, total charges taken.
    */
   a: number;
   b: number;
@@ -55,6 +64,8 @@ export const ENT_PLAYER = 1;
 export const ENT_PICKUP = 2;
 /** A bolt in flight: `id` is the owner, `sub` the spell, `a` the cast_seq, x and y in 1/16 cell. */
 export const ENT_PROJECTILE = 3;
+/** A dropped bag: `id` is its index in the list, `a` the total charges, x and y the cell centre in 1/16 cell. */
+export const ENT_BAG = 4;
 export const NUM_SPELLS = 6;
 export interface EntityView {
   type: number;

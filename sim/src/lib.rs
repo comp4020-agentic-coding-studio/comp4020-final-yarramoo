@@ -188,7 +188,7 @@ pub extern "C" fn entities(out_ptr: u32, max: u32) -> u32 {
     with(|s| {
         // SAFETY: caller provides `max` records of ENTITY_BYTES.
         let o = unsafe { out_slice(out_ptr, max as usize * entities::ENTITY_BYTES) };
-        entities::write_view(&s.players, &s.pickups, &s.projectiles, s.tick, o, max as usize) as u32
+        entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, s.tick, o, max as usize) as u32
     })
     .unwrap_or(0)
 }

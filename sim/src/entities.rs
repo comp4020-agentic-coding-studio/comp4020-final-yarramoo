@@ -336,6 +336,8 @@ pub const EV_EXPLODE: u8 = 8;
 /// A player died: `player` = victim, a = killer (0 if none), b = cause (`CAUSE_*` or a spell id), c = 0
 /// (reserved: slice 3 sets it to 1 when a bag dropped).
 pub const EV_DEATH: u8 = 9;
+/// A bag was taken: `player` = taker, a, b = the bag's cell x, y, c = total charges taken.
+pub const EV_BAG_PICKUP: u8 = 10;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;
@@ -367,11 +369,13 @@ pub const ENT_PLAYER: u8 = 1;
 pub const ENT_PICKUP: u8 = 2;
 /// Projectile view record: `id` = owner, `sub` = spell, x, y in 1/16 cell, `a` = cast_seq.
 pub const ENT_PROJECTILE: u8 = 3;
+/// A dropped bag: `id` = index, `active` = 1, x, y = the cell centre in 1/16 cell, `a` = total charges (capped to u16).
+pub const ENT_BAG: u8 = 4;
 /// Entity record: `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`.
 pub const ENTITY_BYTES: usize = 18;
 
 /// Entity views for the renderer, players then pickups, written into `out` (at most `max` records).
-pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], tick: u32, out: &mut [u8], max: usize) -> usize {
+pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], tick: u32, out: &mut [u8], max: usize) -> usize {
     let mut n = 0;
     let mut put = |t: u8, id: u32, active: bool, sub: u8, x: i32, y: i32, a: u16, health: u8| {
         if n >= max || (n + 1) * ENTITY_BYTES > out.len() {
@@ -406,6 +410,9 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
     }
     for q in projectiles {
         put(ENT_PROJECTILE, q.owner, true, q.spell, q.x >> 4, q.y >> 4, q.cast_seq, 0);
+    }
+    for (i, b) in bags.iter().enumerate() {
+        put(ENT_BAG, i as u32, true, 0, i32::from(b.x) * POS_ONE + POS_ONE / 2, i32::from(b.y) * POS_ONE + POS_ONE / 2, b.total(), 0);
     }
     n
 }
