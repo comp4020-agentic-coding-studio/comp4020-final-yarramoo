@@ -44,6 +44,9 @@ import { Renderer, type Camera, type Rect } from "./render.ts";
 const STEP_MS = 1000 / 60;
 const MAX_FRAME_STEPS = 4;
 const FF_BUDGET_MS = 12;
+/** While replaying, draw the world at most this often so the visitor sees it evolve without the draw eating replay time. */
+const FF_DRAW_INTERVAL_MS = 250;
+let lastFfDraw = -Infinity;
 const SEND_EVERY_MS = 33; // ~30 paint inputs/s, under the server's 40/s cap
 const RECONNECT_MS = [500, 1000, 2000, 4000];
 
@@ -701,7 +704,8 @@ function frame(now: number) {
       }
       statSteps += ran;
     }
-    if (ls) {
+    if (ls && (net !== "catching-up" || now - lastFfDraw >= FF_DRAW_INTERVAL_MS)) {
+      if (net === "catching-up") lastFfDraw = now;
       ranChunks = ls.sim.ranChunks();
       const rects = net === "live" && ls.sim.width() > 512 ? gameFrame(ls.sim, dt, now) : [];
       if (renderer) {
