@@ -65,6 +65,17 @@ const MIGRATIONS: string[] = [
     primary key (player_id, stat)
   );
   `,
+  // M6 slice a (plan 9.1): achievements earned, once per player ever (across worlds and resets).
+  `
+  create table achievements (
+    player_id integer references players(id),
+    achievement text not null,
+    world_id integer,
+    tick integer,
+    earned_at integer not null,
+    primary key (player_id, achievement)
+  );
+  `,
 ];
 
 export interface WorldRow {
@@ -258,6 +269,7 @@ export class GameDb {
     this.db.exec("BEGIN");
     try {
       this.q("delete from player_stats where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
+      this.q("delete from achievements where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
       const n = Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
       this.db.exec("COMMIT");
       return n;
@@ -293,6 +305,33 @@ export class GameDb {
   loadStats(playerId: number): Record<string, number> {
     const rows = this.q("select stat, value from player_stats where player_id = ?").all(playerId) as { stat: string; value: number }[];
     return Object.fromEntries(rows.map((r) => [r.stat, r.value]));
+  }
+
+  /** Record an award. Returns true only the first time this player earns it (insert or ignore). */
+  awardAchievement(playerId: number, achievement: string, worldId: number, tick: number): boolean {
+    const r = this.q("insert or ignore into achievements (player_id, achievement, world_id, tick, earned_at) values (?, ?, ?, ?, ?)").run(
+      playerId, achievement, worldId, tick, Date.now(),
+    );
+    return Number(r.changes) === 1;
+  }
+
+  /** Ids this player has earned. */
+  achievementsOf(playerId: number): string[] {
+    return (this.q("select achievement from achievements where player_id = ? order by earned_at, achievement").all(playerId) as { achievement: string }[]).map((r) => r.achievement);
+  }
+
+  /** The newest awards across all players, with the plain name (admin only: callers add the #id). */
+  recentAchievements(limit: number): { playerId: number; name: string; achievement: string; worldId: number | null; tick: number | null; earnedAt: number }[] {
+    const rows = this.q(
+      `select a.player_id, p.display_name, a.achievement, a.world_id, a.tick, a.earned_at from achievements a
+         join players p on p.id = a.player_id order by a.earned_at desc, a.rowid desc limit ?`,
+    ).all(limit) as { player_id: number; display_name: string; achievement: string; world_id: number | null; tick: number | null; earned_at: number }[];
+    return rows.map((r) => ({ playerId: r.player_id, name: r.display_name, achievement: r.achievement, worldId: r.world_id, tick: r.tick, earnedAt: r.earned_at }));
+  }
+
+  /** How many awards were made at or after `sinceMs`. */
+  achievementsSince(sinceMs: number): number {
+    return (this.q("select count(*) as n from achievements where earned_at >= ?").get(sinceMs) as { n: number }).n;
   }
 
   recordIncident(worldId: number, tick: number, details: unknown): void {

@@ -45,7 +45,7 @@ describe("migration 4", () => {
       PRAGMA user_version = 3;`);
     raw.close();
     const db = new GameDb(dir);
-    expect(db.schemaVersion).toBe(4);
+    expect(db.schemaVersion).toBe(5); // migrations 4 and 5 both applied
     expect(db.playerByTokenHash("abc")).toEqual({ id: 1, displayName: "Old" });
     db.upsertStats([{ playerId: 1, stat: "casts_push", value: 3 }]);
     db.upsertStats([{ playerId: 1, stat: "casts_push", value: 5 }]);
