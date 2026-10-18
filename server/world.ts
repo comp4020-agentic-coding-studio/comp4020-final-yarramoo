@@ -128,6 +128,8 @@ export class World {
   readonly clock: TickClock;
   readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 };
   closing = false;
+  /** True for the duration of reset(): stamp, join, onHash and onUpload refuse. */
+  resetting = false;
   /** Test and telemetry hook: called after each closed tick has been broadcast. */
   onTickClosed: ((tick: number) => void) | null = null;
 
@@ -157,6 +159,8 @@ export class World {
   /** True while a snapshot is being verified in the worker. */
   verifying = false;
   private lastRequestTick = 0;
+  /** Bumped by reset(); a snapshot verification that started under an older generation must not save. */
+  private resetGen = 0;
   /** Last accepted Pos per sim player, kept across reconnects within this process (the baseline for plan 7.6). */
   private readonly lastPosOf = new Map<number, PosBaselines>();
 
@@ -378,6 +382,7 @@ export class World {
    * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
   join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
+    if (this.resetting) throw new Error("world is resetting");
     this.clock.resume();
     this.clock.advance();
     const spectate = !!opts.spectate && this.kind === WORLD_GAME;
@@ -492,6 +497,7 @@ export class World {
   }
 
   stamp(input: TickInput): number {
+    if (this.resetting) return 0;
     return this.clock.stamp(input);
   }
 
@@ -516,11 +522,67 @@ export class World {
     this.flush();
   }
 
+  /**
+   * Admin reset (D-097): return this world to its generated starting state. Synchronous from start to finish, so no
+   * input, HASH or join can slip in between. The database is reset first: if that throws, nothing in memory has
+   * changed and the world carries on as before (the transaction rolled back), so there is never a world whose
+   * memory and disk disagree. Members are closed with 4001 and are NOT given Leaves (the log is being discarded);
+   * they are removed from `members` first, so main.ts's finish() calling leave() later is a no-op. `nextPlayer` and
+   * `nextSeq` survive so sandbox player ids and connection ids never repeat across a reset (D-039).
+   */
+  reset(by: string): { oldTick: number; closed: number } {
+    if (this.resetting) throw new Error("reset already in progress");
+    this.resetting = true;
+    const oldTick = this.clock.lastClosed;
+    try {
+      try {
+        this.db?.resetWorld(this.id, this.simBuild);
+      } catch (e) {
+        this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, outcome: "failed", error: String(e) }, "error");
+        throw e;
+      }
+      const victims = [...this.members.values()];
+      this.members.clear();
+      for (const m of victims) {
+        try {
+          m.peer.close(4001, "world reset");
+        } catch {
+          // already gone
+        }
+      }
+      this.resetGen++;
+      this.clock.reset();
+      this.log.length = 0;
+      this.logBase = 0;
+      this.snapshot = null;
+      this.snapFrame = null;
+      this.dropped.length = 0;
+      this.online = 0;
+      this.snapshotOnline = 0;
+      this.onlineAt.clear();
+      this.pending = [];
+      this.pendingFirst = 0;
+      this.lastFlush = this.now();
+      this.checkpoints.clear();
+      this.truth.clear();
+      this.request = null;
+      this.waitingUpload = null;
+      this.verifying = false;
+      this.lastRequestTick = 0;
+      this.lastPosOf.clear();
+      Object.assign(this.stats, { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 });
+      this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, members: victims.length }, "warn");
+      return { oldTick, closed: victims.length };
+    } finally {
+      this.resetting = false;
+    }
+  }
+
   // ---- hash checks (plan 7.4) -----------------------------------------------------------------
 
   onHash(memberId: number, tick: number, hash: bigint, stepP95Ms?: number, buffered?: number): void {
     const m = this.members.get(memberId);
-    if (!m || tick % HASH_EVERY !== 0 || tick <= m.minHashTick || tick > this.clock.lastClosed) return;
+    if (this.resetting || !m || tick % HASH_EVERY !== 0 || tick <= m.minHashTick || tick > this.clock.lastClosed) return;
     m.timing.lastHashTick = tick;
     if (stepP95Ms !== undefined) m.timing.stepP95Ms = stepP95Ms;
     if (buffered !== undefined) m.timing.buffered = buffered;
@@ -645,7 +707,7 @@ export class World {
 
   /** Verify an upload once the majority hash for its tick is known; until then hold it. */
   onUpload(memberId: number, tick: number, claimed: bigint, data: Uint8Array): void {
-    if (!this.expectsUpload(memberId, tick)) return;
+    if (this.resetting || !this.expectsUpload(memberId, tick)) return;
     this.waitingUpload = { tick, memberId, hash: claimed, data };
     this.checkUpload(tick);
   }
@@ -666,10 +728,12 @@ export class World {
     // Decompress, restore and hash in a worker thread: restoring a game world regenerates it (about 400 ms),
     // which on this thread would stall every closed tick. The tick clock keeps running while this awaits.
     const t0 = this.now();
+    const gen = this.resetGen;
     this.verifying = true;
     void this.verifier
       .hashOf(u.data, maxSnapshotRawFor(this.kind))
       .then((got) => {
+        if (gen !== this.resetGen) return; // the world was reset while this verified: the snapshot is from the old world
         this.verifying = false;
         this.stats.lastVerifyMs = this.now() - t0;
         if (this.closing || !this.db) return;
@@ -688,6 +752,7 @@ export class World {
       .catch((e) => {
         // A failed save (disk full) is a lost snapshot, not a dead process: the log keeps growing and the
         // next request tries again.
+        if (gen !== this.resetGen) return;
         this.verifying = false;
         reject(`save failed: ${String(e)}`);
       });

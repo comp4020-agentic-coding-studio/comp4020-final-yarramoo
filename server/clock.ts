@@ -42,6 +42,14 @@ export class TickClock {
     this.closed = tick;
   }
 
+  /** Admin reset: forget everything, including inputs stamped but not yet closed. Pauses without advancing, so no tick closes on the way. */
+  reset(): void {
+    this.paused = true;
+    this.open = [];
+    this.closed = 0;
+    this.baseTick = 0;
+  }
+
   /** Shutdown only: close whatever is open right now, even mid-tick, so nothing stamped is lost. */
   closeNow(): void {
     this.advance();
