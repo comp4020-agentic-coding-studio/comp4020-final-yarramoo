@@ -208,6 +208,11 @@ come into existence.
   crashes the deploy (review crit 10 S1). `tests/net/imports.test.ts` checks it.
 - **CI does not run on `multa`**, only on `main` and pull requests. Before a
   merge, build and boot the real Docker image, or let a PR's CI run do it.
+- **Every `rm` names an explicit, literal absolute path.** Never `rm -rf $DIR/*`,
+  a glob on a variable, or a path relative to an earlier `cd`: an empty variable
+  turns it into `rm -rf /*`. Print a computed path first, then remove it by its
+  literal value. Prefer `git worktree remove` and `docker rm` where a tool owns
+  the cleanup. Briefs to workers carry this rule too.
 - **Probe output from a passing vitest test is swallowed.** Write to a file
   under `/tmp` instead of `console.log` when measuring something mid-test. A
   test written to catch a bug must be shown red without the fix first.
