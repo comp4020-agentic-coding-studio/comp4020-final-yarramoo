@@ -5,7 +5,20 @@ use crate::materials::*;
 use crate::rng::*;
 
 pub const CHUNK: usize = 64;
+/// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
+#[derive(Clone, Copy)]
+pub struct Liquid {
+    diag: u32,
+    side: u32,
+    reach: usize,
+}
+const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6 };
+/// Lava is thicker, so it spreads less per update (and it only moves on even ticks).
+const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3 };
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
+/// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
+pub const ACTIVE_W: i32 = crate::tuning::ACTIVE_W;
+pub const ACTIVE_H: i32 = crate::tuning::ACTIVE_H;
 
 pub struct Grid {
     pub w: usize,
@@ -19,11 +32,25 @@ pub struct Grid {
     pub dirty_since_hash: Vec<bool>,
     pub hash_cache: Vec<u64>,
     pub pristine: Vec<bool>,
-    /// Test hook (D7). Sleeping is not implemented yet; all chunks are always active.
+    /// Sleeping on/off (D7 test hook; on for real play). Invisible by design: see `step_cells`.
     pub sleep_enabled: bool,
+    /// Scratch, not state: false means the chunk was quiet and has no volatile material, so it is
+    /// skipped. Every touched cell sets its own chunk and any neighbour within 1 cell of the shared
+    /// edge. Cleared just before a chunk runs, so a quiet run lets it sleep.
+    pub awake: Vec<bool>,
+    /// Scratch, not state: the semantic active set (plan 6.5). Inactive chunks are frozen.
+    pub active: Vec<bool>,
+    /// Scratch: set by `update_cell` when it sees a volatile material in the chunk being run.
+    vol_seen: bool,
+    /// Telemetry only: chunks actually run in the last `step_cells`.
+    pub ran_chunks: u32,
     /// Scratch, not state: explosions queued during this tick's cell pass (plan 6.2 step 4).
     /// Primed Gunpowder lives in the grid (`aux == 1`), so leftovers beyond the cap are not lost.
     pending: Vec<(u32, u32)>,
+    /// Scratch, not state, like `awake` (D-054): the centres that really detonated in the last
+    /// `step_cells`, in queue order, for the damage pass. Cleared at the start of each `step_cells`,
+    /// never hashed or snapshotted, and never fed back into the grid.
+    pub explosions: Vec<(u32, u32)>,
 }
 
 /// Explosions resolved per tick. Bounds the per-tick cost of a chain (D-022).
@@ -44,8 +71,13 @@ impl Grid {
             dirty_since_hash: vec![true; cw * ch],
             hash_cache: vec![0; cw * ch],
             pristine: vec![true; cw * ch],
-            sleep_enabled: false,
+            sleep_enabled: true,
+            awake: vec![true; cw * ch],
+            active: vec![true; cw * ch],
+            vol_seen: false,
+            ran_chunks: 0,
             pending: Vec::new(),
+            explosions: Vec::new(),
         }
     }
 
@@ -59,14 +91,60 @@ impl Grid {
 
     /// Record that the cell at flat index `i` changed.
     pub fn touch(&mut self, i: usize) {
-        let c = self.chunk_of(i % self.w, i / self.w);
+        let (x, y) = (i % self.w, i / self.w);
+        let c = self.chunk_of(x, y);
         self.dirty_since_hash[c] = true;
         self.pristine[c] = false;
+        self.awake[c] = true;
+        // Wake the neighbours whose cells can see this one (distance 1, corners included).
+        let (lx, ly) = (x % CHUNK, y % CHUNK);
+        let (cx, cy) = (c % self.cw, c / self.cw);
+        let xs = [(lx == 0 && cx > 0, -1isize), (lx == CHUNK - 1 && cx + 1 < self.cw, 1)];
+        let ys = [(ly == 0 && cy > 0, -1isize), (ly == CHUNK - 1 && cy + 1 < self.ch, 1)];
+        for &(okx, dx) in &xs {
+            if okx {
+                self.awake[(c as isize + dx) as usize] = true;
+            }
+        }
+        for &(oky, dy) in &ys {
+            if !oky {
+                continue;
+            }
+            let row = (c as isize + dy * self.cw as isize) as usize;
+            self.awake[row] = true;
+            for &(okx, dx) in &xs {
+                if okx {
+                    self.awake[(row as isize + dx) as usize] = true;
+                }
+            }
+        }
     }
 
     pub fn mark_chunk(&mut self, c: usize) {
         self.dirty_since_hash[c] = true;
         self.pristine[c] = false;
+        self.awake[c] = true;
+    }
+
+    /// Wake every chunk (after the sleep switch is turned on, or a restore).
+    pub fn wake_all(&mut self) {
+        self.awake.fill(true);
+    }
+
+    /// Set the active set from the centres (cell coordinates) of active players: a chunk is active
+    /// if it intersects the 576 x 320 rectangle around any centre. An empty list means nothing is
+    /// active; callers decide what an empty player list means for their world kind.
+    pub fn set_active_around(&mut self, centres: &[(i32, i32)]) {
+        let (hw, hh) = (ACTIVE_W / 2, ACTIVE_H / 2);
+        for c in 0..self.chunk_count() {
+            let (x0, y0) = ((c % self.cw * CHUNK) as i32, (c / self.cw * CHUNK) as i32);
+            let (x1, y1) = (x0 + CHUNK as i32, y0 + CHUNK as i32);
+            self.active[c] = centres.iter().any(|&(px, py)| x0 < px + hw && x1 > px - hw && y0 < py + hh && y1 > py - hh);
+        }
+    }
+
+    pub fn set_all_active(&mut self) {
+        self.active.fill(true);
     }
 
     pub fn set(&mut self, i: usize, m: u8, a: u8) {
@@ -88,15 +166,35 @@ impl Grid {
     pub fn step_cells(&mut self, seed: u64, tick: u32) {
         self.moved.fill(0);
         self.pending.clear();
+        self.explosions.clear();
         let odd = tick & 1 == 1;
+        self.ran_chunks = 0;
         for cy in (0..self.ch).rev() {
             for ci in 0..self.cw {
                 let cx = if odd { self.cw - 1 - ci } else { ci };
+                let c = cy * self.cw + cx;
+                if !self.active[c] {
+                    // Frozen, but awake so it runs on its first active tick.
+                    self.awake[c] = true;
+                    continue;
+                }
+                if self.sleep_enabled {
+                    if !self.awake[c] {
+                        continue;
+                    }
+                    // Quiet unless this run changes a cell here or meets a volatile material.
+                    self.awake[c] = false;
+                    self.vol_seen = false;
+                }
+                self.ran_chunks += 1;
                 for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
                     for xi in 0..CHUNK {
                         let x = cx * CHUNK + if odd { CHUNK - 1 - xi } else { xi };
                         self.update_cell(x, y, seed, tick);
                     }
+                }
+                if self.vol_seen {
+                    self.awake[c] = true;
                 }
             }
         }
@@ -106,9 +204,21 @@ impl Grid {
     fn update_cell(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         let i = y * self.w + x;
         if self.moved[i] != 0 {
+            // Changed this tick by something that ran earlier, and skipped here: look again next tick.
+            self.vol_seen = true;
             return;
         }
-        match self.mat[i] {
+        let m = self.mat[i];
+        // Volatile: acts on chance, a timer or a counter even when nothing around it changes, so the
+        // chunk may not sleep (plan 6.4). Lava also ignites neighbours by chance. A resting powder or
+        // liquid is not volatile: with an unchanged neighbourhood it provably does nothing.
+        if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA)
+            || (m == STEM && self.aux[i] != 0)
+            || (m == GUNPOWDER && self.aux[i] == 1)
+        {
+            self.vol_seen = true;
+        }
+        match m {
             SAND => {
                 self.powder_move(x, y, seed, tick, SALT_SAND_DIAG);
             }
@@ -188,25 +298,71 @@ impl Grid {
         self.try_move(x, y, d, 1, Self::powder_ok) || self.try_move(x, y, -d, 1, Self::powder_ok)
     }
 
-    /// Shared liquid motion: down, diagonal down, sideways.
-    fn liquid_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, diag: u32, side: u32) {
+    /// Shared liquid motion: down, diagonal down, then a sideways slide of up to `reach` cells.
+    fn liquid_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, l: Liquid) {
         let ok = Self::liquid_ok;
         if self.try_move(x, y, 0, 1, ok) {
             return;
         }
-        let d = if rng(seed, tick, x as u32, y as u32, diag) & 1 == 0 { -1 } else { 1 };
-        if self.try_move(x, y, d, 1, ok) || self.try_move(x, y, -d, 1, ok) {
+        // The rng only picks which side is tried first, so it is drawn only when both sides are open
+        // (a lone open side is taken whatever the draw says; none open moves nothing). Same result.
+        let open = |g: &Grid, dx: isize, dy: isize| g.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(g.at(nx, ny)));
+        let (dl, dr) = (open(self, -1, 1), open(self, 1, 1));
+        if dl || dr {
+            let d = if dl && dr {
+                if rng(seed, tick, x as u32, y as u32, l.diag) & 1 == 0 { -1 } else { 1 }
+            } else if dl {
+                -1
+            } else {
+                1
+            };
+            if self.try_move(x, y, d, 1, ok) || self.try_move(x, y, -d, 1, ok) {
+                return;
+            }
+        }
+        let (sl, sr) = (open(self, -1, 0), open(self, 1, 0));
+        if !sl && !sr {
             return;
         }
-        let s = if rng(seed, tick, x as u32, y as u32, side) & 1 == 0 { -1 } else { 1 };
-        if self.try_move(x, y, s, 0, ok) {
-            return;
+        let s = if sl && sr {
+            if rng(seed, tick, x as u32, y as u32, l.side) & 1 == 0 { -1 } else { 1 }
+        } else if sl {
+            -1
+        } else {
+            1
+        };
+        if !self.slide(x, y, s, l.reach) {
+            self.slide(x, y, -s, l.reach);
         }
-        self.try_move(x, y, -s, 0, ok);
+    }
+
+    /// Slide a liquid cell sideways to the furthest free cell within `reach`, stopping at the first
+    /// blocked one, and dropping into a gap it passes over. One step at a time, a deep heap only levels
+    /// from its surface a cell per update and settles into a staircase on chunk edges; dispersion is how
+    /// a liquid finds its level. Bounded by `reach`, integer-only, and a fixed scan order.
+    fn slide(&mut self, x: usize, y: usize, dir: isize, reach: usize) -> bool {
+        let mut best = None;
+        for k in 1..=reach as isize {
+            let Some((nx, ny)) = self.off(x, y, dir * k, 0) else { break };
+            if !Self::liquid_ok(self.at(nx, ny)) {
+                break;
+            }
+            best = Some((nx, ny));
+            if self.off(nx, ny, 0, 1).is_some_and(|(bx, by)| Self::liquid_ok(self.at(bx, by))) {
+                break; // a gap below: fall into it from here
+            }
+        }
+        match best {
+            Some((nx, ny)) => {
+                self.swap(y * self.w + x, ny * self.w + nx);
+                true
+            }
+            None => false,
+        }
     }
 
     fn update_water(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
-        self.liquid_move(x, y, seed, tick, SALT_WATER_DIAG, SALT_WATER_SIDE);
+        self.liquid_move(x, y, seed, tick, WATER_FLOW);
     }
 
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
@@ -228,7 +384,7 @@ impl Grid {
             }
         }
         if tick & 1 == 0 {
-            self.liquid_move(x, y, seed, tick, SALT_LAVA_DIAG, SALT_LAVA_SIDE);
+            self.liquid_move(x, y, seed, tick, LAVA_FLOW);
         }
     }
 
@@ -347,8 +503,11 @@ impl Grid {
         }
     }
 
-    /// Stem: the tip (aux != 0) extends upward at random until it reaches its target height,
-    /// then places a Flower and matures (aux = 0). Blocked tips mature without a Flower.
+    /// Stem tips (D-084). `aux` is `hi << 4 | lo`; only a growing tip has a non-zero aux.
+    /// `hi` 8..=14 is a main tip (`hi` = target height, `lo` = current height), exactly D-024's
+    /// encoding, so stems saved by the older rule keep growing. `hi` 1..=7 is a side-branch tip
+    /// (`hi` = steps left, `lo` 1 = leans left, 2 = right). Any other non-zero value (never written)
+    /// is clamped or finished, so no saved byte can grow without bound.
     fn update_stem(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         let i = y * self.w + x;
         let a = self.aux[i] as u32;
@@ -358,20 +517,98 @@ impl Grid {
         if rng(seed, tick, x as u32, y as u32, SALT_STEM_GROW) % 12 != 0 {
             return;
         }
-        let (target, cur) = (a >> 4, a & 15);
-        let above = self.off(x, y, 0, -1).filter(|&(ax, ay)| self.at(ax, ay) == EMPTY);
-        match above {
-            Some((ax, ay)) => {
-                let j = ay * self.w + ax;
-                if cur >= target {
-                    self.set(j, FLOWER, 0);
-                } else {
-                    self.set(j, STEM, ((target << 4) | (cur + 1)) as u8);
-                }
-                self.moved[j] = 1;
-                self.set(i, STEM, 0);
+        let (hi, lo) = (a >> 4, a & 15);
+        if hi == 0 {
+            self.set(i, STEM, 0);
+        } else if hi < 8 {
+            self.grow_branch(x, y, hi, lo, seed, tick);
+        } else {
+            self.grow_main(x, y, hi.min(14), lo, seed, tick);
+        }
+    }
+
+    fn empty_at(&self, x: usize, y: usize, dx: isize, dy: isize) -> Option<(usize, usize)> {
+        self.off(x, y, dx, dy).filter(|&(ax, ay)| self.at(ax, ay) == EMPTY)
+    }
+
+    /// Put a new cell and mark it as already moved this tick, so it does not act until the next.
+    fn put_plant(&mut self, p: (usize, usize), m: u8, aux: u8) {
+        let j = p.1 * self.w + p.0;
+        self.set(j, m, aux);
+        self.moved[j] = 1;
+    }
+
+    /// Flower shapes, chosen by rng at the moment of blooming: one cell, a T (cell with both sides
+    /// and the top), or a 2x2 cluster leaning right. Only Empty cells are filled.
+    fn bloom(&mut self, p: (usize, usize), seed: u64, tick: u32) {
+        let shape = rng(seed, tick, p.0 as u32, p.1 as u32, SALT_STEM_BLOOM) % 4;
+        self.put_plant(p, FLOWER, 0);
+        let extra: &[(isize, isize)] = match shape {
+            2 => &[(-1, 0), (1, 0), (0, -1)],
+            3 => &[(1, 0), (0, -1), (1, -1)],
+            _ => &[],
+        };
+        for &(dx, dy) in extra {
+            if let Some(q) = self.empty_at(p.0, p.1, dx, dy) {
+                self.put_plant(q, FLOWER, 0);
             }
-            None => self.set(i, STEM, 0),
+        }
+    }
+
+    fn grow_main(&mut self, x: usize, y: usize, target: u32, cur: u32, seed: u64, tick: u32) {
+        let (xu, yu) = (x as u32, y as u32);
+        let i = y * self.w + x;
+        let r = rng(seed, tick, xu, yu, SALT_STEM_LEAN);
+        // Lean: one step in four goes diagonally, falling back to straight up if that is blocked.
+        let dx: isize = match r % 8 {
+            0 => -1,
+            1 => 1,
+            _ => 0,
+        };
+        let next = self.empty_at(x, y, dx, -1).or_else(|| self.empty_at(x, y, 0, -1));
+        let Some(p) = next else {
+            self.set(i, STEM, 0);
+            return;
+        };
+        if cur >= target {
+            self.set(i, STEM, 0);
+            self.bloom(p, seed, tick);
+            return;
+        }
+        // Leaf and branch are decided at fixed heights, so each can happen at most once per stem.
+        let rb = rng(seed, tick, xu, yu, SALT_STEM_BRANCH);
+        if cur == 3 && rb % 3 == 0 {
+            let side = if rb & 8 == 0 { -1 } else { 1 };
+            if let Some(q) = self.empty_at(x, y, side, 0) {
+                self.put_plant(q, STEM, 0);
+            }
+        }
+        if cur == 5 && rb % 2 == 0 {
+            let (side, bit) = if rb & 8 == 0 { (-1, 1) } else { (1, 2) };
+            if let Some(q) = self.empty_at(x, y, side, 0) {
+                let rem = 3 + (rb >> 4) % 3;
+                self.put_plant(q, STEM, ((rem << 4) | bit) as u8);
+            }
+        }
+        self.put_plant(p, STEM, ((target << 4) | (cur + 1)) as u8);
+        self.set(i, STEM, 0);
+    }
+
+    fn grow_branch(&mut self, x: usize, y: usize, rem: u32, lo: u32, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        let side: isize = if lo == 1 { -1 } else { 1 };
+        let up = rng(seed, tick, x as u32, y as u32, SALT_STEM_LEAN) % 2 == 0;
+        let next = self.empty_at(x, y, side, if up { -1 } else { 0 });
+        let Some(p) = next else {
+            self.set(i, STEM, 0);
+            return;
+        };
+        if rem == 1 {
+            self.set(i, STEM, 0);
+            self.put_plant(p, FLOWER, 0);
+        } else {
+            self.put_plant(p, STEM, (((rem - 1) << 4) | lo) as u8);
+            self.set(i, STEM, 0);
         }
     }
 
@@ -393,36 +630,43 @@ impl Grid {
         self.powder_move(x, y, seed, tick, SALT_GUNPOWDER_DIAG);
     }
 
-    /// Plan 6.2 step 4: resolve this tick's queued explosions in queue order.
+    /// Plan 6.2 step 4: resolve this tick's queued explosions in queue order. Each centre that really
+    /// detonates is also reported in `explosions` for the damage pass.
     fn resolve_explosions(&mut self, seed: u64, tick: u32) {
         let queue = core::mem::take(&mut self.pending);
-        let r = BLAST_RADIUS;
         for &(cx, cy) in &queue {
-            let (cx, cy) = (cx as i32, cy as i32);
             let ci = cy as usize * self.w + cx as usize;
             if self.mat[ci] != GUNPOWDER {
                 continue;
             }
-            for y in (cy - r).max(0)..=(cy + r).min(self.h as i32 - 1) {
-                for x in (cx - r).max(0)..=(cx + r).min(self.w as i32 - 1) {
-                    let d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
-                    if d2 > r * r {
-                        continue;
+            self.explosions.push((cx, cy));
+            self.carve(cx as i32, cy as i32, BLAST_RADIUS, seed, tick);
+        }
+    }
+
+    /// Clear the disc of radius `r` around (`cx`, `cy`): bedrock stays, Gunpowder other than the centre
+    /// cell is primed, everything else becomes Empty (or Fire on a third of the rim, by counter-based rng).
+    /// Work is bounded by the (2r+1)^2 box clamped to the world.
+    pub fn carve(&mut self, cx: i32, cy: i32, r: i32, seed: u64, tick: u32) {
+        let ci = cy as usize * self.w + cx as usize;
+        for y in (cy - r).max(0)..=(cy + r).min(self.h as i32 - 1) {
+            for x in (cx - r).max(0)..=(cx + r).min(self.w as i32 - 1) {
+                let d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+                if d2 > r * r {
+                    continue;
+                }
+                let i = y as usize * self.w + x as usize;
+                match self.mat[i] {
+                    BEDROCK => {}
+                    // Caught in the blast: primed, explodes on the next tick.
+                    GUNPOWDER if i != ci => {
+                        if self.aux[i] != 1 {
+                            self.set(i, GUNPOWDER, 1);
+                        }
                     }
-                    let i = y as usize * self.w + x as usize;
-                    match self.mat[i] {
-                        BEDROCK => {}
-                        // Caught in the blast: primed, explodes on the next tick.
-                        GUNPOWDER if i != ci => {
-                            if self.aux[i] != 1 {
-                                self.set(i, GUNPOWDER, 1);
-                            }
-                        }
-                        _ => {
-                            let rim = d2 > (r - 1) * (r - 1)
-                                && rng(seed, tick, x as u32, y as u32, SALT_BLAST_RIM) % 3 == 0;
-                            self.set(i, if rim { FIRE } else { EMPTY }, 0);
-                        }
+                    _ => {
+                        let rim = d2 > (r - 1) * (r - 1) && rng(seed, tick, x as u32, y as u32, SALT_BLAST_RIM) % 3 == 0;
+                        self.set(i, if rim { FIRE } else { EMPTY }, 0);
                     }
                 }
             }
@@ -610,10 +854,77 @@ mod tests {
         g.set(61 * 64 + 22, WATER, 0);
         run(&mut g, 11, 3000);
         assert_eq!(g.at(20, 61), STEM);
-        let stems = (0..62).filter(|&y| g.at(20, y) == STEM).count();
-        assert!((8..=14).contains(&stems), "stem length {stems}");
-        let top = (0..62).find(|&y| g.at(20, y) != EMPTY).unwrap();
-        assert_eq!(g.at(20, top), FLOWER);
+        let plants = (0..64 * 62).filter(|&i| g.mat[i] == STEM || g.mat[i] == FLOWER).count();
+        assert!((9..=60).contains(&plants), "plant size {plants}");
+        assert!(count(&g, FLOWER) >= 1);
+    }
+
+    /// A dirt strip with one seed and water beside it, run to completion; returns the plant's cells.
+    fn grow_plant(seed: u64) -> Vec<(usize, usize, u8)> {
+        let mut g = boxed(64, 64);
+        for x in 0..64 {
+            g.set(62 * 64 + x, DIRT, 0);
+        }
+        g.set(61 * 64 + 30, SEED, 0);
+        g.set(61 * 64 + 32, WATER, 0);
+        run(&mut g, seed, 4000);
+        let mut cells = Vec::new();
+        for y in 0..62 {
+            for x in 0..64 {
+                let m = g.at(x, y);
+                if m == STEM || m == FLOWER {
+                    assert!(m != STEM || g.aux[y * 64 + x] == 0, "unfinished tip at {x},{y}");
+                    cells.push((x, y, m));
+                }
+            }
+        }
+        cells
+    }
+
+    #[test]
+    fn plants_are_bounded_vary_in_shape_and_repeat_per_seed() {
+        let mut shapes = std::collections::BTreeSet::new();
+        for seed in 0..40u64 {
+            let c = grow_plant(seed);
+            // Main stem 8-14, a leaf, one branch of up to 5 cells, a bloom of up to 4 cells.
+            assert!((9..=30).contains(&c.len()), "seed {seed}: {} cells", c.len());
+            assert!(c.iter().any(|&(_, _, m)| m == FLOWER), "seed {seed}: no flower");
+            let flowers = c.iter().filter(|&&(_, _, m)| m == FLOWER).count();
+            let stems = c.len() - flowers;
+            shapes.insert((flowers, c.iter().map(|&(x, _, _)| x).min().unwrap() != 30, stems > 14));
+            assert_eq!(c, grow_plant(seed), "same seed must grow the same plant");
+        }
+        assert!(shapes.len() >= 4, "plants too alike: {shapes:?}");
+        let all_flowers: std::collections::BTreeSet<usize> =
+            (0..40u64).map(|s| grow_plant(s).iter().filter(|c| c.2 == FLOWER).count()).collect();
+        assert!(all_flowers.len() >= 2, "one bloom shape only: {all_flowers:?}");
+    }
+
+    /// D-084: stems saved under D-024's encoding (`target << 4 | height`) and any odd byte must
+    /// finish as some plant, never grow without bound, and leave no growing tip behind.
+    #[test]
+    fn old_encoded_stems_finish() {
+        for aux in [0x81u8, 0xE1, 0xA7, 0xEE, 0xF1, 0xFF, 0x05, 0x13, 0x77, 0x01] {
+            let mut g = boxed(64, 64);
+            g.set(40 * 64 + 20, STEM, aux);
+            run(&mut g, 5, 6000);
+            let plant = count(&g, STEM) + count(&g, FLOWER);
+            assert!(plant <= 40, "aux {aux:#x}: {plant} cells");
+            assert!((0..64 * 64).all(|i| g.mat[i] != STEM || g.aux[i] == 0), "aux {aux:#x}: tip left growing");
+        }
+    }
+
+    #[test]
+    fn growing_stem_keeps_its_chunk_awake_and_mature_plants_sleep() {
+        let mut g = boxed(64, 64);
+        g.set(40 * 64 + 20, STEM, 0xC1);
+        g.step_cells(1, 0);
+        assert!(g.awake[g.chunk_of(20, 40)]);
+        run(&mut g, 1, 6000);
+        for t in 6000..6003 {
+            g.step_cells(1, t);
+        }
+        assert_eq!(g.ran_chunks, 0, "a finished plant must let its chunks sleep");
     }
 
     #[test]
@@ -697,5 +1008,59 @@ mod tests {
             assert!(paintable(m), "{m}");
         }
         assert!(!paintable(BEDROCK) && !paintable(15));
+    }
+}
+
+#[cfg(test)]
+mod lava_levels {
+    use super::*;
+
+    fn lava_column(sleep: bool) -> Grid { column(sleep, LAVA) }
+    fn column(sleep: bool, mat: u8) -> Grid {
+        let (w, h) = (384, 192);
+        let mut g = Grid::new(w, h);
+        g.set_all_active();
+        g.sleep_enabled = sleep;
+        for x in 0..w {
+            g.set((h - 1) * w + x, BEDROCK, 0);
+        }
+        for y in 0..h {
+            g.set(y * w + w - 1, BEDROCK, 0);
+            g.set(y * w, BEDROCK, 0);
+        }
+        // A tall column of lava against the right wall, as in the bug screenshot.
+        for y in 20..h - 1 {
+            for x in w - 60..w - 1 {
+                g.set(y * w + x, mat, 0);
+            }
+        }
+        for t in 0..6000 {
+            g.step_cells(7, t);
+        }
+        g
+    }
+
+    fn surface(g: &Grid) -> Vec<usize> { surface_of(g, LAVA) }
+    fn surface_of(g: &Grid, m: u8) -> Vec<usize> {
+        (1..g.w - 1).map(|x| (0..g.h).find(|&y| g.mat[y * g.w + x] == m).unwrap_or(g.h)).collect()
+    }
+
+    #[test]
+    fn water_levels_out() {
+        let g = column(true, WATER);
+        let s = surface_of(&g, WATER);
+        let spread = s.iter().max().unwrap() - s.iter().min().unwrap();
+        assert!(spread <= 2, "water surface spans {spread} rows; a liquid should level");
+    }
+
+    #[test]
+    fn lava_settles_the_same_with_sleeping_on_and_off() {
+        let (on, off) = (lava_column(true), lava_column(false));
+        let (son, soff) = (surface(&on), surface(&off));
+        let spread = |s: &[usize]| s.iter().max().unwrap() - s.iter().min().unwrap();
+        assert_eq!(on.mat, off.mat, "sleeping changed the result (invariant 8)");
+        // The reported bug: a heap of lava settled into a staircase on chunk edges, 48 rows high.
+        assert!(spread(&son) <= 2, "lava surface spans {} rows; a liquid should level", spread(&son));
+        let _ = soff;
     }
 }

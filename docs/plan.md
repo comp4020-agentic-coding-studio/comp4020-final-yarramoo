@@ -258,7 +258,8 @@ Each distinct use of randomness gets its own `salt` constant.
 - **Death:** when health reaches 0, the player is dead for 180 ticks, then respawns at the surface spawn point with a rng-chosen horizontal offset. `life` is incremented and a `Respawn { player, x, y, life }` event is emitted.
   - Pos inputs carry `life`. The simulation **ignores Pos inputs with a stale `life`**, so a dead avatar's old position can't override the respawn.
 - **Kill credit (last-hit rule):** on death, if `last_hit_by != 0`, `last_hit_by != victim` and `tick - last_hit_tick <= 300`, emit `Death { victim, killer: last_hit_by, cause_spell }`. Otherwise emit `Death { victim, killer: 0, cause }`.
-- **Inventory is kept on death** (default; see section 14).
+- **Inventory is kept on death** (default; see section 14). M5 supersedes this with dropped bags.
+- **As built (M5 slice 1):** step order, damage and credit rules, the dead-state rules, cause codes and event layouts are in `docs/DECISIONS.md` D-102 to D-105.
 
 ### 6.9 World generation (deterministic, integer-only)
 
@@ -322,6 +323,92 @@ set_sleep_enabled(on: u32)                 // test hook for D7
 | 3 | `Pos` | `life u16, x i32, y i32, facing u8` | 16 |
 | 4 | `Cast` | `spell u8, angle u16, cast_seq u16` | 10 |
 | 5 | `Paint` | `mat u8, x0 i16, y0 i16, x1 i16, y1 i16, radius u8` | 15 |
+
+**Entity bytes and views (M4a, fixed 2026-10-14, D-062; projectiles and player view added in M4b).** All little-endian, fixed-width, no padding. Offsets are relative to the start of each record. Positions are 1/16 cell, `x` is the feet centre and `y` the feet line (the hitbox covers the 10 rows above `y`).
+
+- *Canonical entity bytes* (state hash and the snapshot's entity section; empty in the sandbox). Section order: `n_players u32`, players (sorted by id), `n_pickups u32`, pickups (id order), `n_projectiles u32`, projectiles (spawn order). Total size: `12 + 65 * n_players + 13 * n_pickups + 25 * n_projectiles` bytes.
+
+  | Player record (65 bytes) | Type | Offset | Size |
+  |---|---|---|---|
+  | `id` | u32 | 0 | 4 |
+  | `active` | u8 | 4 | 1 |
+  | `life` | u16 | 5 | 2 |
+  | `x` | i32 | 7 | 4 |
+  | `y` | i32 | 11 | 4 |
+  | `facing` | u8 | 15 | 1 |
+  | `health` | u8 | 16 | 1 |
+  | `dead_until` | u32 | 17 | 4 |
+  | `charges` | u16[6] | 21 | 12 |
+  | `cooldown_until` | u32[6] | 33 | 24 |
+  | `last_hit_by` | u32 | 57 | 4 |
+  | `last_hit_tick` | u32 | 61 | 4 |
+
+  | Pickup record (13 bytes) | Type | Offset | Size |
+  |---|---|---|---|
+  | `id` | u16 | 0 | 2 |
+  | `spell` | u8 | 2 | 1 |
+  | `x` | u16 | 3 | 2 |
+  | `y` | u16 | 5 | 2 |
+  | `charges` | u16 | 7 | 2 |
+  | `respawn_at` | u32 | 9 | 4 |
+
+  | Projectile record (25 bytes) | Type | Offset | Size |
+  |---|---|---|---|
+  | `owner` | u32 | 0 | 4 |
+  | `spell` | u8 | 4 | 1 |
+  | `cast_seq` | u16 | 5 | 2 |
+  | `x` | i32 | 7 | 4 |
+  | `y` | i32 | 11 | 4 |
+  | `vx` | i32 | 15 | 4 |
+  | `vy` | i32 | 19 | 4 |
+  | `age` | u16 | 23 | 2 |
+
+  Projectile `x`, `y`, `vx`, `vy` are in 1/256 cell (and per tick). Pickup identity comes from generation; restore checks it matches and takes only `charges` and `respawn_at`. Snapshot `format_version` is 2; version 1 (no entities, the sandbox snapshots already stored) still restores.
+
+- *`events(out, max) -> n`* (events of the last step): records of 17 bytes.
+
+  | Event record (17 bytes) | Type | Offset | Size |
+  |---|---|---|---|
+  | `kind` | u8 | 0 | 1 |
+  | `player` | u32 | 1 | 4 |
+  | `a` | i32 | 5 | 4 |
+  | `b` | i32 | 9 | 4 |
+  | `c` | i32 | 13 | 4 |
+
+  | kind | Event | `player` | `a` | `b` | `c` |
+  |---|---|---|---|---|---|
+  | 1 | `Spawn` | player | x (1/16 cell) | y (1/16 cell) | life |
+  | 2 | `Pickup` | player | pickup id | spell | charges granted |
+  | 3 | `Cast` (accepted) | caster | spell | angle | cast_seq |
+  | 4 | `CastRejected` | caster | spell | reason (`REJECT_*`) | cast_seq |
+  | 5 | `Knock` | victim | vx (1/16 cell per tick) | vy (1/16 cell per tick) | attacker id |
+  | 6 | `Impact` | owner | cell x | cell y | spell |
+  | 7 | `Respawn` | player | x (1/16 cell) | y (1/16 cell) | new life |
+
+  `REJECT_*` reasons: 1 spell, 2 charges, 3 cooldown, 4 full, 5 dead. `Knock` does not move the victim; the sim does not change its position.
+
+- *`entities(out, max) -> n`*: records of 18 bytes.
+
+  | Entity record (18 bytes) | Type | Offset | Size |
+  |---|---|---|---|
+  | `type` | u8 | 0 | 1 |
+  | `id` | u32 | 1 | 4 |
+  | `active` | u8 | 5 | 1 |
+  | `sub` | u8 | 6 | 1 |
+  | `x` | i32 | 7 | 4 |
+  | `y` | i32 | 11 | 4 |
+  | `a` | u16 | 15 | 2 |
+  | `health` | u8 | 17 | 1 |
+
+  | `type` | Entity | `id` | `active` | `sub` | `x`, `y` | `a` | `health` |
+  |---|---|---|---|---|---|---|---|
+  | 1 | player | player id | active | facing | feet centre | life | health |
+  | 2 | pickup | pickup id | available now (`tick >= respawn_at`) | spell | bottom centre of its cell | charges | 0 |
+  | 3 | projectile | owner id | always 1 | spell | 1/16 cell (stored 1/256 cell, shifted right by 4) | cast_seq | 0 |
+
+  Order: players, then pickups, then projectiles. The caller's buffer holds `max` records; any record past that is dropped.
+
+- *`player_view(id, out) -> 1 | 0`* (HUD, render-only): writes 24 bytes for one player, or returns 0 if the player does not exist. `charges u16[6]` at offsets 0 to 11, then ticks of cooldown left `u16[6]` at offsets 12 to 23 (each saturates at 65535; `charges` 65535 means infinite).
 
 `Paint` coordinates are whole cells; it stamps a filled disc of `radius` along the segment from `(x0,y0)` to `(x1,y1)` (integer DDA), skipping Bedrock. `push_input` returns 0 on success and a negative value for a malformed input, which is then ignored.
 
@@ -552,6 +639,8 @@ All achievements are defined in `shared/achievements.ts`. Tune the names freely.
 ## 11. Telemetry and live dashboard
 
 The server collects metrics in memory, streams them to `/dashboard` via SSE (protected by `DASHBOARD_TOKEN`), and writes per-minute aggregates to `metrics_minutely` for history charts. Basic metrics come in at M2 and the full dashboard at M6.
+
+**As built (crit 10, D-090 to D-097):** one `ADMIN_TOKEN` gates the dashboard's detail view and the admin reset; the public view shows aggregates only. Every server event is a JSON line from `server/log.ts`, named from the catalogue in `shared/events.ts`. Per-player counters live in `player_stats`, and per-minute history (`metrics_minutely`) is not built yet (see `FUTURE.md`).
 
 **Metrics:**
 

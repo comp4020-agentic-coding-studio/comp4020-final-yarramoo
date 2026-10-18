@@ -4,6 +4,45 @@ Ideas worth keeping that aren't being built yet. Add one whenever it comes up,
 while developing or while looking at other sites. Say where it came from and
 why it might be worth doing. Nothing here is a commitment.
 
+## Snapshot from a client mid-replay
+
+Let a client that is still catching up upload a snapshot at an already-closed
+tick, checked against the hash the server recorded for that tick.
+
+- **Source:** `docs/research/snapshot-timing.md` fix (h), 2026-10-18.
+- **Why:** the first visitor after a long gap could shrink the log without
+  having to stay until they are fully live. It needs old hashes kept longer than
+  today's 30 checkpoints.
+
+## Dashboard history across restarts
+
+Write per-minute aggregates to plan 9.1's `metrics_minutely` table, and draw
+the last hour or day on `/dashboard` (players online, hash failures, RSS).
+
+- **Source:** crit 10 dashboard work, 2026-10-18. Today everything is in memory,
+  and Fly stops the machine when idle, so the dashboard only ever shows the
+  current run.
+- **Why:** a reader of the logs after the crit could see the session as a
+  whole, not just whatever happened since the last cold start.
+
+## Which chunk diverged (done, D-126)
+
+Build REQUEST_CHUNK_HASHES/CHUNK_HASHES (deferred in D-043), so a desync
+incident records the first diverging chunk, and show it on the admin dashboard.
+
+- **Source:** the desync row in the crit 10 event catalogue, 2026-10-18.
+- **Why:** a `desync` event today says who diverged but not where, which leaves
+  a determinism bug with nothing to replay against.
+
+## A player page (done, D-125)
+
+A per-player admin view: sessions, play time, casts by spell, deepest point,
+resyncs. Later, achievements.
+
+- **Source:** `player_stats` (D-091) collects all of it already, 2026-10-18.
+- **Why:** it is the obvious reader of those counters, and M6 achievements
+  need somewhere to show up.
+
 ## Workshops and classes
 
 Members post an in-person workshop or class: what skill, when, where (by
@@ -127,7 +166,7 @@ outcome only, not admin notes.
 - Expose `matView()`/`auxView()` on `shared/sim.ts` so the client does not capture wasm exports; from the M1 worker.
 - A pause/step/clear control in the sandbox; from watching long gunpowder chains.
 
-## Show catch-up as a real progress bar, and replay faster (from M2a)
+## ~~Show catch-up as a real progress bar, and replay faster (from M2a)~~ (done: D-127; replay is not faster, only visible)
 
 Late join replays the whole log at roughly 200-400 ticks/s on a laptop (about 5 s for 1300 ticks), shown only as a percentage in the header. Snapshots will cut this, but a visible bar plus rendering every Nth tick during fast-forward would make the wait feel shorter on phones.
 
@@ -138,6 +177,42 @@ J is a constant 2. The plan says adapted to jitter; the client already sees tick
 ## From M2b (persistence and snapshots)
 
 - **Snapshot the last player out.** The server could ask the departing client for a snapshot on a clean close (the socket's `close` event arrives after the tab is gone, so it needs a `beforeunload` hint or a heartbeat-driven "you're the last, upload now" push). Source: D-042. Worth it if cold-start replay of ~30 s is noticeable.
-- **CHUNK_HASHES diff for desync incidents.** Keep the last 5 chunk-hash arrays on the client and diff on request, so an incident names the diverging chunks. Source: D-043.
+- ~~**CHUNK_HASHES diff for desync incidents.** (done: D-126)~~ Keep the last 5 chunk-hash arrays on the client and diff on request, so an incident names the diverging chunks. Source: D-043.
 - **Server-side check of snapshot "reasonableness".** The majority-hash rule trusts that the majority's sim is right; a periodic deliberate-lie client in CI could run the bad-snapshot test against the deployed build.
 - **Per-player upload budget for SNAPSHOT_UPLOAD.** Unsolicited uploads are ignored cheaply, but a solicited client can upload once per request at up to 1 MiB; fine for co-op, worth rate-limiting if the URL is public.
+
+## From M3 (world generation, sleeping, camera)
+
+- ~~**Generator preview page.** (done in part: D-124, `client/gen-preview.html` with a readout; no slider panel yet)~~ A dev route that regenerates the world for a seed typed in and shows the whole-world overview, with a "reachable cells" and "pool count" readout. Came from iterating on parameters by dumping PNGs; a live slider panel would make tuning the caves minutes instead of an hour. Also a cheap way to pick a nice default seed.
+- **Biome bands by depth.** (Rock tint done, D-124; the cave-shape half is not: shallow winding, deep open, a sim change needing the full determinism suite and the D-086 pickup counts.) Noita has distinct biomes by depth with their own rock colours and materials. A per-band tint of Rock (shallow brown, deep blue-black) and different cave shapes (shallow winding, deep open) costs little in the generator and the shader and makes depth legible without a HUD.
+- **Stalactites and moss.** (Moss near water done, D-124; drips under ceilings not.) The research checklist marks them as Noita look-and-feel (unverified). A cosmetic post-pass in the shader (hash-based drips under ceilings, green tint on wet floors) needs no sim change.
+- **Wake by activity heat map.** The dev stats line shows chunks run; drawing the awake chunks as an overlay would make sleeping bugs visible at a glance, the same way the overview made generation bugs visible.
+- **Generation in a worker thread at join time.** About 400 ms of wasm generation blocks the worker at join and on every resync. Fine now; once resyncs are routine, restoring from a snapshot could skip generation for chunks that are already stored (but the sim must regenerate for pristine ones).
+
+## From M4a (players, identity, two worlds)
+
+- **Server-side respawn allowance for Pos validation.** The server cannot see `Respawn`, so after M5 a teleport to the surface looks like a jump. Let the server read `Death` claims (or just widen the limit for a few ticks after one) so honest respawns are never rejected. Source: D-067.
+- **Cache the generated base world per (seed, kind).** Restore and `init` each regenerate (about 400 ms); the verify worker pays it on every upload and a joining client pays it twice. A 3 MB memcpy of the pristine `mat` removes both. Source: review-m3 S2, still open.
+- ~~**A "who is online" list and a share-a-spot link.** The labels already know every active player; a side list with a "jump camera here" click is the spectate feature phones need (D-011) and helps markers find the second profile. (done: D-123; the share-a-spot link is not built)~~
+- ~~**Name tags that fade with distance, and a tiny minimap.** The world is 2048 wide and the view 480; two players can be many screens apart and never know. A strip along the top with a dot per player costs one DOM element each. (done: D-123)~~
+- **Walking animation for the figures.** `pushFigure` is a static placeholder; leg swing and a lean while levitating need only the avatar's velocity, which the worker already has (todo: character animation).
+
+## Aim assist and a visible cone for Blast
+
+Draw a faint arc at Blast's reach while its key is selected, and a dotted line
+for Push's first few cells.
+
+- **Source:** building the M4b spell bar: Blast's 24-cell cone is invisible until it fires.
+- **Why:** players learn range by feel otherwise; the preview is renderer-only and costs nothing in the sim.
+
+## Interpolated cast ghosts for other players
+
+Show a faint ghost for another player's bolt for the round trip, from their Cast
+input as it reaches the server, not only for your own.
+
+- **Source:** the cast-preview work in M4b, where only the caster's own ghost hides the lockstep delay.
+- **Why:** other players see a bolt appear mid-air a round trip late; an early hint would smooth it. It needs the server to relay Cast before the tick closes, which touches the protocol.
+
+## Bag fade-out and per-bag lifetime (from M5 slice 4)
+
+Bags expire after 90 s but the view carries no `expires_at`, so the client cannot blink or fade a bag that is about to vanish. Adding the expiry tick to `ENT_BAG` would let the sprite flash in its last 10 s. Also worth doing: a spell-coloured breakdown of a bag's contents on hover, instead of only the total.

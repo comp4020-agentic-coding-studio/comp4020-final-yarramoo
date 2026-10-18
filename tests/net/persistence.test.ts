@@ -9,8 +9,6 @@ import { compressSnapshot, encodeSnapshotUpload, encodeTick, simInputBytes } fro
 import { GameDb } from "../../server/db.ts";
 import { loadSim, simBuildHash } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
-import { SnapshotVerifier } from "../../server/verify.ts";
-import { World } from "../../server/world.ts";
 import { buildHashHex, connect, paintFor, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
 
 let hex: string;
@@ -63,7 +61,7 @@ describe("cold start with a long log", () => {
 });
 
 describe("a new sim build at start-up", () => {
-  /** A world with one verified snapshot, its stored build then renamed, as a deploy of a new sim would leave it. */
+  /** A sandbox with one verified snapshot, then the server stopped and its stored build renamed (a deploy). */
   async function storedUnderOldBuild(): Promise<{ dir: string; tick: number }> {
     const dir = tmp();
     const s = await boot(dir, 60);
@@ -78,25 +76,55 @@ describe("a new sim build at start-up", () => {
     db.close();
     return { dir, tick };
   }
-  const world = (db: GameDb, verifier: SnapshotVerifier) =>
-    new World({ now: () => performance.now(), db, verifier, simBuild: "the-new-build", log: () => {} });
 
-  it("a verifier that cannot run refuses to start and leaves the stored world alone (D-112, ported)", async () => {
+  it("a hung verifier refuses to start and leaves the stored world alone (review M5 slice 3 N2)", async () => {
     const { dir, tick } = await storedUnderOldBuild();
+    await expect(
+      startServer({ port: 0, dataDir: dir, quiet: true, verifyTimeoutMs: 300, verifierWorkerUrl: new URL("./hang-worker.ts", import.meta.url) }),
+    ).rejects.toThrow(/not resetting/);
     const db = new GameDb(dir);
-    const broken = new SnapshotVerifier(join(dir, "game.db")); // not wasm: loading it fails
-    expect(() => world(db, broken)).toThrow(/not resetting/);
     expect(db.latestSnapshot(0)?.tick).toBe(tick);
     expect(db.getWorld(0)?.simBuild).toBe("an-older-build");
     db.close();
   });
 
+  it("a real server process starts on a changed build: it does not exit while start-up waits on the verifier", async () => {
+    // Vitest keeps its own event loop alive, so this must be a separate `node server/main.ts`. With the verify
+    // worker unref'd and nothing else pending, Node exited mid-check (code 13) and a deploy crash-looped. Found by
+    // the merge rehearsal on the real image.
+    const { dir, tick } = await storedUnderOldBuild();
+    const { spawn } = await import("node:child_process");
+    const port = 20000 + Math.floor(Math.random() * 20000);
+    const child = spawn(process.execPath, ["server/main.ts"], { env: { ...process.env, DATA_DIR: dir, PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (b) => (out += b));
+    child.stderr.on("data", (b) => (out += b));
+    let exitCode: number | null = null;
+    child.on("exit", (c) => (exitCode = c));
+    cleanups.push(() => void child.kill("SIGKILL"));
+    await waitFor(() => exitCode !== null || out.includes('"ev":"server.start"'), 30000, "the server to start or exit");
+    expect(exitCode, out.slice(-600)).toBeNull();
+    expect(out).toContain('"outcome":"kept_snapshot"');
+    expect((await fetch(`http://127.0.0.1:${port}/readme/`)).status).toBe(200);
+    expect(out).toContain(`"kept_snapshot_tick":${tick}`);
+  }, 60_000);
+
   it("a snapshot the new build can restore is kept", async () => {
     const { dir, tick } = await storedUnderOldBuild();
+    const s = await boot(dir);
+    expect(s.world.snapshot?.tick).toBe(tick);
+    expect(s.log.recent().some((e) => e.ev === "world.build_changed" && e.outcome === "kept_snapshot")).toBe(true);
+  });
+
+  it("a snapshot the new build refuses still resets the world", async () => {
+    const { dir } = await storedUnderOldBuild();
     const db = new GameDb(dir);
-    const w = world(db, new SnapshotVerifier(join(process.cwd(), "sim/target/wasm32-unknown-unknown/release/sim.wasm")));
-    expect(w.snapshot?.tick).toBe(tick);
+    const snap = db.latestSnapshot(0)!;
+    db.saveSnapshot(0, { tick: snap.tick + 60, hash: 0n, simBuild: "an-older-build", data: new Uint8Array([1, 2, 3]) });
     db.close();
+    const s = await boot(dir);
+    expect(s.world.snapshot).toBeNull();
+    expect(s.log.recent().some((e) => e.ev === "world.build_changed" && e.outcome === "reset")).toBe(true);
   });
 });
 

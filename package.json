@@ -10,12 +10,15 @@
     "test": "vitest run",
     "build:sim": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release",
     "build:sim:canary": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release --features canary --target-dir sim/target-canary",
-    "dev:client": "pnpm build:sim && vite --config client/vite.config.ts",
+    "dev:client": "pnpm build:sim && pnpm build:sim:devpaint && vite --config client/vite.config.ts",
     "build:client": "pnpm build:sim && vite build --config client/vite.config.ts",
+    "build:sim:devpaint": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --manifest-path sim/Cargo.toml --target wasm32-unknown-unknown --release --features dev_paint --target-dir sim/target-devpaint",
     "test:determinism": "pnpm build:sim && pnpm build:sim:canary && vitest run --config vitest.determinism.config.ts",
     "test:net": "vitest run --config vitest.net.config.ts",
     "start:game": "node server/main.ts",
     "dev:server": "pnpm build:client && node server/main.ts",
+    "soak:n1": "node tests/soak/n1.ts",
+    "soak:p1": "node tests/soak/p1.ts",
     "build:client:only": "vite build --config client/vite.config.ts"
   },
   "devDependencies": {

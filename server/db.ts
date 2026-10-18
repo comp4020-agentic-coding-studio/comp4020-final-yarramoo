@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const SNAPSHOTS_KEPT = 5;
-export const SNAPSHOT_FORMAT_VERSION = 1;
+export const SNAPSHOT_FORMAT_VERSION = 3;
 
 /** Applied in order; PRAGMA user_version is the number applied. Append only, never edit. */
 const MIGRATIONS: string[] = [
@@ -42,6 +42,38 @@ const MIGRATIONS: string[] = [
   create table desync_incidents (
     id integer primary key,
     world_id integer, tick integer, details text, created_at integer
+  );
+  `,
+  // M4a identity (plan 9.1): only sha256(token) is stored. The id is the sim's player id in the game world.
+  `
+  create table players (
+    id integer primary key,
+    display_name text not null,
+    token_hash text unique not null,
+    created_at integer not null,
+    last_seen integer
+  );
+  `,
+  // Review M4a S1: remember who actually joined, so registrations that never did can be evicted.
+  `alter table players add column joined_at integer;`,
+  // Slice 2 (plan 9.1): per-player counters, keyed by the registered player id. Survives a world reset.
+  `
+  create table player_stats (
+    player_id integer references players(id),
+    stat text not null,
+    value integer not null default 0,
+    primary key (player_id, stat)
+  );
+  `,
+  // M6 slice a (plan 9.1): achievements earned, once per player ever (across worlds and resets).
+  `
+  create table achievements (
+    player_id integer references players(id),
+    achievement text not null,
+    world_id integer,
+    tick integer,
+    earned_at integer not null,
+    primary key (player_id, achievement)
   );
   `,
 ];
@@ -209,10 +241,144 @@ export class GameDb {
     return (this.q("select tick from snapshots where world_id = ? order by tick").all(worldId) as { tick: number }[]).map((r) => r.tick);
   }
 
-  recordIncident(worldId: number, tick: number, details: unknown): void {
-    this.q("insert into desync_incidents (world_id, tick, details, created_at) values (?, ?, ?, ?)").run(
+  /** Create a player; returns its id (the sim's player_id). */
+  createPlayer(displayName: string, tokenHash: string): number {
+    const r = this.q("insert into players (display_name, token_hash, created_at, last_seen) values (?, ?, ?, ?)").run(
+      displayName, tokenHash, Date.now(), Date.now(),
+    );
+    return Number(r.lastInsertRowid);
+  }
+
+  playerByTokenHash(tokenHash: string): { id: number; displayName: string } | null {
+    const r = this.q("select id, display_name from players where token_hash = ?").get(tokenHash) as { id: number; display_name: string } | undefined;
+    return r ? { id: r.id, displayName: r.display_name } : null;
+  }
+
+  playerCount(): number {
+    return (this.q("select count(*) as n from players").get() as { n: number }).n;
+  }
+
+  /** A HELLO with this player's token: stamp last_seen, and joined_at the first time. */
+  touchPlayer(id: number): void {
+    this.q("update players set last_seen = ?, joined_at = coalesce(joined_at, ?) where id = ?").run(Date.now(), Date.now(), id);
+  }
+
+  /** Delete registrations created before `cutoffMs` that never joined. Returns how many. */
+  evictUnjoined(cutoffMs: number): number {
+    // Name-only registrations (sandbox painters, spectators) may have stats rows; the FK needs them gone first.
+    this.db.exec("BEGIN");
+    try {
+      this.q("delete from player_stats where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
+      this.q("delete from achievements where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
+      const n = Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
+      this.db.exec("COMMIT");
+      return n;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /** One registered player's row for the admin player page. */
+  playerRow(id: number): { id: number; name: string; createdAt: number; lastSeen: number | null; joinedAt: number | null } | null {
+    const r = this.q("select id, display_name, created_at, last_seen, joined_at from players where id = ?").get(id) as
+      | { id: number; display_name: string; created_at: number; last_seen: number | null; joined_at: number | null }
+      | undefined;
+    return r ? { id: r.id, name: r.display_name, createdAt: r.created_at, lastSeen: r.last_seen, joinedAt: r.joined_at } : null;
+  }
+
+  /** Awards with their dates, oldest first. */
+  achievementRows(playerId: number): { achievement: string; worldId: number | null; tick: number | null; earnedAt: number }[] {
+    const rows = this.q("select achievement, world_id, tick, earned_at from achievements where player_id = ? order by earned_at, achievement").all(playerId) as {
+      achievement: string; world_id: number | null; tick: number | null; earned_at: number;
+    }[];
+    return rows.map((r) => ({ achievement: r.achievement, worldId: r.world_id, tick: r.tick, earnedAt: r.earned_at }));
+  }
+
+  /** Registered players, newest last_seen first (never-seen last), for the admin index. */
+  playerIndex(limit: number, offset: number): { id: number; name: string; lastSeen: number | null; playMs: number; kills: number; deaths: number; achievements: number }[] {
+    const stat = (s: string) => `coalesce((select value from player_stats where player_id = p.id and stat = '${s}'), 0)`;
+    const rows = this.q(
+      `select p.id, p.display_name, p.last_seen, ${stat("play_ms")} as play_ms, ${stat("kills")} as kills, ${stat("deaths")} as deaths,
+         (select count(*) from achievements where player_id = p.id) as ach
+         from players p order by p.last_seen is null, p.last_seen desc, p.id desc limit ? offset ?`,
+    ).all(limit, offset) as { id: number; display_name: string; last_seen: number | null; play_ms: number; kills: number; deaths: number; ach: number }[];
+    return rows.map((r) => ({ id: r.id, name: r.display_name, lastSeen: r.last_seen, playMs: r.play_ms, kills: r.kills, deaths: r.deaths, achievements: r.ach }));
+  }
+
+  playerNames(ids: number[]): Record<number, string> {
+    const out: Record<number, string> = {};
+    for (const id of ids) {
+      const r = this.q("select display_name from players where id = ?").get(id) as { display_name: string } | undefined;
+      if (r) out[id] = r.display_name;
+    }
+    return out;
+  }
+
+  /** Overwrite these absolute values in one transaction (PlayerStats keeps the running totals). */
+  upsertStats(rows: { playerId: number; stat: string; value: number }[]): void {
+    if (rows.length === 0) return;
+    this.db.exec("BEGIN");
+    try {
+      const s = this.q("insert into player_stats (player_id, stat, value) values (?, ?, ?) on conflict (player_id, stat) do update set value = excluded.value");
+      for (const r of rows) s.run(r.playerId, r.stat, r.value);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  loadStats(playerId: number): Record<string, number> {
+    const rows = this.q("select stat, value from player_stats where player_id = ?").all(playerId) as { stat: string; value: number }[];
+    return Object.fromEntries(rows.map((r) => [r.stat, r.value]));
+  }
+
+  /** Record an award. Returns true only the first time this player earns it (insert or ignore). */
+  awardAchievement(playerId: number, achievement: string, worldId: number, tick: number): boolean {
+    const r = this.q("insert or ignore into achievements (player_id, achievement, world_id, tick, earned_at) values (?, ?, ?, ?, ?)").run(
+      playerId, achievement, worldId, tick, Date.now(),
+    );
+    return Number(r.changes) === 1;
+  }
+
+  /** Ids this player has earned. */
+  achievementsOf(playerId: number): string[] {
+    return (this.q("select achievement from achievements where player_id = ? order by earned_at, achievement").all(playerId) as { achievement: string }[]).map((r) => r.achievement);
+  }
+
+  /** The newest awards across all players, with the plain name (admin only: callers add the #id). */
+  recentAchievements(limit: number): { playerId: number; name: string; achievement: string; worldId: number | null; tick: number | null; earnedAt: number }[] {
+    const rows = this.q(
+      `select a.player_id, p.display_name, a.achievement, a.world_id, a.tick, a.earned_at from achievements a
+         join players p on p.id = a.player_id order by a.earned_at desc, a.rowid desc limit ?`,
+    ).all(limit) as { player_id: number; display_name: string; achievement: string; world_id: number | null; tick: number | null; earned_at: number }[];
+    return rows.map((r) => ({ playerId: r.player_id, name: r.display_name, achievement: r.achievement, worldId: r.world_id, tick: r.tick, earnedAt: r.earned_at }));
+  }
+
+  /** How many awards were made at or after `sinceMs`. */
+  achievementsSince(sinceMs: number): number {
+    return (this.q("select count(*) as n from achievements where earned_at >= ?").get(sinceMs) as { n: number }).n;
+  }
+
+  /** Returns the new row's id, so a later diagnosis can fill in its `chunks` (D-126). */
+  recordIncident(worldId: number, tick: number, details: unknown): number {
+    const r = this.q("insert into desync_incidents (world_id, tick, details, created_at) values (?, ?, ?, ?)").run(
       worldId, tick, JSON.stringify(details), Date.now(),
     );
+    return Number(r.lastInsertRowid);
+  }
+
+  updateIncident(id: number, details: unknown): void {
+    this.q("update desync_incidents set details = ? where id = ?").run(JSON.stringify(details), id);
+  }
+
+  /** Newest first, across worlds (the admin dashboard). */
+  recentIncidents(limit: number): { id: number; worldId: number; tick: number; createdAt: number; details: Record<string, unknown> }[] {
+    const rows = this.q("select id, world_id, tick, details, created_at from desync_incidents order by id desc limit ?").all(limit) as {
+      id: number; world_id: number; tick: number; details: string; created_at: number;
+    }[];
+    return rows.map((r) => ({ id: r.id, worldId: r.world_id, tick: r.tick, createdAt: r.created_at, details: JSON.parse(r.details) }));
   }
 
   incidents(worldId: number): { tick: number; details: Record<string, unknown> }[] {

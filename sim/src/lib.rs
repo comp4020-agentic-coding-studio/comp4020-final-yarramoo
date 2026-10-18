@@ -2,6 +2,8 @@
 #![deny(clippy::float_arithmetic)]
 #![allow(clippy::result_unit_err)]
 
+pub mod entities;
+pub mod gen;
 pub mod grid;
 pub mod hash;
 pub mod input;
@@ -9,7 +11,10 @@ pub mod materials;
 pub mod rng;
 pub mod script;
 pub mod sim;
+pub mod spells;
 pub mod snapshot;
+pub mod trig;
+pub mod tuning;
 
 use core::cell::UnsafeCell;
 use sim::Sim;
@@ -118,13 +123,24 @@ pub extern "C" fn snapshot_write(out_ptr: u32) -> u32 {
 pub extern "C" fn restore(ptr: u32, len: u32) -> i32 {
     // SAFETY: caller guarantees the range is valid linear memory.
     let b = unsafe { slice(ptr, len) };
-    match snapshot::restore(b) {
-        Ok(s) => {
+    // SAFETY: see `with`.
+    let old = unsafe { (*G.0.get()).take() };
+    let prev = old.as_ref().and_then(|o| o.base.as_ref());
+    match snapshot::restore_with(b, prev) {
+        Ok(mut s) => {
+            // Keep at most one base: the one just generated, else the one that matched (moved, not copied).
+            if s.base.is_none() {
+                s.base = old.and_then(|mut o| o.base.take()).filter(|b| b.seed == s.seed && b.world_kind == s.world_kind);
+            }
             // SAFETY: see `with`.
             unsafe { *G.0.get() = Some(s) };
             0
         }
-        Err(()) => -1,
+        Err(()) => {
+            // SAFETY: see `with`.
+            unsafe { *G.0.get() = old };
+            -1
+        }
     }
 }
 
@@ -154,16 +170,54 @@ pub extern "C" fn dirty_rects(_out_ptr: u32, _max: u32) -> u32 {
 }
 
 #[no_mangle]
-pub extern "C" fn events(_out_ptr: u32, _max: u32) -> u32 {
-    0
+pub extern "C" fn events(out_ptr: u32, max: u32) -> u32 {
+    with(|s| {
+        let n = s.events.len().min(max as usize);
+        // SAFETY: caller provides `max` records of EVENT_BYTES.
+        let o = unsafe { out_slice(out_ptr, n * entities::EVENT_BYTES) };
+        for (i, e) in s.events.iter().take(n).enumerate() {
+            e.write(&mut o[i * entities::EVENT_BYTES..(i + 1) * entities::EVENT_BYTES]);
+        }
+        n as u32
+    })
+    .unwrap_or(0)
 }
 
 #[no_mangle]
-pub extern "C" fn entities(_out_ptr: u32, _max: u32) -> u32 {
-    0
+pub extern "C" fn entities(out_ptr: u32, max: u32) -> u32 {
+    with(|s| {
+        // SAFETY: caller provides `max` records of ENTITY_BYTES.
+        let o = unsafe { out_slice(out_ptr, max as usize * entities::ENTITY_BYTES) };
+        entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, s.tick, o, max as usize) as u32
+    })
+    .unwrap_or(0)
 }
 
 #[no_mangle]
 pub extern "C" fn set_sleep_enabled(on: u32) {
-    with(|s| s.grid.sleep_enabled = on != 0);
+    with(|s| {
+        s.grid.sleep_enabled = on != 0;
+        // Turning sleep on starts from a fully awake world, as after a restore.
+        s.grid.wake_all();
+    });
+}
+
+/// Telemetry only: chunks run by the last step. Not state, never an input.
+#[no_mangle]
+pub extern "C" fn ran_chunks() -> u32 {
+    with(|s| s.grid.ran_chunks).unwrap_or(0)
+}
+
+/// HUD view of one player's spells, written to `out_ptr` (`PLAYER_VIEW_BYTES` bytes: charges u16[6],
+/// ticks of cooldown left u16[6]). Returns 1 if the player exists, else 0. Render and UI only.
+#[no_mangle]
+pub extern "C" fn player_view(id: u32, out_ptr: u32) -> u32 {
+    with(|s| {
+        let Ok(k) = s.players.binary_search_by_key(&id, |p| p.id) else { return 0 };
+        // SAFETY: caller provides PLAYER_VIEW_BYTES writable bytes.
+        let o = unsafe { out_slice(out_ptr, entities::PLAYER_VIEW_BYTES) };
+        entities::write_player_view(&s.players[k], s.tick, o);
+        1
+    })
+    .unwrap_or(0)
 }

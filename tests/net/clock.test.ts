@@ -69,4 +69,24 @@ describe("TickClock", () => {
     clock.advance();
     expect(closed.map((c) => c.tick)).toEqual([1, 2, 3, 4]);
   });
+
+  it("reset pauses, drops open inputs and restarts numbering at 0", () => {
+    const { clock, closed, at } = setup();
+    clock.resume();
+    at(1000 + 100);
+    clock.stamp(inp(1)); // closes ticks 1..6, leaves inp(1) open for tick 7
+    const before = closed.length;
+    expect(before).toBe(6);
+    clock.reset();
+    expect(clock.isPaused).toBe(true);
+    expect(clock.lastClosed).toBe(0);
+    at(1000 + 5000);
+    clock.advance(); // paused: nothing closes
+    expect(closed).toHaveLength(before);
+    clock.resume();
+    at(1000 + 5000 + 17);
+    clock.advance();
+    // The dropped input is gone and numbering restarted at 1.
+    expect(closed.slice(before)).toEqual([{ tick: 1, inputs: [] }]);
+  });
 });

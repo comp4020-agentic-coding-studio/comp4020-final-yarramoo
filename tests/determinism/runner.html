@@ -15,7 +15,7 @@
     const imports = opts.canary
       ? { env: { canary_value: () => (navigator.userAgent.startsWith("Mozilla") ? 1 : 0) } }
       : {};
-    const result = run(wasm, script, imports);
+    const result = run(wasm, script, imports, { hashTick0: !!opts.hashTick0 });
     return { result, buildHash: await simBuildHash(wasm), userAgent: navigator.userAgent };
   };
   document.getElementById("out").textContent = "ready";

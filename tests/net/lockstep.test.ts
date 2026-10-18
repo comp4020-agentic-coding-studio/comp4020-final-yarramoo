@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { encodePaint, KIND_PAINT } from "../../shared/inputs.ts";
 import { encodeInput, PROTOCOL_VERSION } from "../../shared/protocol.ts";
 import { loadSim, simBuildHash } from "../../shared/sim.ts";
-import { connect as connectReal, sleep, unhex, wasmBytes } from "./helpers.ts";
+import { connect as connectReal, sleep, unhex, waitFor, wasmBytes } from "./helpers.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 
 const bytes = wasmBytes;
@@ -61,7 +61,14 @@ describe("lockstep over the real server", () => {
     const empty = loadSim(bytes);
     empty.init(1n, 0);
     expect(a.ls.sim.stateHash()).not.toBe(empty.stateHash());
-    expect(a.ls.simTick).toBe(b.ls.simTick);
+    // Clients play back at their own pace, so their current tick can differ by one at any instant;
+    // that's not divergence (the hashes above are). Compare once both have applied the same closed tick.
+    const target = server.world.clock.lastClosed;
+    await waitFor(() => {
+      for (const x of [a, b]) x.drain();
+      return a.ls.simTick >= target && b.ls.simTick >= target;
+    }, 5000, "both clients at the last closed tick");
+    expect(a.hashes.get(Math.floor(target / 60) * 60)).toBe(b.hashes.get(Math.floor(target / 60) * 60));
     expect(c.ls.simTick).toBe(a.ls.simTick);
     for (const x of [a, b, c]) x.close();
   });
@@ -83,7 +90,7 @@ describe("lockstep over the real server", () => {
     expect(server.stats.rejected).toBeGreaterThan(0);
     void sawPaint;
     a.close();
-    expect(PROTOCOL_VERSION).toBe(2);
+    expect(PROTOCOL_VERSION).toBe(8);
   });
 
   it("drops inputs over the rate limit and counts them", async () => {
@@ -96,8 +103,9 @@ describe("lockstep over the real server", () => {
   });
 
   it("pauses with no players and continues numbering on the next join", async () => {
-    await sleep(200);
-    expect(server.world.playerCount).toBe(0);
+    // Earlier tests' closes are processed asynchronously; wait for the world to empty, don't guess.
+    await waitFor(() => server.world.playerCount === 0, 5000, "world empty");
+    await waitFor(() => server.world.clock.isPaused, 5000, "clock paused");
     const t0 = server.world.clock.lastClosed;
     await sleep(500);
     expect(server.world.clock.lastClosed).toBe(t0);

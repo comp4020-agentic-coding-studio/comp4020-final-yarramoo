@@ -2,6 +2,7 @@
 // Environment-free (no Node APIs) so the browser page can import it.
 import { unhex } from "../../shared/inputs.ts";
 import { loadSim } from "../../shared/sim.ts";
+import type { SimEvent } from "../../shared/sim.ts";
 
 export interface ScriptLike {
   seed: string;
@@ -13,6 +14,8 @@ export interface ScriptLike {
 export interface RunResult {
   hashes: [number, string][];
   finalChunkHashes: string[];
+  /** Every event of every step, in order, when `RunOptions.collectEvents` is set (tick added). */
+  events?: (SimEvent & { tick: number })[];
 }
 
 /** How ticks are grouped into step calls. All must give identical results (D6). */
@@ -23,6 +26,12 @@ export type Batching =
 
 export interface RunOptions {
   batching?: Batching;
+  /** D7: switch chunk sleeping on or off before the first step (default: the sim's own default, on). */
+  sleep?: boolean;
+  /** D8: also record the state hash straight after init, as tick 0. */
+  hashTick0?: boolean;
+  /** M5: keep every event so a test can assert the script really exercised damage, death and bags. */
+  collectEvents?: boolean;
 }
 
 const h64 = (n: bigint) => n.toString(16).padStart(16, "0");
@@ -35,7 +44,10 @@ export function run(
 ): RunResult {
   const sim = loadSim(simBytes, imports);
   sim.init(BigInt(script.seed), script.world_kind);
+  if (opts.sleep !== undefined) sim.setSleepEnabled(opts.sleep);
   const hashes: [number, string][] = [];
+  if (opts.hashTick0) hashes.push([0, h64(sim.stateHash())]);
+  const events: (SimEvent & { tick: number })[] = [];
   const b = opts.batching ?? { kind: "each" };
 
   // Inputs for tick t go in before the step that produces tick t (the queue is
@@ -45,6 +57,7 @@ export function run(
   const doTick = () => {
     for (const hx of script.inputs[String(t)] ?? []) sim.pushInput(unhex(hx));
     sim.step();
+    if (opts.collectEvents) for (const e of sim.events()) events.push({ ...e, tick: t });
     // "each" also reads the hash every tick: reading must never perturb state.
     if (b.kind === "each" && t % 60 !== 0) sim.stateHash();
     if (t % 60 === 0) hashes.push([t, h64(sim.stateHash())]);
@@ -56,5 +69,7 @@ export function run(
     else if (b.kind === "burst") n = t === b.at ? b.len : 1;
     for (let i = 0; i < n && t <= script.ticks; i++) doTick();
   }
-  return { hashes, finalChunkHashes: Array.from(sim.chunkHashes(), h64) };
+  const out: RunResult = { hashes, finalChunkHashes: Array.from(sim.chunkHashes(), h64) };
+  if (opts.collectEvents) out.events = events;
+  return out;
 }

@@ -36,6 +36,50 @@ pub const SALT_LAVA_DIAG: u32 = 21;
 pub const SALT_LAVA_SIDE: u32 = 22;
 pub const SALT_LAVA_IGNITE: u32 = 23;
 
+pub const SALT_GEN_SURF_A: u32 = 100;
+pub const SALT_GEN_SURF_B: u32 = 101;
+pub const SALT_GEN_SURF_C: u32 = 102;
+pub const SALT_GEN_DIRT: u32 = 103;
+pub const SALT_GEN_CAVE_A: u32 = 104;
+pub const SALT_GEN_CAVE_B: u32 = 105;
+pub const SALT_GEN_WARP_X: u32 = 106;
+pub const SALT_GEN_WARP_Y: u32 = 107;
+pub const SALT_GEN_DETAIL: u32 = 108;
+pub const SALT_GEN_ENTRANCE: u32 = 109;
+pub const SALT_GEN_WORM_DY: u32 = 110;
+pub const SALT_GEN_WORM_DX: u32 = 111;
+pub const SALT_GEN_WORM_R: u32 = 112;
+pub const SALT_GEN_WORM_DRIFT: u32 = 113;
+pub const SALT_GEN_WORM_BRANCH: u32 = 114;
+pub const SALT_GEN_HWORM: u32 = 115;
+
+pub const SALT_GEN_DIRTLINE: u32 = 116;
+pub const SALT_GEN_SAND_X: u32 = 117;
+pub const SALT_GEN_SAND_Y: u32 = 118;
+pub const SALT_GEN_SAND_R: u32 = 119;
+pub const SALT_GEN_GP_X: u32 = 120;
+pub const SALT_GEN_GP_Y: u32 = 121;
+pub const SALT_GEN_GP_R: u32 = 122;
+pub const SALT_GEN_WATER_X: u32 = 123;
+pub const SALT_GEN_WATER_Y: u32 = 124;
+pub const SALT_GEN_WATER_D: u32 = 125;
+pub const SALT_GEN_LAVA_X: u32 = 126;
+pub const SALT_GEN_LAVA_Y: u32 = 127;
+pub const SALT_GEN_LAVA_D: u32 = 128;
+pub const SALT_GEN_TREE_X: u32 = 129;
+pub const SALT_GEN_TREE_H: u32 = 130;
+pub const SALT_GEN_TREE_BR: u32 = 131;
+pub const SALT_GEN_SPOT_X: u32 = 132;
+pub const SALT_GEN_SPOT_Y: u32 = 133;
+pub const SALT_GEN_LINK: u32 = 134;
+pub const SALT_GEN_ENTRANCE_BAND: u32 = 135;
+pub const SALT_STEM_LEAN: u32 = 143;
+pub const SALT_STEM_BRANCH: u32 = 144;
+pub const SALT_STEM_BLOOM: u32 = 145;
+pub const SALT_SPAWN_X: u32 = 140;
+pub const SALT_PICKUP_SPELL: u32 = 141;
+pub const SALT_BURST: u32 = 142;
+
 #[cfg(test)]
 mod tests {
     use super::*;

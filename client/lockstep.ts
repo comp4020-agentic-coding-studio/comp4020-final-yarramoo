@@ -1,8 +1,16 @@
 // Playout buffer and apply loop (plan 7.1). No DOM, no worker APIs: shared by the worker and the Node tests.
 // The sim only ever advances through closed ticks from the server: push that tick's inputs in the listed
 // order, then step once. TypeScript writes sim state only through push_input (invariant 1).
-import { compressSnapshot, decompressSnapshot, HASH_EVERY, simInputBytes, type TickInput } from "../shared/protocol.ts";
+import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawFor, simInputBytes, WORLD_GAME, WORLD_SANDBOX, type TickInput } from "../shared/protocol.ts";
 import type { Sim } from "../shared/sim.ts";
+
+/** Review M4b S2: a Knock older than this many ticks behind the live edge is dropped (a stalled tab's backlog). */
+export const KNOCK_FRESH_TICKS = 6;
+/** The sim never moves anyone for a Knock, so skipping a stale one desyncs nothing; it only avoids a fling. */
+export const knockIsFresh = (tick: number, latestClosed: number): boolean => tick >= latestClosed - KNOCK_FRESH_TICKS;
+
+/** Checkpoints of per-chunk hashes a client keeps for a desync diagnosis (plan 6.10, D-126). About 30 KB in the game world. */
+export const CHUNK_RING = 5;
 
 /** Target buffer depth, in ticks. */
 export const J = 2;
@@ -19,9 +27,22 @@ export class Lockstep {
   /** True while playing live; drops to false when the buffer runs dry, back to true once J ticks are queued. */
   private playing = false;
   onStepped: ((tick: number, inputs: TickInput[]) => void) | null = null;
+  /** Chunk hashes at the last CHUNK_RING checkpoints this client hashed, oldest first. Read-only diagnostics (invariant 9). */
+  private readonly chunkRing: { tick: number; hashes: BigUint64Array }[] = [];
 
   constructor(sim: Sim) {
     this.sim = sim;
+  }
+
+  /** Keep the sim's per-chunk hashes for `tick` (call right after `stateHash`, which has just refreshed them). */
+  recordChunkHashes(tick: number): void {
+    this.chunkRing.push({ tick, hashes: this.sim.chunkHashes() });
+    while (this.chunkRing.length > CHUNK_RING) this.chunkRing.shift();
+  }
+
+  /** The chunk hashes recorded for `tick`, or null when it has left the ring (or was never hashed here). */
+  chunkHashesAt(tick: number): BigUint64Array | null {
+    return this.chunkRing.find((e) => e.tick === tick)?.hashes ?? null;
   }
 
   get simTick(): number {
@@ -43,7 +64,9 @@ export class Lockstep {
 
   /** Start from a server snapshot: replace the sim state (restore) and expect ticks from snapshot tick + 1. */
   loadSnapshot(compressed: Uint8Array, tick: number): void {
-    this.sim.restore(decompressSnapshot(compressed));
+    // The world's size (set by init before any snapshot arrives) tells which ceiling applies.
+    const kind = this.sim.width() * this.sim.height() > 512 * 512 ? WORLD_GAME : WORLD_SANDBOX;
+    this.sim.restore(decompressSnapshot(compressed, maxSnapshotRawFor(kind)));
     if (this.sim.tick() !== tick) throw new Error(`snapshot tick mismatch: ${this.sim.tick()} vs ${tick}`);
     this.queue.clear();
     this.received = tick;
@@ -120,7 +143,10 @@ export interface TickReactions {
 export function reactToTick(ls: Lockstep, tick: number, wantSnapshotAt: number): TickReactions {
   const out: TickReactions = {};
   if (tick <= ls.catchUpTarget) return out;
-  if (tick % HASH_EVERY === 0) out.hash = ls.sim.stateHash();
+  if (tick % HASH_EVERY === 0) {
+    out.hash = ls.sim.stateHash();
+    ls.recordChunkHashes(tick);
+  }
   if (tick === wantSnapshotAt) {
     out.snapshot = { hash: out.hash ?? ls.sim.stateHash(), data: ls.compressedSnapshot() };
   }

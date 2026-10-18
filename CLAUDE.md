@@ -62,6 +62,37 @@ A delegated task still follows the dispatch cap above, and its brief says
 which files it may touch. Review what comes back before it's pushed: the
 cheaper model writes the code, but the session model answers for it.
 
+### Architectural decisions go to review, not straight in
+
+Every delegated brief asks for a section "Architectural decisions for review":
+each choice that shapes code later milestones build on, with what was chosen,
+the alternatives, why, and what it costs later. When a worker is unsure about a
+hard-to-reverse choice it takes the more reversible option and flags it. The
+session model reviews these before pushing; anything it would change goes back
+to the same worker, and anything that changes the design gets a row in
+`docs/DECISIONS.md`.
+
+Slices that set structure (a milestone's core, anything touching the shared
+input path, the snapshot format or the ABI) also get an independent Sonnet
+reviewer that reads the diff cold and writes to `docs/research/review-*.md`.
+Its findings are checked against the code before they're acted on. The M3
+review found a snapshot buffer overrun and a server stall that every test had
+passed over.
+
+Name commit boundaries in a brief as a checklist. Left as a suggestion, a
+worker landed one slice as a single 1000-line commit (D-046).
+
+### A test that passes on a retry is a bug, and `&&` is not a gate
+
+A merge was committed on a red `pnpm test:net` run because the commit was
+chained after the test with `;`, so it ran whatever the test said (`d24bf69`).
+Gate commits on the exit code (`pnpm test:net && git commit ...`), and never
+on output piped through `grep`, which exits 0 whatever the tests did. A test
+that fails one run in three is a real defect: in lockstep code, intermittent
+means a race until shown otherwise. Find which assertion is timing-dependent
+before calling it flaky. The first one turned out to compare two independent
+clocks' tick numbers.
+
 ## Log good ideas in `FUTURE.md`
 
 When a good idea for a feature turns up and isn't part of the current task,
@@ -72,6 +103,16 @@ from, and why it might be worth doing. Nothing obliges an entry, and an entry
 obliges no work: the file exists so a good idea outlives the session that had
 it. Delegated workers can suggest ideas in their reports; the session model
 decides what goes in.
+
+## Record the big decisions in `docs/engineering-decisions.md`
+
+Every decision still gets its row in `docs/DECISIONS.md`. A decision or
+challenge also gets an entry in `docs/engineering-decisions.md` when it shapes
+the architecture or code later milestones build on, costs real time, overturns
+an earlier belief, or is something a reviewer or marker would ask about. Write
+the entry in the same batch of work as the change, not afterwards, and link it
+to its D-rows, research notes and commits. When a later finding corrects an
+entry, update it and keep the correction visible rather than rewriting history.
 
 ## Open it and look
 
@@ -150,3 +191,28 @@ come into existence.
   input, so one huge `Paint` freezes the whole room. The sim clamps paint
   endpoints to the world and the radius to `MAX_PAINT_RADIUS`; new input kinds
   need the same bound.
+
+## Server logging and identity
+
+- **Every server-side action logs through `log.event`** (`server/log.ts`) with a
+  name from the catalogue in `shared/events.ts`. No `console.*` in `server/`.
+  Anything a client can trigger repeatedly goes through `log.limited`, or one
+  client floods the ring the admin dashboard reads. Never log one line per
+  input: per-input counts go into `input.summary`.
+- **Never log a raw IP or a token.** Use `log.ipTag(ip)`.
+- **Players only ever see the plain name they chose.** `name#id` is for logs,
+  the database and the admin dashboard. The public `/dashboard` and
+  `/api/summary` show aggregates only.
+- **`server/` and `shared/` never import from `client/`.** The runtime image
+  copies only `server/` and `shared/`, so such an import passes every test and
+  crashes the deploy (review crit 10 S1). `tests/net/imports.test.ts` checks it.
+- **CI does not run on `multa`**, only on `main` and pull requests. Before a
+  merge, build and boot the real Docker image, or let a PR's CI run do it.
+- **Every `rm` names an explicit, literal absolute path.** Never `rm -rf $DIR/*`,
+  a glob on a variable, or a path relative to an earlier `cd`: an empty variable
+  turns it into `rm -rf /*`. Print a computed path first, then remove it by its
+  literal value. Prefer `git worktree remove` and `docker rm` where a tool owns
+  the cleanup. Briefs to workers carry this rule too.
+- **Probe output from a passing vitest test is swallowed.** Write to a file
+  under `/tmp` instead of `console.log` when measuring something mid-test. A
+  test written to catch a bug must be shown red without the fix first.

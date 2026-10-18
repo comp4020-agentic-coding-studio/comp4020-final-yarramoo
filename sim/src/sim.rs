@@ -1,9 +1,12 @@
 //! The simulation instance: grid + tick + queued inputs.
 
+use crate::entities::{self, Bag, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
 use crate::materials::*;
+use crate::rng::{rng, SALT_PICKUP_SPELL, SALT_SPAWN_X};
+use crate::tuning::*;
 
 pub const SANDBOX_W: usize = 512;
 pub const SANDBOX_H: usize = 512;
@@ -13,24 +16,70 @@ const FLOOR_ROWS: usize = 16;
 const WALL_COLS: usize = 16;
 pub const MAX_PAINT_RADIUS: i32 = 32;
 
+/// The pristine generated world for one (seed, kind): derived data, not state. It is never hashed or
+/// snapshotted, so a hit and a miss give identical results (D-088). Game worlds only; one per instance.
+pub struct Base {
+    pub seed: u64,
+    pub world_kind: u8,
+    pub mat: Vec<u8>,
+    pub aux: Vec<u8>,
+    pub pickups: Vec<Pickup>,
+}
+
 pub struct Sim {
     pub seed: u64,
     pub world_kind: u8,
     pub tick: u32,
     pub grid: Grid,
     queue: Vec<Input>,
+    /// Player entities, sorted by id (game worlds only; the sandbox has none). State: hashed and snapshotted.
+    pub players: Vec<Player>,
+    /// Pickups created by generation, in id order (game worlds only). State.
+    pub pickups: Vec<Pickup>,
+    /// Bolts in flight, in spawn order (game worlds only). State: hashed and snapshotted.
+    pub projectiles: Vec<Projectile>,
+    /// Dropped bags, in spawn order (game worlds only; the sandbox has none). State: hashed and snapshotted.
+    pub bags: Vec<Bag>,
+    /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
+    pub events: Vec<Event>,
+    /// Cache of the generated world, so `restore` need not regenerate it. Not state.
+    pub base: Option<Base>,
 }
 
 impl Sim {
     /// Generate a world, tick = 0. Returns None for an unknown `world_kind`.
     pub fn new(seed: u64, world_kind: u8) -> Option<Sim> {
+        Self::new_with_base(seed, world_kind, None)
+    }
+
+    /// As `new`, but a game world whose (seed, kind) matches `base` is copied from it instead of generated.
+    pub fn new_with_base(seed: u64, world_kind: u8, base: Option<&Base>) -> Option<Sim> {
         let (w, h) = match world_kind {
             0 => (SANDBOX_W, SANDBOX_H),
-            // Game worlds get their real generator in M3; until then they are an empty box.
             1 => (GAME_W, GAME_H),
             _ => return None,
         };
         let mut grid = Grid::new(w, h);
+        if let Some(b) = base.filter(|b| b.seed == seed && b.world_kind == world_kind && b.mat.len() == w * h && b.aux.len() == w * h) {
+            grid.mat.copy_from_slice(&b.mat);
+            grid.aux.copy_from_slice(&b.aux);
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: b.pickups.clone(), projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: None });
+        }
+        if world_kind == 1 {
+            let spots = crate::gen::generate(&mut grid, seed);
+            let pickups: Vec<Pickup> = spots
+                .iter()
+                .enumerate()
+                .map(|(i, sp)| {
+                    // Shallow spots give Water or Rose seed, deep spots Fire bolt or Bomb (plan 6.7).
+                    let pick = (rng(seed, 0, i as u32, 0, SALT_PICKUP_SPELL) & 1) as u8;
+                    let spell = 2 + 2 * sp.band + pick;
+                    Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
+                })
+                .collect();
+            let base = Base { seed, world_kind, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone() };
+            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: Some(base) });
+        }
         for y in 0..h {
             for x in 0..w {
                 if y >= h - FLOOR_ROWS || x < WALL_COLS || x >= w - WALL_COLS {
@@ -38,7 +87,7 @@ impl Sim {
                 }
             }
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new() })
+        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: None })
     }
 
     /// 0 on success, negative if malformed (input is then dropped).
@@ -52,12 +101,32 @@ impl Sim {
         }
     }
 
+    /// One tick, in this order (D-102):
+    /// 1. inputs
+    /// 2. `update_entities`: projectiles, then respawns, then bags (expire, fall, take), then pickups
+    /// 3. `refresh_active`
+    /// 4. `grid.step_cells`
+    /// 5. grid explosions -> `explode_at` (damage, knockback, `EV_EXPLODE`)
+    /// 6. hazard scan (lava, fire contact)
+    ///
+    /// Damage and death happen inside 5 and 6.
     pub fn step(&mut self) -> u32 {
+        self.events.clear();
         let inputs = core::mem::take(&mut self.queue);
         for i in inputs {
             self.apply(i);
         }
+        self.update_entities();
+        self.refresh_active();
         self.grid.step_cells(self.seed, self.tick);
+        if self.world_kind != 0 {
+            let centres = core::mem::take(&mut self.grid.explosions);
+            for &(cx, cy) in &centres {
+                self.explode_at(cx as i32, cy as i32, crate::grid::BLAST_RADIUS, 0, CAUSE_GUNPOWDER);
+            }
+            self.grid.explosions = centres;
+            self.hazard_scan();
+        }
         #[cfg(feature = "canary")]
         {
             // Test D10: the only host import. Must make the build fail the zero-imports check.
@@ -73,15 +142,132 @@ impl Sim {
         self.tick
     }
 
+    /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks that intersect the 576 x 320
+    /// rectangle around an ACTIVE player's official position; with no active player nothing updates
+    /// (the world is frozen). The centres come from entity state, which is hashed and snapshotted, so
+    /// every client agrees on the set.
+    fn refresh_active(&mut self) {
+        if self.world_kind == 0 {
+            self.grid.set_all_active();
+            return;
+        }
+        let centres: Vec<(i32, i32)> =
+            self.players.iter().filter(|p| p.active).map(|p| (p.x >> POS_SHIFT, p.y >> POS_SHIFT)).collect();
+        self.grid.set_active_around(&centres);
+    }
+
+    fn player_index(&self, id: u32) -> Result<usize, usize> {
+        self.players.binary_search_by_key(&id, |p| p.id)
+    }
+
     fn apply(&mut self, i: Input) {
         match i {
             Input::Paint { mat, x0, y0, x1, y1, radius, .. } => {
-                if self.world_kind == 0 {
+                if self.world_kind == 0 || cfg!(feature = "dev_paint") {
                     self.paint(mat, x0 as i32, y0 as i32, x1 as i32, y1 as i32, radius as i32);
                 }
             }
-            // Entities arrive in a later milestone; accepted and ignored for now.
-            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } => {}
+            // Players live in game worlds only: a sandbox visitor has no entity to grow without bound.
+            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } if self.world_kind == 0 => {}
+            Input::Join { player } => self.join(player),
+            Input::Leave { player } => {
+                if let Ok(k) = self.player_index(player) {
+                    self.players[k].active = false;
+                }
+            }
+            Input::Pos { player, life, x, y, facing } => {
+                if let Ok(k) = self.player_index(player) {
+                    let p = &mut self.players[k];
+                    // A stale `life` is ignored, so a dead avatar's old position cannot override a respawn.
+                    // An inactive player is ignored too. Clamped to the world: the work stays bounded.
+                    // A dead player (health 0) is ignored as well: the corpse stays where it fell, and a
+                    // client that keeps sending Pos while dead cannot move it before the respawn.
+                    if p.active && p.health > 0 && p.life == life {
+                        p.x = x.clamp(0, (self.grid.w as i32 - 1) * POS_ONE);
+                        p.y = y.clamp(0, (self.grid.h as i32 - 1) * POS_ONE);
+                        p.facing = facing & 1;
+                    }
+                }
+            }
+            Input::Cast { player, spell, angle, cast_seq } => self.cast(player, spell, angle, cast_seq),
+        }
+    }
+
+    fn join(&mut self, id: u32) {
+        if id == 0 {
+            return;
+        }
+        let k = match self.player_index(id) {
+            Ok(k) => k,
+            Err(at) => {
+                if self.players.len() >= MAX_PLAYERS {
+                    return;
+                }
+                let (x, y) = self.spawn_point(id);
+                self.players.insert(at, Player::new(id, x, y));
+                at
+            }
+        };
+        let p = &mut self.players[k];
+        p.active = true;
+        let ev = Event { kind: EV_SPAWN, player: id, a: p.x, b: p.y, c: i32::from(p.life) };
+        self.events.push(ev);
+    }
+
+    /// Centre of the surface plus an rng offset: the first column from a few candidates whose hitbox
+    /// has clear air above solid ground (trees and overhangs are skipped). Pure function of state.
+    pub(crate) fn spawn_point(&self, id: u32) -> (i32, i32) {
+        let g = &self.grid;
+        let (w, h) = (g.w as i32, g.h as i32);
+        let first = (rng(self.seed, self.tick, id, 0, SALT_SPAWN_X) % (2 * SPAWN_JITTER + 1)) as i32 - SPAWN_JITTER as i32;
+        let mut best = (w / 2 * POS_ONE + POS_ONE / 2, (h / 2) * POS_ONE);
+        for k in 0..16 {
+            let col = (w / 2 + first + 7 * k).clamp(3, w - 4);
+            let Some(ground) = (0..h).find(|&y| matches!(g.mat[(y * w + col) as usize], DIRT | ROCK | SAND | BEDROCK)) else {
+                continue;
+            };
+            let clear = ground >= HITBOX_H
+                && (col - 2..=col + 2).all(|x| (ground - HITBOX_H..ground).all(|y| g.mat[(y * w + x) as usize] == EMPTY));
+            best = (col * POS_ONE + POS_ONE / 2, ground * POS_ONE);
+            if clear {
+                break;
+            }
+        }
+        best
+    }
+
+    /// Plan 6.2 step 2: pickups (players move only through Pos inputs). Players by id, pickups by id,
+    /// so two players on one pickup resolve to the lower id.
+    fn update_entities(&mut self) {
+        self.update_projectiles();
+        let tick = self.tick;
+        // Respawns come first, in id order, whether or not the player is still active: a player who
+        // left while dead must not stay dead.
+        for k in 0..self.players.len() {
+            let p = &self.players[k];
+            if p.health == 0 && tick >= p.dead_until {
+                let id = p.id;
+                self.respawn_player(id);
+            }
+        }
+        self.update_bags();
+        if self.pickups.is_empty() {
+            return;
+        }
+        for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            for k in self.pickups.iter_mut() {
+                let (kx, ky) = (i32::from(k.x), i32::from(k.y));
+                if tick < k.respawn_at || kx < x0 || kx > x1 || ky < y0 || ky > y1 {
+                    continue;
+                }
+                let c = &mut p.charges[k.spell as usize];
+                if *c != INFINITE {
+                    *c = c.saturating_add(k.charges).min(INFINITE - 1);
+                }
+                k.respawn_at = tick.wrapping_add(PICKUP_RESPAWN);
+                self.events.push(Event { kind: EV_PICKUP, player: p.id, a: i32::from(k.id), b: i32::from(k.spell), c: i32::from(k.charges) });
+            }
         }
     }
 
@@ -119,8 +305,12 @@ impl Sim {
         }
     }
 
+    /// Canonical entity bytes (plan 6.10): players by id, then pickups. In the state hash and snapshots.
     pub fn entity_bytes(&self) -> Vec<u8> {
-        Vec::new()
+        if self.world_kind == 0 {
+            return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
+        }
+        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags)
     }
 
     pub fn state_hash(&mut self) -> u64 {

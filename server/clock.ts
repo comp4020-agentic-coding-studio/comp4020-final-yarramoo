@@ -42,6 +42,14 @@ export class TickClock {
     this.closed = tick;
   }
 
+  /** Admin reset: forget everything, including inputs stamped but not yet closed. Pauses without advancing, so no tick closes on the way. */
+  reset(): void {
+    this.paused = true;
+    this.open = [];
+    this.closed = 0;
+    this.baseTick = 0;
+  }
+
   /** Shutdown only: close whatever is open right now, even mid-tick, so nothing stamped is lost. */
   closeNow(): void {
     this.advance();
@@ -84,4 +92,17 @@ export class TickClock {
     this.open.push(input);
     return this.closed + 1;
   }
+
+  /** Inputs already in the open tick. */
+  get openCount(): number {
+    return this.open.length;
+  }
 }
+
+/**
+ * Most client inputs one tick may carry. The TICK frame stores its input count as a u16, so a tick past 65535
+ * inputs would encode a wrapped count, every client would misparse it, and the frame is persisted. Normal play is a
+ * few per tick (64 members at 40/s over 60 ticks/s); this backstop sits far above that (review catch-up N1).
+ * Server-stamped Join and Leave are not capped, so `encodeTick` keeps its own hard check too.
+ */
+export const MAX_CLIENT_INPUTS_PER_TICK = 4096;

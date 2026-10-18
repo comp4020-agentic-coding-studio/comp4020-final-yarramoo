@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canaryPath, readWasm, sh, sharedScript, wasmPath } from "./helpers.ts";
+import { canaryPath, castScript, readWasm, sh, sharedScript, wasmPath } from "./helpers.ts";
 import { compare } from "./compare.ts";
 import { readWasm as _r } from "./helpers.ts";
 import { run } from "./run.ts";
@@ -11,6 +11,15 @@ describe("native and static guards", () => {
     const native = (JSON.parse(out) as [number, string][]).map(([t, h]): [number, string] => [t, h]);
     const wasm = run(readWasm(wasmPath), script);
     expect(native).toHaveLength(30);
+    expect(compare({ hashes: native, finalChunkHashes: [] }, { hashes: wasm.hashes, finalChunkHashes: [] }, ["native", "wasm"])).toBeNull();
+  });
+
+  it("D3 with casts: native Rust equals WASM in a game world with players and bolts", () => {
+    const { script, path } = castScript();
+    const out = sh("cargo", ["run", "--quiet", "--release", "--manifest-path", "sim/Cargo.toml", "--example", "run_script", "--", path]);
+    const native = (JSON.parse(out) as [number, string][]).map(([t, h]): [number, string] => [t, h]);
+    const wasm = run(readWasm(wasmPath), script);
+    expect(native).toHaveLength(15);
     expect(compare({ hashes: native, finalChunkHashes: [] }, { hashes: wasm.hashes, finalChunkHashes: [] }, ["native", "wasm"])).toBeNull();
   });
 

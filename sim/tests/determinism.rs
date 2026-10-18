@@ -119,3 +119,54 @@ fn reference_script_hashes() {
     println!("REFERENCE_HASHES {:?}", h);
     assert_eq!(h, run_script_json(json));
 }
+
+#[test]
+fn snapshot_size_matches_write_and_restore_rejects_crafted_counts() {
+    let mut s = sim::sim::Sim::new(9, 0).unwrap();
+    s.push_input(&encode_paint(1, 4, 100, 100, 300, 300, 8));
+    s.step();
+    let snap = sim::snapshot::write(&s);
+    assert_eq!(sim::snapshot::size(&s), snap.len());
+    assert!(sim::snapshot::restore(&snap).is_ok());
+    // Chunk count field sits after the 55-byte header and the 4-byte entity length.
+    for n in [u32::MAX, 0x0001_0000, 65, 64 * 64] {
+        let mut bad = snap.clone();
+        bad[59..63].copy_from_slice(&n.to_le_bytes());
+        assert!(sim::snapshot::restore(&bad).is_err(), "count {n} accepted");
+    }
+}
+
+
+/// The reported bug (D-081, D-082): a heap of lava painted against the sandbox's right wall settled into
+/// chunk-edge steps for minutes. Measured on the real path (`Sim::step`, the 512 x 512 sandbox, the
+/// strokes used to reproduce it in the browser). Before dispersion the surface still spanned 46 rows at
+/// tick 16000; now it is flat.
+#[test]
+fn lava_heap_levels_in_the_sandbox() {
+    let mut s = sim::sim::Sim::new(1, 0).unwrap();
+    for y in (120..=470).step_by(25) {
+        s.push_input(&encode_paint(1, 14, 420, y, 490, y, 16));
+    }
+    for _ in 0..16_000 {
+        s.step();
+    }
+    let w = s.grid.w;
+    let tops: Vec<usize> = (16..w - 16)
+        .filter_map(|x| (0..s.grid.h).find(|&y| s.grid.mat[y * w + x] == 14))
+        .collect();
+    let spread = tops.iter().max().unwrap() - tops.iter().min().unwrap();
+    assert!(spread <= 2, "lava surface still spans {spread} rows at tick 16000");
+}
+
+/// Every generated world gets its full set of pickup spots (plan 6.9: about 40 shallow, 25 deep). Deep
+/// pickups are the only source of Fire bolt and Bomb, so a short world is a weaker world. A tuning change
+/// once cut the search from 4000 tries to 400 and left 3 of 12 seeds short in the deep band.
+#[test]
+fn every_world_gets_its_full_set_of_pickups() {
+    for seed in 1..=12u64 {
+        let s = sim::sim::Sim::new(seed, 1).unwrap();
+        let shallow = s.pickups.iter().filter(|p| p.y < 800).count();
+        let deep = s.pickups.len() - shallow;
+        assert_eq!((shallow, deep), (40, 25), "seed {seed} has {shallow} shallow and {deep} deep pickups");
+    }
+}
