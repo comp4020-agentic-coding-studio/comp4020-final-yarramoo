@@ -4,16 +4,6 @@ Ideas worth keeping that aren't being built yet. Add one whenever it comes up,
 while developing or while looking at other sites. Say where it came from and
 why it might be worth doing. Nothing here is a commitment.
 
-## Pause the world while a lone visitor catches up
-
-While the only client is still replaying, hold the tick clock, so the log stops
-growing under them, as OpenTTD's `pause_on_join` does. It needs a message from
-the client saying "I'm live", since it sends no HASH until then.
-
-- **Source:** `docs/research/snapshot-timing.md` fix (g), 2026-10-18.
-- **Why:** it is the real fix for slow phones. Without it, a phone may never
-  catch up to a log that keeps growing at 60 ticks/s while it replays.
-
 ## Snapshot from a client mid-replay
 
 Let a client that is still catching up upload a snapshot at an already-closed

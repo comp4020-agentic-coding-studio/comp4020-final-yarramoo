@@ -431,11 +431,13 @@ minutes; that is inferred, because visit lengths were not logged then.
 
 **What changed.** The 200,000-tick cap was a real trap: above it every join was
 refused, so no snapshot was possible at all. That fix stands. The note, the
-D-row and this entry all keep the correction visible. The real cures, pausing the
-clock for a lone catching-up visitor and snapshotting mid-replay, are in
+D-row and this entry all keep the correction visible. Of the two real cures,
+pausing the clock while every member is still catching up is now built (D-122,
+protocol v7 `C_LIVE`): the log stops growing under a lone joiner, and a
+snapshot follows soon after they go live. Snapshotting mid-replay is still in
 [FUTURE.md](../FUTURE.md) and not built.
 
-**Evidence.** D-100, D-101; [snapshot-timing.md](research/snapshot-timing.md);
+**Evidence.** D-100, D-101, D-122; [snapshot-timing.md](research/snapshot-timing.md);
 [`c895a35`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/c895a35),
 [`dbe8495`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/dbe8495),
 [`70355c5`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/70355c5),
