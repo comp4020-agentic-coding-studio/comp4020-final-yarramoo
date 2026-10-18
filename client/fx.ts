@@ -177,6 +177,8 @@ export interface Particle {
   b: number;
   /** Downward pull, cells per ms^2 (cosmetic). */
   grav: number;
+  /** Drawn as a disc (one strip per row) rather than a square: a big flash as one square read as a square crater. */
+  round?: boolean;
 }
 
 const MAX_PARTICLES = 600;
@@ -215,7 +217,17 @@ export class Particles {
   toRects(out: Rect[]): void {
     for (const p of this.list) {
       const k = 1 - p.age / p.life;
-      out.push({ x: Math.round(p.x - p.size / 2), y: Math.round(p.y - p.size / 2), w: p.size, h: p.size, r: p.r, g: p.g, b: p.b, a: Math.min(1, k * 1.4) });
+      const a = Math.min(1, k * 1.4);
+      if (p.round && p.size > 2) {
+        const rad = p.size / 2;
+        const cy = Math.round(p.y);
+        for (let dy = -Math.floor(rad); dy <= Math.floor(rad); dy++) {
+          const half = Math.floor(Math.sqrt(rad * rad - dy * dy));
+          out.push({ x: Math.round(p.x) - half, y: cy + dy, w: 2 * half + 1, h: 1, r: p.r, g: p.g, b: p.b, a });
+        }
+        continue;
+      }
+      out.push({ x: Math.round(p.x - p.size / 2), y: Math.round(p.y - p.size / 2), w: p.size, h: p.size, r: p.r, g: p.g, b: p.b, a });
     }
   }
 
@@ -295,8 +307,8 @@ export class Particles {
    */
   explosion(x: number, y: number, radius: number): void {
     const big = Math.min(1, radius / 18);
-    this.add({ x, y, vx: 0, vy: 0, life: 70, size: Math.max(6, Math.round(radius * 1.2)), r: 1, g: 1, b: 0.9, grav: 0 });
-    this.add({ x, y, vx: 0, vy: 0, life: 150, size: Math.max(4, Math.round(radius * 0.8)), r: 1, g: 0.8, b: 0.35, grav: 0 });
+    this.add({ x, y, vx: 0, vy: 0, life: 70, size: Math.max(6, Math.round(radius * 1.2)), r: 1, g: 1, b: 0.9, grav: 0, round: true });
+    this.add({ x, y, vx: 0, vy: 0, life: 150, size: Math.max(4, Math.round(radius * 0.8)), r: 1, g: 0.8, b: 0.35, grav: 0, round: true });
     const ring = 10 + Math.round(26 * big);
     const speed = (radius / 260) * 1.0; // the outer ring reaches about `radius` cells in 260 ms
     for (let i = 0; i < ring; i++) {
