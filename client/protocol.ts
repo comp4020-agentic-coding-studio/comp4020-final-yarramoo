@@ -11,7 +11,7 @@ export type ToWorker =
       width: number;
       height: number;
       /** Dev: run a local single-player sim of this world kind instead of connecting (no networking). */
-      local?: { kind: number; seed: string };
+      local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean };
       /** Which server world to join: 0 sandbox, 1 game. */
       worldId: number;
       /** The player token, 64 hex characters, or "" (spectators and the sandbox send none). */
@@ -62,7 +62,11 @@ export type FromWorker =
   /** Game world, about 30 Hz: who to draw labels for, where the camera is, and avatar state. */
   | {
       type: "players";
-      list: { id: number; name: string; x: number; y: number; me: boolean }[];
+      list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean }[];
+      /** My own health and death countdown (null respawnTicks: unknown, e.g. I joined while dead). Render-only. */
+      me: { health: number; dead: boolean; respawnTicks: number | null } | null;
+      /** Dropped bags as the entities() view gives them: cell centre in cells and total charges. Render-only. */
+      bags: { x: number; y: number; total: number }[];
       cam: { x: number; y: number };
       /** The worker is steering the camera (avatar or followed player); otherwise the main thread pans freely. */
       following: boolean;
@@ -71,4 +75,6 @@ export type FromWorker =
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
     }
+  /** A line for the death feed, already formatted from a plain-name death event. */
+  | { type: "toast"; text: string }
   | { type: "error"; error: string };

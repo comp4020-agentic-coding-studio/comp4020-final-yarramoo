@@ -1,7 +1,7 @@
 // Main thread: DOM (palette, brush), pointer forwarding, and the main-thread render fallback.
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
-import { BAR, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
+import { BAR, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -72,6 +72,8 @@ const spectate = worldId === 1 && (params.get("spectate") === "1" || (matchMedia
 document.body.classList.toggle("game", worldId === 1);
 // Dev-only: the production build serves no sim-dev.wasm, so the route must not exist there.
 const localKind = import.meta.env.DEV && params.get("world") === "game" ? 1 : null;
+/** Dev route + ?avatar=1: a local avatar (player 1) that can cast and die; painting then goes through window.__devPaint. */
+const devAvatar = localKind !== null && params.get("avatar") === "1";
 if (localKind === null) $("title").textContent = worldId === 1 ? "Game world" : "Sandbox";
 $("navGame").setAttribute("aria-current", worldId === 1 ? "page" : "false");
 $("navSandbox").setAttribute("aria-current", worldId === 0 ? "page" : "false");
@@ -149,7 +151,7 @@ let selectedSpell = 0;
 let castHeld = false;
 let aimAt: { x: number; y: number } | null = null;
 /** Only a player in the networked game world casts; the sandbox paints and a spectator watches. */
-const castsOnClick = () => worldId === 1 && !spectate && localKind === null && worldKind === 1;
+const castsOnClick = () => worldId === 1 && !spectate && (localKind === null || devAvatar) && worldKind === 1;
 
 /** Angle from my chest to the pointer, quantised to u16 here so the input never carries a float (invariant 2). */
 function castNow() {
@@ -190,6 +192,7 @@ function attachPointer(c: HTMLCanvasElement) {
   const post = (kind: "down" | "move" | "up", e: PointerEvent) => {
     // The game world has no painting: Paint is sandbox-only (the dev route aside).
     if (worldKind !== 0 && localKind === null) return;
+    if (devAvatar) return;
     const p = toCell(e);
     send({ type: "pointer", kind, x: p.x, y: p.y, mat: selected, radius });
   };
@@ -274,7 +277,7 @@ function attachPointer(c: HTMLCanvasElement) {
 // Keyboard pan (arrows / WASD, Shift for faster); Tab or O toggles the whole-world overview (game worlds).
 const held = new Set<string>();
 /** In the networked game world with an avatar, movement keys steer it; everywhere else they pan the camera. */
-const steersAvatar = () => worldId === 1 && !spectate && localKind === null;
+const steersAvatar = () => worldId === 1 && !spectate && (localKind === null || devAvatar);
 let following = true;
 function sendKeys() {
   send({
@@ -287,7 +290,7 @@ function sendKeys() {
 addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   const k = e.key.toLowerCase();
-  if (castsOnClick() && k >= "1" && k <= "4") {
+  if (castsOnClick() && k >= "1" && k <= String(BAR.length)) {
     selectedSpell = BAR[Number(k) - 1];
     renderSpellBar();
     return;
@@ -402,6 +405,9 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     case "players":
       onPlayers(m);
       break;
+    case "toast":
+      addToast(m.text);
+      break;
     case "stats":
       lastStats = m;
       renderInfo();
@@ -439,8 +445,30 @@ stage.append(labels);
 const hud = document.createElement("div");
 hud.id = "hud";
 hud.hidden = true;
-hud.innerHTML = '<span>Levitate</span><div class="bar"><i></i></div>';
+hud.innerHTML = '<span>Levitate</span><div class="bar"><i></i></div><span>Health</span><div class="bar hp"><i></i></div>';
 stage.append(hud);
+// Death overlay (dims the canvas and counts down), the death toast feed, and bag charge counts. All render-only.
+const deathEl = document.createElement("div");
+deathEl.id = "death";
+deathEl.hidden = true;
+stage.append(deathEl);
+const toastsEl = document.createElement("div");
+toastsEl.id = "toasts";
+toastsEl.setAttribute("aria-live", "polite");
+stage.append(toastsEl);
+const bagLabels = document.createElement("div");
+bagLabels.id = "bags";
+stage.append(bagLabels);
+const TOAST_MAX = 5;
+const TOAST_MS = 6000;
+function addToast(text: string) {
+  const el = document.createElement("div");
+  el.textContent = text; // textContent only: a name is never HTML
+  toastsEl.append(el);
+  while (toastsEl.children.length > TOAST_MAX) toastsEl.firstElementChild?.remove();
+  setTimeout(() => el.classList.add("fade"), TOAST_MS - 600);
+  setTimeout(() => el.remove(), TOAST_MS);
+}
 const spellBar = document.createElement("div");
 spellBar.id = "spells";
 spellBar.hidden = true;
@@ -490,9 +518,52 @@ function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
   hud.hidden = !steersAvatar();
   spellBar.hidden = !steersAvatar() || !m.spells;
   renderSpellBar();
-  (hud.querySelector("i") as HTMLElement).style.width = `${Math.round((m.energy / m.energyMax) * 100)}%`;
+  const bars = hud.querySelectorAll<HTMLElement>(".bar i");
+  bars[0].style.width = `${Math.round((m.energy / m.energyMax) * 100)}%`;
+  const hp = m.me ? m.me.health / HEALTH_MAX : 1;
+  bars[1].style.width = `${Math.round(hp * 100)}%`;
+  bars[1].style.background = healthColour(hp);
+  const dead = steersAvatar() && !!m.me?.dead;
+  deathEl.hidden = !dead;
+  canvas.classList.toggle("dim", dead);
+  if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
+  placeBags(m);
   (window as unknown as { __players: unknown }).__players = m.list;
   (window as unknown as { __spells: unknown }).__spells = { selected: selectedSpell, ...m.spells };
+}
+
+/** Green at full health through yellow to red at none. */
+function healthColour(f: number): string {
+  const k = Math.max(0, Math.min(1, f));
+  return `hsl(${Math.round(k * 120)}, 70%, 48%)`;
+}
+
+const bagEls: HTMLSpanElement[] = [];
+/** A charge count over each bag, only when zoomed in (zoom 2 or more), where the number is readable. */
+function placeBags(m: Extract<FromWorker, { type: "players" }>) {
+  const show = zoom >= 2 && !overview;
+  const r = canvas.getBoundingClientRect();
+  const sr = stage.getBoundingClientRect();
+  const sx = r.width / camera.vw;
+  const sy = r.height / camera.vh;
+  const bags = show ? m.bags : [];
+  while (bagEls.length < bags.length) {
+    const el = document.createElement("span");
+    bagLabels.append(el);
+    bagEls.push(el);
+  }
+  bagEls.forEach((el, i) => {
+    const b = bags[i];
+    if (!b) {
+      el.style.display = "none";
+      return;
+    }
+    const x = r.left - sr.left + (b.x - camera.x) * sx;
+    const y = r.top - sr.top + (b.y - 5 - camera.y) * sy;
+    el.textContent = String(b.total);
+    el.style.display = x < -20 || x > sr.width + 20 || y < -20 || y > sr.height + 20 ? "none" : "";
+    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+  });
 }
 
 function placeLabels() {
@@ -511,8 +582,28 @@ function placeLabels() {
       labelEls.set(p.id, el);
       labels.append(el);
     }
-    el.textContent = p.name; // textContent: a name is never HTML
-    el.className = p.me ? "me" : "";
+    let nm = el.firstElementChild as HTMLSpanElement | null;
+    let bar = el.lastElementChild as HTMLElement | null;
+    if (!nm || nm === bar) {
+      el.replaceChildren();
+      nm = document.createElement("span");
+      nm.className = "nm";
+      bar = document.createElement("i");
+      bar.className = "hpbar";
+      bar.append(document.createElement("b"));
+      el.append(nm, bar);
+    }
+    nm.textContent = p.name; // textContent: a name is never HTML
+    el.className = (p.me ? "me" : "") + (p.dead ? " dead" : "");
+    // A thin bar under the name, only when hurt; nothing for the dead (their label greys out instead).
+    const hurt = p.health < HEALTH_MAX && !p.dead;
+    bar!.style.display = hurt ? "" : "none";
+    if (hurt) {
+      const f = p.health / HEALTH_MAX;
+      const fill = bar!.firstElementChild as HTMLElement;
+      fill.style.width = `${Math.round(f * 100)}%`;
+      fill.style.background = healthColour(f);
+    }
     const x = r.left - sr.left + (p.x - camera.x) * sx;
     const y = r.top - sr.top + (p.y - 10 - 2 - camera.y) * sy;
     el.style.display = x < -40 || x > sr.width + 40 || y < -20 || y > sr.height + 20 ? "none" : "";
@@ -565,7 +656,7 @@ const wasmUrl = new URL(localKind !== null ? "sim-dev.wasm" : "sim.wasm", docume
 const serverParam = new URLSearchParams(location.search).get("server");
 const httpBase = serverParam ? `${location.protocol}//${serverParam}` : "";
 const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${serverParam ?? location.host}/ws`;
-const local = localKind !== null ? { kind: localKind, seed: params.get("seed") ?? "1" } : undefined;
+const local = localKind !== null ? { kind: localKind, seed: params.get("seed") ?? "1", avatar: devAvatar } : undefined;
 
 /** Ask the server for a token for this display name (plan 8, 9.1). Resolves to the token and the cleaned name. */
 async function register(name: string): Promise<{ token: string; name: string }> {
@@ -635,5 +726,10 @@ new ResizeObserver(() => {
   camera.y = y;
   overview = ov;
   applyCamera();
+};
+(window as unknown as Record<string, unknown>).__devPaint = (x: number, y: number, mat: number, r: number) => {
+  if (!devAvatar) return;
+  send({ type: "pointer", kind: "down", x, y, mat, radius: r });
+  send({ type: "pointer", kind: "up", x, y, mat, radius: r });
 };
 (window as unknown as Record<string, unknown>).__setSleep = (on: boolean) => send({ type: "sleep", on });

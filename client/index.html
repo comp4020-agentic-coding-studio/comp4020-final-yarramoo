@@ -30,8 +30,12 @@
     header nav a[aria-current="page"] { color: var(--fg); }
     #stage { position: relative; }
     #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-    #labels span { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 3px; background: rgba(11,14,20,.72); color: #fff; white-space: nowrap; }
-    #labels span.me { background: rgba(110,168,255,.85); color: #0b0e14; }
+    #labels > span { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 3px; background: rgba(11,14,20,.72); color: #fff; white-space: nowrap; }
+    #labels > span { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+    #labels > span.dead { color: #7d8496; background: rgba(11,14,20,.5); text-decoration: line-through; }
+    #labels .hpbar { display: block; height: 3px; background: #1b2231; border-radius: 2px; overflow: hidden; }
+    #labels .hpbar b { display: block; height: 100%; width: 100%; }
+    #labels > span.me { background: rgba(110,168,255,.85); color: #0b0e14; }
     #zoom { position: absolute; right: 8px; top: 8px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--dim); background: rgba(15,19,27,.82); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; }
     #zoom[hidden] { display: none; }
     #zoom button { width: 26px; height: 26px; font: inherit; font-size: 16px; line-height: 1; background: #0f131b; color: var(--fg); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
@@ -39,6 +43,8 @@
     #zoom span { min-width: 22px; text-align: center; }
     #hud { position: absolute; left: 8px; bottom: 8px; width: 120px; pointer-events: none; font-size: 11px; color: var(--dim); }
     #hud .bar { height: 6px; background: #1b2231; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+    #hud .bar.hp { margin-bottom: 0; }
+    #hud span + .bar + span { display: block; margin-top: 6px; }
     #hud .bar i { display: block; height: 100%; width: 100%; background: #6ea8ff; }
     #spells { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; }
     #spells[hidden], #hud[hidden] { display: none; }
@@ -50,6 +56,15 @@
     #spells .ch { display: block; color: var(--dim); font-variant-numeric: tabular-nums; }
     #spells .cd { position: absolute; left: 0; bottom: 0; width: 100%; height: 0; background: rgba(0,0,0,.55); }
     #spells .sw { position: absolute; left: 0; bottom: 0; width: 100%; height: 3px; border: 0; border-radius: 0; }
+    canvas.dim { filter: brightness(.45) saturate(.7); }
+    #death { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); pointer-events: none; font-size: 22px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; text-align: center; max-width: 90%; }
+    #death[hidden] { display: none; }
+    #toasts { position: absolute; left: 8px; top: 8px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: calc(100% - 120px); }
+    #toasts div { font-size: 12px; line-height: 1.2; padding: 3px 7px; border-radius: 4px; background: rgba(11,14,20,.78); color: #fff; align-self: flex-start; overflow-wrap: anywhere; transition: opacity .6s; }
+    #toasts div.fade { opacity: 0; }
+    #bags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    #bags span { position: absolute; left: 0; top: 0; font-size: 11px; line-height: 1; padding: 1px 3px; border-radius: 3px; background: rgba(11,14,20,.75); color: #ffd98a; font-variant-numeric: tabular-nums; }
+    @media (max-width: 480px) { #spells { gap: 3px; } #spells .slot { width: 56px; padding: 3px 4px; } #hud { bottom: 58px; } #death { font-size: 16px; } #toasts div { font-size: 11px; } }
     #join { position: fixed; inset: 0; z-index: 5; display: flex; overflow: auto; padding: 12px; box-sizing: border-box; align-items: center; justify-content: center; background: rgba(11,14,20,.88); }
     #join form { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(92vw, 340px); display: grid; gap: 12px; }
     #join[hidden] { display: none; }
