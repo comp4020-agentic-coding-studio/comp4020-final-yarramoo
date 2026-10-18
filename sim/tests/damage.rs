@@ -43,6 +43,19 @@ fn pl(s: &Sim, id: u32) -> &Player {
     s.players.iter().find(|p| p.id == id).unwrap()
 }
 
+/// `shooter` casts Push straight left (angle 32768) at chest height; returns every knock on `target` over
+/// the bolt's flight, collected step by step.
+fn push_hits(s: &mut Sim, shooter: u32, target: u32) -> Vec<Event> {
+    let seq = s.tick as u16;
+    push(s, encode_cast(shooter, 0, 32768, seq));
+    let mut hits = Vec::new();
+    for _ in 0..12 {
+        s.step();
+        hits.extend(s.events.iter().filter(|e| e.kind == EV_KNOCK && e.player == target).copied());
+    }
+    hits
+}
+
 fn fill_hitbox(s: &mut Sim, id: u32, m: u8) {
     let (x0, y0, x1, y1) = pl(s, id).hitbox_cells();
     let w = s.grid.w;
@@ -130,12 +143,9 @@ fn gunpowder_explosion_damages_by_falloff_knocks_back_and_gives_no_credit() {
     let w = s.grid.w;
     s.grid.set(833 * w + 512, GUNPOWDER, 1);
     s.step();
-    let d = {
-        let (dx, dy) = (i64::from(510 * PX + PX / 2 - 512 * PX - PX / 2), i64::from(833 * PX - 833 * PX - PX / 2));
-        (isqrt((dx * dx + dy * dy) as u64) >> POS_SHIFT) as i32
-    };
-    assert_eq!(100 - pl(&s, 1).health as i32, 60 * (4 - d) / 4);
-    assert!(pl(&s, 1).health < 100);
+    // A literal, not the formula again: the chest is 2 whole cells from the centre, so 60 * (4 - 2) / 4 = 30
+    // (review M5 slice 1 N3: recomputing it with isqrt would pass a wrong formula too).
+    assert_eq!(pl(&s, 1).health, 100 - 30);
     assert_eq!(pl(&s, 1).last_hit_by, 0);
 }
 
@@ -209,6 +219,49 @@ fn self_kill_credits_last_other_hitter_or_nobody() {
 }
 
 #[test]
+fn the_corpse_test_shot_does_hit_a_live_player() {
+    // Control for the corpse check below: the same shot at the same live target lands, so an empty
+    // result there means "no hitbox while dead", not "the bolt missed".
+    let mut s = boxed(&[1, 2]);
+    let hits = push_hits(&mut s, 2, 1);
+    assert_eq!(hits.len(), 1, "the shot missed a live player, so the corpse check proves nothing");
+    assert_eq!(hits[0].c, 2);
+}
+
+#[test]
+fn a_hit_from_a_previous_life_does_not_credit_the_next_death() {
+    let mut s = boxed(&[1, 2]);
+    // Player 2 knocks player 1, then player 1 dies to lava straight away: player 2 is credited.
+    s.explode_at(510, 833, 18, 2, 5);
+    assert_eq!(pl(&s, 1).last_hit_by, 2);
+    s.players[0].health = 1;
+    while pl(&s, 1).health > 0 {
+        fill_hitbox(&mut s, 1, LAVA);
+        s.step();
+    }
+    // Respawn, then die again to lava with no one near, still inside the 300-tick credit window.
+    let dead_until = pl(&s, 1).dead_until;
+    while s.tick <= dead_until {
+        s.step();
+    }
+    assert_eq!(pl(&s, 1).health, HEALTH_MAX);
+    assert!(s.tick - pl(&s, 1).dead_until.max(dead_until) < KILL_CREDIT_TICKS);
+    place(&mut s, 1, 510);
+    s.players[0].health = 1;
+    let mut death = None;
+    for _ in 0..4 {
+        fill_hitbox(&mut s, 1, LAVA);
+        s.step();
+        if let Some(d) = s.events.iter().find(|e| e.kind == EV_DEATH && e.player == 1) {
+            death = Some(*d);
+            break;
+        }
+    }
+    let d = death.expect("second death");
+    assert_eq!(d.a, 0, "player 2 was credited for a death in the next life (review N1)");
+}
+
+#[test]
 fn a_dead_player_is_inert_and_respawns_exactly_at_dead_until() {
     let mut s = boxed(&[1, 2]);
     let k = 0;
@@ -231,14 +284,9 @@ fn a_dead_player_is_inert_and_respawns_exactly_at_dead_until() {
     s.events.clear();
     s.step();
     assert!(s.events.iter().any(|e| e.kind == EV_CAST_REJECTED && e.b == REJECT_DEAD));
-    // A bolt passes through the corpse: owner 2 fires Push at it.
-    push(&mut s, encode_cast(2, 0, 0, 2));
-    s.step();
-    assert!(s.projectiles.len() <= 1);
-    for _ in 0..8 {
-        s.step();
-    }
-    assert!(s.events.iter().all(|e| !(e.kind == EV_KNOCK && e.player == 1)));
+    // A bolt passes through the corpse. Player 2 stands at x=518, the corpse at 510, so aim left (angle
+    // 32768 is -x), and collect knocks over every step, since `events` holds only the last one (review N2).
+    assert!(push_hits(&mut s, 2, 1).is_empty(), "a bolt hit the corpse");
     // Until dead_until: still dead; at dead_until: respawned with life + 1 and full health.
     while s.tick < dead_until {
         assert_eq!(pl(&s, 1).health, 0, "tick {}", s.tick);

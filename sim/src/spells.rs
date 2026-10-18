@@ -355,6 +355,10 @@ impl Sim {
         p.y = y;
         p.health = HEALTH_MAX;
         p.dead_until = 0;
+        // A hit from the last life must not credit a death in this one: the 300-tick credit window outlasts
+        // the 180-tick death (review M5 slice 1 N1).
+        p.last_hit_by = 0;
+        p.last_hit_tick = 0;
         let ev = Event { kind: EV_RESPAWN, player: id, a: x, b: y, c: i32::from(p.life) };
         self.events.push(ev);
     }
