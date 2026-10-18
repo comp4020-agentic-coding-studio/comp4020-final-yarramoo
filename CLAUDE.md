@@ -104,6 +104,16 @@ obliges no work: the file exists so a good idea outlives the session that had
 it. Delegated workers can suggest ideas in their reports; the session model
 decides what goes in.
 
+## Record the big decisions in `docs/engineering-decisions.md`
+
+Every decision still gets its row in `docs/DECISIONS.md`. A decision or
+challenge also gets an entry in `docs/engineering-decisions.md` when it shapes
+the architecture or code later milestones build on, costs real time, overturns
+an earlier belief, or is something a reviewer or marker would ask about. Write
+the entry in the same batch of work as the change, not afterwards, and link it
+to its D-rows, research notes and commits. When a later finding corrects an
+entry, update it and keep the correction visible rather than rewriting history.
+
 ## Open it and look
 
 A green check is not the same as a correct page. Multi-user and real-time
