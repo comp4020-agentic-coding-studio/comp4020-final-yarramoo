@@ -262,7 +262,8 @@ export class World {
       }
     }
     if (frames.length === 0 && db.ticksAfter(this.id, base).length > 0) rewrite = true;
-    this.log.push(...frames);
+    // Not push(...frames): spreading ~130k+ ticks as arguments overflows the stack, and the app crashed on boot.
+    for (const f of frames) this.log.push(f);
     // Who the restored state says is active: the snapshot's players, then the logged Joins and Leaves (S4).
     const stillActive = this.kind === WORLD_GAME ? activeAfter(snap ? activePlayersIn(snap.data) : new Set<number>(), frames) : new Set<number>();
     this.snapshotOnline = this.kind === WORLD_GAME ? (snap ? activePlayersIn(snap.data).size : 0) : Math.max(0, -net);
