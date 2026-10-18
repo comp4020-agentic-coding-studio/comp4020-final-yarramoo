@@ -1,5 +1,5 @@
 // WebGL2 renderer, shared by the worker (OffscreenCanvas) and the main-thread fallback.
-import { paletteTable } from "./materials.ts";
+import { DEEP_TOP, paletteTable, SHALLOW_TOP } from "./materials.ts";
 
 /** The window of the world to draw, in cells. */
 export interface Camera {
@@ -28,6 +28,7 @@ uniform float uTime;
 uniform vec2 uWorld;
 uniform vec2 uCam;
 uniform vec2 uView;
+uniform vec3 uBands; // x: 1 in a game world, else 0; y: SHALLOW_TOP; z: DEEP_TOP
 in vec2 uv;
 out vec4 outColor;
 
@@ -66,6 +67,26 @@ void main() {
     return;
   }
   float v = 0.9 + 0.2 * h;
+  if (uBands.x > 0.5 && (m == 2u || m == 3u)) {
+    // Depth look (cosmetic, game world only): warm brown at the surface, grey-brown in the shallows, cold
+    // blue-black deep down, blended over 80 cells at each boundary. A pure function of the cell: no flicker.
+    float y = float(c.y);
+    float s1 = smoothstep(uBands.y - 40.0, uBands.y + 40.0, y);
+    float s2 = smoothstep(uBands.z - 40.0, uBands.z + 40.0, y);
+    vec3 tint = mix(mix(vec3(1.18, 0.96, 0.78), vec3(0.95, 0.93, 0.88), s1), vec3(0.50, 0.62, 0.95), s2);
+    float dark = mix(1.0, 0.62, s2);
+    // Two scales of hash noise so big faces are not flat.
+    float n = 0.80 + 0.28 * h + 0.14 * (hash(vec2(c / 3) + 17.0) - 0.5);
+    col = col * tint * dark;
+    if (m == 2u) {
+      // Moss: rock touching water, speckled by hash.
+      bool wet = texelFetch(uMat, c + ivec2(0, -1), 0).r == 5u || texelFetch(uMat, c + ivec2(-1, 0), 0).r == 5u
+        || texelFetch(uMat, c + ivec2(1, 0), 0).r == 5u || texelFetch(uMat, c + ivec2(0, 1), 0).r == 5u;
+      if (wet && h > 0.35) col = mix(col, vec3(0.20, 0.45, 0.16), 0.6);
+    }
+    outColor = vec4(col * n, 1.0);
+    return;
+  }
   if (m == 5u) v = 0.88 + 0.12 * sin(uTime * 1.5 + float(c.x) * 0.2 + h * 2.0) + 0.06 * h;
   if (m == 1u) v = 0.8 + 0.4 * hash(vec2(c / 4));
   if (m == 8u) v = 0.8 + 0.3 * h;
@@ -101,6 +122,8 @@ uniform vec4 uCol;
 out vec4 outColor;
 void main() { outColor = uCol; }`;
 
+const SANDBOX_H = 512;
+
 export class Renderer {
   private gl: WebGL2RenderingContext;
   private matTex: WebGLTexture;
@@ -109,6 +132,7 @@ export class Renderer {
   private uWorld: WebGLUniformLocation | null;
   private uCam: WebGLUniformLocation | null;
   private uView: WebGLUniformLocation | null;
+  private uBands: WebGLUniformLocation | null;
   private prog: WebGLProgram;
   private rectProg: WebGLProgram;
   private rRect: WebGLUniformLocation | null;
@@ -169,6 +193,7 @@ export class Renderer {
     this.uWorld = gl.getUniformLocation(prog, "uWorld");
     this.uCam = gl.getUniformLocation(prog, "uCam");
     this.uView = gl.getUniformLocation(prog, "uView");
+    this.uBands = gl.getUniformLocation(prog, "uBands");
     const pal = new Float32Array(48);
     paletteTable().forEach((c, i) => {
       pal[i * 3] = ((c >> 16) & 255) / 255;
@@ -190,6 +215,8 @@ export class Renderer {
     this.ww = w;
     this.wh = h;
     gl.uniform2f(this.uWorld, w, h);
+    // The sandbox is 512 tall and has no bands: only a taller world gets the depth look.
+    gl.uniform3f(this.uBands, h > SANDBOX_H ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
   }
 
   private makeTex(unit: number, w: number, h: number): WebGLTexture {
