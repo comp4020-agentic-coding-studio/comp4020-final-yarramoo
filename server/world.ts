@@ -685,13 +685,16 @@ export class World {
     this.requestSnapshot();
   }
 
-  /** Ask the longest-connected client that has not disagreed recently for a snapshot at a future tick. */
+  /** Ask the longest-connected live client that has not disagreed recently for a snapshot at a future tick. */
   requestSnapshot(): boolean {
     if (this.request || !this.db) return false;
     const last = this.clock.lastClosed;
     let ref: Member | null = null;
     for (const m of this.members.values()) {
       if (last - m.lastBadTick < 3 * this.snapshotEvery && m.lastBadTick) continue;
+      // Only a live member: a replaying client sends no HASH and would ignore the request (D-100).
+      const h = m.timing.lastHashTick;
+      if (h === undefined || h <= m.minHashTick || last - h > 3 * HASH_EVERY) continue;
       if (!ref || m.seq < ref.seq) ref = m;
     }
     if (!ref) return false;
