@@ -456,7 +456,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     // A figure that has not moved takes its facing from the official record (others turn without walking).
     if (!isMe && Math.abs(ps.vx) < 0.05) ps.facingRight = e.sub === 1;
     if (isMe) ps.facingRight = avatar!.facing === 1;
-    if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, PLAYER_COLOURS[e.id % PLAYER_COLOURS.length], ps.castCol);
+    if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, PLAYER_COLOURS[e.id % PLAYER_COLOURS.length], ps.castCol, now / 16.7);
     if (isMe && e.health > 0) rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
   }
   for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
