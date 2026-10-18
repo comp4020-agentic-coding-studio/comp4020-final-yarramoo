@@ -89,8 +89,8 @@ describe("events from a real server", () => {
     const b = await connect(s.port, hex);
     await waitFor(() => s.log.recent().filter((e) => e.ev === "join").length === 2);
     const joins = s.log.recent().filter((e) => e.ev === "join");
-    expect(joins[0]).toMatchObject({ lvl: "info", world: 0, role: "painter", online: 1, who: `p${a.playerId}`, ua: "vitest-client" });
-    expect(joins[1]).toMatchObject({ world: 0, role: "painter", online: 2, who: `p${b.playerId}` });
+    expect(joins[0]).toMatchObject({ lvl: "info", world: 0, role: "painter", online: 1, who: expect.stringMatching(/^anon#c\d+$/), ua: "vitest-client" });
+    expect(joins[1]).toMatchObject({ world: 0, role: "painter", online: 2, who: expect.stringMatching(/^anon#c\d+$/) });
     expect(joins[0].ip_tag).toMatch(/^[0-9a-f]{6}$/);
     expect(typeof joins[0].tick).toBe("number");
     expect(new Date(joins[0].t as string).toISOString()).toBe(joins[0].t);
@@ -98,7 +98,7 @@ describe("events from a real server", () => {
     a.close();
     await waitFor(() => s.log.recent().some((e) => e.ev === "leave"));
     const leave = s.log.recent().find((e) => e.ev === "leave")!;
-    expect(leave).toMatchObject({ world: 0, role: "painter", online: 1, who: `p${a.playerId}` });
+    expect(leave).toMatchObject({ world: 0, role: "painter", online: 1, who: expect.stringMatching(/^anon#c\d+$/) });
     expect(leave.duration_s).toBeGreaterThanOrEqual(0);
 
     b.close();
@@ -121,11 +121,11 @@ describe("events from a real server", () => {
     const me = await register(s.port, "Ada");
     const c = await connect(s.port, hex, { world: 1, token: me.token });
     await waitFor(() => s.log.recent().some((e) => e.ev === "join"));
-    expect(s.log.recent().find((e) => e.ev === "join")).toMatchObject({ world: 1, role: "player", who: `p${me.id}` });
+    expect(s.log.recent().find((e) => e.ev === "join")).toMatchObject({ world: 1, role: "player", who: `Ada#${me.id}` });
     c.move(100, 100);
     c.cast(1, 16384, 1);
     await waitFor(() => s.log.recent().some((e) => e.ev === "cast"));
-    expect(s.log.recent().find((e) => e.ev === "cast")).toMatchObject({ world: 1, who: `p${me.id}`, spell: 1, angle: 16384 });
+    expect(s.log.recent().find((e) => e.ev === "cast")).toMatchObject({ world: 1, who: `Ada#${me.id}`, spell: 1, angle: 16384 });
     c.close();
     await expect(connect(s.port, hex, { world: 1 })).rejects.toBeDefined();
     await waitFor(() => s.log.recent().some((e) => e.ev === "hello.rejected"));

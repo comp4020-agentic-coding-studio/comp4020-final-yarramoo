@@ -52,7 +52,7 @@ export interface Peer {
   userAgent?: string;
 }
 
-interface Member {
+export interface Member {
   /** Connection id: unique per connection. The sandbox uses it as the sim's player id too. */
   id: number;
   /** The sim player id this connection controls; 0 for a spectator (no Join was stamped). */
@@ -60,8 +60,12 @@ interface Member {
   peer: Peer;
   /** Connection order: lower means connected longer. */
   seq: number;
-  /** Display name, already trimmed and capped; render-only. */
+  /** Display name, already trimmed and capped; render-only. Set for game-world players only (S_PLAYER_NAME). */
   name: string;
+  /** The registered player id behind this connection, 0 when anonymous. Logs and stats only; never reaches the sim. */
+  visitorId: number;
+  /** The registered display name, "" when anonymous. Logs only: players only ever see `name`. */
+  visitorName: string;
   /** HASH for ticks at or below this are ignored (they predate the client's current sim). */
   minHashTick: number;
   lastBadTick: number;
@@ -158,14 +162,14 @@ export class World {
     this.lastFlush = opts.now();
   }
 
-  /** Placeholder identity for logs until names arrive: the sim player id, else the connection. */
+  /** The one place a log `who` is built: `name#visitorId`, or `anon#c<conn>` when the connection has no identity. */
   whoOf(m: Member): string {
-    return m.playerId ? `p${m.playerId}` : `c${m.id}`;
+    return m.visitorId ? `${m.visitorName}#${m.visitorId}` : `anon#c${m.id}`;
   }
 
   whoOfConn(conn: number): string {
     const m = this.members.get(conn);
-    return m ? this.whoOf(m) : `c${conn}`;
+    return m ? this.whoOf(m) : `anon#c${conn}`;
   }
 
   get playerCount(): number {
@@ -355,7 +359,7 @@ export class World {
    * id from the players table (the same person always controls the same entity); a spectator (`playerId` 0)
    * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
-  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean } = {}): { conn: number; playerId: number } {
+  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number } {
     this.clock.resume();
     this.clock.advance();
     const spectate = !!opts.spectate && this.kind === WORLD_GAME;
@@ -381,7 +385,9 @@ export class World {
     this.members.set(conn, {
       id: conn,
       playerId,
-      name: opts.name ?? "",
+      name: this.kind === WORLD_GAME ? (opts.name ?? "") : "",
+      visitorId: opts.visitorId ?? 0,
+      visitorName: opts.visitorName ?? "",
       peer,
       seq: conn,
       minHashTick: this.clock.lastClosed,
@@ -389,7 +395,7 @@ export class World {
     });
     if (playerId) {
       this.stamp({ player: playerId, kind: KIND_JOIN, payload: new Uint8Array(0) });
-      if (opts.name) this.broadcastName(conn, playerId, opts.name);
+      if (opts.name && this.kind === WORLD_GAME) this.broadcastName(conn, playerId, opts.name);
     }
     return { conn, playerId };
   }

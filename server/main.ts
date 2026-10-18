@@ -298,19 +298,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
           return rej("world is full; try again later", msg.worldId);
         }
-        let playerId: number | undefined;
-        let name = "";
-        if (w.kind === WORLD_GAME && !(msg.flags & HELLO_SPECTATE)) {
-          const who = identity.resolve(msg.token);
-          if (who === "unknown") return rej("unknown token", msg.worldId);
-          playerId = who.id;
-          name = who.name;
-        }
-        const j = w.join(peer, { playerId, name, spectate: !!(msg.flags & HELLO_SPECTATE) });
+        // Identity for every world and role. A game-world player must hold a known token (its id is the sim id);
+        // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
+        // anonymous resolve touches nothing in the database. Identity never reaches the sim.
+        const spectating = !!(msg.flags & HELLO_SPECTATE);
+        const who = identity.resolve(msg.token);
+        if (who === "unknown" && w.kind === WORLD_GAME && !spectating) return rej("unknown token", msg.worldId);
+        const visitorId = who === "unknown" ? 0 : who.id;
+        const visitorName = who === "unknown" ? "" : who.name;
+        const gamePlayer = w.kind === WORLD_GAME && !spectating;
+        const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
         joined = { world: w, conn: j.conn, playerId: j.playerId, at: Date.now() };
         log.event("join", {
           world: w.id,
-          who: j.playerId ? `p${j.playerId}` : `c${j.conn}`,
+          who: w.whoOfConn(j.conn),
+          visitor: visitorId,
+          name: visitorName || undefined,
           conn: j.conn,
           role: roleOf(w, j.playerId),
           online: w.playerCount,
@@ -352,7 +355,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
             else {
               const pv = new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength);
-              log.event("cast", { world: w.id, who: `p${joined.playerId}`, spell: msg.payload[0], angle: pv.getUint16(1, true), tick: w.clock.lastClosed });
+              log.event("cast", { world: w.id, who: w.whoOfConn(joined.conn), spell: msg.payload[0], angle: pv.getUint16(1, true), tick: w.clock.lastClosed });
             }
             w.stamp({ player: joined.playerId, kind: msg.kind, payload: msg.payload });
             return;
@@ -377,13 +380,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       clearTimeout(helloTimer);
       if (joined) {
         const jw = joined.world;
+        const leaverWho = jw.whoOfConn(joined.conn);
         jw.leave(joined.conn);
         log.forget(`rate:${joined.conn}`);
         log.forget(`pos:${joined.conn}`);
         log.forget(`bad:${joined.conn}`);
         log.event("leave", {
           world: jw.id,
-          who: joined.playerId ? `p${joined.playerId}` : `c${joined.conn}`,
+          who: leaverWho,
           conn: joined.conn,
           role: roleOf(jw, joined.playerId),
           online: jw.playerCount,
