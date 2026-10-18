@@ -1,5 +1,7 @@
 # Snapshot timing: why a long log never recovers
 
+> **Correction (D-101):** a side-by-side browser test showed the old code *does* recover once a visitor stays until live, at most ~43 s late. "Never recovers" below overstates it; the cause is visitors leaving during a long catch-up (inferred). The 200k cap trap (Surprise, below) is real.
+
 Labels: **[code]** read in code, **[measured]** run here, **[src]** from a source, **[infer]** inference.
 
 ## Summary
