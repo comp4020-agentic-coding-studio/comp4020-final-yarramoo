@@ -10,6 +10,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { KIND_CAST, KIND_PAINT, KIND_POS } from "../shared/inputs.ts";
 import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
+  C_CHUNK_HASHES,
   cleanName,
   decodeClient,
   encodePong,
@@ -58,6 +59,8 @@ export const MAX_MEMBERS_PER_WORLD = 64;
 /** Concurrent sockets per client address. */
 export const MAX_CONNS_PER_IP = 12;
 const MAX_FRAME_BYTES = 256;
+/** Unsolicited CHUNK_HASHES frames one connection may send before it is closed (a reply that crosses a timeout). */
+export const MAX_UNASKED_CHUNK_FRAMES = 3;
 const TIMER_MS = 4;
 const HELLO_TIMEOUT_MS = 10_000;
 export const INPUT_SUMMARY_MS = 10_000;
@@ -630,6 +633,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
+    /** CHUNK_HASHES frames nobody asked for: an honest client never sends one, so a few close the socket. */
+    let unaskedChunks = 0;
     const helloTimer = setTimeout(() => ws.close(1008, "no hello"), HELLO_TIMEOUT_MS);
     const peer: Peer = {
       send: (f) => ws.send(f, { binary: true }),
@@ -641,6 +646,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     ws.on("message", (data, isBinary) => {
       if (!isBinary) return ws.close(1003, "binary only");
       const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
+      // CHUNK_HASHES is the one large frame besides an upload. Check its size and whether this connection owes one
+      // from the tag and tick alone, before decoding hundreds of u64s (review chunk-diag N1).
+      if (buf.length > 0 && buf[0] === C_CHUNK_HASHES) {
+        if (!joined || buf.length > maxChunkHashesFrameFor(joined.world.kind)) return ws.close(1009, "frame too large");
+        const tick = buf.length >= 5 ? buf.readUInt32LE(1) : -1;
+        if (!joined.world.wantsChunkHashes(joined.conn, tick)) {
+          if (++unaskedChunks > MAX_UNASKED_CHUNK_FRAMES) return ws.close(1008, "unsolicited chunk hashes");
+          joined.world.onChunkHashes(joined.conn, tick, new BigUint64Array(0)); // counts and logs it, decodes nothing
+          return;
+        }
+      }
       const msg = decodeClient(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
       if (!msg) return ws.close(1002, "bad frame");
       if (!joined) {

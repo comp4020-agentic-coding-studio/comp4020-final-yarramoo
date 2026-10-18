@@ -14,7 +14,7 @@ import {
 } from "../../shared/protocol.ts";
 import { GameDb } from "../../server/db.ts";
 import { EventLog } from "../../server/log.ts";
-import { startServer } from "../../server/main.ts";
+import { MAX_UNASKED_CHUNK_FRAMES, startServer } from "../../server/main.ts";
 import {
   CHUNK_DIAG_WAIT_MS,
   DIAG_WINDOW_MS,
@@ -340,14 +340,24 @@ describe("chunk diagnosis over the real server", () => {
     for (const x of [a, b, bad]) x.close();
   }, 40000);
 
-  it("closes a socket whose CHUNK_HASHES frame is over the world's cap, and shrugs off a flood of valid-size ones", async () => {
+  it("closes a socket that sends CHUNK_HASHES nobody asked for, before decoding them (review N1)", async () => {
+    // An honest client only answers a request, so a stream of unasked 6 KB frames is abuse. The server checks the
+    // tag and tick before decoding and closes the socket after MAX_UNASKED_CHUNK_FRAMES; the allowance absorbs a
+    // reply that crosses a diagnosis timeout.
     const s = await boot();
     const a = await connect(s.port, hex);
-    for (let i = 0; i < 300; i++) a.ws.send(encodeChunkHashes(60, new BigUint64Array(64)));
-    await sleep(300);
-    expect(a.ws.readyState).toBe(a.ws.OPEN);
-    expect(s.world.stats.chunkUnsolicited).toBe(300);
+    let code = 0;
+    a.ws.on("close", (c) => (code = c));
+    for (let i = 0; i < 300; i++) if (a.ws.readyState === a.ws.OPEN) a.ws.send(encodeChunkHashes(60, new BigUint64Array(64)));
+    await waitFor(() => code !== 0, 3000, "close");
+    expect(code).toBe(1008);
+    expect(s.world.stats.chunkUnsolicited).toBe(MAX_UNASKED_CHUNK_FRAMES);
     expect(s.log.recent().filter((e) => e.reason === "chunk_hashes_unsolicited").length).toBeLessThanOrEqual(1);
+  });
+
+  it("closes a socket whose CHUNK_HASHES frame is over the world's cap", async () => {
+    const s = await boot();
+    const a = await connect(s.port, hex);
     let code = 0;
     a.ws.on("close", (c) => (code = c));
     a.ws.send(encodeChunkHashes(60, new BigUint64Array(65))); // 7 + 8 * 65 > the sandbox's 7 + 8 * 64

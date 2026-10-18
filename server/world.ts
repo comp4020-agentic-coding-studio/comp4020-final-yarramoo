@@ -922,6 +922,12 @@ export class World {
    * not asked, a second reply) is ignored without work, counted, and logged at most once a few seconds. A count of 0, or
    * a count that is not the world's chunk count, marks the member's array unavailable.
    */
+  /** Whether this connection owes a CHUNK_HASHES reply for `tick`: checked before the frame is decoded (review N1). */
+  wantsChunkHashes(memberId: number, tick: number): boolean {
+    const d = this.diagnoses.get(tick);
+    return !this.resetting && !!d && d.asked.has(memberId) && !d.replies.has(memberId);
+  }
+
   onChunkHashes(memberId: number, tick: number, hashes: BigUint64Array): void {
     const d = this.diagnoses.get(tick);
     if (this.resetting || !d || !d.asked.has(memberId) || d.replies.has(memberId)) {
