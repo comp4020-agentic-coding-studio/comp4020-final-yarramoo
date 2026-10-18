@@ -3,7 +3,7 @@ import { unzlibSync, zlibSync } from "fflate";
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -18,6 +18,13 @@ export const CLAIM_LEN = 15;
 /** `tick u32`: "I have finished replaying to my WELCOME or RESYNC tick" (D-122). Lets the server stop holding the clock for me. */
 export const C_LIVE = 0x07;
 export const LIVE_LEN = 5;
+/**
+ * `tick u32, count u16, hashes u64[count]`: this client's per-chunk hashes at a checkpoint tick the server asked
+ * about (D-126). `count` 0 means "that tick is no longer in my ring buffer". Exactly `7 + 8 * count` bytes.
+ * A diagnostic report, never an input (invariant 9).
+ */
+export const C_CHUNK_HASHES = 0x08;
+export const CHUNK_HASHES_HEADER = 7;
 // Server -> client tags
 export const S_WELCOME = 0x81;
 export const S_REJECT = 0x82;
@@ -32,6 +39,8 @@ export const MAX_NAME_CHARS = 24;
 /** `id_len u8, id utf8, tick u32`: you earned this achievement (to the earner only). Ids are short ASCII slugs. */
 export const S_ACHIEVEMENT = 0x89;
 export const MAX_ACHIEVEMENT_ID_BYTES = 32;
+/** `tick u32`: send me your chunk hashes for this checkpoint (D-126). */
+export const S_REQUEST_CHUNK_HASHES = 0x8a;
 
 /** Hash checkpoint spacing; snapshot ticks are multiples of it. */
 export const HASH_EVERY = 60;
@@ -56,6 +65,17 @@ export const maxSnapshotRawFor = (worldKind: number): number => (worldKind === W
 export const maxUploadFrameFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_UPLOAD_FRAME_GAME : MAX_UPLOAD_FRAME);
 /** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */
 export const MAX_SOCKET_PAYLOAD = Math.max(MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME);
+/** Chunk side in cells (sim CHUNK) and the grid each world kind has: 512x512 sandbox = 8x8, 2048x1536 game = 32x24. */
+export const CHUNK_CELLS = 64;
+export const chunkGridFor = (worldKind: number): { cw: number; ch: number } => (worldKind === WORLD_GAME ? { cw: 32, ch: 24 } : { cw: 8, ch: 8 });
+export const chunkCountFor = (worldKind: number): number => {
+  const g = chunkGridFor(worldKind);
+  return g.cw * g.ch;
+};
+/** The most chunks any world has (sim.ts MAX_CHUNKS): the decoder's own bound, whatever the world. */
+export const MAX_CHUNK_COUNT = 4096;
+/** The only length a CHUNK_HASHES frame for this world may have, at most (the server's per-world frame cap). */
+export const maxChunkHashesFrameFor = (worldKind: number): number => CHUNK_HASHES_HEADER + 8 * chunkCountFor(worldKind);
 export const HASH_LEN = 32;
 export const TOKEN_LEN = 32;
 export const MAX_REASON_BYTES = 200;
@@ -76,7 +96,8 @@ export type ClientMsg =
   | { t: "hash"; tick: number; hash: bigint; stepP95: number; buffered: number }
   | { t: "snapshot-upload"; tick: number; hash: bigint; data: Uint8Array }
   | { t: "claim"; tick: number; victim: number; killer: number; cause: number; bag: number }
-  | { t: "live"; tick: number };
+  | { t: "live"; tick: number }
+  | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array };
 
 export type ServerMsg =
   | { t: "welcome"; playerId: number; seed: bigint; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
@@ -88,7 +109,8 @@ export type ServerMsg =
   /** Followed by an optional SNAPSHOT and then every closed tick after it; `tick` is the last closed tick (the replay target). */
   | { t: "resync"; tick: number; playersAtBase: number }
   | { t: "player-name"; player: number; name: string }
-  | { t: "achievement"; id: string; tick: number };
+  | { t: "achievement"; id: string; tick: number }
+  | { t: "request-chunk-hashes"; tick: number };
 
 const te = new TextEncoder();
 const td = new TextDecoder("utf-8", { fatal: true });
@@ -202,6 +224,25 @@ export function encodeClaim(tick: number, victim: number, killer: number, cause:
 export function encodeLive(tick: number): Uint8Array {
   const b = new Uint8Array(LIVE_LEN);
   b[0] = C_LIVE;
+  view(b).setUint32(1, tick >>> 0, true);
+  return b;
+}
+
+/** CHUNK_HASHES: `hashes` empty means the tick is gone from the ring buffer. */
+export function encodeChunkHashes(tick: number, hashes: BigUint64Array | readonly bigint[]): Uint8Array {
+  if (hashes.length > MAX_CHUNK_COUNT) throw new RangeError("too many chunk hashes");
+  const b = new Uint8Array(CHUNK_HASHES_HEADER + 8 * hashes.length);
+  const v = view(b);
+  b[0] = C_CHUNK_HASHES;
+  v.setUint32(1, tick >>> 0, true);
+  v.setUint16(5, hashes.length, true);
+  for (let i = 0; i < hashes.length; i++) v.setBigUint64(CHUNK_HASHES_HEADER + 8 * i, BigInt.asUintN(64, hashes[i]), true);
+  return b;
+}
+
+export function encodeRequestChunkHashes(tick: number): Uint8Array {
+  const b = new Uint8Array(5);
+  b[0] = S_REQUEST_CHUNK_HASHES;
   view(b).setUint32(1, tick >>> 0, true);
   return b;
 }
@@ -346,6 +387,14 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
     case C_LIVE:
       if (b.length !== LIVE_LEN) return null;
       return { t: "live", tick: v.getUint32(1, true) };
+    case C_CHUNK_HASHES: {
+      if (b.length < CHUNK_HASHES_HEADER) return null;
+      const n = v.getUint16(5, true);
+      if (n > MAX_CHUNK_COUNT || b.length !== CHUNK_HASHES_HEADER + 8 * n) return null;
+      const hashes = new BigUint64Array(n);
+      for (let i = 0; i < n; i++) hashes[i] = v.getBigUint64(CHUNK_HASHES_HEADER + 8 * i, true);
+      return { t: "chunk-hashes", tick: v.getUint32(1, true), hashes };
+    }
     default:
       return null;
   }
@@ -417,6 +466,9 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
         return null;
       }
     }
+    case S_REQUEST_CHUNK_HASHES:
+      if (b.length !== 5) return null;
+      return { t: "request-chunk-hashes", tick: v.getUint32(1, true) };
     default:
       return null;
   }

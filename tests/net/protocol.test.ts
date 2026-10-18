@@ -8,6 +8,14 @@ import {
   encodeClaim,
   encodeHash,
   PROTOCOL_VERSION,
+  C_CHUNK_HASHES,
+  S_REQUEST_CHUNK_HASHES,
+  WORLD_GAME,
+  WORLD_SANDBOX,
+  chunkCountFor,
+  encodeChunkHashes,
+  encodeRequestChunkHashes,
+  maxChunkHashesFrameFor,
   C_CLAIM,
   C_LIVE,
   encodeLive,
@@ -32,7 +40,7 @@ const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
 describe("protocol codec", () => {
   it("round-trips HELLO, INPUT, PING", () => {
     const h = decodeClient(encodeHello(hash, 7));
-    expect(h).toMatchObject({ t: "hello", version: 7, worldId: 7, flags: 0 });
+    expect(h).toMatchObject({ t: "hello", version: 8, worldId: 7, flags: 0 });
     expect(h && h.t === "hello" && Array.from(h.buildHash)).toEqual(Array.from(hash));
     const payload = encodePaint(0, 4, -3, 5, 100, 200, 6).subarray(5);
     expect(payload.length).toBe(PAINT_PAYLOAD_LEN);
@@ -135,7 +143,7 @@ describe("protocol codec", () => {
   });
 
   it("round-trips CLAIM at protocol v6 and refuses any other length", () => {
-    expect(PROTOCOL_VERSION).toBe(7);
+    expect(PROTOCOL_VERSION).toBe(8);
     expect(C_CLAIM).toBe(6);
     const f = encodeClaim(123456, 7, 9, 4, 1);
     expect(f.length).toBe(15);
@@ -168,6 +176,62 @@ describe("protocol codec", () => {
       const m = decodeClient(b);
       if (m?.t === "claim") expect(b.length).toBe(15);
       if (m?.t === "live") expect(b.length).toBe(5);
+    }
+  });
+
+  it("round-trips REQUEST_CHUNK_HASHES and CHUNK_HASHES at protocol v8", () => {
+    expect(PROTOCOL_VERSION).toBe(8);
+    expect(C_CHUNK_HASHES).toBe(8);
+    expect(S_REQUEST_CHUNK_HASHES).toBe(0x8a);
+    const rq = encodeRequestChunkHashes(0x01020304);
+    expect(Array.from(rq)).toEqual([0x8a, 4, 3, 2, 1]);
+    expect(decodeServer(rq)).toEqual({ t: "request-chunk-hashes", tick: 0x01020304 });
+    for (const n of [1, 2, 4]) expect(decodeServer(rq.subarray(0, n))).toBeNull();
+    expect(decodeServer(new Uint8Array([...rq, 0]))).toBeNull();
+    const hs = BigUint64Array.from([1n, 0xffffffffffffffffn, 0x0102030405060708n]);
+    const f = encodeChunkHashes(600, hs);
+    expect(f.length).toBe(7 + 8 * 3);
+    expect(decodeClient(f)).toEqual({ t: "chunk-hashes", tick: 600, hashes: hs });
+    expect(decodeClient(encodeChunkHashes(600, new BigUint64Array(0)))).toEqual({ t: "chunk-hashes", tick: 600, hashes: new BigUint64Array(0) });
+    // Any length other than 7 + 8 * count is refused.
+    expect(decodeClient(f.subarray(0, f.length - 1))).toBeNull();
+    expect(decodeClient(new Uint8Array([...f, 0]))).toBeNull();
+    expect(decodeClient(f.subarray(0, 6))).toBeNull();
+    const lie = f.slice();
+    lie[5] = 4; // claims 4 hashes, carries 3
+    expect(decodeClient(lie)).toBeNull();
+    const huge = new Uint8Array(7);
+    huge[0] = C_CHUNK_HASHES;
+    huge[5] = 0xff;
+    huge[6] = 0xff; // count 65535 with no body
+    expect(decodeClient(huge)).toBeNull();
+  });
+
+  it("has a per-world CHUNK_HASHES frame cap that fits a full array exactly", () => {
+    expect(chunkCountFor(WORLD_SANDBOX)).toBe(64);
+    expect(chunkCountFor(WORLD_GAME)).toBe(768);
+    expect(maxChunkHashesFrameFor(WORLD_SANDBOX)).toBe(7 + 8 * 64);
+    expect(maxChunkHashesFrameFor(WORLD_GAME)).toBe(7 + 8 * 768);
+    expect(encodeChunkHashes(1, new BigUint64Array(768)).length).toBe(maxChunkHashesFrameFor(WORLD_GAME));
+    expect(encodeChunkHashes(1, new BigUint64Array(768)).length).toBeGreaterThan(maxChunkHashesFrameFor(WORLD_SANDBOX));
+    expect(() => encodeChunkHashes(1, new BigUint64Array(5000))).toThrow();
+  });
+
+  it("never throws decoding random CHUNK_HASHES and REQUEST_CHUNK_HASHES bytes", () => {
+    let x = 777;
+    const rnd = () => (x = (Math.imul(x, 1103515245) + 12345) >>> 0) / 4294967296;
+    for (let k = 0; k < 5000; k++) {
+      const b = new Uint8Array(Math.floor(rnd() * 80));
+      for (let i = 0; i < b.length; i++) b[i] = Math.floor(rnd() * 256);
+      if (b.length) b[0] = k % 2 ? C_CHUNK_HASHES : S_REQUEST_CHUNK_HASHES;
+      if (b.length >= 7 && k % 3 === 0) {
+        b[5] = ((b.length - 7) >> 3) & 255; // sometimes a self-consistent count
+        b[6] = 0;
+      }
+      expect(() => decodeClient(b)).not.toThrow();
+      expect(() => decodeServer(b)).not.toThrow();
+      const m = decodeClient(b);
+      if (m?.t === "chunk-hashes") expect(b.length).toBe(7 + 8 * m.hashes.length);
     }
   });
 });
