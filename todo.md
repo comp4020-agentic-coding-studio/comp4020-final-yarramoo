@@ -71,6 +71,18 @@ the input path, snapshot format, protocol or ABI, the full gate per commit):
   bag, respawned and took it back (every event and entity record as the client
   reads them). The health bar, death overlay, toast, gunpowder explosion and
   phone layout were seen. Worth two minutes of your eyes in the game world.
+- **A design limit in kill/death achievements (D-119):** with two players
+  connected, one claim is a majority, so a single modified client could award
+  itself `first_blood` or `five_kills`. This follows plan 10's own rule
+  (`ceil(n/2)`). Options: accept it (co-op, light anti-cheat is the stated
+  goal); require 2 votes whenever 2+ are connected, so a lone claim with two
+  players present waits for the other; or only award claim achievements with 3+
+  witnesses. Kept as planned until you choose.
+- **`shoved_to_doom` was redefined (D-120):** the plan said "a kill whose last
+  hit was Push or Blast", but a death records what killed you (lava, fire,
+  gunpowder), not the last hit. Recording the last hit would change the sim
+  and the save format. It now means "a credited kill where the environment
+  finished them off", and the in-game description says exactly that.
 
 ## Now
 
