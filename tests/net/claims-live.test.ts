@@ -41,6 +41,20 @@ const deaths = (c: TestClient) => {
 };
 void deaths;
 
+describe("logging resolved deaths", () => {
+  it("a bomb that kills three players in one tick logs all three deaths", async () => {
+    // A global rate limit on claim.death once dropped all but the first of these. Each real death resolves
+    // exactly once, so every one must reach the log (the crit 10 log is how deaths are read).
+    const s = await boot();
+    const ids = [await register(s.port, "A"), await register(s.port, "B"), await register(s.port, "C"), await register(s.port, "D")].map((r) => r.id);
+    const [killer, ...victims] = ids;
+    for (const v of victims) s.game.onDeathResolved!({ tick: 500, victim: v, killer, cause: BOMB, bag: 1 });
+    const logged = s.log.recent().filter((e) => e.ev === "claim.death");
+    expect(logged).toHaveLength(3);
+    expect(logged.map((e) => e.victim)).toEqual(victims.map((v) => `${["B", "C", "D"][victims.indexOf(v)]}#${v}`));
+  });
+});
+
 describe("two real clients, one kills the other", () => {
   it("the killer is awarded first_blood, deaths and kills are counted, claim.death is logged", async () => {
     const s = await boot();

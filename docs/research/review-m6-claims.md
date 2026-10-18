@@ -98,3 +98,5 @@ Options for the user: (a) accept it and say so in the deliverable, since achieve
 - **M3** not changed: reconnecting resets the per-connection claim window; churn is limited elsewhere.
 - **M4** not changed: the live test is wall-clock dependent but retries until the death appears.
 - **M5** accepted: stalled members raise the bar and unresolved deaths are logged.
+
+**Orchestrator correction to the N2 fix.** The N2 fix first put `claim.death` behind a single global `log.limited` key at one per second. That dropped real deaths: a bomb that killed three players in one tick logged one. A resolved death happens exactly once and needs a quorum of registered voters, so it cannot be repeated by a client; it is now `log.event` again. The per-claim lines a client can repeat stay limited. New test "a bomb that kills three players in one tick logs all three deaths" failed on the limited version (1 of 3 logged) and passes now.
