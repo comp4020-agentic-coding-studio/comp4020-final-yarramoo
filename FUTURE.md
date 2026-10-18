@@ -166,7 +166,7 @@ outcome only, not admin notes.
 - Expose `matView()`/`auxView()` on `shared/sim.ts` so the client does not capture wasm exports; from the M1 worker.
 - A pause/step/clear control in the sandbox; from watching long gunpowder chains.
 
-## Show catch-up as a real progress bar, and replay faster (from M2a)
+## ~~Show catch-up as a real progress bar, and replay faster (from M2a)~~ (done: D-127; replay is not faster, only visible)
 
 Late join replays the whole log at roughly 200-400 ticks/s on a laptop (about 5 s for 1300 ticks), shown only as a percentage in the header. Snapshots will cut this, but a visible bar plus rendering every Nth tick during fast-forward would make the wait feel shorter on phones.
 
