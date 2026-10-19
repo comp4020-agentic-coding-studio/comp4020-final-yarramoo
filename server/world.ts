@@ -544,8 +544,12 @@ export class World {
    */
   join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
     if (this.resetting) throw new Error("world is resetting");
-    // A newcomer is catching up, so with nobody live the world stays held: do not even start the clock (D-122).
-    let anyLive = false;
+    // A joiner replays the log after the snapshot. With none to replay it is live from the start and holds nothing:
+    // otherwise the first visitor to an empty world froze it until their LIVE arrived, and any client that never
+    // sends one (an older tab, the course's CI spec clients) froze it for the whole valve (D-131).
+    const nothingToReplay = this.log.length === 0;
+    // A newcomer with a backlog is catching up, so with nobody live the world stays held: do not start the clock (D-122).
+    let anyLive = nothingToReplay;
     for (const m of this.members.values()) if (m.live) anyLive = true;
     if (anyLive) this.clock.resume();
     this.clock.advance();
@@ -580,7 +584,7 @@ export class World {
       peer,
       seq: conn,
       minHashTick: this.clock.lastClosed,
-      live: false,
+      live: nothingToReplay,
       catchupSince: this.now(),
       lastBadTick: 0,
       claimWindowStart: 0,
