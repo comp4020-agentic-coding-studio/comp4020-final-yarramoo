@@ -92,6 +92,19 @@ describe("a lone client catching up holds the clock", () => {
   });
 });
 
+describe("a joiner with nothing to replay holds nothing", () => {
+  it("a client that never sends LIVE, joining an empty world, sees the clock run and its paint land", async () => {
+    // D-131: the first visitor to an empty world used to start not-live, so the world froze until their LIVE came.
+    // A client that never sends one (an older tab, the course's CI spec clients) froze it for the whole valve.
+    const s = await boot(tmp());
+    const c = await connect(s.port, hex, { holdLive: true });
+    await sleep(500);
+    expect(s.world.held).toBe(false);
+    expect(s.world.clock.lastClosed).toBeGreaterThan(10);
+    c.close();
+  }, 30_000);
+});
+
 describe("a live player is never frozen by a joiner", () => {
   it("one live client keeps ticking the whole time a second client replays", async () => {
     const N = 3000;
