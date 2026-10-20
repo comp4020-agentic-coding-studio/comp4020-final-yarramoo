@@ -164,6 +164,51 @@ drift, lie or upload a bad snapshot.
 - Input validation is light: the server re-adds the player id to every input,
   so a client cannot name another player (D-032), and Pos jumps are bounded.
 
+**The simulation model.** The world exists only in the browsers. The server
+orders inputs and checks agreement; it never steps the world, so it never sees
+a death, a pickup or an explosion. That is why deaths reach it only as client
+claims, accepted by majority (D-118, D-119).
+
+```mermaid
+flowchart TB
+  BR["<b>Every browser</b> (players and spectators)<br/>runs the same sim.wasm: the whole world,<br/>stepped 60 times a second on the same inputs"]
+
+  subgraph SRV[" "]
+    direction LR
+    ORDER["<b>Server · Tick clock</b><br/>stamps inputs<br/>into ticks"]
+    CHECK["<b>Hash vote</b><br/>majority is truth;<br/>mismatch → resync"]
+    VERIFY["<b>Verify worker</b><br/>restores an uploaded<br/>snapshot, never steps"]
+    TALLY["<b>Claim tally</b><br/>a death counts when most<br/>registered witnesses agree"]
+  end
+
+  DB[("<b>SQLite on /data</b><br/>tick log · snapshots · player_stats · achievements")]
+
+  BR -->|"1 · inputs: Pos, Cast, Paint"| ORDER
+  ORDER -->|"2 · TICK: the same ordered inputs to everyone"| BR
+  BR -->|"3 · HASH every 60 ticks"| CHECK
+  BR -->|"4 · snapshot, when asked"| VERIFY
+  BR -->|"5 · CLAIM: a death my sim saw"| TALLY
+  SRV --> DB
+```
+
+What the server can see, and so what it can log, is limited to what crosses
+the wire. These are the events in `shared/events.ts`, grouped by what produced
+them:
+
+```mermaid
+flowchart TB
+  c1["<b>Connections</b><br/>join · leave<br/>replaced<br/>hello.rejected<br/>dropped_slow"]
+  i1["<b>Inputs it stamps</b><br/>input.summary (10 s)<br/>pos.rejected<br/>input.rejected<br/>input.rate_limited"]
+  a1["<b>Hashes, snapshots</b><br/>desync · resync<br/>desync.chunks<br/>snapshot.accepted /<br/>rejected / abandoned"]
+  k1["<b>Client claims</b><br/>claim.death<br/>claim.unresolved<br/>achievement.awarded"]
+  p1["<b>Its own state</b><br/>server.start<br/>world.loaded<br/>world.build_changed<br/>world.hold / release<br/>process.minute"]
+  c1 & i1 & a1 & k1 & p1 --> LOG["one JSON line per event → fly logs and /dashboard"]
+```
+
+Damage, deaths, pickups and explosions happen inside each browser's sim. The
+server learns of a death only when enough witnesses claim it; it never learns of
+a pickup or an explosion at all.
+
 **Alternatives considered.** Trusting the first uploader. Restoring on the main
 thread. Server-side replay.
 
@@ -401,6 +446,46 @@ Spreading 130,000 or more frames as call arguments overflows V8's stack, and the
 sandbox's log since its last snapshot had grown past that. I reproduced it in
 the real Docker image on a seeded 150,000-tick log: unfixed, a RangeError and no
 HTTP; fixed, 150,000 ticks loaded and HTTP 200 (D-099).
+
+**How it broke.** A cold start restores the last snapshot, then replays every
+tick logged since. The log should stay short, because each new snapshot lets the
+server drop the log before it. Snapshots had stopped for days (entry 12), so the
+log kept growing until one ordinary restart crossed a line nobody knew was there:
+
+```mermaid
+flowchart LR
+  S["14 Oct<br/>last snapshot<br/>log: 37,573 ticks"] --> G["14–18 Oct<br/>no new snapshot<br/>log keeps growing<br/>(60 ticks a second of play)"]
+  G --> X["18 Oct, idle stop<br/>log: 130,000+ ticks"]
+  X --> R["cold start<br/>loadFromDb"]
+  R --> Boom["RangeError:<br/>Maximum call stack size exceeded"]
+  Boom --> Loop["crash, restart, crash…<br/>Fly gives up after 10"]
+  Loop --> Down["site down"]
+  style Boom fill:#7a1f1f,color:#fff
+  style Down fill:#7a1f1f,color:#fff
+```
+
+The bug is in one line. `push(...frames)` spreads the whole array into separate
+call arguments, and every argument takes a slot on the call stack. A few hundred
+is nothing; past about 130,000 (measured on Node 24 here; the exact limit
+depends on stack size, so it is not a constant) the stack runs out before
+`push` even starts:
+
+```mermaid
+flowchart TB
+  B1["<b>Before</b><br/>this.log.push(...frames)"] --> B2["push(f1, f2, … f130000)<br/>130,000 arguments, all on the stack at once"]
+  B2 --> B3["stack overflow before push runs"]
+  B3 -.->|"fixed by"| A1["<b>After</b><br/>for (const f of frames) this.log.push(f)"]
+  A1 --> A2["push(f1), push(f2), …<br/>one argument each: the stack never grows"]
+  A2 --> A3["150,000 ticks load, HTTP 200"]
+  style B3 fill:#7a1f1f,color:#fff
+  style A3 fill:#1f5a2e,color:#fff
+```
+
+The fix was proven before it shipped. A database was seeded with 150,000 empty
+ticks, and both builds of the real Docker image were booted on it. The unfixed
+image threw the RangeError and served nothing; the fixed one loaded all 150,000
+ticks and returned HTTP 200. A regression test writes the same long log and
+cold-starts, and fails with the same RangeError without the fix.
 
 **What changed.** The log is appended one frame at a time. The fix went onto
 `main` first and then `multa`. Why the log had grown so long was not answered
