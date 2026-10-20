@@ -40,6 +40,8 @@ Challenges
 16. [What independent reviews caught that tests missed](#16-what-independent-reviews-caught-that-tests-missed)
 17. [Snapshot format 3 before any game snapshot exists](#17-snapshot-format-3-before-any-game-snapshot-exists)
 18. [A cross-browser check that tested nothing it named](#18-a-cross-browser-check-that-tested-nothing-it-named)
+19. [An achievement the sim's outputs cannot express](#19-an-achievement-the-sims-outputs-cannot-express)
+20. [The merge rehearsal: two bugs only the real image could show](#20-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
 
 ---
 
@@ -67,6 +69,35 @@ test harness before any game code, and a server that has to police clients
 without being able to run the sim. The out-of-scope list (plan section 16, and
 invariant 11 in `CLAUDE.md`) bans server stepping, P2P and rollback so a later
 session cannot quietly reopen the choice.
+
+**A late joiner, step by step.** A client joining mid-game gets the latest verified snapshot and every tick closed since, replays them, and must report the same hash as everyone else. The server orders and checks; it never steps the world.
+
+```mermaid
+sequenceDiagram
+    participant A as Client A
+    participant S as Server (clock and log)
+    participant B as Client B
+    participant C as Client C (late)
+    A->>S: input
+    B->>S: input
+    Note over S: stamps inputs into tick k, closes it, appends it to the log
+    S->>A: TICK k
+    S->>B: TICK k
+    Note over A,B: each pushes inputs, then steps its own sim
+    A->>S: HASH k
+    B->>S: HASH k
+    Note over S: hashes agree, checkpoint k resolves
+    C->>S: HELLO
+    S->>C: WELCOME (last closed tick)
+    S->>C: SNAPSHOT (latest verified)
+    S->>C: every closed tick since the snapshot
+    Note over C: replays to the present, unthrottled
+    S->>C: TICK k+1 (live)
+    C->>S: HASH k+1
+    Note over S: matches A and B. The server never steps the world.
+```
+
+WELCOME carries the last closed tick, which is the joiner's replay target (D-030). A client only sends HASH for ticks past that target (D-038).
 
 **Evidence.** [plan.md section 3](plan.md); D-002, D-003 in
 [DECISIONS.md](DECISIONS.md); commit
@@ -424,6 +455,22 @@ because the user could not set a secret before crit 10. Anyone who reads the
 repo can open the admin view and reset a world. The decision record says so
 plainly and says to move it to a secret if the world starts to matter.
 
+**The input-count bug the hold created.** While the clock was held for a catching-up visitor (D-122), client inputs piled into one open tick. A TICK frame stores its input count as a 16-bit unsigned integer, so past 65,535 the count would wrap while every input was still written: every client would misread the frame, and it is saved to the log. Three guards now stop it (review of D-122).
+
+```mermaid
+flowchart TD
+    I["Client input: Pos, Cast or Paint"] --> G1{"Guard 1: world held?"}
+    G1 -- yes --> D1["Dropped, logged input.rejected (world_held)"]
+    G1 -- no --> G2{"Guard 2: open tick already has 4096 client inputs?"}
+    G2 -- yes --> D2["Dropped"]
+    G2 -- no --> T["Stamped into the open tick"]
+    T --> G3{"Guard 3: encodeTick, more than 65,535 inputs?"}
+    G3 -- yes --> E["Throws RangeError, no wrapped count written"]
+    G3 -- no --> OK["TICK frame sent and saved to the log"]
+```
+
+Guards 1 and 2 are in `World.stampClient`. Join and Leave are the server's own and bypass the cap, which is why the encoder keeps its own hard check.
+
 **Evidence.** D-010, D-092 to D-098; [review-crit10.md](research/review-crit10.md),
 [review-crit10-reset.md](research/review-crit10-reset.md);
 [`9eecdab`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9eecdab),
@@ -524,6 +571,23 @@ pausing the clock while every member is still catching up is now built (D-122,
 protocol v7 `C_LIVE`): the log stops growing under a lone joiner, and a
 snapshot follows soon after they go live. Snapshotting mid-replay is still in
 [FUTURE.md](../FUTURE.md) and not built.
+
+**The correction, as a diagram.**
+
+```mermaid
+flowchart TD
+  A["Research claim:<br/>a long log never recovers"] --> B["Cause found: server asks a<br/>client that is still replaying"]
+  B --> C["D-100: four fixes<br/>ask only a live client<br/>retry 300 ticks after a lapse<br/>show log since snapshot<br/>allow joins past 200,000 ticks"]
+  C --> D["D-101: old and new code<br/>side by side, same lava world,<br/>20,000 logged ticks"]
+  D --> E["Old: asks on join, gives up<br/>after 13 s, succeeds about 5 s<br/>after the client is live"]
+  D --> F["New: no request in the 37 s<br/>catch-up, verified snapshot<br/>3 s after the client is live"]
+  E --> G["Correction: slow, not stuck,<br/>at most about 43 s late"]
+  F --> G
+  G --> H["Likely real cause: visitors left<br/>during a catch-up of minutes (inferred).<br/>The 200,000-tick cap was a real trap."]
+  H --> I["D-122: pause the world while<br/>a lone visitor catches up"]
+```
+
+The visitors-leaving explanation is inferred, because visit lengths were not logged at the time.
 
 **Evidence.** D-100, D-101, D-122; [snapshot-timing.md](research/snapshot-timing.md);
 [`c895a35`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/c895a35),
@@ -734,4 +798,52 @@ description says so, and D-120 records the departure from the plan.
 that ends in a fall onto stone does not, because that death has no environmental
 cause. Exact semantics need the last-hit spell in the event.
 
+**How a death claim is counted.** The server never runs the sim, so it cannot see a death. Each client reports the deaths its own sim emits, and the server accepts one only when enough registered visitors agree (D-118 to D-121).
+
+```mermaid
+flowchart TD
+  A["Client sim emits a death"] --> B["Client sends CLAIM"]
+  B --> C{"Registered visitor?"}
+  C -- "no token" --> X1["Refused: claim_anonymous<br/>no vote, no quorum effect"]
+  C -- yes --> D{"Names players who<br/>joined this world?"}
+  D -- "unknown victim" --> X2["Refused: claim_unknown_player"]
+  D -- yes --> E["Vote counted once per visitor,<br/>however many tabs"]
+  E --> F{"Votes reach<br/>ceil of eligible / 2?"}
+  F -- no --> G["Tally stays open,<br/>dropped after 10 s"]
+  F -- yes --> H["Death resolves:<br/>stats and achievements"]
+  H -.-> N["Accepted limit: with two players<br/>one vote is a majority (D-121)"]
+```
+
+Before review S1, anonymous tabs could vote and raise the quorum, so a dozen of them could forge any death or achievement. The two-player limit is plan 10's own rule, kept by the user's choice.
+
 **Evidence.** D-118 to D-120; commit `89988b1`.
+
+## 20. The merge rehearsal: two bugs only the real image could show
+
+**What happened.** Before merging `multa` into `main` for crit 10, the merge was rehearsed in a scratch copy: merge locally, build the real Docker image, and boot it on data written by the build then deployed. Every test was green at the time.
+
+**What we found.** Two bugs, both invisible to the test suites, either of which would have broken the live deploy:
+
+```mermaid
+flowchart TD
+    G["All 245 net tests green"] --> R["Rehearse: merge locally, build the real image, boot it on the deployed build's data"]
+    R --> F1["Boot exits with code 13"]
+    R --> F2["pnpm check: 2 of 9 spec tests fail"]
+    F1 --> C1["Cause (D-130): start-up awaits the verify worker before the server listens. The worker is unref'd, so Node exits. Vitest's own event loop hid it."]
+    F2 --> C2["Cause (D-131): every joiner started 'not live', so an empty world froze until LIVE. Clients that never send LIVE froze it for 120 s."]
+    C1 --> X1["Fix: ref the worker while a job is pending. Test spawns a real node server/main.ts"]
+    C2 --> X2["Fix: a joiner with nothing to replay is live at once"]
+    X1 --> V["Rehearsal re-run: the merged image keeps a scratch world's snapshot (tick 1920), all routes 200"]
+    X2 --> V
+    V --> D["Deployed: the live sandbox keeps its real world (tick 2,396,400)"]
+```
+
+- **D-130:** vitest keeps its own event loop alive, so a test could never see the process exit. The regression test spawns a real `node server/main.ts`; it failed with the same "unsettled top-level await" and passes now.
+- **D-131:** found by running the course's own CI spec (`pnpm check`) against the merged image, the same check CI runs before every deploy. It would have failed CI and blocked the deploy.
+
+**What changed.** Both fixes went onto `multa`, the merge was redone, and all 9 course spec tests passed against the real image before anything was pushed. The deploy kept the live sandbox's world. The real merge also conflicted in three files, where `main`'s two hotfixes met `multa`'s rewrite; resolving all three to `multa`'s version left a tree identical to `multa`, with both fixes present.
+
+**Evidence.** D-130, D-131;
+[`e2851ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e2851ed),
+[`d0d0634`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d0d0634),
+[`d9c6ed1`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d9c6ed1) (the merge).
