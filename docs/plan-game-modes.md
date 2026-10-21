@@ -64,6 +64,13 @@ short, and matches an 8-player room.
 - **U2: the arena's world generation.** The arena needs the cave fixes (passages wide enough to walk, and a way to
   dig from spawn). Those come from the overnight cave research (`docs/research/cave-gen-v2.md`). New kinds can use
   gen v2 at no cost to world 1. Whether world 1 gets a deliberate reset to gen v2 is a separate question.
+  The research found that for 8 seeds, no player-sized body can walk from the surface to the deepest band
+  (1100+), and one seed never leaves the shallow band. Bomb is the only spell that carves, and it's a deep pickup.
+  Its recommendation: Blast also carves Dirt, Sand and Wood (no new spell id, no snapshot format change, safe on
+  the live world), plus gen v2 (a minimum-width backbone, box-fit repair, no pools on the path) for kinds 2 and 3,
+  with v1 frozen for world 1. **Session-model caveat:** caves are mostly Rock, so a soft-only Blast won't widen a
+  rock neck. Either let a starting dig cut Rock at a small radius, or accept that world 1 stays hard until a reset.
+  **U2b:** is a deliberate reset of world 1 to gen v2 acceptable?
 - **U3: rounds.** Ship the arena as continuous free-for-all with tallies (size M). Timed rounds with a round-end
   screen are size L, and need a deterministic sim-side reset that has to pass D7 with a reset inside the run. Only
   worth it if G4 lands with time to spare.
