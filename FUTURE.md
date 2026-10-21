@@ -258,3 +258,17 @@ Gen v2's box-fit repair carves near-vertical radius-6 shafts that read as pipes 
 
 - **Source:** reviewing the gen v2 worker's output and the preview of seed 8.
 - **Why:** the repair is a correctness backstop; the look of the caves is what players see.
+
+## One shared byte-vector file for the config encoders
+
+The config round-trip vectors are hard-coded twice (`sim/tests/config.rs`, `tests/net/room.test.ts`). A single `tests/fixtures/room-vectors.json` that both read (the Rust side with the script.rs mini-parser) would make drift impossible rather than merely tested. Not done in R0a because the brief allowed either and the table is 3 vectors plus a mutation list.
+
+- **Source:** R0a worker, while writing the round-trip test.
+- **Why:** R1 and R2 add fields and presets; a third copy is where the encoders would quietly diverge.
+
+## Property test: decode never accepts what encode cannot produce
+
+Fuzz random 16-byte arrays through `RoomConfig::decode` and `decodeConfig` and assert they agree, and that every accepted config re-encodes to the same bytes. Catches a range off by one in either language.
+
+- **Source:** R0a worker.
+- **Why:** the server validates in TS and the sim in Rust; they must refuse exactly the same configs or a room could be created that no client can init.
