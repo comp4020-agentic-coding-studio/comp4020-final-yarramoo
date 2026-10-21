@@ -29,3 +29,4 @@ contexts should be able to provide a higher level of assurance.
 I'll be generating more networking timelines, and system architecture charts from now on for anything deeply agentic. 
 It looks like mermaid is another syntax that AI can just generate from scratch so it's easy and cheap to do. 
 
+See the docs/ folder for engineering-decisions.md and lockstep-networking.png
