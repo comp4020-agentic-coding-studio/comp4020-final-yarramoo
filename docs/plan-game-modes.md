@@ -1,164 +1,183 @@
-# Plan: game modes and a menu
+# Plan: configurable rooms and game modes
 
-Written 2026-10-21 by the session model. Builds on `docs/research/game-modes-design.md` (what the modes are) and
-`docs/research/game-modes-capacity.md` (whether the server can carry them). Feature freeze is Mon 2 Nov; the final
+Rewritten 2026-10-21 (evening) by the session model, after the user's direction:
+
+- **Modes:** Survival (last player standing), Deathmatch (endless fighting, resources respawn), and peaceful
+  Creative rooms that players make and share.
+- **Tools:** Creative has every spell, plus Sandspiel-style brushes.
+- **Config:** everything is configurable per room: terrain, size and rules.
+- **Not live:** the game is **not live until the user says so**, so resets and format breaks are fine.
+
+The first version of this plan (four fixed worlds, protecting the live cave world) is replaced. Its git history is
+`cd194e7`.
+
+Inputs: `docs/research/game-modes-design.md` (prior art), `docs/research/game-modes-capacity.md` (server budget),
+`docs/research/cave-gen-v2.md` (why the caves can't be walked; gen v2). Feature freeze is Mon 2 Nov; the final
 submission is due Mon 9 Nov.
 
-## The problem
+## The idea: a room is a seed plus a config
 
-PvP is "up to the players", but damage is unconditional in the cave world (`apply_damage` in `sim/src/spells.rs`).
-One player who wants to fight forces everyone else to. Every game the research looked at that handles this well
-(Minecraft servers, Noita's Entangled Worlds lobbies, .io games) settles consent **at the world level**: you choose a
-fight by choosing where you go. A per-player toggle (Terraria) is weaker here, because Blast and Bomb are area
-damage, and a griefer can still blow up the ground under a peaceful player.
+Every world becomes a **room**: a seed plus a small fixed-width integer **config**. A mode is just a preset of
+config values. The sim reads the config at `init`, stores it in the snapshot header, and includes it in the world
+hash, so two clients with different configs fail the hash check straight away. All rule logic stays in `sim/`
+(invariant 1). The config is integers only (invariant 2).
 
-## The shape
+### Config fields (version 1, 16 bytes, all `u8` or `u16`)
 
-A menu at `/` with one card per world. Each card has the rules in one line, a PvP badge, the number of players
-online (aggregate only), and a Join button. Name entry moves onto the menu.
+| Field | Values | Notes |
+|---|---|---|
+| `terrain` | 0 Caves (gen v2), 1 Solid box, 2 Empty box | Solid box: Dirt over Rock, for digging and carving. Empty box: a Sandspiel canvas with walls |
+| `size` | 0 S 512x384, 1 M 1024x768, 2 L 2048x1536 | L only for Caves; the snapshot cap scales by size |
+| `avatars` | 0 off, 1 on | Off reproduces today's paint-only sandbox |
+| `damage` | 0 none, 1 environment only, 2 full PvP | 1 is "peaceful but lava still burns" |
+| `spells` | 0 from pickups, 1 all, unlimited charges | Cooldowns stay in both cases: they bound per-tick work |
+| `brushes` | 0 off, 1 on | Sandspiel tool panel; Paint inputs refused when off |
+| `death` | 0 respawn, 1 out until the round ends | 1 is what makes Survival |
+| `respawn_secs` | 0..30 | Used when `death` is 0 |
+| `pickup_respawn` | 0 off, 1 on | Deathmatch on, Survival off |
+| `round` | 0 none, 1 last player standing | Needs `death` 1 |
+| `max_players` | 2..8 | The server enforces it; the sim's `MAX_PLAYERS` stays 8 |
+| `visibility` | 0 public, 1 unlisted | Server-only (not hashed); unlisted rooms are reachable by link only |
 
-| id | kind | URL | World | Damage | Spells | Paint | Size |
-|---|---|---|---|---|---|---|---|
-| 0 | 0 sandbox | `/sandbox` | Materials toy, as now | n/a | none | yes | 512x512 |
-| 1 | 1 caves | `/caves` | The live cave world, as now | **decision U1** | pickups | no | 2048x1536 |
-| 2 | 2 creative | `/creative` | Build freely with avatars | off (lava and fire too) | all, unlimited | yes | 1024x768 |
-| 3 | 3 arena | `/arena` | Free-for-all PvP | on | pickups, strong ones deep | no | 1024x768 |
+The sim rejects an out-of-range config (`init` returns -1) and clamps nothing silently. The server validates the
+same table in `shared/room.ts` before it creates a room, so a bad config never reaches a client.
 
-**New kinds, not flags.** `world_kind` is already an integer in the ABI and in the snapshot, and it already gates
-behaviour in the sim. Adding kinds 2 and 3 leaves worlds 0 and 1 byte-identical, so the live cave world keeps its
-state (D-014). Flags on world 1 would be cheaper to write but would change a live world's rules underfoot.
+### Presets
 
-**One process.** The capacity research measured 82 MB RSS idle with both worlds loaded. The server runs no sim per
-world: a world is a tick log, a member map and a snapshot blob, and one shared verify worker does the checking.
-Worker threads or child processes would cost RAM and give no CPU gain on one shared vCPU. What binds first is the
-total number of sockets (each can buffer up to 8 MiB) and the single 4 ms tick timer, not the number of worlds. So:
-four worlds, one process, plus a **server-wide cap of 40 members** on top of the per-world caps. The capacity note
-lists six estimated (not measured) figures. Milestone G1 measures them before anything ships.
+| Preset | terrain | size | damage | spells | brushes | death | pickups respawn | round |
+|---|---|---|---|---|---|---|---|---|
+| **Survival** | Caves | M | PvP | pickups | off | out | off | last standing |
+| **Deathmatch** | Caves | M | PvP | pickups | off | respawn 3 s | on | none |
+| **Creative** | Solid box or Caves | M | none | all | on | respawn 1 s | on | none |
+| **Classic sandbox** | Empty box | S | n/a | n/a | on | n/a | n/a | none (avatars off) |
 
-**Arena and creative are 1024x768**, a quarter of the cave world's cells. That keeps their snapshots and verify jobs
-small (the verify of a 7 MiB cave snapshot is the memory peak the capacity note warns about), keeps late-join replay
-short, and matches an 8-player room.
+The create-room form opens on a preset, with an "Advanced" section that exposes every field.
 
-## Settled by this plan (each gets a DECISIONS.md row)
+## Sandspiel-style brushes (Creative)
 
-- **D-132** New world kinds 2 (creative) and 3 (arena); worlds 0 and 1 unchanged.
-- **D-133** One kind table replaces every `kind === WORLD_GAME ? a : b` ternary. Today a new kind silently gets
-  sandbox values from `maxSnapshotRawFor`, `maxUploadFrameFor` and `chunkGridFor` in `shared/protocol.ts:64-70`.
-  The table is an exhaustive `Record<WorldKind, KindInfo>`, so a missing kind fails `pnpm typecheck`. The Rust side
-  gets matching `has_players()`, `damage_on()`, `paint_on()` and `grants_all_spells()` on the sim.
-- **D-134** One process; a total member cap; per-kind caps from the kind table.
-- **D-135** Arena kill and death tallies live in sim state (snapshot format 4), so scores are shared state that
-  every client agrees on. The scoreboard reads them as an output and never writes back (invariant 9). Format 3
-  snapshots must still restore, because world 1's stored snapshot is format 3 and a new build keeps the snapshot
-  (`server/world.ts:372-391`).
-- **D-136** `/` becomes the menu. The course spec only requires that `/` serves the client page, with a module
-  script and a `/readme/` link (`spec/game.test.ts:15-22`). The menu is part of the same bundle, so this holds.
+Sandspiel's appeal is a big element palette, a size slider, and instant feedback. In this game:
+
+- **Panel:** a material picker (every material in `sim/src/materials.rs` that makes sense to place: Rock, Dirt,
+  Sand, Water, Wood, Seed, Fire, Gunpowder, Lava, plus an Eraser), a size slider up to `MAX_PAINT_RADIUS` (32), and
+  a toggle between the brush and the spell bar. The panel sits beside the spell bar, so both are one click away.
+- **Paint modes:** *replace* (today's Paint) and *fill empty only* (paint sand without erasing rock). The second
+  needs one flag bit in the Paint input. The input stays bounded: the same radius clamp and endpoint clamp.
+- **Rate:** brush strokes are already batched per tick by the client. The existing per-connection input caps
+  apply. A room of 8 painters at radius 32 must stay inside the per-tick step budget, and R4 measures it.
+- **Out of scope, kept in FUTURE.md:** Sandspiel's cloner and wind tools, new materials (ice, oil, gas), and spray
+  density.
+
+## Survival rounds (sim-side)
+
+A round state machine lives in sim state, so every client agrees on it:
+
+- **Phases:** `waiting` (fewer than 2 players), `countdown` (5 s), `playing`, `ended` (5 s banner).
+- **Death:** a death in `playing` sets the player *out* until the round ends. They watch, and the camera can
+  follow survivors. A player who joins mid-round is out until the next round.
+- **End:** one player left (or none) ends the round with an `EV_ROUND_END {winner}` event.
+- **Reset:** a new round restores the grid from the generated `base` the sim already keeps (`sim/src/lib.rs:133`),
+  regenerates pickups and respawns everyone. It's deterministic, needs no server involvement, and no TypeScript
+  writes state.
+- **Tests:** D7 (sleeping invisible) must pass with a round reset inside the run, and D1/D2 need a scripted
+  round to a winner.
+
+## Server: rooms instead of two fixed worlds
+
+The capacity research measured 82 MB RSS idle with two worlds loaded, and found no per-world sim on the server. A
+world is a tick log, a member map and a snapshot blob. That makes many rooms cheap **if empty ones unload**.
+
+- **Storage:** a `rooms` table (id, code, name, config blob, seed, creator visitor id, created_at, last_active).
+  The existing world tables are already keyed by world id, so a room's id is its world id.
+- **Codes:** each room gets a 6-character code from `crypto.randomBytes` (not its sequential id, so unlisted rooms
+  can't be enumerated). Links are `/r/<code>`.
+- **Lifecycle:** a room loads on its first join and unloads after 2 minutes empty (snapshot flushed, then dropped
+  from memory). Rooms idle for 7 days are deleted. Survival and Deathmatch rooms idle for 24 h are deleted.
+- **Caps** (from the capacity note, measured in R2 before shipping): 6 loaded rooms, 40 members in total, 8 per
+  room, 3 rooms created per visitor per day, 100 stored rooms. Room creation goes through `log.limited`.
+- **Names:** room names are user text. Cap them at 32 characters, store them plain, and render them only with
+  `textContent`. Like player names, they never go into HTML.
+- **API:** `POST /api/rooms` (create, validated), `GET /api/rooms` (public rooms with live counts, no player
+  names), `GET /api/rooms/<code>` (config and world id for joining). The admin dashboard gets a rooms panel.
+- **Joining:** the client fetches the room, then sends HELLO with the world id. WELCOME carries the config, so a
+  fresh room with no snapshot inits identically everywhere. Protocol v9.
+- **Process:** one process. Worker threads buy nothing on one shared vCPU (capacity note).
+
+## Caves: gen v2 everywhere
+
+Since nothing is live, the cave world simply moves to gen v2. No frozen v1 and no versioned generator; that drops
+architectural decision 2 from the cave note. Gen v2, from `docs/research/cave-gen-v2.md`:
+
+- A worm backbone at minimum radius 7.
+- An opening pass that widens necks.
+- A box-fit repair, flood-filling with a 6x11 box and carving to any band it can't reach.
+- No pools on the backbone.
+
+The test `traversable_to_every_band` must be shown red on today's generator first. It has to work at all three
+sizes.
+
+**Starting dig:** a short-range dig from spawn that cuts Dirt, Sand, Wood **and Rock** at a small radius (about 4)
+and leaves Bedrock alone. Soft-only carving (the cave note's cheaper option) won't open the rock necks that are
+the actual problem. Bomb stays the big digger, so deep pickups still matter. Whether the dig is part of Blast or
+its own spell is R1's call. With no live world, a new spell id and a snapshot format change cost nothing extra.
+
+## Settled by this plan (DECISIONS.md rows on landing)
+
+- **D-132** Rooms with a hashed, integer config replace fixed world kinds. Modes are presets.
+- **D-133** Snapshot format 4 carries the config and the round state. Older formats are refused: nothing is live.
+- **D-134** One process; rooms load lazily and unload when empty; caps as above.
+- **D-135** Survival's round reset restores the sim's generated base, sim-side.
+- **D-136** `/` is the menu: the room browser, the presets, and "create a room". The course spec only needs `/` to
+  serve the client page, with a module script and a `/readme/` link (`spec/game.test.ts:15-22`).
+- **D-137** Gen v2 for every Caves room; a starting dig that cuts Rock at a small radius.
 
 ## Decisions for the user
 
-- **U1: is the cave world peaceful?** Option (a): player damage off in world 1 (players still die to lava, fire and
-  falls). Size S. It's safe for history: on a new sim build the server keeps the verified snapshot and clears the
-  input log, so no old input replays under the new rule (checked in `server/world.ts:372-391`; this corrects the
-  design note's worry). Option (b): leave world 1 hostile and label it "Caves (PvP)". **Recommendation: (a)**,
-  because then the arena is the only place to fight, which is the point of the whole change.
-- **U2: the arena's world generation.** The arena needs the cave fixes (passages wide enough to walk, and a way to
-  dig from spawn). Those come from the overnight cave research (`docs/research/cave-gen-v2.md`). New kinds can use
-  gen v2 at no cost to world 1. Whether world 1 gets a deliberate reset to gen v2 is a separate question.
-  The research found that for 8 seeds, no player-sized body can walk from the surface to the deepest band
-  (1100+), and one seed never leaves the shallow band. Bomb is the only spell that carves, and it's a deep pickup.
-  Its recommendation: Blast also carves Dirt, Sand and Wood (no new spell id, no snapshot format change, safe on
-  the live world), plus gen v2 (a minimum-width backbone, box-fit repair, no pools on the path) for kinds 2 and 3,
-  with v1 frozen for world 1. **Session-model caveat:** caves are mostly Rock, so a soft-only Blast won't widen a
-  rock neck. Either let a starting dig cut Rock at a small radius, or accept that world 1 stays hard until a reset.
-  **U2b:** is a deliberate reset of world 1 to gen v2 acceptable?
-- **U3: rounds.** Ship the arena as continuous free-for-all with tallies (size M). Timed rounds with a round-end
-  screen are size L, and need a deterministic sim-side reset that has to pass D7 with a reset inside the run. Only
-  worth it if G4 lands with time to spare.
+- **U1:** Keep `/sandbox` as a permanent public Classic sandbox room alongside player rooms? (Recommended: yes,
+  as the zero-setup front-page option.)
+- **U2:** Room lifetimes: 7 days idle for Creative, 24 h for matches. Fine?
+- **U3:** If the freeze gets close, Survival (R6) is the one to cut or simplify, because rounds are the riskiest
+  sim change. Agree?
 
 ## Milestones
 
-Workers run one at a time: they share `shared/protocol.ts`, `server/world.ts` and `client/main.ts`. Each brief
-names the files the worker may touch, the commit checklist, the gate, and asks for "Architectural decisions for
+Workers run one at a time: they share `shared/protocol.ts`, `server/world.ts`, `client/main.ts` and `sim/`. Each
+brief names the files the worker may touch, gives a commit checklist, and asks for "Architectural decisions for
 review". Each commit is gated on exit codes:
 `pnpm typecheck && pnpm test:net && pnpm test:determinism && git commit`.
 
-### G0. The kind table refactor (Sonnet, size S, no behaviour change)
-
-- `shared/protocol.ts`: `WorldKind` type and a `KIND_INFO` table (snapshot cap, upload cap, chunk grid, has players,
-  max members). The three helpers read the table.
-- `server/world.ts`: the roughly 10 `this.kind === WORLD_GAME` sites become `KIND_INFO[this.kind].hasPlayers`.
-- `server/main.ts`: build `worlds` from a list of `{id, kind}` instead of two literals.
-- `sim/src/sim.rs`: rule helpers replace the bare `world_kind == 0` checks (lines 150, 166, 171, 310).
-- Commits: (1) the TS table and helpers; (2) the server sites; (3) the Rust helpers.
-- Verify: no test changes, all green, and the determinism suite's hashes unchanged.
-- **Independent review.** It touches the input path and the snapshot caps.
-
-### G1. Capacity check (Haiku runs it, session model reads it)
-
-- Boot the real Docker image locally. Connect 24 bot sockets across worlds 0 and 1, and force a cave verify
-  mid-run. Record peak RSS, event-loop p99, and per-socket memory into `docs/research/game-modes-capacity.md`.
-- Pass: peak RSS under 200 MB. If it fails, lower the total cap before going on.
-
-### G2. Menu and routing (Sonnet, size M, client plus a small server change)
-
-- `client/main.ts:48`: derive the world id from a route table (`/sandbox` 0, `/caves` 1, `/creative` 2,
-  `/arena` 3, `/` the menu). Old links to `/` reach the menu, one click from the caves.
-- New `client/menu.ts`: cards from the kind table, plus counts from `/api/summary` polled every 10 s. The summary
-  carries counts per world and no names (project rule).
-- `server/main.ts`: serve the client at the new paths.
-- Spec and net tests: `/caves`, `/creative` and `/arena` serve the page, and `/` still passes the course spec.
-- Commits: (1) the route table; (2) the menu; (3) the server routes and tests.
-- Open it and look: the menu in a phone-width context, and both kinds of join.
-
-### G3. Creative world, kind 2 (Sonnet, size M, sim-heavy)
-
-- Sim: kind 2 accepts Join, Pos, Cast and Paint. `apply_damage` returns early. Join grants every spell with
-  unlimited charges. Cooldowns stay, since they are the bound on per-tick work (the unbounded-input rule in
-  CLAUDE.md). Generation: an open plain with a hill and a pool, so there is something to dig and build with.
-- Server: world 2 in the worlds list. Identity and presence come free from `hasPlayers`.
-- Client: the paint palette and the spell bar together, and no health bar.
-- Determinism: a kind-2 script in D1/D2 (paint plus every spell, two clients), and D7 with sleeping off.
-- Commits: (1) the sim rules plus Rust tests; (2) generation; (3) the server and client; (4) the determinism script.
-- Look: two browser contexts on `/creative`; each sees the other's builds and casts.
-
-### G4. Arena, kind 3, continuous FFA (Sonnet, size M; after the cave research is reviewed)
-
-- Sim: gen v2 at 1024x768. Weak spells near spawn, Fire bolt and Bomb deep. The starting dig ability from
-  the cave research. Kill and death tallies per player in sim state; snapshot format 4; format 3 still loads.
-  Respawn already exists (`dead_until`).
-- Client: a kill feed from the existing `EV_DEATH` events, a scoreboard from the tallies, and a PvP warning on the
-  card and on entry.
-- Determinism: the arena script fights to a kill (adapt the D-114 scripted combat test) on all four runtimes.
-- Commits: (1) gen v2 for kind 3; (2) the tallies and format 4; (3) the client; (4) the tests.
-- **Independent review.** It changes the snapshot format.
-
-### G5. The U1 outcome, and docs (session model plus Sonnet, size S)
-
-- If U1 is (a): one guard in `apply_damage` for world 1, for player-sourced damage only. Merge rehearsal, then boot
-  the Docker image (the build-change path must keep world 1's snapshot) before asking to push to `main`.
-- Update `docs/DECISIONS.md` (D-132 to D-136), `docs/engineering-decisions.md` (one entry: "consent at the world
-  level"), the README, and FUTURE.md.
+| # | Milestone | Worker | Size | Review |
+|---|---|---|---|---|
+| R0 | **Config in the sim.** `init(seed_lo, seed_hi, cfg_ptr, cfg_len)`, the config struct and validation, rule helpers replacing every `world_kind` check, snapshot format 4, `shared/room.ts` table and presets. Worlds 0 and 1 re-expressed as presets | Sonnet | M | **yes** (ABI, snapshot) |
+| R1 | **Terrain.** Gen v2 for Caves, Solid box and Empty box, all three sizes; the traversal test red then green; the starting dig | Sonnet | M | gen output by eye in `client/gen-preview.html` |
+| R2 | **Rooms on the server.** Table, codes, create/list/get API, lazy load and unload, caps, logging, admin panel, protocol v9; then the capacity measurement (Docker image, 24 sockets over 4 rooms, a forced verify; pass is under 200 MB) | Sonnet, then Haiku runs the measurement | M | **yes** (protocol, lifecycle) |
+| R3 | **Menu.** Room browser, presets, create form with Advanced, `/r/<code>` links, share button | Sonnet | M | look at phone width |
+| R4 | **Creative.** All spells, the brush panel, fill-empty mode, damage off; measure 8 painters | Sonnet | M | two browser contexts |
+| R5 | **Deathmatch.** Respawn delay, pickup respawn, kill and death tallies in sim state, kill feed, scoreboard | Sonnet | M | two contexts fighting |
+| R6 | **Survival.** The round machine, out-until-round-end, joiners waiting, the round banner, base restore | Sonnet | L | **yes** (sim state) |
+| R7 | **Ship prep.** DECISIONS rows, an engineering-decisions entry ("consent by room"), README, FUTURE.md, merge rehearsal, Docker boot, `pnpm check` against it; ask before pushing to `main` | session model plus Sonnet | S | |
 
 ## Schedule
 
 | Day | Work |
 |---|---|
-| Thu 22 Oct (budget resets) | G0 with its review; G1 |
-| Fri 23 to Mon 26 | G2; G3 |
-| Tue 27 to Thu 29 | G4 with its review |
-| Fri 30 to Sun 1 Nov | G5; merge rehearsal; ask before deploying |
-| Mon 2 Nov | Feature freeze. U3 rounds only if everything above is in |
+| Thu 22 Oct (budget resets) | R0 and its review |
+| Fri 23 | R1 |
+| Sat 24 to Sun 25 | R2, its review, the measurement |
+| Mon 26 | R3 |
+| Tue 27 | R4 |
+| Wed 28 to Thu 29 | R5 |
+| Fri 30 to Sun 1 Nov | R6 and its review (cut line), R7 |
+| Mon 2 Nov | Feature freeze |
 
-## Protocol and deploy
-
-Protocol goes to v9 in G2: HELLO accepts world ids 2 and 3, and the summary shape changes. Open tabs reload once.
-Each deploy changes the sim build, so world 1 keeps its snapshot and starts a fresh log (the path above). The
-merge rehearsal boots the real image with a copy of a format 3 snapshot to prove it.
+That's eight milestones in eleven days, tight but serial. The fallback ladder: drop R6 (Survival), then
+fill-empty mode, then Advanced settings (presets only).
 
 ## Risks
 
-- **Memory under a cave verify with many sockets.** G1 measures it; the total cap is the lever.
-- **The snapshot format bump.** Format 3 must still restore. G4's review checks it, and a test loads a stored
-  format 3 snapshot.
-- **Narrow caves make the arena unplayable.** That's why G4 waits on the cave research.
-- **Scope.** Rounds (U3), private arena rooms and a per-player PvP toggle stay out of scope; they go to FUTURE.md.
+- **Room churn under memory pressure.** Loading a Caves L room verifies a 7 MiB snapshot. The loaded-room cap and
+  the R2 measurement are the levers. A Caves L room may need to count as two slots.
+- **Round reset vs chunk sleeping (invariant 8).** D7 must include a reset; review R6.
+- **Brush load.** 8 painters at radius 32 in one tick; R4 measures it, and the radius cap is the lever.
+- **User text** (room names): `textContent` only, with a length cap. The net tests include a name with markup.
+- **Scope.** Cloner and wind tools, new materials, private passwords, room ownership transfer, and a per-player
+  PvP toggle all go to FUTURE.md.
