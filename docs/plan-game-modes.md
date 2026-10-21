@@ -97,7 +97,7 @@ A round state machine lives in sim state, so every client agrees on it:
 
 1. **Show the game, not a form.** Behind the menu, a live, muted view of the busiest public room (spectator mode,
    no input) shows what the game is before any words do. If nothing is live, the `/sandbox` room plays.
-2. **One click to play.** "Quick play" joins the busiest public room that has space, falling back to `/sandbox`.
+2. **A knowing choice.** No Quick play (user, M2): the hero is the mode cards, each labelled PvP or not.
 3. **The name comes at the moment of joining**, not on arrival. The first Join (or Create) opens a small name
    sheet. It's remembered after that (the existing `sand.name` and token storage, `client/main.ts:50`). The name
    is always shown plain, never `name#id` (project rule).
@@ -113,10 +113,10 @@ desktop                                                 phone (<600 px)
 | Falling Sand              [your name v]   readme      |   | Falling Sand   [=]  |
 +-------------------------------------------------------+   | [live room preview] |
 |  [ live preview of the busiest room, dimmed ]         |   |                     |
-|                                                       |   | [  Quick play  ]    |
+|                                                       |   |                     |
 |    Falling Sand                                       |   |                     |
 |    A shared world of sand, water, fire and spells.    |   | Creative       ->   |
-|    [ Quick play ]   [ Create a room ]                 |   | Deathmatch PvP ->   |
+|    [ Create a room ]                                |   | Deathmatch PvP ->   |
 +-------------------------------------------------------+   | Survival   PvP ->   |
 |  Creative       |  Deathmatch    |  Survival          |   | Sandbox        ->   |
 |  Build together |  Fight, respawn|  Last one standing |   |                     |
@@ -135,7 +135,7 @@ desktop                                                 phone (<600 px)
 
 - **Header:** title, the player's name (tap to change it), the readme link (the course spec needs `/readme/`
   linked from `/`, `spec/game.test.ts:21`). The old Game/Sandbox nav (`client/index.html:103`) goes away.
-- **Hero:** a one-line pitch, Quick play, Create a room.
+- **Hero:** a one-line pitch and Create a room; the mode cards sit directly under it.
 - **Mode cards:** the three modes plus Sandbox. Each shows a one-line rule, a PvP badge, players online in that
   mode, Browse (filters the room list) and New (opens the create sheet on that preset).
 - **Room list:** public rooms only. Each row has the name (`textContent`, never HTML), mode, players as count/max,
@@ -169,22 +169,20 @@ D-011 made the cave world spectate-only on phones. In the menu:
 
 ### Done when
 
-- A cold visitor on a phone-width context goes from landing to painting in the sandbox in 2 taps plus a name.
+- A cold visitor on a phone-width context goes from landing to painting in the sandbox in 2 taps (Sandbox, Join) plus a name.
 - A desktop visitor goes from landing to inside a Deathmatch in 2 clicks plus a name.
 - Two browser contexts: one creates an unlisted room and shares the code; the other enters it and they see each
   other. The public list never shows the unlisted room.
 - `pnpm check` (the course spec) passes against the Docker image with the menu at `/`.
 - Look at it: screenshots at 375 px and 1280 px, reviewed by the session model before the commit is pushed.
 
-### Open questions for the user
+### Answered by the user (21 Oct, night)
 
-- **M1:** The live preview behind the menu costs one spectator connection per visitor (it replays the room). Fine,
-  or use a static image or video loop to save server capacity? (Recommendation: live, but only for desktop, and
-  only if the capacity measurement shows room for it. A recorded loop is the fallback.)
-- **M2:** Quick play: busiest room first (more social), or always `/sandbox` (no PvP surprises)?
-  (Recommendation: busiest *non-PvP* room. Quick play should never drop a newcomer into a fight.)
-- **M3:** Do you want a visual identity pass (logo, title art) for the menu? The image-gen skill can make a title
-  and mode icons in the existing art style (`docs/art/`).
+- **M1:** The live preview stays live. Its spectator connection counts against the capacity caps.
+- **M2:** **No Quick play.** The player must knowingly choose PvP or sandbox. The hero shows the mode cards
+  directly; remove "Quick play" from the wireframes and the done-when list ("landing to painting" is then: tap
+  Sandbox, then Join).
+- **M3:** Yes to icons. First attempt: `docs/art/menu/` (generated 21 Oct night; see HANDOVER.md).
 
 ## Server: rooms instead of two fixed worlds
 
