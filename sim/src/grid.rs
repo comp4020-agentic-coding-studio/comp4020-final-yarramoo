@@ -3,6 +3,7 @@
 
 use crate::materials::*;
 use crate::rng::*;
+use crate::tuning::BLAST_DIG_RADIUS;
 
 pub const CHUNK: usize = 64;
 /// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
@@ -644,6 +645,25 @@ impl Grid {
         }
     }
 
+    /// Blast's dig: clear solids and plants in the disc of radius `r` (clamped to `BLAST_DIG_RADIUS`) around
+    /// (`cx`, `cy`). Bedrock, liquids, fire, smoke and steam stay; Gunpowder is primed; no fire rim.
+    pub fn dig(&mut self, cx: i32, cy: i32, r: i32) {
+        let r = r.clamp(0, BLAST_DIG_RADIUS);
+        for y in (cy - r).max(0)..=(cy + r).min(self.h as i32 - 1) {
+            for x in (cx - r).max(0)..=(cx + r).min(self.w as i32 - 1) {
+                if (x - cx) * (x - cx) + (y - cy) * (y - cy) > r * r {
+                    continue;
+                }
+                let i = y as usize * self.w + x as usize;
+                match self.mat[i] {
+                    ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER => self.set(i, EMPTY, 0),
+                    GUNPOWDER if self.aux[i] != 1 => self.set(i, GUNPOWDER, 1),
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// Clear the disc of radius `r` around (`cx`, `cy`): bedrock stays, Gunpowder other than the centre
     /// cell is primed, everything else becomes Empty (or Fire on a third of the rim, by counter-based rng).
     /// Work is bounded by the (2r+1)^2 box clamped to the world.
@@ -679,6 +699,51 @@ const GERMINATE_AT: u8 = 60;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dig_removes_solids_and_plants_only() {
+        let mut g = Grid::new(64, 64);
+        // All within radius 4 of (20, 30): nine on the centre row, four on the row above.
+        let cells: Vec<(usize, usize)> = (16..=24).map(|x| (x, 30)).chain((18..=21).map(|x| (x, 29))).collect();
+        let mats = [ROCK, DIRT, SAND, WOOD, SEED, STEM, FLOWER, BEDROCK, WATER, LAVA, FIRE, SMOKE, STEAM];
+        for (&(x, y), &m) in cells.iter().zip(&mats) {
+            g.set(y * 64 + x, m, 0);
+        }
+        g.dig(20, 30, 4);
+        for (k, (&(x, y), &m)) in cells.iter().zip(&mats).enumerate() {
+            let removed = k < 7;
+            assert_eq!(g.at(x, y) == EMPTY && m != EMPTY, removed, "material {m} at {x},{y}");
+            if !removed {
+                assert_eq!(g.at(x, y), m);
+            }
+        }
+    }
+
+    #[test]
+    fn dig_primes_gunpowder_without_fire_rim() {
+        let mut g = Grid::new(64, 64);
+        g.set(30 * 64 + 30, GUNPOWDER, 0);
+        for x in 20..29 {
+            g.set(30 * 64 + x, ROCK, 0);
+        }
+        g.dig(30, 30, 4);
+        assert_eq!(g.mat[30 * 64 + 30], GUNPOWDER);
+        assert_eq!(g.aux[30 * 64 + 30], 1);
+        assert!((0..64 * 64).all(|i| g.mat[i] != FIRE));
+    }
+
+    #[test]
+    fn dig_radius_is_clamped_so_work_is_bounded() {
+        let mut g = Grid::new(256, 256);
+        for i in 0..256 * 256 {
+            g.mat[i] = ROCK;
+        }
+        g.dig(128, 128, 10_000);
+        let gone = g.mat.iter().filter(|&&m| m == EMPTY).count() as i32;
+        let r = BLAST_DIG_RADIUS;
+        assert!(gone > 0 && gone <= (2 * r + 1) * (2 * r + 1), "cleared {gone}");
+        assert_eq!(g.at((128 + r + 1) as usize, 128), ROCK);
+    }
 
     #[test]
     fn sand_falls() {

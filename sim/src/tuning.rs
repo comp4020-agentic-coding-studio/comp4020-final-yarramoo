@@ -58,6 +58,10 @@ pub const KNOCK_PUSH: i32 = 64;
 pub const KNOCK_BLAST: i32 = 96;
 /// Blast reach in cells, and the half-angle of its cone: 45 degrees (the test is `2 * dot^2 >= |d|^2`).
 pub const BLAST_RADIUS_CELLS: i32 = 24;
+/// Blast also digs: a disc of this radius (cells), centred `BLAST_DIG_REACH` cells along the aim from the chest.
+/// `Grid::dig` clamps its radius to this, so one cast clears at most (2r+1)^2 cells.
+pub const BLAST_DIG_RADIUS: i32 = 4;
+pub const BLAST_DIG_REACH: i32 = 6;
 /// Height of a player's chest above the feet, in cells: where bolts leave and what the cone aims at.
 pub const CHEST: i32 = 5;
 pub const WATER_BURST_CELLS: usize = 60;
