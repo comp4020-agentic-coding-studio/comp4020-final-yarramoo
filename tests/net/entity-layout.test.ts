@@ -58,7 +58,7 @@ describe("server's snapshot entity parser matches the sim", () => {
     expect(bags.length).toBe(1);
 
     const snap = sim.snapshot();
-    const HEADER = 55;
+    const HEADER = 70;
     const dv = new DataView(snap.buffer, snap.byteOffset, snap.byteLength);
     const elen = dv.getUint32(HEADER, true);
     const e = new DataView(snap.buffer, snap.byteOffset + HEADER + 4, elen);

@@ -1,14 +1,15 @@
 //! Canonical snapshot (plan 6.10). Little-endian, fixed-width fields only.
 
+use crate::config::{RoomConfig, CONFIG_BYTES};
 use crate::grid::{CHUNK, CHUNK_AREA};
 use crate::sim::Sim;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
-/// v2 added entities; v3 appends the bag section to them (D-110). v1 and v2 *sandbox* snapshots (the live
-/// sandbox's stored state) have an empty entity section and still restore. A v2 *game* snapshot is refused:
-/// its entities have no bag count. None was ever deployed (D-074), so nothing is lost.
-pub const FORMAT_VERSION: u16 = 3;
-const HEADER: usize = 4 + 2 + 32 + 8 + 1 + 4 + 2 + 2;
+/// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
+/// room-config bytes. Restore refuses anything below 4 (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 4;
+const CFG_AT: usize = 4 + 2 + 32 + 8;
+const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
 pub fn write(s: &Sim) -> Vec<u8> {
     let mut v = Vec::new();
@@ -16,7 +17,7 @@ pub fn write(s: &Sim) -> Vec<u8> {
     v.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     v.extend_from_slice(&[0u8; 32]); // sim_build_hash: filled in by the TS side
     v.extend_from_slice(&s.seed.to_le_bytes());
-    v.push(s.cfg_kind());
+    v.extend_from_slice(&s.cfg.encode());
     v.extend_from_slice(&s.tick.to_le_bytes());
     v.extend_from_slice(&(s.grid.w as u16).to_le_bytes());
     v.extend_from_slice(&(s.grid.h as u16).to_le_bytes());
@@ -49,7 +50,7 @@ pub fn restore(b: &[u8]) -> Result<Sim, ()> {
     restore_with(b, None)
 }
 
-/// Restore, starting from `base` when it is the same (seed, kind) world and regenerating otherwise. The
+/// Restore, starting from `base` when it is the same (seed, config) world and regenerating otherwise. The
 /// result is identical either way. A game-world result carries a base (the one used, or a fresh one).
 pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()> {
     if b.len() < HEADER + 8 || &b[0..4] != MAGIC {
@@ -57,17 +58,17 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     }
     let u16_at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
     let u32_at = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
-    let version = u16_at(4);
-    if !(1..=FORMAT_VERSION).contains(&version) {
+    if u16_at(4) != FORMAT_VERSION {
         return Err(());
     }
     let mut sd = [0u8; 8];
     sd.copy_from_slice(&b[38..46]);
     let seed = u64::from_le_bytes(sd);
-    let kind = b[46];
-    let tick = u32_at(47);
-    let (w, h) = (u16_at(51) as usize, u16_at(53) as usize);
-    let mut s = Sim::new_with_base(seed, kind, base).ok_or(())?;
+    let cfg = RoomConfig::decode(&b[CFG_AT..CFG_AT + CONFIG_BYTES]).ok_or(())?;
+    let t = CFG_AT + CONFIG_BYTES;
+    let tick = u32_at(t);
+    let (w, h) = (u16_at(t + 4) as usize, u16_at(t + 6) as usize);
+    let mut s = Sim::new_with_base(seed, cfg, base).ok_or(())?;
     if s.grid.w != w || s.grid.h != h {
         return Err(());
     }
@@ -76,9 +77,9 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     o += 4;
     // The length must fit inside the buffer with room for the chunk count (checked without overflow).
     let eend = o.checked_add(elen).filter(|&e| e.checked_add(4).is_some_and(|x| x <= b.len())).ok_or(())?;
-    if version < FORMAT_VERSION || kind == 0 {
-        // v1, v2 and sandbox snapshots have no entity section; a v1/v2 game world is refused (see above).
-        if elen != 0 || (version < FORMAT_VERSION && kind != 0) {
+    if !cfg.has_players() {
+        // A world without avatars has no entity section.
+        if elen != 0 {
             return Err(());
         }
     } else {

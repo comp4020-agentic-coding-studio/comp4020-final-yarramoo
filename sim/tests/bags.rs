@@ -434,46 +434,32 @@ fn with_version(snap: &[u8], v: u16) -> Vec<u8> {
 }
 
 #[test]
-fn format_is_three_and_a_v3_game_snapshot_round_trips_with_bags() {
-    assert_eq!(snapshot::FORMAT_VERSION, 3);
+fn format_is_four_and_a_game_snapshot_round_trips_with_bags() {
+    assert_eq!(snapshot::FORMAT_VERSION, 4);
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 15, 0, 0, 5]);
     kill(&mut s, 1);
     let snap = snapshot::write(&s);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 3);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 4);
     let mut r = snapshot::restore(&snap).unwrap();
     assert_eq!(r.bags, s.bags);
     assert_eq!(r.state_hash(), s.state_hash());
 }
 
+/// R0a: format 4 replaced the kind byte with the config, so every older format is refused, sandbox or game
+/// (the game is not live; no stored state is lost). Config-header refusals are in config_state.rs.
 #[test]
-fn v2_sandbox_restores_but_v1_and_v2_game_snapshots_are_refused() {
+fn formats_below_four_are_refused_for_sandbox_and_game() {
     let mut sb = Sim::new(9, 0).unwrap();
     push(&mut sb, sim::input::encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let snap = snapshot::write(&sb);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 3);
-    for v in [1u16, 2, 3] {
-        let mut r = snapshot::restore(&with_version(&snap, v)).unwrap_or_else(|_| panic!("sandbox v{v}"));
-        // The state hash covers tick, entity bytes and chunk hashes, never the header, so the version stamp
-        // cannot change a sandbox's hash.
-        assert_eq!(r.state_hash(), sb.state_hash(), "v{v}");
-    }
-    assert!(snapshot::restore(&with_version(&snap, 4)).is_err());
-    assert!(snapshot::restore(&with_version(&snap, 0)).is_err());
-
-    // A game snapshot stamped v2 has the v2 entity layout (no bag count); it is refused, and so is v1.
-    let g = boxed(&[1]);
-    let gsnap = snapshot::write(&g);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 4);
+    assert!(snapshot::restore(&snap).is_ok());
+    let gsnap = snapshot::write(&boxed(&[1]));
     assert!(snapshot::restore(&gsnap).is_ok());
-    assert!(snapshot::restore(&with_version(&gsnap, 2)).is_err());
-    assert!(snapshot::restore(&with_version(&gsnap, 1)).is_err());
-    // A real v2 body: drop the 4-byte bag count from the end of the entity section.
-    let elen_at = 55;
-    let elen = u32::from_le_bytes(gsnap[elen_at..elen_at + 4].try_into().unwrap()) as usize;
-    let mut v2 = gsnap[..elen_at].to_vec();
-    v2.extend_from_slice(&((elen - 4) as u32).to_le_bytes());
-    v2.extend_from_slice(&gsnap[elen_at + 4..elen_at + 4 + elen - 4]);
-    v2.extend_from_slice(&gsnap[elen_at + 4 + elen..]);
-    assert!(snapshot::restore(&with_version(&v2, 2)).is_err());
+    for v in [0u16, 1, 2, 3, 5] {
+        assert!(snapshot::restore(&with_version(&snap, v)).is_err(), "sandbox v{v}");
+        assert!(snapshot::restore(&with_version(&gsnap, v)).is_err(), "game v{v}");
+    }
 }

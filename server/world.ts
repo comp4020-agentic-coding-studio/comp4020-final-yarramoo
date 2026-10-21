@@ -1264,7 +1264,7 @@ export function activePlayersIn(compressed: Uint8Array): Set<number> {
   try {
     const raw = decompressSnapshot(compressed, MAX_SNAPSHOT_RAW_GAME);
     const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-    const ENTITY_AT = 55; // after the 55-byte header comes the entity length u32, then the entity bytes
+    const ENTITY_AT = 70; // after the 70-byte header (format 4) comes the entity length u32, then the entity bytes
     let o = ENTITY_AT + 4;
     const n = v.getUint32(o, true);
     o += 4;

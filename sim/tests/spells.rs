@@ -352,7 +352,7 @@ fn hostile_projectile_sections_are_refused() {
     let good = snapshot::write(&s);
     assert!(snapshot::restore(&good).is_ok());
     // The projectile count sits 4 bytes before the first projectile; the (empty) bag count, 4 bytes, ends the section.
-    let elen_at = 55;
+    let elen_at = 70; // format 4 header
     let elen = u32::from_le_bytes(good[elen_at..elen_at + 4].try_into().unwrap()) as usize;
     let count_at = elen_at + 4 + elen - 4 - PROJECTILE_BYTES - 4;
     let mut bad = good.clone();

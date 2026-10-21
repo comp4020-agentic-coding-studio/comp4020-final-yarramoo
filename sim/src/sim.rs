@@ -99,11 +99,6 @@ impl Sim {
         }
     }
 
-    /// The old world-kind byte for the v3 snapshot header (0 sandbox preset, 1 caves preset). Commit 4 replaces it.
-    pub(crate) fn cfg_kind(&self) -> u8 {
-        u8::from(self.cfg.has_players())
-    }
-
     /// 0 on success, negative if malformed (input is then dropped).
     pub fn push_input(&mut self, bytes: &[u8]) -> i32 {
         match decode(bytes) {
@@ -329,6 +324,6 @@ impl Sim {
 
     pub fn state_hash(&mut self) -> u64 {
         let e = self.entity_bytes();
-        hash::state_hash(&mut self.grid, self.tick, &e)
+        hash::state_hash(&mut self.grid, self.tick, &self.cfg.encode(), &e)
     }
 }

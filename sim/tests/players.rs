@@ -240,32 +240,30 @@ fn d7_sleep_is_invisible_with_players() {
 }
 
 #[test]
-fn restore_rejects_hostile_entity_sections_and_v1_sandbox_snapshots_still_load() {
+fn restore_rejects_hostile_entity_sections_and_old_formats() {
     let mut a = Sim::new(4, 1).unwrap();
     push(&mut a, encode_join(1));
     a.step();
     let snap = snapshot::write(&a);
-    let elen = u32::from_le_bytes(snap[55..59].try_into().unwrap()) as usize;
+    let elen = u32::from_le_bytes(snap[70..74].try_into().unwrap()) as usize;
     assert!(elen > 0);
     for bad in [u32::MAX, (elen + 1) as u32, 0, 0x7fff_ffff] {
         let mut b = snap.clone();
-        b[55..59].copy_from_slice(&bad.to_le_bytes());
+        b[70..74].copy_from_slice(&bad.to_le_bytes());
         assert!(snapshot::restore(&b).is_err(), "elen {bad}");
     }
     let mut b = snap.clone();
-    b[59..63].copy_from_slice(&(MAX_PLAYERS as u32 + 1).to_le_bytes());
+    b[74..78].copy_from_slice(&(MAX_PLAYERS as u32 + 1).to_le_bytes());
     assert!(snapshot::restore(&b).is_err());
     assert!(snapshot::restore(&snap[..snap.len() - 1]).is_err());
 
-    // A v1 sandbox snapshot (version 1, entity length 0) restores and equals the v2 write apart from the version.
+    // Format 4 refuses every older format, a v1 sandbox snapshot included (R0a; the game is not live).
     let mut sb = Sim::new(9, 0).unwrap();
     push(&mut sb, encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let mut v1 = snapshot::write(&sb);
     v1[4..6].copy_from_slice(&1u16.to_le_bytes());
-    let mut r = snapshot::restore(&v1).expect("v1 restores");
-    assert_eq!(r.state_hash(), sb.state_hash());
-    // And a v1 game-world snapshot with a non-empty entity section is refused.
+    assert!(snapshot::restore(&v1).is_err());
     let mut v1g = snap.clone();
     v1g[4..6].copy_from_slice(&1u16.to_le_bytes());
     assert!(snapshot::restore(&v1g).is_err());
