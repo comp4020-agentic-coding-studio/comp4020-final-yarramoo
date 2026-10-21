@@ -951,4 +951,70 @@ mod tests {
             assert!(xs[0] < 2048 / 3 && *xs.last().unwrap() > 2048 * 2 / 3, "seed {seed}: {xs:?}");
         }
     }
+
+    /// Deepest row a box of `bw` x `bh` cells can reach by moving one cell at a time through Empty cells,
+    /// starting from the spawn point. Liquids, sand and every solid count as blocking: stricter than play.
+    fn deepest_box_reach(g: &Grid, spawn: (i32, i32), bw: usize, bh: usize) -> Option<usize> {
+        let (w, h) = (g.w, g.h);
+        // Prefix sums of solid cells, so "is this box all Empty" is O(1).
+        let mut ps = vec![0u32; (w + 1) * (h + 1)];
+        for y in 0..h {
+            for x in 0..w {
+                let solid = u32::from(g.mat[y * w + x] != EMPTY);
+                ps[(y + 1) * (w + 1) + x + 1] = solid + ps[y * (w + 1) + x + 1] + ps[(y + 1) * (w + 1) + x] - ps[y * (w + 1) + x];
+            }
+        }
+        // A box is keyed by its top-left cell.
+        let fits = |x: usize, y: usize| {
+            x + bw <= w && y + bh <= h && {
+                let (x1, y1) = (x + bw, y + bh);
+                ps[y1 * (w + 1) + x1] + ps[y * (w + 1) + x] == ps[y * (w + 1) + x1] + ps[y1 * (w + 1) + x]
+            }
+        };
+        let foot_x = (spawn.0 / crate::tuning::POS_ONE) as usize;
+        let foot_y = (spawn.1 / crate::tuning::POS_ONE) as usize;
+        // The spawn's feet rest on the ground row; try box positions around it.
+        let start = (0..=bw)
+            .flat_map(|dx| (0..=3).map(move |dy| (dx, dy)))
+            .map(|(dx, dy)| (foot_x.saturating_sub(dx), foot_y.saturating_sub(bh + dy)))
+            .find(|&(x, y)| fits(x, y))?;
+        let mut seen = vec![false; w * h];
+        let mut stack = vec![start];
+        seen[start.1 * w + start.0] = true;
+        let mut deepest = start.1 + bh;
+        while let Some((x, y)) = stack.pop() {
+            deepest = deepest.max(y + bh);
+            let mut nb = [(usize::MAX, 0); 4];
+            if x > 0 { nb[0] = (x - 1, y) }
+            nb[1] = (x + 1, y);
+            if y > 0 { nb[2] = (x, y - 1) }
+            nb[3] = (x, y + 1);
+            for (nx, ny) in nb {
+                if nx != usize::MAX && nx < w && ny < h && !seen[ny * w + nx] && fits(nx, ny) {
+                    seen[ny * w + nx] = true;
+                    stack.push((nx, ny));
+                }
+            }
+        }
+        Some(deepest)
+    }
+
+    /// Gen v2's target (plan-game-modes R1, research `cave-gen-v2.md`): a body a margin bigger than the 5x10
+    /// hitbox can walk from spawn to the bottom of the deep band. Red on the v1 generator; R1 removes the ignore.
+    #[test]
+    #[ignore = "red until gen v2 (plan R1); run with --ignored to see which seeds fail"]
+    fn traversable_to_every_band() {
+        let (bw, bh) = (crate::tuning::HITBOX_W as usize + 1, crate::tuning::HITBOX_H as usize + 1);
+        let mut failures = Vec::new();
+        for seed in 1..=8u64 {
+            let s = Sim::new(seed, 1).unwrap();
+            let spawn = s.spawn_point(1);
+            match deepest_box_reach(&s.grid, spawn, bw, bh) {
+                None => failures.push(format!("seed {seed}: no {bw}x{bh} box fits at spawn {spawn:?}")),
+                Some(d) if d < 1380 => failures.push(format!("seed {seed}: reaches y={d}, needs 1380")),
+                Some(_) => {}
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 }
