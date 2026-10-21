@@ -101,6 +101,7 @@ impl Sim {
 
     /// Blast: a cone of `BLAST_RADIUS_CELLS` and 45 degrees either side of the aim, no projectile.
     /// Every other live player whose chest is inside gets `Knock` and the caster is their last hitter.
+    /// It also digs a small disc of terrain ahead of the caster (`Grid::dig`).
     fn blast(&mut self, caster: u32, cx: i32, cy: i32, angle: u16) {
         let (c, sn) = dir(angle);
         let reach = i64::from(BLAST_RADIUS_CELLS * POS_ONE);
@@ -124,6 +125,11 @@ impl Sim {
             let id = t.id;
             self.hit_player(id, caster, c * KNOCK_BLAST / TRIG_ONE, sn * KNOCK_BLAST / TRIG_ONE);
         }
+        // Dig: a disc `BLAST_DIG_REACH` cells along the aim. `cx, cy` are 1/16 cell, so add the offset in
+        // 1/16 cell and shift down to cells (arithmetic shift floors, the same on every platform).
+        let off = BLAST_DIG_REACH * POS_ONE;
+        let (dx, dy) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
+        self.grid.dig(dx, dy, BLAST_DIG_RADIUS);
     }
 
     fn hit_player(&mut self, victim: u32, attacker: u32, vx: i32, vy: i32) {
@@ -521,5 +527,88 @@ impl Sim {
         p.last_hit_tick = 0;
         let ev = Event { kind: EV_RESPAWN, player: id, a: x, b: y, c: i32::from(p.life) };
         self.events.push(ev);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::{encode_cast, encode_join};
+
+    const DOWN: u16 = 16384;
+    const FX: i32 = 1000;
+
+    /// Game world, one player (id 1) standing at feet (FX, 190) on an arena with rock from y=192 and bedrock from y=194.
+    fn arena(floor: u8) -> Sim {
+        let mut s = Sim::new(11, 1).unwrap();
+        let w = s.grid.w;
+        for y in 100..260 {
+            for x in 900..1150 {
+                s.grid.mat[y * w + x] = if y < 192 { EMPTY } else if y < 194 { floor } else { BEDROCK };
+            }
+        }
+        for c in 0..s.grid.chunk_count() {
+            s.grid.mark_chunk(c);
+        }
+        assert_eq!(s.push_input(&encode_join(1)), 0);
+        s.step();
+        s.players[0].x = FX * POS_ONE;
+        s.players[0].y = 190 * POS_ONE;
+        s
+    }
+
+    fn cast_down(s: &mut Sim, seq: u16) {
+        assert_eq!(s.push_input(&encode_cast(1, BLAST, DOWN, seq)), 0);
+        s.step();
+    }
+
+    fn at(s: &Sim, x: i32, y: i32) -> u8 {
+        s.grid.mat[y as usize * s.grid.w + x as usize]
+    }
+
+    #[test]
+    fn blast_aimed_down_digs_rock_but_not_bedrock() {
+        let mut s = arena(ROCK);
+        cast_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (EMPTY, EMPTY));
+        assert_eq!(at(&s, FX, 194), BEDROCK);
+        assert_eq!(at(&s, FX + 3, 193), EMPTY);
+        assert_eq!(at(&s, FX + 9, 193), ROCK, "outside the disc");
+    }
+
+    #[test]
+    fn blast_does_not_dig_water() {
+        let mut s = arena(WATER);
+        cast_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (WATER, WATER));
+    }
+
+    /// Casts needed to dig 100 rows of solid rock straight down, standing in the shaft (falling to the bottom
+    /// after each cast). Run with `--ignored --nocapture`; the number is in the panic-free output file.
+    #[test]
+    #[ignore = "measurement"]
+    fn casts_to_dig_100_rows() {
+        let mut s = arena(ROCK);
+        let w = s.grid.w;
+        for y in 192..400 {
+            for x in 900..1150 {
+                s.grid.mat[y * w + x] = ROCK;
+            }
+        }
+        let mut casts = 0u16;
+        while s.players[0].y / POS_ONE < 190 + 100 {
+            casts += 1;
+            for _ in 0..COOLDOWN[1] {
+                s.step();
+            }
+            cast_down(&mut s, casts);
+            let mut y = s.players[0].y / POS_ONE;
+            while (FX - 2..=FX + 2).all(|x| at(&s, x, y + 1) == EMPTY) {
+                y += 1;
+            }
+            s.players[0].y = y * POS_ONE;
+            assert!(casts < 200);
+        }
+        std::fs::write("/tmp/casts_to_dig_100_rows.txt", format!("{casts}\n")).unwrap();
     }
 }
