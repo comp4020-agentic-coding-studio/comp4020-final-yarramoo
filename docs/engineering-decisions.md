@@ -30,18 +30,19 @@ Decisions
 8. [Chunk sleeping that must be invisible](#8-chunk-sleeping-that-must-be-invisible)
 9. [Identity and names](#9-identity-and-names)
 10. [Observability, the dashboard and admin reset](#10-observability-the-dashboard-and-admin-reset)
+11. [A config replaces the world kind, and ends a compatibility guarantee](#11-a-config-replaces-the-world-kind-and-ends-a-compatibility-guarantee)
 
 Challenges
-11. [The live site went down on 18 October](#11-the-live-site-went-down-on-18-october)
-12. [Snapshot timing, and the correction](#12-snapshot-timing-and-the-correction)
-13. [The late-join test that failed after the world cache](#13-the-late-join-test-that-failed-after-the-world-cache)
-14. [Liquids "stuck in staircases"](#14-liquids-stuck-in-staircases)
-15. [Performance gate P1](#15-performance-gate-p1)
-16. [What independent reviews caught that tests missed](#16-what-independent-reviews-caught-that-tests-missed)
-17. [Snapshot format 3 before any game snapshot exists](#17-snapshot-format-3-before-any-game-snapshot-exists)
-18. [A cross-browser check that tested nothing it named](#18-a-cross-browser-check-that-tested-nothing-it-named)
-19. [An achievement the sim's outputs cannot express](#19-an-achievement-the-sims-outputs-cannot-express)
-20. [The merge rehearsal: two bugs only the real image could show](#20-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
+12. [The live site went down on 18 October](#12-the-live-site-went-down-on-18-october)
+13. [Snapshot timing, and the correction](#13-snapshot-timing-and-the-correction)
+14. [The late-join test that failed after the world cache](#14-the-late-join-test-that-failed-after-the-world-cache)
+15. [Liquids "stuck in staircases"](#15-liquids-stuck-in-staircases)
+16. [Performance gate P1](#16-performance-gate-p1)
+17. [What independent reviews caught that tests missed](#17-what-independent-reviews-caught-that-tests-missed)
+18. [Snapshot format 3 before any game snapshot exists](#18-snapshot-format-3-before-any-game-snapshot-exists)
+19. [A cross-browser check that tested nothing it named](#19-a-cross-browser-check-that-tested-nothing-it-named)
+20. [An achievement the sim's outputs cannot express](#20-an-achievement-the-sims-outputs-cannot-express)
+21. [The merge rehearsal: two bugs only the real image could show](#21-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
 
 ---
 
@@ -168,7 +169,7 @@ by platform. 1024 entries is 2 KB, against 128 KB for a full 16-bit
 table, and the aim resolution is about 0.35 degrees (D-075).
 
 **Cost / consequences.** Every random draw costs three mix rounds, and profiling
-later found draws that could not matter (entry 15). Long-range spells would
+later found draws that could not matter (entry 16). Long-range spells would
 need a finer table.
 
 **Evidence.** [plan.md section 6.3](plan.md); D-051, D-075, D-087;
@@ -419,7 +420,7 @@ Refusing anonymous painters, which would break old tabs.
 **Why.** A stored hash means a database leak does not leak sessions. The id is
 the sim id so the entity returns without a lookup table.
 
-**Cost / consequences.** Anti-teleport was harder than it looked, see entry 16
+**Cost / consequences.** Anti-teleport was harder than it looked, see entry 17
 for the exploit. A zero token once minted a permanent player on every connect,
 so an unclaimable token no longer gets a player (D-069).
 
@@ -477,9 +478,51 @@ Guards 1 and 2 are in `World.stampClient`. Join and Leave are the server's own a
 [`d088c4f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d088c4f),
 [`0ca9f5e`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/0ca9f5e).
 
+## 11. A config replaces the world kind, and ends a compatibility guarantee
+
+**Context.** PvP consent was broken: one fighter in the shared game world forced everyone else to fight, because
+the only way to tell worlds apart was a bare `world_kind` byte (0 sandbox, 1 game) compiled into every rule gate.
+Rooms need their own terrain, damage, spells and player cap, and the plan reserved D-132/D-133 for exactly this
+before any code existed.
+
+**Decision.** A 16-byte, versioned `RoomConfig` (terrain, size, avatars, damage, spells, brushes, death,
+respawn_secs, pickup_respawn, round, max_players, 4 reserved bytes, all zero-checked) replaces `world_kind` at the
+ABI (`init(seed_lo, seed_hi, cfg_ptr, cfg_len)`) and in every sim rule gate, which now reads a helper
+(`has_players()`, `paint_allowed()`, ...) instead of a bare compare. Worlds 0 and 1 become presets
+(`classic_sandbox()`, `caves_pvp()`) built to reproduce today's state hashes exactly. The config bytes are
+themselves hashed, so two clients running different configs diverge at tick 0 instead of silently agreeing.
+Snapshot format bumps to 4, with the config in the header; restore refuses every older format. `shared/room.ts`
+mirrors the Rust layout field-for-field, and the round-trip and refusal tests in both languages share the literal
+same hex vectors, not independently-authored ones that happen to agree. The protocol itself is untouched: server
+and client map world kind 0/1 to a preset locally (D-132, D-133).
+
+**Alternatives considered.** Keeping `world_kind` and adding a second dimension alongside it (more gates to keep in
+sync, not fewer). Versioning the config as forward-compatible, accepting unknown future fields (rejected: a version
+byte that must match exactly is simpler and the game is not live, so there is no old client to be lenient to).
+
+**Why.** Rooms (R2) need per-room rules, which a compile-time `world_kind` cannot express. Reproducing today's
+presets byte-for-byte meant R0a could land with the determinism suite's existing hashes as its own regression test,
+rather than writing new fixtures to trust.
+
+**Cost / consequences.** Format 4 refuses every snapshot from versions 1-3, which ends the deployed-sandbox
+compatibility guarantee from D-014 and D-068 — acceptable only because the 21 Oct redirect says the game is not
+live and world resets are fine until the user says otherwise. If the sandbox is declared live before R2 ships a
+protocol-level config, this needs a migration path first. Separately, `RoomConfig.max_players` is decoded, hashed
+and range-checked (2..=8) but not yet enforced against the live player count: only the pre-existing global
+`MAX_PLAYERS = 1024` gates joins. This was flagged independently by the worker and by a cold second review
+(entry 17), and is deferred, not forgotten (D-134) — it's strictly more permissive than before, not a new hole, but
+R2/R6 (Survival's lobby cap) must not assume it already works.
+
+**Evidence.** D-132, D-133, D-134; [plan-game-modes.md](plan-game-modes.md) "Config fields";
+[review-r0a.md](research/review-r0a.md);
+[`8ee79f3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8ee79f3)
+(config.rs and shared/room.ts),
+[`425cab4`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/425cab4)
+(snapshot format 4).
+
 ---
 
-## 11. The live site went down on 18 October
+## 12. The live site went down on 18 October
 
 **What happened.** The sandbox stopped serving. Every cold start threw
 `RangeError: Maximum call stack size exceeded` in `loadFromDb`, and Fly gave up
@@ -496,7 +539,7 @@ HTTP; fixed, 150,000 ticks loaded and HTTP 200 (D-099).
 
 **How it broke.** A cold start restores the last snapshot, then replays every
 tick logged since. The log should stay short, because each new snapshot lets the
-server drop the log before it. Snapshots had stopped for days (entry 12), so the
+server drop the log before it. Snapshots had stopped for days (entry 13), so the
 log kept growing until one ordinary restart crossed a line nobody knew was there:
 
 ```mermaid
@@ -536,14 +579,14 @@ cold-starts, and fails with the same RangeError without the fix.
 
 **What changed.** The log is appended one frame at a time. The fix went onto
 `main` first and then `multa`. Why the log had grown so long was not answered
-by D-099; entry 12 is that investigation.
+by D-099; entry 13 is that investigation.
 
 **Evidence.** D-099;
 [`2c70ceb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2c70ceb)
 (hotfix on `main`),
 [`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2).
 
-## 12. Snapshot timing, and the correction
+## 13. Snapshot timing, and the correction
 
 **What happened.** A log that should be short, because verified snapshots
 normally truncate it, had grown past 130,000 ticks. Research
@@ -595,7 +638,7 @@ The visitors-leaving explanation is inferred, because visit lengths were not log
 [`70355c5`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/70355c5),
 [`943cefc`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/943cefc).
 
-## 13. The late-join test that failed after the world cache
+## 14. The late-join test that failed after the world cache
 
 **What happened.** After caching the generated world so a join did not generate
 twice (D-088, joins went from 1170 ms to 320 to 520 ms, measured in Node wasm),
@@ -618,7 +661,7 @@ had passed two runs in three before is not established.
 [`4ad1435`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/4ad1435),
 [`5e417ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5e417ed).
 
-## 14. Liquids "stuck in staircases"
+## 15. Liquids "stuck in staircases"
 
 **What happened.** From play, a lava heap looked like a staircase on chunk edges,
 48 rows high after 100 s.
@@ -641,7 +684,7 @@ the user sees.
 [`f48a500`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f48a500),
 [`42e167a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/42e167a).
 
-## 15. Performance gate P1
+## 16. Performance gate P1
 
 **What happened.** The plan set a worst-case budget: step time p95 of at most
 8 ms with four players each lighting a fire and a flood. The G2 run found N1,
@@ -668,7 +711,7 @@ spell can make, and a real phone was never measured.
 [`3111461`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3111461),
 [`3c5188a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3c5188a).
 
-## 16. What independent reviews caught that tests missed
+## 17. What independent reviews caught that tests missed
 
 **What happened.** Slices that set structure were read cold by a fresh reviewer.
 Three findings show why.
@@ -702,7 +745,7 @@ from where the system ships.
 [`08b1dd7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/08b1dd7),
 [`e46c83f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e46c83f).
 
-## 17. Snapshot format 3 before any game snapshot exists
+## 18. Snapshot format 3 before any game snapshot exists
 
 **Context.** Dropped bags (M5 slice 3) add a section to the entity bytes, which
 are inside every game snapshot and the state hash. The live sandbox is the one
@@ -742,7 +785,7 @@ untouched (D-112).
 [`b71a386`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b71a386).
 
 
-## 18. A cross-browser check that tested nothing it named
+## 19. A cross-browser check that tested nothing it named
 
 **What happened.** M5 added damage, death, respawn, Fire bolt, Bomb and dropped
 bags (D-102 to D-113). The determinism suite had a game-world test called "D2
@@ -775,7 +818,7 @@ sim changes. Bag expiry, bag merging and lava deaths are not in it yet.
 [`94290ce`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/94290ce),
 [`5b5de22`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5b5de22).
 
-## 19. An achievement the sim's outputs cannot express
+## 20. An achievement the sim's outputs cannot express
 
 **What happened.** Plan 10 defined "Shoved to their doom" as a kill whose last hit
 was Push or Blast. Slice b awards kill achievements from a majority claim about
@@ -818,7 +861,7 @@ Before review S1, anonymous tabs could vote and raise the quorum, so a dozen of 
 
 **Evidence.** D-118 to D-120; commit `89988b1`.
 
-## 20. The merge rehearsal: two bugs only the real image could show
+## 21. The merge rehearsal: two bugs only the real image could show
 
 **What happened.** Before merging `multa` into `main` for crit 10, the merge was rehearsed in a scratch copy: merge locally, build the real Docker image, and boot it on data written by the build then deployed. Every test was green at the time.
 
