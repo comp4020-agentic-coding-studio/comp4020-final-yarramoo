@@ -37,11 +37,19 @@ unsafe fn out_slice<'a>(ptr: u32, len: usize) -> &'a mut [u8] {
     core::slice::from_raw_parts_mut(ptr as usize as *mut u8, len)
 }
 
+/// Start a world from a seed and a 16-byte room config (written with `alloc` first, as inputs are). Returns 0, or
+/// -1 for a config that fails `RoomConfig::decode` or has no terrain yet. Integers only.
 #[no_mangle]
-pub extern "C" fn init(seed_lo: u32, seed_hi: u32, world_kind: u32) -> i32 {
+pub extern "C" fn init(seed_lo: u32, seed_hi: u32, cfg_ptr: u32, cfg_len: u32) -> i32 {
     let seed = u64::from(seed_lo) | (u64::from(seed_hi) << 32);
-    let Ok(k) = u8::try_from(world_kind) else { return -1 };
-    match Sim::new(seed, k) {
+    // A wrong length is refused before the read, so a hostile length cannot run past the buffer.
+    if cfg_len as usize != config::CONFIG_BYTES {
+        return -1;
+    }
+    // SAFETY: caller guarantees the range is valid linear memory (it was just written with `alloc`).
+    let b = unsafe { slice(cfg_ptr, cfg_len) };
+    let Some(cfg) = config::RoomConfig::decode(b) else { return -1 };
+    match Sim::new(seed, cfg) {
         Some(s) => {
             // SAFETY: see `with`.
             unsafe { *G.0.get() = Some(s) };

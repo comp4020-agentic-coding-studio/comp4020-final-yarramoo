@@ -82,3 +82,14 @@ export function decodeConfig(b: Uint8Array): RoomConfig | null {
 }
 
 export const isCaves = (c: RoomConfig): boolean => c.terrain === 0;
+
+/**
+ * The two fixed worlds of the current server, as configs: id 0 is the classic sandbox, id 1 the caves. A bare
+ * "world kind" number survives only at the protocol edge (WELCOME carries one until R2); everything inside maps
+ * it here once. Any other number is an error, not a default.
+ */
+export function configForKind(kind: number): Uint8Array {
+  if (kind === 0) return encodeConfig(CLASSIC_SANDBOX);
+  if (kind === 1) return encodeConfig(CAVES_PVP);
+  throw new Error(`unknown world kind ${kind}`);
+}

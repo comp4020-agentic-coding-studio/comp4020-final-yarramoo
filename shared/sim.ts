@@ -1,8 +1,9 @@
 // Typed loader around the sim.wasm C ABI (plan 6.11). No Node-only APIs: runs in browsers too.
+import { configForKind } from "./room.ts";
 
 export interface SimExports {
   memory: WebAssembly.Memory;
-  init(seedLo: number, seedHi: number, worldKind: number): number;
+  init(seedLo: number, seedHi: number, cfgPtr: number, cfgLen: number): number;
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
   push_input(ptr: number, len: number): number;
@@ -93,7 +94,8 @@ export interface PlayerView {
 }
 
 export interface Sim {
-  init(seed: bigint, worldKind: number): void;
+  /** Start a world from a seed and a room config (16 bytes, see room.ts). A bare number is the legacy world kind: 0 and 1 map to the presets. Throws if the sim refuses the config. */
+  init(seed: bigint, cfg: Uint8Array | number): void;
   /** Returns 0 on success, negative if the sim rejected the input. */
   pushInput(input: Uint8Array): number;
   step(): number;
@@ -190,9 +192,21 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
         return { charges, cooldown };
       });
     },
-    init(seed, worldKind) {
+    init(seed, cfg) {
       const s = BigInt.asUintN(64, seed);
-      const rc = x.init(Number(s & 0xffffffffn), Number(s >> 32n), worldKind);
+      // The deployed v1 sandbox wasm (tests/fixtures, compat test) still has init(lo, hi, kind): a wasm export's
+      // length is its parameter count, so that one old build is called the old way, with a bare kind.
+      if ((x.init as unknown as { length: number }).length === 3) {
+        if (typeof cfg !== "number") throw new Error("legacy sim.wasm takes a world kind, not a config");
+        const rc = (x.init as unknown as (a: number, b: number, c: number) => number)(Number(s & 0xffffffffn), Number(s >> 32n), cfg);
+        if (rc !== 0) throw new Error(`sim init failed (${rc})`);
+        return;
+      }
+      const bytes = typeof cfg === "number" ? configForKind(cfg) : cfg;
+      const rc = withBuf(bytes.length, (p) => {
+        mem().set(bytes, p);
+        return x.init(Number(s & 0xffffffffn), Number(s >> 32n), p, bytes.length);
+      });
       if (rc !== 0) throw new Error(`sim init failed (${rc})`);
     },
     pushInput(input) {
