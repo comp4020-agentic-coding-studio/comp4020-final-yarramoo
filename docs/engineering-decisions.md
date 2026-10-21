@@ -510,10 +510,10 @@ live and world resets are fine until the user says otherwise. If the sandbox is 
 protocol-level config, this needs a migration path first. Separately, `RoomConfig.max_players` is decoded, hashed
 and range-checked (2..=8) but not yet enforced against the live player count: only the pre-existing global
 `MAX_PLAYERS = 1024` gates joins. This was flagged independently by the worker and by a cold second review
-(entry 17), and is deferred, not forgotten (D-134) — it's strictly more permissive than before, not a new hole, but
+(entry 17), and is deferred, not forgotten (D-138) — it's strictly more permissive than before, not a new hole, but
 R2/R6 (Survival's lobby cap) must not assume it already works.
 
-**Evidence.** D-132, D-133, D-134; [plan-game-modes.md](plan-game-modes.md) "Config fields";
+**Evidence.** D-132, D-133, D-138; [plan-game-modes.md](plan-game-modes.md) "Config fields";
 [review-r0a.md](research/review-r0a.md);
 [`8ee79f3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8ee79f3)
 (config.rs and shared/room.ts),
