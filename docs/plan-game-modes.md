@@ -75,11 +75,13 @@ A round state machine lives in sim state, so every client agrees on it:
 - **Death:** a death in `playing` sets the player *out* until the round ends. They watch, and the camera can
   follow survivors. A player who joins mid-round is out until the next round.
 - **End:** one player left (or none) ends the round with an `EV_ROUND_END {winner}` event.
-- **Reset:** a new round restores the grid from the generated `base` the sim already keeps (`sim/src/lib.rs:133`),
-  regenerates pickups and respawns everyone. It's deterministic, needs no server involvement, and no TypeScript
-  writes state.
-- **Tests:** D7 (sleeping invisible) must pass with a round reset inside the run, and D1/D2 need a scripted
-  round to a winner.
+- **After the win:** the room ends; there is no next round in the same world (user, 21 Oct). The server sees
+  `EV_ROUND_END` confirmed by a majority claim (the D-120/D-121 path deaths use), shows the banner, then deletes
+  the room. "Play again" makes a fresh room with the same config. So **no in-sim reset is needed**, which removes
+  the riskiest piece of the earlier design (reset vs chunk sleeping).
+- **Joiners:** a player who arrives after `countdown` spectates. The room is listed as "in progress" in the browser.
+- **Tests:** D1/D2 need a scripted round to a winner, and a net test checks the room is deleted after the win and
+  after the last leave.
 
 ## Server: rooms instead of two fixed worlds
 
@@ -90,8 +92,20 @@ world is a tick log, a member map and a snapshot blob. That makes many rooms che
   The existing world tables are already keyed by world id, so a room's id is its world id.
 - **Codes:** each room gets a 6-character code from `crypto.randomBytes` (not its sequential id, so unlisted rooms
   can't be enumerated). Links are `/r/<code>`.
-- **Lifecycle:** a room loads on its first join and unloads after 2 minutes empty (snapshot flushed, then dropped
-  from memory). Rooms idle for 7 days are deleted. Survival and Deathmatch rooms idle for 24 h are deleted.
+- **Lifecycle (user's answers, 21 Oct):**
+  - **Creative:** a room loads on its first join and unloads after 2 minutes empty (snapshot flushed, then dropped
+    from memory). After **1 hour inactive** it is **archived**: the server takes one final snapshot and deletes the
+    tick log and older snapshots, leaving one row. Snapshots are already zlib level 6 (`shared/protocol.ts:301`),
+    so the archive step may recompress at level 9, or with a material-run pre-pass if R2's measurement shows it
+    pays. A join to an archived room restores from that snapshot. Deleted after **7 days** inactive.
+  - **Deathmatch:** deleted as soon as the last player leaves. Nothing persists; the room is never snapshotted to
+    disk for archive.
+  - **Survival:** deleted when a player wins the round (after the 5 s winner banner) or when the last player
+    leaves, whichever comes first. One match per room; "play again" creates a fresh room with the same config and
+    sends everyone the new code.
+  - **`/sandbox`:** a permanent public Classic sandbox room, never archived or deleted.
+  - Because match rooms vanish when empty, they cost disk only while running, and stored-room limits apply to
+    Creative only.
 - **Caps** (from the capacity note, measured in R2 before shipping): 6 loaded rooms, 40 members in total, 8 per
   room, 3 rooms created per visitor per day, 100 stored rooms. Room creation goes through `log.limited`.
 - **Names:** room names are user text. Cap them at 32 characters, store them plain, and render them only with
@@ -125,18 +139,20 @@ its own spell is R1's call. With no live world, a new spell id and a snapshot fo
 - **D-132** Rooms with a hashed, integer config replace fixed world kinds. Modes are presets.
 - **D-133** Snapshot format 4 carries the config and the round state. Older formats are refused: nothing is live.
 - **D-134** One process; rooms load lazily and unload when empty; caps as above.
-- **D-135** Survival's round reset restores the sim's generated base, sim-side.
+- **D-135** Room lifetimes by mode: Creative archives at 1 h and is deleted at 7 days; match rooms are deleted on
+  a win or the last leave. Survival is one match per room, so there is no in-sim round reset.
 - **D-136** `/` is the menu: the room browser, the presets, and "create a room". The course spec only needs `/` to
   serve the client page, with a module script and a `/readme/` link (`spec/game.test.ts:15-22`).
 - **D-137** Gen v2 for every Caves room; a starting dig that cuts Rock at a small radius.
 
-## Decisions for the user
+## Answered by the user (21 Oct)
 
-- **U1:** Keep `/sandbox` as a permanent public Classic sandbox room alongside player rooms? (Recommended: yes,
-  as the zero-setup front-page option.)
-- **U2:** Room lifetimes: 7 days idle for Creative, 24 h for matches. Fine?
-- **U3:** If the freeze gets close, Survival (R6) is the one to cut or simplify, because rounds are the riskiest
-  sim change. Agree?
+- **U1:** Keep `/sandbox` as a permanent room. Yes.
+- **U2:** Creative rooms archive after 1 h inactive and are deleted after 7 days. Deathmatch is deleted when the
+  last player leaves. Survival is deleted on a win or when the last player leaves.
+- **U3:** No cut line. Time and budget are ample; build all of it, with the full review discipline.
+- **Open:** how many rooms of each type fit at once. A measurement is under way (`docs/research/capacity-rooms.md`).
+  The caps in "Server" above are placeholders until it lands.
 
 ## Milestones
 
@@ -153,7 +169,7 @@ review". Each commit is gated on exit codes:
 | R3 | **Menu.** Room browser, presets, create form with Advanced, `/r/<code>` links, share button | Sonnet | M | look at phone width |
 | R4 | **Creative.** All spells, the brush panel, fill-empty mode, damage off; measure 8 painters | Sonnet | M | two browser contexts |
 | R5 | **Deathmatch.** Respawn delay, pickup respawn, kill and death tallies in sim state, kill feed, scoreboard | Sonnet | M | two contexts fighting |
-| R6 | **Survival.** The round machine, out-until-round-end, joiners waiting, the round banner, base restore | Sonnet | L | **yes** (sim state) |
+| R6 | **Survival.** The round machine, out-until-the-end, late joiners spectate, the winner banner, delete on win or last leave, "play again" | Sonnet | M | **yes** (sim state, lifecycle) |
 | R7 | **Ship prep.** DECISIONS rows, an engineering-decisions entry ("consent by room"), README, FUTURE.md, merge rehearsal, Docker boot, `pnpm check` against it; ask before pushing to `main` | session model plus Sonnet | S | |
 
 ## Schedule
@@ -169,14 +185,15 @@ review". Each commit is gated on exit codes:
 | Fri 30 to Sun 1 Nov | R6 and its review (cut line), R7 |
 | Mon 2 Nov | Feature freeze |
 
-That's eight milestones in eleven days, tight but serial. The fallback ladder: drop R6 (Survival), then
-fill-empty mode, then Advanced settings (presets only).
+Eight milestones in eleven days, serial. The user has said time and budget are ample, so there's no cut line, and
+any slack goes to the FUTURE.md extras (rounds polish, more brush tools).
 
 ## Risks
 
 - **Room churn under memory pressure.** Loading a Caves L room verifies a 7 MiB snapshot. The loaded-room cap and
   the R2 measurement are the levers. A Caves L room may need to count as two slots.
-- **Round reset vs chunk sleeping (invariant 8).** D7 must include a reset; review R6.
+- **A win claimed by a lying client.** The room is deleted on a win, so the end of a round must be majority-agreed
+  like deaths (D-121), not taken from one client. R6's review checks it.
 - **Brush load.** 8 painters at radius 32 in one tick; R4 measures it, and the radius cap is the lever.
 - **User text** (room names): `textContent` only, with a length cap. The net tests include a name with markup.
 - **Scope.** Cloner and wind tools, new materials, private passwords, room ownership transfer, and a per-player
