@@ -21,4 +21,5 @@ Generated with `recraft-v3` for the main menu's mode cards (plan `docs/plan-game
 | `menu/deathmatch.png` | two crossed staffs with fire orbs | Strongest of the set |
 | `menu/survival.png` | a lone hooded figure on a rock pillar, one flame | Darker than the others; may need a lighter background to sit on the card |
 | `menu/sandbox.png` | an hourglass with sand, water and a flame | Good |
-| `menu/logo.png` | a sand dune with a cave opening, embers | Reads as a pyramid; regenerate before use |
+| `menu/logo.png` | a falling sand stream forming a pile, a tiny wizard on top casting a spark | Second attempt; shows sand and spells together. The first (a dune with a cave) read as a pyramid and was replaced |
+| `menu/logo-alt.png` | caves in cross-section, sand pouring down a shaft | Reads as a mine entrance; kept as an option |
