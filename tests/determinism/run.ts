@@ -1,12 +1,18 @@
 // Runner contract: run(simBytes, script, imports?) -> hash log + final chunk hashes.
 // Environment-free (no Node APIs) so the browser page can import it.
 import { unhex } from "../../shared/inputs.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, configForKind, encodeConfig, type RoomConfig } from "../../shared/room.ts";
 import { loadSim } from "../../shared/sim.ts";
+
+const PRESETS: Record<string, RoomConfig> = { classic_sandbox: CLASSIC_SANDBOX, caves_pvp: CAVES_PVP };
 import type { SimEvent } from "../../shared/sim.ts";
 
 export interface ScriptLike {
   seed: string;
-  world_kind: number;
+  /** Legacy alias: 0 is classic_sandbox, 1 is caves_pvp. */
+  world_kind?: number;
+  /** "classic_sandbox" | "caves_pvp"; wins over world_kind. */
+  config?: string;
   ticks: number;
   inputs: Record<string, string[]>;
 }
@@ -34,6 +40,16 @@ export interface RunOptions {
   collectEvents?: boolean;
 }
 
+/** The room config bytes a script asks for: a preset name in `config`, else the `world_kind` alias (0 or 1). */
+export function scriptConfig(script: Pick<ScriptLike, "world_kind" | "config">): Uint8Array {
+  if (script.config !== undefined) {
+    const c = PRESETS[script.config];
+    if (!c) throw new Error(`unknown script config ${script.config}`);
+    return encodeConfig(c);
+  }
+  return configForKind(script.world_kind ?? -1);
+}
+
 const h64 = (n: bigint) => n.toString(16).padStart(16, "0");
 
 export function run(
@@ -43,7 +59,7 @@ export function run(
   opts: RunOptions = {},
 ): RunResult {
   const sim = loadSim(simBytes, imports);
-  sim.init(BigInt(script.seed), script.world_kind);
+  sim.init(BigInt(script.seed), scriptConfig(script));
   if (opts.sleep !== undefined) sim.setSleepEnabled(opts.sleep);
   const hashes: [number, string][] = [];
   if (opts.hashTick0) hashes.push([0, h64(sim.stateHash())]);

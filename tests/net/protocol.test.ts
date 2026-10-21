@@ -10,8 +10,6 @@ import {
   PROTOCOL_VERSION,
   C_CHUNK_HASHES,
   S_REQUEST_CHUNK_HASHES,
-  WORLD_GAME,
-  WORLD_SANDBOX,
   chunkCountFor,
   encodeChunkHashes,
   encodeRequestChunkHashes,
@@ -34,6 +32,7 @@ import {
   PAINT_PAYLOAD_LEN,
   simInputBytes,
 } from "../../shared/protocol.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX } from "../../shared/room.ts";
 
 const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
 
@@ -208,12 +207,12 @@ describe("protocol codec", () => {
   });
 
   it("has a per-world CHUNK_HASHES frame cap that fits a full array exactly", () => {
-    expect(chunkCountFor(WORLD_SANDBOX)).toBe(64);
-    expect(chunkCountFor(WORLD_GAME)).toBe(768);
-    expect(maxChunkHashesFrameFor(WORLD_SANDBOX)).toBe(7 + 8 * 64);
-    expect(maxChunkHashesFrameFor(WORLD_GAME)).toBe(7 + 8 * 768);
-    expect(encodeChunkHashes(1, new BigUint64Array(768)).length).toBe(maxChunkHashesFrameFor(WORLD_GAME));
-    expect(encodeChunkHashes(1, new BigUint64Array(768)).length).toBeGreaterThan(maxChunkHashesFrameFor(WORLD_SANDBOX));
+    expect(chunkCountFor(CLASSIC_SANDBOX)).toBe(64);
+    expect(chunkCountFor(CAVES_PVP)).toBe(768);
+    expect(maxChunkHashesFrameFor(CLASSIC_SANDBOX)).toBe(7 + 8 * 64);
+    expect(maxChunkHashesFrameFor(CAVES_PVP)).toBe(7 + 8 * 768);
+    expect(encodeChunkHashes(1, new BigUint64Array(768)).length).toBe(maxChunkHashesFrameFor(CAVES_PVP));
+    expect(encodeChunkHashes(1, new BigUint64Array(768)).length).toBeGreaterThan(maxChunkHashesFrameFor(CLASSIC_SANDBOX));
     expect(() => encodeChunkHashes(1, new BigUint64Array(5000))).toThrow();
   });
 

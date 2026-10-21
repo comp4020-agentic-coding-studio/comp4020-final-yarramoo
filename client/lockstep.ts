@@ -1,7 +1,8 @@
 // Playout buffer and apply loop (plan 7.1). No DOM, no worker APIs: shared by the worker and the Node tests.
 // The sim only ever advances through closed ticks from the server: push that tick's inputs in the listed
 // order, then step once. TypeScript writes sim state only through push_input (invariant 1).
-import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawFor, simInputBytes, WORLD_GAME, WORLD_SANDBOX, type TickInput } from "../shared/protocol.ts";
+import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawFor, simInputBytes, type TickInput } from "../shared/protocol.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX } from "../shared/room.ts";
 import type { Sim } from "../shared/sim.ts";
 
 /** Review M4b S2: a Knock older than this many ticks behind the live edge is dropped (a stalled tab's backlog). */
@@ -65,8 +66,8 @@ export class Lockstep {
   /** Start from a server snapshot: replace the sim state (restore) and expect ticks from snapshot tick + 1. */
   loadSnapshot(compressed: Uint8Array, tick: number): void {
     // The world's size (set by init before any snapshot arrives) tells which ceiling applies.
-    const kind = this.sim.width() * this.sim.height() > 512 * 512 ? WORLD_GAME : WORLD_SANDBOX;
-    this.sim.restore(decompressSnapshot(compressed, maxSnapshotRawFor(kind)));
+    const cfg = this.sim.width() * this.sim.height() > 512 * 512 ? CAVES_PVP : CLASSIC_SANDBOX;
+    this.sim.restore(decompressSnapshot(compressed, maxSnapshotRawFor(cfg)));
     if (this.sim.tick() !== tick) throw new Error(`snapshot tick mismatch: ${this.sim.tick()} vs ${tick}`);
     this.queue.clear();
     this.received = tick;

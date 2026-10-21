@@ -4,10 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { decodeServer, encodeTick, encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME, compressSnapshot, decompressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
+import { decodeServer, encodeTick, encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME, compressSnapshot, decompressSnapshot, maxSnapshotRawFor, maxUploadFrameFor, MAX_SNAPSHOT_RAW_GAME } from "../../shared/protocol.ts";
 import { createHash } from "node:crypto";
 import { KIND_JOIN, KIND_LEAVE, KIND_PAINT, encodePaint } from "../../shared/inputs.ts";
 import { GameDb } from "../../server/db.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX } from "../../shared/room.ts";
 import { ENT_PROJECTILE, EV_CAST, EV_KNOCK, loadSim } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, register, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
@@ -255,8 +256,12 @@ describe("respawn Pos rule (D-078, review M4b S1)", () => {
 
 describe("snapshots in the game world", () => {
   it("caps scale with the world kind", () => {
-    expect(maxSnapshotRawFor(1)).toBeGreaterThan(6_400_000);
-    expect(maxSnapshotRawFor(0)).toBe(1 << 20);
+    expect(maxSnapshotRawFor(CAVES_PVP)).toBeGreaterThan(6_400_000);
+    expect(maxSnapshotRawFor(CLASSIC_SANDBOX)).toBe(1 << 20);
+    // R0a: derived from the config, but they must equal the constants the old per-kind helpers returned.
+    expect(maxSnapshotRawFor(CAVES_PVP)).toBe(MAX_SNAPSHOT_RAW_GAME);
+    expect(maxUploadFrameFor(CAVES_PVP)).toBe(MAX_UPLOAD_FRAME_GAME);
+    expect(maxUploadFrameFor(CLASSIC_SANDBOX)).toBe(MAX_UPLOAD_FRAME);
     expect(MAX_UPLOAD_FRAME_GAME_ok()).toBe(true);
   });
 
@@ -442,7 +447,7 @@ function MAX_UPLOAD_FRAME_GAME_ok(): boolean {
     raw[i] = (x >>> 16) % 15;
   }
   const z = compressSnapshot(raw);
-  return z.length + 13 < MAX_UPLOAD_FRAME_GAME && raw.length < maxSnapshotRawFor(1) && MAX_UPLOAD_FRAME < MAX_UPLOAD_FRAME_GAME && decompressSnapshot(z, maxSnapshotRawFor(1)).length === raw.length;
+  return z.length + 13 < MAX_UPLOAD_FRAME_GAME && raw.length < maxSnapshotRawFor(CAVES_PVP) && MAX_UPLOAD_FRAME < MAX_UPLOAD_FRAME_GAME && decompressSnapshot(z, maxSnapshotRawFor(CAVES_PVP)).length === raw.length;
 }
 
 describe("connection limits (review M4a S2)", () => {

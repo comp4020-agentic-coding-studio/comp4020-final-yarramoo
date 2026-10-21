@@ -170,3 +170,10 @@ fn every_world_gets_its_full_set_of_pickups() {
         assert_eq!((shallow, deep), (40, 25), "seed {seed} has {shallow} shallow and {deep} deep pickups");
     }
 }
+
+#[test]
+fn script_config_names_and_world_kind_aliases_run_the_same() {
+    let run = |k: &str| sim::script::run_script_json(&format!(r#"{{ "seed": "7", {k}, "ticks": 120, "inputs": {{}} }}"#));
+    assert_eq!(run(r#""config": "classic_sandbox""#), run(r#""world_kind": 0"#));
+    assert_eq!(run(r#""config": "caves_pvp""#), run(r#""world_kind": 1"#));
+}

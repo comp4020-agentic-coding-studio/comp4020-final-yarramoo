@@ -1,6 +1,7 @@
 //! Determinism-harness script runner (plan 6.11 "Input script format").
 //! Hand-rolled minimal JSON reader; the sim never depends on serde.
 
+use crate::config::{IntoRoom, RoomConfig};
 use crate::sim::Sim;
 use std::collections::BTreeMap;
 
@@ -91,9 +92,15 @@ pub fn run_script_json(json: &str) -> Vec<(u32, u64)> {
         J::Num(n) => *n,
         _ => panic!("seed"),
     };
-    let kind = match &o["world_kind"] {
-        J::Num(n) => *n as u8,
-        _ => panic!("world_kind"),
+    // "config" names a preset; the old "world_kind" 0 and 1 stay as aliases so existing scripts run unchanged.
+    let cfg = match (o.get("config"), o.get("world_kind")) {
+        (Some(J::Str(n)), _) => match n.as_str() {
+            "classic_sandbox" => RoomConfig::classic_sandbox(),
+            "caves_pvp" => RoomConfig::caves_pvp(),
+            _ => panic!("unknown config {n}"),
+        },
+        (None, Some(J::Num(n))) => u8::try_from(*n).ok().and_then(IntoRoom::into_room).expect("world_kind"),
+        _ => panic!("script needs config or world_kind"),
     };
     let ticks = match &o["ticks"] {
         J::Num(n) => *n as u32,
@@ -108,7 +115,7 @@ pub fn run_script_json(json: &str) -> Vec<(u32, u64)> {
             }
         }
     }
-    let mut sim = Sim::new(seed, kind).expect("world_kind");
+    let mut sim = Sim::new(seed, cfg).expect("config");
     let mut out = Vec::new();
     for t in 1..=ticks {
         for b in by_tick.get(&t).into_iter().flatten() {

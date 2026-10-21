@@ -29,6 +29,7 @@ import { MAX_CLIENT_INPUTS_PER_TICK, TickClock, type ClosedTick } from "./clock.
 import type { GameDb } from "./db.ts";
 import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, type RoomConfig } from "../shared/room.ts";
 import type { SnapshotVerifier } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
@@ -195,6 +196,8 @@ export class World {
   readonly id: number;
   seed: bigint;
   readonly kind: number;
+  /** The room config for this world id, mapped locally from the kind (R0a: the protocol still carries only the kind). */
+  readonly cfg: RoomConfig;
   /** log[i] is the encoded TICK frame for tick logBase + 1 + i: only ticks after the latest verified snapshot. */
   readonly log: Uint8Array[] = [];
   logBase = 0;
@@ -262,6 +265,7 @@ export class World {
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
     this.kind = worldKindOf(this.id) ?? WORLD_SANDBOX;
+    this.cfg = this.kind === WORLD_GAME ? CAVES_PVP : CLASSIC_SANDBOX;
     this.seed = this.id === GAME_ID ? GAME_SEED : SANDBOX_SEED;
     this.now = opts.now;
     this.db = opts.db;
@@ -378,7 +382,7 @@ export class World {
         // worker timing out on a busy 256 MB machine, a crash, no verifier) says nothing about the snapshot,
         // so refuse to start and let the platform restart us with the volume untouched (D-014, review M5
         // slice 3 N2). Before this, a timeout here reset the live sandbox.
-        const r = this.verifier ? await this.verifier.check(snap.data, maxSnapshotRawFor(this.kind)) : { kind: "unavailable" as const };
+        const r = this.verifier ? await this.verifier.check(snap.data, maxSnapshotRawFor(this.cfg)) : { kind: "unavailable" as const };
         if (r.kind === "unavailable") {
           this.elog.event("world.build_changed", { world: this.id, outcome: "verify_unavailable", snapshot_tick: snap.tick }, "error");
           throw new Error(`world ${this.id}: could not verify the stored snapshot under the new build; not resetting`);
@@ -939,7 +943,7 @@ export class World {
       this.elog.limited(`chunk_unsolicited:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOfConn(memberId), reason: "chunk_hashes_unsolicited", tick }, "warn");
       return;
     }
-    d.replies.set(memberId, hashes.length === chunkCountFor(this.kind) ? hashes : null);
+    d.replies.set(memberId, hashes.length === chunkCountFor(this.cfg) ? hashes : null);
     this.maybeFinish(d, this.now());
   }
 
@@ -953,7 +957,7 @@ export class World {
     for (const id of d.asked.keys()) if (this.members.has(id) && !d.replies.has(id)) waiting = true;
     if (waiting && !timedOut) return;
     this.diagnoses.delete(d.tick);
-    const grid = chunkGridFor(this.kind);
+    const grid = chunkGridFor(this.cfg);
     const base = { tick: d.tick, grid, asked: d.asked.size, answered: [...d.replies.values()].filter((r) => r !== null).length };
     const unavailable = (reason: string): void => this.finishDiagnosis(d, { status: "unavailable", reason, ...base }, null);
     // The reference: the array most agreeing members sent; a tie goes to the group with the longest-connected sender.
@@ -1230,7 +1234,7 @@ export class World {
     const gen = this.resetGen;
     this.verifying = true;
     void this.verifier
-      .hashOf(u.data, maxSnapshotRawFor(this.kind))
+      .hashOf(u.data, maxSnapshotRawFor(this.cfg))
       .then((got) => {
         if (gen !== this.resetGen) return; // the world was reset while this verified: the snapshot is from the old world
         this.verifying = false;

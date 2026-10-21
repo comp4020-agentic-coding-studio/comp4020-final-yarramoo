@@ -649,7 +649,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // CHUNK_HASHES is the one large frame besides an upload. Check its size and whether this connection owes one
       // from the tag and tick alone, before decoding hundreds of u64s (review chunk-diag N1).
       if (buf.length > 0 && buf[0] === C_CHUNK_HASHES) {
-        if (!joined || buf.length > maxChunkHashesFrameFor(joined.world.kind)) return ws.close(1009, "frame too large");
+        if (!joined || buf.length > maxChunkHashesFrameFor(joined.world.cfg)) return ws.close(1009, "frame too large");
         const tick = buf.length >= 5 ? buf.readUInt32LE(1) : -1;
         if (!joined.world.wantsChunkHashes(joined.conn, tick)) {
           if (++unaskedChunks > MAX_UNASKED_CHUNK_FRAMES) return ws.close(1008, "unsolicited chunk hashes");
@@ -750,7 +750,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // A replaced tab (same token, newer connection) stays open until its socket closes; it must not stamp or count.
       if (!w.hasMember(joined.conn)) return;
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
-      const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.kind) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.kind) : MAX_FRAME_BYTES;
+      const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.cfg) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.cfg) : MAX_FRAME_BYTES;
       if (buf.length > frameCap) return ws.close(1009, "frame too large");
 
       switch (msg.t) {

@@ -9,3 +9,13 @@ Baseline taken before any change (`sim/examples/r0a_baseline.rs`, kept in the wo
 - Red first: `sim/tests/config.rs` failed to compile (`could not find config in sim`); `tests/net/room.test.ts` failed (no `shared/room.ts`). Both written before the implementation.
 - Green: both pass. Same vectors in both languages (3 good vectors, 17 single-byte mutations, wrong lengths).
 - Gate: cargo test, both clippies, typecheck, test:determinism (40 pass), test:net (267 pass).
+
+## Commit 2: rule helpers
+Sim::new(seed, impl IntoRoom); all 7 bare gates became helpers (`has_players`, `paint_allowed`). Old `Sim::new(seed, 0|1)` still compiles (tests, examples) via `IntoRoom for u8`. Baseline hashes for both worlds identical before/after (diffed).
+
+## Commit 3: ABI
+`init(seed_lo, seed_hi, cfg_ptr, cfg_len)`; length checked before the read. Red first: `tests/net/room-abi.test.ts` failed (3 of 4) against the kind-taking wasm, then passed. Compat test (deployed v1 wasm still has 3-arg init) needed a branch in `shared/sim.ts` keyed on `x.init.length`.
+
+## Commit 4: snapshot format 4
+Header 55 -> 70 bytes (config at offset 46..62). Hash = xxh3(tick, 16 config bytes, entity bytes, chunk hashes). Red first: `sim/tests/config_state.rs` 3/3 failed, then passed (hash differs per rule field, header carries config, every older format and every truncation refused, no panic).
+Edited outside the strict file list because the format changed: `sim/tests/{bags,players,spells}.rs` (old-format and header-offset assertions), `server/world.ts` `ENTITY_AT` 55 -> 70, `tests/net/entity-layout.test.ts` HEADER, `tests/determinism/compat.test.ts` (v1 deployed snapshot is now refused; the old DATA/RULES pair is replaced by one refusal test; determinism test count 40 -> 39).

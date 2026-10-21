@@ -1,5 +1,6 @@
 // Binary WebSocket protocol (plan 7.2). Little-endian, u8 type tag first. Shared by client and server.
 import { unzlibSync, zlibSync } from "fflate";
+import { SIZE_DIMS, type RoomConfig } from "./room.ts";
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
@@ -60,22 +61,36 @@ export const WORLD_GAME = 1;
 /** HELLO flag: watch only (no avatar, no Join, no inputs). Phones use this in the game world (D-011). */
 export const HELLO_SPECTATE = 1;
 
-/** Snapshot size ceilings by world id (0 sandbox, 1 game): world kind decides how big a snapshot can be. */
-export const maxSnapshotRawFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_SNAPSHOT_RAW_GAME : MAX_SNAPSHOT_RAW);
-export const maxUploadFrameFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_UPLOAD_FRAME_GAME : MAX_UPLOAD_FRAME);
-/** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */
-export const MAX_SOCKET_PAYLOAD = Math.max(MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME);
-/** Chunk side in cells (sim CHUNK) and the grid each world kind has: 512x512 sandbox = 8x8, 2048x1536 game = 32x24. */
-export const CHUNK_CELLS = 64;
-export const chunkGridFor = (worldKind: number): { cw: number; ch: number } => (worldKind === WORLD_GAME ? { cw: 32, ch: 24 } : { cw: 8, ch: 8 });
-export const chunkCountFor = (worldKind: number): number => {
-  const g = chunkGridFor(worldKind);
+/**
+ * Ceilings that depend on the room, computed from its config (R0a): the size gives the chunk grid, the grid gives the
+ * snapshot cap, and the cap bounds decompression (zip-bomb guard) before anything is read. A chunk is 8194 bytes in a
+ * snapshot (2-byte index, mat and aux planes); 128 KiB covers the header, up to 1024 players and the pickups.
+ * Reproduces the old per-kind numbers exactly: classic sandbox 1 MiB, caves 7 MiB.
+ */
+const MIB = 1 << 20;
+export const SNAPSHOT_CHUNK_BYTES = 8194;
+export const SNAPSHOT_OVERHEAD = 128 * 1024;
+/** The chunk grid of a room: `cw x ch` chunks of CHUNK_CELLS. */
+export const chunkGridFor = (cfg: RoomConfig): { cw: number; ch: number } => {
+  const [w, h] = SIZE_DIMS[cfg.size];
+  return { cw: w / CHUNK_CELLS, ch: h / CHUNK_CELLS };
+};
+export const chunkCountFor = (cfg: RoomConfig): number => {
+  const g = chunkGridFor(cfg);
   return g.cw * g.ch;
 };
+/** Uncompressed snapshot ceiling for a room. */
+export const maxSnapshotRawFor = (cfg: RoomConfig): number => Math.ceil((chunkCountFor(cfg) * SNAPSHOT_CHUNK_BYTES + SNAPSHOT_OVERHEAD) / MIB) * MIB;
+/** Compressed SNAPSHOT_UPLOAD frame ceiling: a worst-case all-live world compresses at least 2:1 (see MAX_UPLOAD_FRAME_GAME). */
+export const maxUploadFrameFor = (cfg: RoomConfig): number => Math.max(1, Math.ceil(maxSnapshotRawFor(cfg) / 2 / MIB)) * MIB;
+/** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */
+export const MAX_SOCKET_PAYLOAD = Math.max(MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME);
+/** Chunk side in cells (sim CHUNK). */
+export const CHUNK_CELLS = 64;
 /** The most chunks any world has (sim.ts MAX_CHUNKS): the decoder's own bound, whatever the world. */
 export const MAX_CHUNK_COUNT = 4096;
-/** The only length a CHUNK_HASHES frame for this world may have, at most (the server's per-world frame cap). */
-export const maxChunkHashesFrameFor = (worldKind: number): number => CHUNK_HASHES_HEADER + 8 * chunkCountFor(worldKind);
+/** The only length a CHUNK_HASHES frame for this room may have, at most (the server's per-world frame cap). */
+export const maxChunkHashesFrameFor = (cfg: RoomConfig): number => CHUNK_HASHES_HEADER + 8 * chunkCountFor(cfg);
 export const HASH_LEN = 32;
 export const TOKEN_LEN = 32;
 export const MAX_REASON_BYTES = 200;
