@@ -83,6 +83,109 @@ A round state machine lives in sim state, so every client agrees on it:
 - **Tests:** D1/D2 need a scripted round to a winner, and a net test checks the room is deleted after the win and
   after the last leave.
 
+## The main menu (the landing page)
+
+### Who lands here and what they need
+
+- **A marker or classmate, cold, often on a phone.** They need to understand the game in five seconds and be
+  playing in one click. Asking for a name before showing anything is the biggest drop-off risk.
+- **A returning player.** They want back into their room, or a quick match, with no forms.
+- **Someone who got a link** (`/r/<code>`). They skip the menu and land in the room, with the name prompt only if
+  they have no name yet.
+
+### Principles
+
+1. **Show the game, not a form.** Behind the menu, a live, muted view of the busiest public room (spectator mode,
+   no input) shows what the game is before any words do. If nothing is live, the `/sandbox` room plays.
+2. **One click to play.** "Quick play" joins the busiest public room that has space, falling back to `/sandbox`.
+3. **The name comes at the moment of joining**, not on arrival. The first Join (or Create) opens a small name
+   sheet. It's remembered after that (the existing `sand.name` and token storage, `client/main.ts:50`). The name
+   is always shown plain, never `name#id` (project rule).
+4. **Mode is chosen by what you want to do**, so PvP is always opt-in and labelled. Each card says in plain words
+   whether others can hurt you.
+5. **Phone-first layout.** One column under 600 px, with large tap targets.
+
+### Layout
+
+```
+desktop                                                 phone (<600 px)
++-------------------------------------------------------+   +---------------------+
+| Falling Sand              [your name v]   readme      |   | Falling Sand   [=]  |
++-------------------------------------------------------+   | [live room preview] |
+|  [ live preview of the busiest room, dimmed ]         |   |                     |
+|                                                       |   | [  Quick play  ]    |
+|    Falling Sand                                       |   |                     |
+|    A shared world of sand, water, fire and spells.    |   | Creative       ->   |
+|    [ Quick play ]   [ Create a room ]                 |   | Deathmatch PvP ->   |
++-------------------------------------------------------+   | Survival   PvP ->   |
+|  Creative       |  Deathmatch    |  Survival          |   | Sandbox        ->   |
+|  Build together |  Fight, respawn|  Last one standing |   |                     |
+|  No damage      |  PvP           |  PvP, one life     |   | Rooms (12 live)     |
+|  [Browse] [New] |  [Browse][New] |  [Browse] [New]    |   |  Castle  4/8  Join  |
++-------------------------------------------------------+   |  ...                |
+|  Live rooms                    [filter: all modes v]  |   | [Have a code? ____] |
+|  Castle build   Creative    4/8   [Join]              |   +---------------------+
+|  Pit of doom    Deathmatch  6/8   [Join]              |
+|  Round 3        Survival    in progress  [Watch]      |
+|  Have a code?  [______] [Go]       Sandbox (always on)|
++-------------------------------------------------------+
+```
+
+### Pieces
+
+- **Header:** title, the player's name (tap to change it), the readme link (the course spec needs `/readme/`
+  linked from `/`, `spec/game.test.ts:21`). The old Game/Sandbox nav (`client/index.html:103`) goes away.
+- **Hero:** a one-line pitch, Quick play, Create a room.
+- **Mode cards:** the three modes plus Sandbox. Each shows a one-line rule, a PvP badge, players online in that
+  mode, Browse (filters the room list) and New (opens the create sheet on that preset).
+- **Room list:** public rooms only. Each row has the name (`textContent`, never HTML), mode, players as count/max,
+  and state (open, full, in progress). Join or Watch. Polled every 5 s from `GET /api/rooms`, which returns counts
+  and names, never player names. Sorted by players, then most recent. Empty state: "No rooms yet. Make one."
+- **Code box:** six characters, case-insensitive, goes to `/r/<code>`. An unknown code says so inline.
+- **Create sheet:** room name, preset (pre-selected), terrain and size, public or unlisted, and "Advanced" for
+  every config field (per the config table above). On create, the player goes straight in, with a share bar
+  holding the link and the code, plus a copy button.
+- **In-room:** a "Menu" button top-left returns to `/`, and the share button sits beside it. Leaving a match room
+  confirms first ("you'll lose your place").
+- **First-visit hint (from the handover's top item):** on first entry to any room, a three-line overlay explains
+  the controls for that mode (move, cast, dig, or brush), dismissed by any input and remembered per mode.
+
+### Phones
+
+D-011 made the cave world spectate-only on phones. In the menu:
+
+- **Sandbox and Creative-with-brushes-only** are playable by touch (touch painting already works in the
+  sandbox).
+- **Avatar modes** (Deathmatch, Survival, Creative with avatars) show "Watch" on phones, not "Join", and the card
+  says "Desktop to play". Full touch controls for avatars stay in FUTURE.md.
+
+### Routes
+
+- `/` is the menu (D-136); `/r/<code>` a room; `/sandbox` the permanent sandbox room.
+- `/caves` and the old `/` deep link are no longer worlds. `/` serves the menu, and the course spec still sees the
+  client page.
+- All routes serve the same bundle. The client picks the menu or a room from the path, so it is still one HTML
+  page.
+
+### Done when
+
+- A cold visitor on a phone-width context goes from landing to painting in the sandbox in 2 taps plus a name.
+- A desktop visitor goes from landing to inside a Deathmatch in 2 clicks plus a name.
+- Two browser contexts: one creates an unlisted room and shares the code; the other enters it and they see each
+  other. The public list never shows the unlisted room.
+- `pnpm check` (the course spec) passes against the Docker image with the menu at `/`.
+- Look at it: screenshots at 375 px and 1280 px, reviewed by the session model before the commit is pushed.
+
+### Open questions for the user
+
+- **M1:** The live preview behind the menu costs one spectator connection per visitor (it replays the room). Fine,
+  or use a static image or video loop to save server capacity? (Recommendation: live, but only for desktop, and
+  only if the capacity measurement shows room for it. A recorded loop is the fallback.)
+- **M2:** Quick play: busiest room first (more social), or always `/sandbox` (no PvP surprises)?
+  (Recommendation: busiest *non-PvP* room. Quick play should never drop a newcomer into a fight.)
+- **M3:** Do you want a visual identity pass (logo, title art) for the menu? The image-gen skill can make a title
+  and mode icons in the existing art style (`docs/art/`).
+
 ## Server: rooms instead of two fixed worlds
 
 The capacity research measured 82 MB RSS idle with two worlds loaded, and found no per-world sim on the server. A
@@ -166,7 +269,7 @@ review". Each commit is gated on exit codes:
 | R0 | **Config in the sim.** `init(seed_lo, seed_hi, cfg_ptr, cfg_len)`, the config struct and validation, rule helpers replacing every `world_kind` check, snapshot format 4, `shared/room.ts` table and presets. Worlds 0 and 1 re-expressed as presets | Sonnet | M | **yes** (ABI, snapshot) |
 | R1 | **Terrain.** Gen v2 for Caves, Solid box and Empty box, all three sizes; the traversal test red then green; the starting dig | Sonnet | M | gen output by eye in `client/gen-preview.html` |
 | R2 | **Rooms on the server.** Table, codes, create/list/get API, lazy load and unload, caps, logging, admin panel, protocol v9; then the capacity measurement (Docker image, 24 sockets over 4 rooms, a forced verify; pass is under 200 MB) | Sonnet, then Haiku runs the measurement | M | **yes** (protocol, lifecycle) |
-| R3 | **Menu.** Room browser, presets, create form with Advanced, `/r/<code>` links, share button | Sonnet | M | look at phone width |
+| R3 | **Menu** (section above). Commits: (1) routing and menu shell; (2) mode cards and room list; (3) create sheet and share bar; (4) name sheet on first join; (5) the first-visit hint; (6) live preview (if M1 says so) | Sonnet | M | screenshots at 375 and 1280 px; two contexts sharing a code |
 | R4 | **Creative.** All spells, the brush panel, fill-empty mode, damage off; measure 8 painters | Sonnet | M | two browser contexts |
 | R5 | **Deathmatch.** Respawn delay, pickup respawn, kill and death tallies in sim state, kill feed, scoreboard | Sonnet | M | two contexts fighting |
 | R6 | **Survival.** The round machine, out-until-the-end, late joiners spectate, the winner banner, delete on win or last leave, "play again" | Sonnet | M | **yes** (sim state, lifecycle) |
