@@ -254,7 +254,7 @@ Coalesce or compress tick frames per member; empty ticks cost about 420 B/s per 
 
 ## Natural-looking traversal: backbone worms instead of repair shafts
 
-Gen v2's box-fit repair carves near-vertical radius-6 shafts that read as pipes (`docs/art/shots/gen-v2-seed8-2026-10-21.png`, the shaft near x=380). A wandering minimum-radius backbone worm per entrance (cave-gen-v2 step 2, skipped because the repair alone passed) would make the guaranteed path look like a cave. Also: make the traversal test reuse `gen::box_reach` (it has its own copy), and check pickup reachability in the repair.
+Gen v2's box-fit repair carves near-vertical radius-6 shafts that read as pipes (`docs/art/shots/gen-v2-seed8-2026-10-21.png`, the shaft near x=380). A wandering minimum-radius backbone worm per entrance (cave-gen-v2 step 2, skipped because the repair alone passed) would make the guaranteed path look like a cave. Also check pickup reachability in the repair. (The traversal test keeps its own copy of the box-fit flood on purpose: an independent check cannot share a bug with `gen::box_reach`.)
 
 - **Source:** reviewing the gen v2 worker's output and the preview of seed 8.
 - **Why:** the repair is a correctness backstop; the look of the caves is what players see.
