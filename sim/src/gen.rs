@@ -145,6 +145,7 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     place_gunpowder(g, seed);
     place_water(g, seed, &mut sc);
     place_trees(g, seed, &surf);
+    repair_traversal(g, seed);
     pick_spots(g, seed)
 }
 
@@ -524,7 +525,7 @@ fn carve_noise_caves(g: &mut Grid, seed: u64, surf: &[i32]) {
             let bot = c * (4 - fx) + d * fx;
             // Samples are 0..=255 and the weights sum to 16, so this is Q12 (max 4080).
             let mut v = top * (4 - fy) + bot * fy;
-            if (v - thr).abs() < 120 {
+            if (v - thr).abs() < 40 {
                 v += (detail.at(x, y) - 2048) / 16;
             }
             if v < thr {
@@ -555,13 +556,13 @@ struct Worm {
 }
 
 /// Remove Rock and Dirt in a disc; Bedrock and everything else stays.
-fn dig(g: &mut Grid, cx: i32, cy: i32, r: i32) {
+fn dig(g: &mut Grid, cx: i32, cy: i32, r: i32, clear_all: bool) {
     let (w, h) = (g.w as i32, g.h as i32);
     for y in (cy - r).max(0)..=(cy + r).min(h - 1) {
         for x in (cx - r).max(0)..=(cx + r).min(w - 1) {
             if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r {
                 let i = (y * w + x) as usize;
-                if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                if g.mat[i] == ROCK || g.mat[i] == DIRT || (clear_all && g.mat[i] != BEDROCK) {
                     g.mat[i] = EMPTY;
                 }
             }
@@ -597,7 +598,7 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
         if near_border(g, wm.x, wm.y, wm.r) {
             return;
         }
-        dig(g, wm.x, wm.y, wm.r);
+        dig(g, wm.x, wm.y, wm.r, false);
         if st % 8 == 0 {
             path.push((wm.x, wm.y));
         }
@@ -689,7 +690,7 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             x,
             y: base,
             r: 5,
-            r_min: 3,
+            r_min: 5,
             r_max: 9,
             drift: 0,
             step: 0,
@@ -741,12 +742,12 @@ fn flood(g: &Grid, seen: &mut [u8], start: usize, stack: &mut Vec<u32>, mut regi
 
 /// A meandering tunnel from `from` to `to`: mostly steps along the longer axis, sometimes sideways,
 /// then a straight finish if it ran out of steps. Randomness is `rng(seed, 0, id, step, SALT_GEN_LINK)`.
-fn wander_link(g: &mut Grid, seed: u64, from: (i32, i32), to: (i32, i32), id: u32) {
+fn wander_link(g: &mut Grid, seed: u64, from: (i32, i32), to: (i32, i32), id: u32, rad: i32, clear_all: bool) {
     let (mut x, mut y) = from;
     let dist = (to.0 - x).abs() + (to.1 - y).abs();
     let steps = 4 * dist as u32 + 100;
     for st in 0..steps {
-        dig(g, x, y, 3 + ((st / 17) % 3) as i32);
+        dig(g, x, y, rad + ((st / 17) % 2) as i32, clear_all);
         let (dx, dy) = ((to.0 - x).signum(), (to.1 - y).signum());
         if (to.0 - x).abs() <= 2 && (to.1 - y).abs() <= 2 {
             break;
@@ -773,7 +774,83 @@ fn wander_link(g: &mut Grid, seed: u64, from: (i32, i32), to: (i32, i32), id: u3
     let (dx, dy) = (to.0 - x, to.1 - y);
     let n = dx.abs().max(dy.abs()).max(1);
     for k in 0..=n {
-        dig(g, x + dx * k / n, y + dy * k / n, 3);
+        dig(g, x + dx * k / n, y + dy * k / n, rad, clear_all);
+    }
+}
+
+/// Box the repair guarantees: the 5x10 hitbox plus a one-cell margin.
+const FIT_W: usize = crate::tuning::HITBOX_W as usize + 1;
+const FIT_H: usize = crate::tuning::HITBOX_H as usize + 1;
+/// Deepest tunnel row the repair aims at; its box bottom clears the test's 1380.
+const REPAIR_DEPTH: i32 = 1420;
+const REPAIR_PASSES: u32 = 3;
+
+/// Flood a `bw` x `bh` box (keyed by top-left) through Empty cells from `start`. Returns the top-left
+/// of the box whose bottom is deepest, or None if the start box does not fit. Liquids, sand and solids block.
+pub fn box_reach(g: &Grid, start: (usize, usize), bw: usize, bh: usize) -> Option<(usize, usize)> {
+    let (w, h) = (g.w, g.h);
+    let mut ps = vec![0u32; (w + 1) * (h + 1)];
+    for y in 0..h {
+        for x in 0..w {
+            let solid = u32::from(g.mat[y * w + x] != EMPTY);
+            ps[(y + 1) * (w + 1) + x + 1] = solid + ps[y * (w + 1) + x + 1] + ps[(y + 1) * (w + 1) + x] - ps[y * (w + 1) + x];
+        }
+    }
+    let fits = |x: usize, y: usize| {
+        x + bw <= w && y + bh <= h && {
+            let (x1, y1) = (x + bw, y + bh);
+            ps[y1 * (w + 1) + x1] + ps[y * (w + 1) + x] == ps[y * (w + 1) + x1] + ps[y1 * (w + 1) + x]
+        }
+    };
+    if !fits(start.0, start.1) {
+        return None;
+    }
+    let mut seen = vec![false; w * h];
+    let mut stack = vec![start];
+    seen[start.1 * w + start.0] = true;
+    let mut deepest = start;
+    while let Some((x, y)) = stack.pop() {
+        if y > deepest.1 {
+            deepest = (x, y);
+        }
+        let mut nb = [(usize::MAX, 0); 4];
+        if x > 0 {
+            nb[0] = (x - 1, y)
+        }
+        nb[1] = (x + 1, y);
+        if y > 0 {
+            nb[2] = (x, y - 1)
+        }
+        nb[3] = (x, y + 1);
+        for (nx, ny) in nb {
+            if nx != usize::MAX && nx < w && ny < h && !seen[ny * w + nx] && fits(nx, ny) {
+                seen[ny * w + nx] = true;
+                stack.push((nx, ny));
+            }
+        }
+    }
+    Some(deepest)
+}
+
+/// Box-fit repair: if a body cannot walk from the surface centre to REPAIR_DEPTH, carve a 6-radius
+/// tunnel from the deepest cell it reaches down to REPAIR_DEPTH. At most REPAIR_PASSES passes.
+/// Runs after the materials so pools and piles cannot plug the path; the tunnel clears them.
+fn repair_traversal(g: &mut Grid, seed: u64) {
+    let start = (g.w / 2, 0usize);
+    for pass in 0..REPAIR_PASSES {
+        let Some((dx, dy)) = box_reach(g, start, FIT_W, FIT_H) else { return };
+        if (dy + FIT_H) as i32 >= REPAIR_DEPTH {
+            return;
+        }
+        let from = ((dx + FIT_W / 2) as i32, (dy + FIT_H / 2) as i32);
+        wander_link(g, seed, from, (from.0, REPAIR_DEPTH), 2000 + pass, 6, true);
+        // A tunnel through a pool's floor leaves liquid hanging; drain it, bottom-up so a column cascades.
+        let w = g.w;
+        for i in (0..g.mat.len() - w).rev() {
+            if (g.mat[i] == WATER || g.mat[i] == LAVA) && g.mat[i + w] == EMPTY {
+                g.mat[i] = EMPTY;
+            }
+        }
     }
 }
 
@@ -810,7 +887,7 @@ fn connect_and_prune(g: &mut Grid, seed: u64, path: &[(i32, i32)]) {
             .map(|&c| ((c as usize % w) as i32, (c as usize / w) as i32))
             .min_by_key(|&(x, y)| (d2(t, x, y), x, y))
             .unwrap_or((fx, fy));
-        wander_link(g, seed, rep, t, i as u32);
+        wander_link(g, seed, rep, t, i as u32, 5, false);
     }
     // Links can open other pockets or leave a sliver cut off: reflood and fill what is left.
     seen.fill(0);
@@ -1000,9 +1077,8 @@ mod tests {
     }
 
     /// Gen v2's target (plan-game-modes R1, research `cave-gen-v2.md`): a body a margin bigger than the 5x10
-    /// hitbox can walk from spawn to the bottom of the deep band. Red on the v1 generator; R1 removes the ignore.
+    /// hitbox can walk from spawn to the bottom of the deep band. Gen v2 passes it.
     #[test]
-    #[ignore = "red until gen v2 (plan R1); run with --ignored to see which seeds fail"]
     fn traversable_to_every_band() {
         let (bw, bh) = (crate::tuning::HITBOX_W as usize + 1, crate::tuning::HITBOX_H as usize + 1);
         let mut failures = Vec::new();
