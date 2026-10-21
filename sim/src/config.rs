@@ -105,3 +105,28 @@ impl RoomConfig {
         self.terrain == TERRAIN_CAVES
     }
 }
+
+/// What `Sim::new` accepts: a config, or (for the many existing tests and examples, and the determinism script
+/// aliases) the old world kind 0 or 1, which maps to its preset. Anything else is None.
+pub trait IntoRoom {
+    fn into_room(self) -> Option<RoomConfig>;
+}
+impl IntoRoom for RoomConfig {
+    fn into_room(self) -> Option<RoomConfig> {
+        Some(self)
+    }
+}
+impl IntoRoom for &RoomConfig {
+    fn into_room(self) -> Option<RoomConfig> {
+        Some(*self)
+    }
+}
+impl IntoRoom for u8 {
+    fn into_room(self) -> Option<RoomConfig> {
+        match self {
+            0 => Some(RoomConfig::classic_sandbox()),
+            1 => Some(RoomConfig::caves_pvp()),
+            _ => None,
+        }
+    }
+}

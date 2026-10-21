@@ -1,5 +1,6 @@
 //! The simulation instance: grid + tick + queued inputs.
 
+use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX};
 use crate::entities::{self, Bag, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
@@ -8,19 +9,15 @@ use crate::materials::*;
 use crate::rng::{rng, SALT_PICKUP_SPELL, SALT_SPAWN_X};
 use crate::tuning::*;
 
-pub const SANDBOX_W: usize = 512;
-pub const SANDBOX_H: usize = 512;
-pub const GAME_W: usize = 2048;
-pub const GAME_H: usize = 1536;
 const FLOOR_ROWS: usize = 16;
 const WALL_COLS: usize = 16;
 pub const MAX_PAINT_RADIUS: i32 = 32;
 
-/// The pristine generated world for one (seed, kind): derived data, not state. It is never hashed or
-/// snapshotted, so a hit and a miss give identical results (D-088). Game worlds only; one per instance.
+/// The pristine generated world for one (seed, config): derived data, not state. It is never hashed or
+/// snapshotted, so a hit and a miss give identical results (D-088). Generated (cave) worlds only; one per instance.
 pub struct Base {
     pub seed: u64,
-    pub world_kind: u8,
+    pub cfg: [u8; CONFIG_BYTES],
     pub mat: Vec<u8>,
     pub aux: Vec<u8>,
     pub pickups: Vec<Pickup>,
@@ -28,7 +25,7 @@ pub struct Base {
 
 pub struct Sim {
     pub seed: u64,
-    pub world_kind: u8,
+    pub cfg: RoomConfig,
     pub tick: u32,
     pub grid: Grid,
     queue: Vec<Input>,
@@ -47,47 +44,64 @@ pub struct Sim {
 }
 
 impl Sim {
-    /// Generate a world, tick = 0. Returns None for an unknown `world_kind`.
-    pub fn new(seed: u64, world_kind: u8) -> Option<Sim> {
-        Self::new_with_base(seed, world_kind, None)
+    /// Generate a world, tick = 0. Returns None for a config that has no terrain yet (Solid box is R1's job, and
+    /// Caves exist at size L only until R1) or, via `IntoRoom`, for an unknown world kind.
+    pub fn new(seed: u64, cfg: impl IntoRoom) -> Option<Sim> {
+        Self::new_with_base(seed, cfg, None)
     }
 
-    /// As `new`, but a game world whose (seed, kind) matches `base` is copied from it instead of generated.
-    pub fn new_with_base(seed: u64, world_kind: u8, base: Option<&Base>) -> Option<Sim> {
-        let (w, h) = match world_kind {
-            0 => (SANDBOX_W, SANDBOX_H),
-            1 => (GAME_W, GAME_H),
-            _ => return None,
-        };
+    /// As `new`, but a cave world whose (seed, config) matches `base` is copied from it instead of generated.
+    pub fn new_with_base(seed: u64, cfg: impl IntoRoom, base: Option<&Base>) -> Option<Sim> {
+        let cfg = cfg.into_room()?;
+        let (w, h) = cfg.dims();
+        let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        if let Some(b) = base.filter(|b| b.seed == seed && b.world_kind == world_kind && b.mat.len() == w * h && b.aux.len() == w * h) {
-            grid.mat.copy_from_slice(&b.mat);
-            grid.aux.copy_from_slice(&b.aux);
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: b.pickups.clone(), projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: None });
-        }
-        if world_kind == 1 {
-            let spots = crate::gen::generate(&mut grid, seed);
-            let pickups: Vec<Pickup> = spots
-                .iter()
-                .enumerate()
-                .map(|(i, sp)| {
-                    // Shallow spots give Water or Rose seed, deep spots Fire bolt or Bomb (plan 6.7).
-                    let pick = (rng(seed, 0, i as u32, 0, SALT_PICKUP_SPELL) & 1) as u8;
-                    let spell = 2 + 2 * sp.band + pick;
-                    Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
-                })
-                .collect();
-            let base = Base { seed, world_kind, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone() };
-            return Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: Some(base) });
-        }
-        for y in 0..h {
-            for x in 0..w {
-                if y >= h - FLOOR_ROWS || x < WALL_COLS || x >= w - WALL_COLS {
-                    grid.mat[y * w + x] = BEDROCK;
+        let make = |grid: Grid, pickups: Vec<Pickup>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base };
+        match cfg.terrain {
+            TERRAIN_CAVES => {
+                if cfg.size != 2 {
+                    return None;
                 }
+                if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
+                    grid.mat.copy_from_slice(&b.mat);
+                    grid.aux.copy_from_slice(&b.aux);
+                    return Some(make(grid, b.pickups.clone(), None));
+                }
+                let spots = crate::gen::generate(&mut grid, seed);
+                let pickups: Vec<Pickup> = spots
+                    .iter()
+                    .enumerate()
+                    .map(|(i, sp)| {
+                        // Shallow spots give Water or Rose seed, deep spots Fire bolt or Bomb (plan 6.7).
+                        let pick = (rng(seed, 0, i as u32, 0, SALT_PICKUP_SPELL) & 1) as u8;
+                        let spell = 2 + 2 * sp.band + pick;
+                        Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
+                    })
+                    .collect();
+                let base = Base { seed, cfg: bytes, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone() };
+                Some(make(grid, pickups, Some(base)))
             }
+            TERRAIN_EMPTY_BOX => {
+                // The classic canvas: bedrock floor and side walls. Only at size S until R1 generalises terrain.
+                if cfg.size != 0 {
+                    return None;
+                }
+                for y in 0..h {
+                    for x in 0..w {
+                        if y >= h - FLOOR_ROWS || x < WALL_COLS || x >= w - WALL_COLS {
+                            grid.mat[y * w + x] = BEDROCK;
+                        }
+                    }
+                }
+                Some(make(grid, Vec::new(), None))
+            }
+            _ => None, // Solid box: R1
         }
-        Some(Sim { seed, world_kind, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups: Vec::new(), projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base: None })
+    }
+
+    /// The old world-kind byte for the v3 snapshot header (0 sandbox preset, 1 caves preset). Commit 4 replaces it.
+    pub(crate) fn cfg_kind(&self) -> u8 {
+        u8::from(self.cfg.has_players())
     }
 
     /// 0 on success, negative if malformed (input is then dropped).
@@ -119,7 +133,7 @@ impl Sim {
         self.update_entities();
         self.refresh_active();
         self.grid.step_cells(self.seed, self.tick);
-        if self.world_kind != 0 {
+        if self.cfg.has_players() {
             let centres = core::mem::take(&mut self.grid.explosions);
             for &(cx, cy) in &centres {
                 self.explode_at(cx as i32, cy as i32, crate::grid::BLAST_RADIUS, 0, CAUSE_GUNPOWDER);
@@ -147,7 +161,7 @@ impl Sim {
     /// (the world is frozen). The centres come from entity state, which is hashed and snapshotted, so
     /// every client agrees on the set.
     fn refresh_active(&mut self) {
-        if self.world_kind == 0 {
+        if !self.cfg.has_players() {
             self.grid.set_all_active();
             return;
         }
@@ -163,12 +177,12 @@ impl Sim {
     fn apply(&mut self, i: Input) {
         match i {
             Input::Paint { mat, x0, y0, x1, y1, radius, .. } => {
-                if self.world_kind == 0 || cfg!(feature = "dev_paint") {
+                if self.cfg.paint_allowed() || cfg!(feature = "dev_paint") {
                     self.paint(mat, x0 as i32, y0 as i32, x1 as i32, y1 as i32, radius as i32);
                 }
             }
             // Players live in game worlds only: a sandbox visitor has no entity to grow without bound.
-            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } if self.world_kind == 0 => {}
+            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } if !self.cfg.has_players() => {}
             Input::Join { player } => self.join(player),
             Input::Leave { player } => {
                 if let Ok(k) = self.player_index(player) {
@@ -307,7 +321,7 @@ impl Sim {
 
     /// Canonical entity bytes (plan 6.10): players by id, then pickups. In the state hash and snapshots.
     pub fn entity_bytes(&self) -> Vec<u8> {
-        if self.world_kind == 0 {
+        if !self.cfg.has_players() {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
         entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags)

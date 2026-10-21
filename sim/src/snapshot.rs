@@ -16,7 +16,7 @@ pub fn write(s: &Sim) -> Vec<u8> {
     v.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     v.extend_from_slice(&[0u8; 32]); // sim_build_hash: filled in by the TS side
     v.extend_from_slice(&s.seed.to_le_bytes());
-    v.push(s.world_kind);
+    v.push(s.cfg_kind());
     v.extend_from_slice(&s.tick.to_le_bytes());
     v.extend_from_slice(&(s.grid.w as u16).to_le_bytes());
     v.extend_from_slice(&(s.grid.h as u16).to_le_bytes());

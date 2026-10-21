@@ -131,7 +131,7 @@ pub extern "C" fn restore(ptr: u32, len: u32) -> i32 {
         Ok(mut s) => {
             // Keep at most one base: the one just generated, else the one that matched (moved, not copied).
             if s.base.is_none() {
-                s.base = old.and_then(|mut o| o.base.take()).filter(|b| b.seed == s.seed && b.world_kind == s.world_kind);
+                s.base = old.and_then(|mut o| o.base.take()).filter(|b| b.seed == s.seed && b.cfg == s.cfg.encode());
             }
             // SAFETY: see `with`.
             unsafe { *G.0.get() = Some(s) };
