@@ -216,3 +216,24 @@ input as it reaches the server, not only for your own.
 ## Bag fade-out and per-bag lifetime (from M5 slice 4)
 
 Bags expire after 90 s but the view carries no `expires_at`, so the client cannot blink or fade a bag that is about to vanish. Adding the expiry tick to `ENT_BAG` would let the sprite flash in its last 10 s. Also worth doing: a spell-coloured breakdown of a bag's contents on hover, instead of only the total.
+
+## Arena extras: rounds, king of the hill, capture the bag
+
+Timed arena rounds with a round-end scoreboard; a marked hill zone that scores points per second held (a sim-side counter); a capture-the-bag variant built on dropped bags.
+
+- **Source:** the game-modes research (`docs/research/game-modes-design.md`), from .io games, Minecraft minigame servers and Worms.
+- **Why:** a fighting mode needs a loop and a reason to move. These are out of scope for the free-for-all arena (plan U3) but are the obvious next step.
+
+## Private arena rooms and a per-player PvP toggle
+
+Room codes that spin up a fresh arena world per group, and a Terraria-style visible PvP flag inside shared worlds.
+
+- **Source:** the game-modes research, Terraria and Entangled Worlds.
+- **Why:** friends could fight without strangers. The server can carry extra 1024x768 worlds (`docs/research/game-modes-capacity.md`), but lazy load and unload of empty worlds would have to be built first.
+
+## Share a creative build
+
+Export a region of the creative world as a PNG or a link (a Sandspiel-style gallery).
+
+- **Source:** the game-modes research, from Sandspiel.
+- **Why:** gives creative play an outcome to show off; rendering only, no sim change.
