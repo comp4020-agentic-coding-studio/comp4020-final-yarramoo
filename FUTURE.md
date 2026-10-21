@@ -237,3 +237,17 @@ Export a region of the creative world as a PNG or a link (a Sandspiel-style gall
 
 - **Source:** the game-modes research, from Sandspiel.
 - **Why:** gives creative play an outcome to show off; rendering only, no sim change.
+
+## Dig preview and depth-scaled digging
+
+Show Blast's dig disc in the aim preview, and make digging slower in deep bands or in harder materials.
+
+- **Source:** the Blast-dig worker (21 Oct night), building R1's starting dig.
+- **Why:** players can't see where the 4-cell disc lands (6 cells along the aim); slower deep digging keeps Bomb worth finding.
+
+## Cheaper empty ticks
+
+Coalesce or compress tick frames per member; empty ticks cost about 420 B/s per member for nothing.
+
+- **Source:** the capacity measurement (`docs/research/capacity-rooms.md`).
+- **Why:** member count and CPU bind capacity, and a Fly machine may start with only a 5 s burst balance.
