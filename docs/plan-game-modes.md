@@ -252,8 +252,13 @@ its own spell is R1's call. With no live world, a new spell id and a snapshot fo
 - **U2:** Creative rooms archive after 1 h inactive and are deleted after 7 days. Deathmatch is deleted when the
   last player leaves. Survival is deleted on a win or when the last player leaves.
 - **U3:** No cut line. Time and budget are ample; build all of it, with the full review discipline.
-- **Open:** how many rooms of each type fit at once. A measurement is under way (`docs/research/capacity-rooms.md`).
-  The caps in "Server" above are placeholders until it lands.
+- **Capacity (measured 21 Oct, `docs/research/capacity-rooms.md`):** rooms are nearly free; members and CPU bind.
+  The caps become: **32 members soft, 48 hard**; 16 loaded rooms, with an L room counting as 2 slots (at most 4 L);
+  100 stored rooms (20 L); 8 players per room. Every live-preview spectator on the menu counts as a member. R2 also
+  makes admission read cgroup memory, and makes a slow verify skip rather than stop the server.
+- **Top risk, unverified:** a cold-started Fly machine may begin with only a 5 s CPU burst balance (Fly docs:
+  initial 5 s, max 500 s, baseline 6.25%), so a busy server could be throttled within minutes of waking. R2 must
+  measure on the real machine before the caps are trusted.
 
 ## Milestones
 
