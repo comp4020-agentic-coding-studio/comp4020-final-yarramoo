@@ -272,3 +272,24 @@ Fuzz random 16-byte arrays through `RoomConfig::decode` and `decodeConfig` and a
 
 - **Source:** R0a worker.
 - **Why:** the server validates in TS and the sim in Rust; they must refuse exactly the same configs or a room could be created that no client can init.
+
+## A `gen-report` dev tool for per-size tuning
+
+Print, per (seed, size), the body-reachable depth and the open fraction by band, as a table, so S and M's scaled bands/targets (`Scale::new` in `sim/src/gen.rs`) can be tuned by numbers instead of only by eye in `gen-preview.html`. Run it in CI so a future generator change that quietly breaks traversal at one size shows up as a diff, not just a test pass/fail.
+
+- **Source:** `docs/research/cave-gen-v2.md`'s own FUTURE idea, generalised to every size by the R1 worker (22 Oct).
+- **Why:** R1 scaled every absolute L constant (bands, pile counts, repair depth) by a linear height ratio and an area ratio with hand-picked floors; those floors (`scale_count`'s 6/8/10) are guesses, not measurements, and a report would make retuning them fast.
+
+## Room creation latency doesn't scale down with world size
+
+Caves generation measured (native, release, R1): S (512x512) 85 ms, M (1024x768) 91.5 ms, L (2048x1536) 245.6 ms. S is barely cheaper than M despite 1/4 the area, and both are a sizeable fraction of L's cost despite being much smaller. The likely cause is `Scale::new`'s count floors (sand/gunpowder/water/lava/tree counts have a minimum, so small worlds still place close to as many discrete features as a big one) plus fixed-cost passes (the noise-field setup, the repair-traversal box-fit flood) that don't shrink with the grid in this size range.
+
+- **Source:** R1 worker's gen-time measurement (brief's "note any surprising cost").
+- **Why:** R2 measures room creation latency on the real server; if S/M rooms are expected to be proportionally fast because they're small, this finding says otherwise, and a `gen-report` (above) would make the cost breakdown visible per pass rather than only as a wall-clock total.
+
+## Scale the surface/wall margins proportionally at small sizes, not just the feature density
+
+R1 scaled material pile/pool x-spans as `w - <L's margin constant>` (clamped to a floor), keeping the same absolute wall clearance as L rather than the same proportion of the width. At S (512 wide) this margin is a much bigger slice of the world than at L; scaling the margin itself, not just the span, might look more visually consistent once someone's eyeballed the S/M previews side by side with L.
+
+- **Source:** R1 worker, flagged as the more-reversible choice taken under budget ("Architectural decisions for review" item 2, `docs/research/r1-worker-report.md`).
+- **Why:** cosmetic, not safety-critical (doesn't affect the traversal guarantee), so it's a good candidate for a later polish pass once there's a preview to judge by eye.
