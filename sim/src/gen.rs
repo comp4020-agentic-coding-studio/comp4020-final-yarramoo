@@ -79,14 +79,17 @@ pub struct Params {
 
 pub const PARAMS: Params = Params { thr_shallow: 1250, thr_deep: 1500 };
 
-/// Surface height per column: three octaves of 1D value noise around `SURFACE_Y`.
-fn surface_heights(seed: u64, w: i32, h: i32) -> Vec<i32> {
+/// Surface height per column: three octaves of 1D value noise around `surface_y` (L's `SURFACE_Y`,
+/// scaled; see `Scale`). The undulation amplitudes scale with it too, so a shorter world's surface band
+/// stays a similar fraction of its depth instead of swallowing the shallow band.
+fn surface_heights(seed: u64, w: i32, h: i32, surface_y: i32) -> Vec<i32> {
     let oct = [(256, 24, SALT_GEN_SURF_A), (64, 8, SALT_GEN_SURF_B), (16, 3, SALT_GEN_SURF_C)];
     let ns: Vec<Noise> = oct.iter().map(|&(wl, _, salt)| Noise::new(seed, salt, wl, 4096, w, h)).collect();
     (0..w)
         .map(|x| {
-            let mut y = SURFACE_Y;
+            let mut y = surface_y;
             for (n, &(_, amp, _)) in ns.iter().zip(&oct) {
+                let amp = (amp * surface_y / SURFACE_Y).max(1);
                 y += (n.at(x, 0) - 2048) * amp / 2048;
             }
             y
@@ -116,9 +119,11 @@ fn cave_field(seed: u64, w: i32, h: i32) -> Vec<u8> {
 }
 
 /// Open threshold (Q12) at depth y: fades in below the surface cap, then eases from shallow to deep.
-fn threshold(y: i32, surf: i32) -> i32 {
-    let t = y.clamp(SHALLOW_TOP, DEEP_TOP) - SHALLOW_TOP;
-    let base = PARAMS.thr_shallow + (PARAMS.thr_deep - PARAMS.thr_shallow) * t / (DEEP_TOP - SHALLOW_TOP);
+/// `shallow`/`deep` are the per-size scaled band tops (`Scale::shallow_top`/`deep_top`): at L they equal
+/// the module `SHALLOW_TOP`/`DEEP_TOP` exactly.
+fn threshold(y: i32, surf: i32, shallow: i32, deep: i32) -> i32 {
+    let t = y.clamp(shallow, deep) - shallow;
+    let base = PARAMS.thr_shallow + (PARAMS.thr_deep - PARAMS.thr_shallow) * t / (deep - shallow).max(1);
     let below = y - surf;
     if below < 24 {
         0
@@ -129,24 +134,117 @@ fn threshold(y: i32, surf: i32) -> i32 {
     }
 }
 
+/// Scale a value tuned for L's usable height (1536 rows minus the `FLOOR_ROWS` floor, i.e. 1472 rows of
+/// diggable depth) to another world's usable height. Exact at L: `h - FLOOR_ROWS == 1472` there, so this
+/// returns `v` unchanged (the brief's "byte-identical presets" requirement for `caves_pvp`).
+fn scale_u(h: i32, v: i32) -> i32 {
+    v * (h - FLOOR_ROWS as i32) / (1536 - FLOOR_ROWS as i32)
+}
+
+/// The traversal test's per-size target depth (L's 1380, scaled): exposed so the test derives it the same
+/// way the generator does, rather than duplicating the ratio. Test-only (`cfg(test)`), so it never ships
+/// in `sim.wasm`.
+#[cfg(test)]
+pub(crate) fn traversal_target_for(h: i32) -> i32 {
+    scale_u(h, 1380)
+}
+
+/// Scale a target count (pickup spots, material piles/trees) by this world's area relative to L's, with a
+/// floor so a small world still gets a sensible minimum. Exact at L (area ratio is 1).
+fn scale_count(w: i32, h: i32, v: i32, floor: i32) -> i32 {
+    let area = i64::from(w) * i64::from(h);
+    let base = 2048i64 * 1536i64;
+    ((i64::from(v) * area / base) as i32).max(floor)
+}
+
+/// Per-size tuning derived once per `generate` call, so Caves at S and M keep the same guarantees as L (a
+/// walkable body, materials that respect the depth bands) without baking L's absolute row/column numbers
+/// into a much shorter or narrower world. Every field is exact at L (w=2048, h=1536): `scale_u`/
+/// `scale_count` return their input unchanged there.
+struct Scale {
+    surface_y: i32,
+    shallow_top: i32,
+    deep_top: i32,
+    repair_depth: i32,
+    link_rows: [i32; 7],
+    sand_y_lo: i32,
+    sand_y_span: i32,
+    sand_count: i32,
+    sand_x_span: i32,
+    gp_y_lo: i32,
+    gp_y_span: i32,
+    gp_count: i32,
+    water_y_lo: i32,
+    water_y_span: i32,
+    water_count: i32,
+    water_x_span: i32,
+    lava_y_lo: i32,
+    lava_y_span: i32,
+    lava_count: i32,
+    tree_count: i32,
+    worm_target_y: i32,
+    worm_branch_span: i32,
+    link_x_span: i32,
+    target_spots: [(i32, i32, i32); 2],
+}
+
+impl Scale {
+    fn new(w: i32, h: i32) -> Scale {
+        let surface_y = scale_u(h, SURFACE_Y);
+        let shallow_top = scale_u(h, SHALLOW_TOP);
+        let deep_top = scale_u(h, DEEP_TOP);
+        let worm_target_y = deep_top + 100;
+        Scale {
+            surface_y,
+            shallow_top,
+            deep_top,
+            repair_depth: scale_u(h, 1420),
+            link_rows: [380, 520, 660, 900, 1060, 1200, 1320].map(|v| scale_u(h, v)),
+            sand_y_lo: shallow_top + 20,
+            sand_y_span: scale_u(h, 500).max(40),
+            sand_count: scale_count(w, h, 40, 6),
+            sand_x_span: (w - 118).max(40),
+            gp_y_lo: deep_top + 20,
+            gp_y_span: scale_u(h, 600).max(40),
+            gp_count: scale_count(w, h, 45, 8),
+            water_y_lo: shallow_top + 20,
+            water_y_span: scale_u(h, 480).max(40),
+            water_count: scale_count(w, h, 90, 10),
+            water_x_span: (w - 88).max(40),
+            lava_y_lo: deep_top + 60,
+            lava_y_span: scale_u(h, 520).max(40),
+            lava_count: scale_count(w, h, 40, 6),
+            tree_count: scale_count(w, h, 28, 4),
+            worm_target_y,
+            worm_branch_span: scale_u(h, 450).max(60),
+            link_x_span: (w - 348).max(40),
+            target_spots: [
+                (shallow_top + 40, deep_top - 40, scale_count(w, h, 40, 8)),
+                (deep_top + 40, scale_u(h, 1400), scale_count(w, h, 25, 6)),
+            ],
+        }
+    }
+}
+
 /// Generate a game world into an all-Empty grid.
 pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     let (w, h) = (g.w as i32, g.h as i32);
-    let surf = surface_heights(seed, w, h);
+    let sc = Scale::new(w, h);
+    let surf = surface_heights(seed, w, h, sc.surface_y);
     fill_terrain(g, seed, &surf);
-    carve_noise_caves(g, seed, &surf);
+    carve_noise_caves(g, seed, &surf, &sc);
     let mut path = Vec::new();
-    carve_worms(g, seed, &surf, &mut path);
+    carve_worms(g, seed, &surf, &mut path, &sc);
     connect_and_prune(g, seed, &path);
     line_entrances_with_dirt(g, seed, &surf);
-    let mut sc = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
-    place_sand(g, seed);
-    place_lava(g, seed, &mut sc);
-    place_gunpowder(g, seed);
-    place_water(g, seed, &mut sc);
-    place_trees(g, seed, &surf);
-    repair_traversal(g, seed);
-    pick_spots(g, seed)
+    let mut pool_scratch = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
+    place_sand(g, seed, &sc);
+    place_lava(g, seed, &mut pool_scratch, &sc);
+    place_gunpowder(g, seed, &sc);
+    place_water(g, seed, &mut pool_scratch, &sc);
+    place_trees(g, seed, &surf, &sc);
+    repair_traversal(g, seed, &sc);
+    pick_spots(g, seed, &sc)
 }
 
 /// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.
@@ -158,8 +256,6 @@ pub struct PickupSpot {
     /// 0 = shallow band, 1 = deep band.
     pub band: u8,
 }
-
-const TARGET_SPOTS: [(i32, i32, i32); 2] = [(SHALLOW_TOP + 40, DEEP_TOP - 40, 40), (DEEP_TOP + 40, 1400, 25)];
 
 fn solid_ground(m: u8) -> bool {
     matches!(m, ROCK | DIRT | BEDROCK | SAND)
@@ -221,10 +317,10 @@ fn pile(g: &mut Grid, cx: i32, y_ref: i32, r: i32, div: i32, mat: u8) -> usize {
     put
 }
 
-fn place_sand(g: &mut Grid, seed: u64) {
-    for k in 0..40u32 {
-        let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_SAND_X) % 1930) as i32;
-        let y = SHALLOW_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_SAND_Y) % 500) as i32;
+fn place_sand(g: &mut Grid, seed: u64, sc: &Scale) {
+    for k in 0..sc.sand_count as u32 {
+        let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_SAND_X) % sc.sand_x_span as u32) as i32;
+        let y = sc.sand_y_lo + (rng(seed, 0, k, 0, SALT_GEN_SAND_Y) % sc.sand_y_span as u32) as i32;
         let r = 12 + (rng(seed, 0, k, 0, SALT_GEN_SAND_R) % 19) as i32;
         pile(g, x, y, r, 3, SAND);
     }
@@ -242,14 +338,14 @@ fn near_material(g: &Grid, cx: i32, cy: i32, rx: i32, ry: i32, m: u8) -> bool {
     false
 }
 
-fn place_gunpowder(g: &mut Grid, seed: u64) {
+fn place_gunpowder(g: &mut Grid, seed: u64, sc: &Scale) {
     let mut placed = 0;
     for k in 0..3000u32 {
-        if placed == 45 {
+        if placed == sc.gp_count {
             break;
         }
-        let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_GP_X) % 1930) as i32;
-        let y = DEEP_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_GP_Y) % 600) as i32;
+        let x = 60 + (rng(seed, 0, k, 0, SALT_GEN_GP_X) % sc.sand_x_span as u32) as i32;
+        let y = sc.gp_y_lo + (rng(seed, 0, k, 0, SALT_GEN_GP_Y) % sc.gp_y_span as u32) as i32;
         let r = 6 + (rng(seed, 0, k, 0, SALT_GEN_GP_R) % 9) as i32;
         // Keep 8 cells clear of lava over the whole area the pile could touch.
         if near_material(g, x, y + 15, r + 8 + 2, 60, LAVA) {
@@ -349,17 +445,17 @@ fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i
     false
 }
 
-fn place_water(g: &mut Grid, seed: u64, sc: &mut PoolScratch) {
+fn place_water(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
     let mut placed = 0;
     for k in 0..1500u32 {
-        if placed == 90 {
+        if placed == scale.water_count {
             break;
         }
-        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_WATER_X) % 1960) as i32;
-        let y = SHALLOW_TOP + 20 + (rng(seed, 0, k, 0, SALT_GEN_WATER_Y) % 480) as i32;
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_WATER_X) % scale.water_x_span as u32) as i32;
+        let y = scale.water_y_lo + (rng(seed, 0, k, 0, SALT_GEN_WATER_Y) % scale.water_y_span as u32) as i32;
         let depth = 5 + (rng(seed, 0, k, 0, SALT_GEN_WATER_D) % 10) as i32;
         let Some(yf) = find_floor(g, x, y, 120) else { continue };
-        if yf >= DEEP_TOP - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
+        if yf >= scale.deep_top - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
             continue;
         }
         if try_pool(g, sc, x, yf, (3, depth), 900, WATER, LAVA) {
@@ -368,18 +464,18 @@ fn place_water(g: &mut Grid, seed: u64, sc: &mut PoolScratch) {
     }
 }
 
-fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch) {
+fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
     let w = g.w as i32;
     let mut placed = 0;
     for k in 0..1500u32 {
-        if placed == 40 {
+        if placed == scale.lava_count {
             break;
         }
-        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_X) % 1960) as i32;
-        let y = DEEP_TOP + 60 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_Y) % 520) as i32;
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_X) % scale.water_x_span as u32) as i32;
+        let y = scale.lava_y_lo + (rng(seed, 0, k, 0, SALT_GEN_LAVA_Y) % scale.lava_y_span as u32) as i32;
         let depth = 8 + (rng(seed, 0, k, 0, SALT_GEN_LAVA_D) % 13) as i32;
         let Some(yf) = find_floor(g, x, y, 160) else { continue };
-        if yf < DEEP_TOP + 30 || g.mat[(yf * w + x) as usize] != EMPTY {
+        if yf < scale.deep_top + 30 || g.mat[(yf * w + x) as usize] != EMPTY {
             continue;
         }
         if try_pool(g, sc, x, yf, (4, depth), 1800, LAVA, WATER) {
@@ -399,14 +495,14 @@ fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch) {
 }
 
 /// Wood trees on the Dirt surface: a trunk, two short branches.
-fn place_trees(g: &mut Grid, seed: u64, surf: &[i32]) {
+fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) {
     let w = g.w as i32;
     let mut xs: Vec<i32> = Vec::new();
-    for k in 0..120u32 {
-        if xs.len() == 28 {
+    for k in 0..(sc.tree_count * 5).max(120) as u32 {
+        if xs.len() == sc.tree_count as usize {
             break;
         }
-        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_TREE_X) % 1960) as i32;
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_TREE_X) % sc.water_x_span as u32) as i32;
         let (s0, s1) = (surf[x as usize], surf[x as usize + 1]);
         if (s0 - s1).abs() > 1 || xs.iter().any(|&o| (o - x).abs() < 24) {
             continue;
@@ -441,17 +537,17 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32]) {
 }
 
 /// Floor positions for pickups: about 40 in the shallow band, 25 in the deep, at least 40 apart.
-fn pick_spots(g: &Grid, seed: u64) -> Vec<PickupSpot> {
+fn pick_spots(g: &Grid, seed: u64, sc: &Scale) -> Vec<PickupSpot> {
     let w = g.w as i32;
     let mut out: Vec<PickupSpot> = Vec::new();
-    for (band, &(y_lo, y_hi, want)) in TARGET_SPOTS.iter().enumerate() {
+    for (band, &(y_lo, y_hi, want)) in sc.target_spots.iter().enumerate() {
         let mut n = 0;
         // 4000 tries, not 400: sparse deep caves need the room to find every spot (D-086).
         for k in 0..4000u32 {
             if n == want {
                 break;
             }
-            let x = 40 + (rng(seed, 0, k, band as u32, SALT_GEN_SPOT_X) % 1960) as i32;
+            let x = 40 + (rng(seed, 0, k, band as u32, SALT_GEN_SPOT_X) % sc.water_x_span as u32) as i32;
             let y = y_lo + (rng(seed, 0, k, band as u32, SALT_GEN_SPOT_Y) % (y_hi - y_lo) as u32) as i32;
             let Some(yf) = find_floor(g, x, y, 100) else { continue };
             if yf < y_lo || yf > y_hi || g.mat[((yf + 1) * w + x) as usize] == SAND {
@@ -498,7 +594,7 @@ fn fill_terrain(g: &mut Grid, seed: u64, surf: &[i32]) {
 
 /// Carve the density field into the solid ground. The quarter-resolution field is bilinearly
 /// upsampled and a fine detail octave roughens the edges.
-fn carve_noise_caves(g: &mut Grid, seed: u64, surf: &[i32]) {
+fn carve_noise_caves(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) {
     let (w, h) = (g.w as i32, g.h as i32);
     let f = cave_field(seed, w, h);
     let qw = (w / 4 + 1) as usize;
@@ -512,7 +608,7 @@ fn carve_noise_caves(g: &mut Grid, seed: u64, surf: &[i32]) {
             if g.mat[i] != ROCK && g.mat[i] != DIRT {
                 continue;
             }
-            let thr = threshold(y, surf[x as usize]);
+            let thr = threshold(y, surf[x as usize], sc.shallow_top, sc.deep_top);
             if thr == 0 {
                 continue;
             }
@@ -591,7 +687,7 @@ fn pick_entrances(seed: u64, w: i32) -> Vec<i32> {
 }
 
 /// Run one worm to completion, pushing branches onto `todo` and sampled positions onto `path`.
-fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &mut Vec<(i32, i32)>, next_id: &mut u32) {
+fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &mut Vec<(i32, i32)>, next_id: &mut u32, sc: &Scale) {
     while wm.step < wm.max_steps {
         let st = wm.step;
         let rn = |salt: u32| rng(seed, 0, wm.id, st, salt);
@@ -637,7 +733,7 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
                 wm.branches -= 1;
                 let id = *next_id;
                 *next_id += 1;
-                let deeper = 900 + (rng(seed, 0, id, 0, SALT_GEN_WORM_BRANCH) % 450) as i32;
+                let deeper = scale_u(g.h as i32, 900) + (rng(seed, 0, id, 0, SALT_GEN_WORM_BRANCH) % sc.worm_branch_span as u32) as i32;
                 let side = if rng(seed, 0, id, 1, SALT_GEN_WORM_BRANCH) & 1 == 0 { -1 } else { 1 };
                 todo.push(Worm {
                     id,
@@ -659,7 +755,7 @@ fn run_worm(g: &mut Grid, seed: u64, mut wm: Worm, todo: &mut Vec<Worm>, path: &
 }
 
 /// Entrance shafts from the surface to the deep band (with branches), plus horizontal links.
-fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>) {
+fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>, sc: &Scale) {
     let w = g.w as i32;
     let mut todo: Vec<Worm> = Vec::new();
     let mut next_id = 1000u32;
@@ -674,17 +770,16 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             drift: 0,
             step: 0,
             max_steps: 2500,
-            target_y: DEEP_TOP + 100,
+            target_y: sc.worm_target_y,
             branches: 2,
             lean: 0,
             horiz: None,
         });
     }
-    const LINK_ROWS: [i32; 7] = [380, 520, 660, 900, 1060, 1200, 1320];
     for i in 0..7u32 {
         let id = 500 + i;
-        let base = LINK_ROWS[i as usize] + (rng(seed, 0, id, 0, SALT_GEN_HWORM) % 60) as i32;
-        let x = 150 + (rng(seed, 0, id, 1, SALT_GEN_HWORM) % 1700) as i32;
+        let base = sc.link_rows[i as usize] + (rng(seed, 0, id, 0, SALT_GEN_HWORM) % 60) as i32;
+        let x = 150 + (rng(seed, 0, id, 1, SALT_GEN_HWORM) % sc.link_x_span as u32) as i32;
         todo.push(Worm {
             id,
             x,
@@ -702,7 +797,7 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
         });
     }
     while let Some(wm) = todo.pop() {
-        run_worm(g, seed, wm, &mut todo, path, &mut next_id);
+        run_worm(g, seed, wm, &mut todo, path, &mut next_id, sc);
     }
 }
 
@@ -781,8 +876,6 @@ fn wander_link(g: &mut Grid, seed: u64, from: (i32, i32), to: (i32, i32), id: u3
 /// Box the repair guarantees: the 5x10 hitbox plus a one-cell margin.
 const FIT_W: usize = crate::tuning::HITBOX_W as usize + 1;
 const FIT_H: usize = crate::tuning::HITBOX_H as usize + 1;
-/// Deepest tunnel row the repair aims at; its box bottom clears the test's 1380.
-const REPAIR_DEPTH: i32 = 1420;
 const REPAIR_PASSES: u32 = 3;
 
 /// Flood a `bw` x `bh` box (keyed by top-left) through Empty cells from `start`. Returns the top-left
@@ -832,18 +925,19 @@ pub fn box_reach(g: &Grid, start: (usize, usize), bw: usize, bh: usize) -> Optio
     Some(deepest)
 }
 
-/// Box-fit repair: if a body cannot walk from the surface centre to REPAIR_DEPTH, carve a 6-radius
-/// tunnel from the deepest cell it reaches down to REPAIR_DEPTH. At most REPAIR_PASSES passes.
+/// Box-fit repair: if a body cannot walk from the surface centre to `sc.repair_depth` (tuned per size so
+/// its box bottom clears `sc.traversal_target`, the same way L's 1420/1380 pair did), carve a 6-radius
+/// tunnel from the deepest cell it reaches down to that depth. At most REPAIR_PASSES passes.
 /// Runs after the materials so pools and piles cannot plug the path; the tunnel clears them.
-fn repair_traversal(g: &mut Grid, seed: u64) {
+fn repair_traversal(g: &mut Grid, seed: u64, sc: &Scale) {
     let start = (g.w / 2, 0usize);
     for pass in 0..REPAIR_PASSES {
         let Some((dx, dy)) = box_reach(g, start, FIT_W, FIT_H) else { return };
-        if (dy + FIT_H) as i32 >= REPAIR_DEPTH {
+        if (dy + FIT_H) as i32 >= sc.repair_depth {
             return;
         }
         let from = ((dx + FIT_W / 2) as i32, (dy + FIT_H / 2) as i32);
-        wander_link(g, seed, from, (from.0, REPAIR_DEPTH), 2000 + pass, 6, true);
+        wander_link(g, seed, from, (from.0, sc.repair_depth), 2000 + pass, 6, true);
         // A tunnel through a pool's floor leaves liquid hanging; drain it, bottom-up so a column cascades.
         let w = g.w;
         for i in (0..g.mat.len() - w).rev() {
@@ -1077,18 +1171,26 @@ mod tests {
     }
 
     /// Gen v2's target (plan-game-modes R1, research `cave-gen-v2.md`): a body a margin bigger than the 5x10
-    /// hitbox can walk from spawn to the bottom of the deep band. Gen v2 passes it.
+    /// hitbox can walk from spawn to the bottom of the deep band, at every Caves size (R1: S and M join L).
+    /// Each size's target is proportional to its own usable height (`traversal_target_for`, scaled from
+    /// L's 1380/1472). Shown red against the un-scaled generator before this change (see the worker report).
     #[test]
     fn traversable_to_every_band() {
+        use crate::config::RoomConfig;
         let (bw, bh) = (crate::tuning::HITBOX_W as usize + 1, crate::tuning::HITBOX_H as usize + 1);
         let mut failures = Vec::new();
-        for seed in 1..=8u64 {
-            let s = Sim::new(seed, 1).unwrap();
-            let spawn = s.spawn_point(1);
-            match deepest_box_reach(&s.grid, spawn, bw, bh) {
-                None => failures.push(format!("seed {seed}: no {bw}x{bh} box fits at spawn {spawn:?}")),
-                Some(d) if d < 1380 => failures.push(format!("seed {seed}: reaches y={d}, needs 1380")),
-                Some(_) => {}
+        for size in 0u8..=2 {
+            let cfg = RoomConfig { size, ..RoomConfig::caves_pvp() };
+            let (_, h) = cfg.dims();
+            let target = traversal_target_for(h as i32);
+            for seed in 1..=8u64 {
+                let s = Sim::new(seed, cfg).unwrap();
+                let spawn = s.spawn_point(1);
+                match deepest_box_reach(&s.grid, spawn, bw, bh) {
+                    None => failures.push(format!("size {size} seed {seed}: no {bw}x{bh} box fits at spawn {spawn:?}")),
+                    Some(d) if (d as i32) < target => failures.push(format!("size {size} seed {seed}: reaches y={d}, needs {target}")),
+                    Some(_) => {}
+                }
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));

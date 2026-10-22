@@ -44,8 +44,9 @@ pub struct Sim {
 }
 
 impl Sim {
-    /// Generate a world, tick = 0. Returns None for a config that has no terrain yet (Solid box is R1's job, and
-    /// Caves exist at size L only until R1) or, via `IntoRoom`, for an unknown world kind.
+    /// Generate a world, tick = 0. Caves now generate at every size (R1); Solid box and Empty box at every
+    /// size land in a later commit this slice. Returns None for a config that has no terrain yet, or, via
+    /// `IntoRoom`, for an unknown world kind.
     pub fn new(seed: u64, cfg: impl IntoRoom) -> Option<Sim> {
         Self::new_with_base(seed, cfg, None)
     }
@@ -59,9 +60,6 @@ impl Sim {
         let make = |grid: Grid, pickups: Vec<Pickup>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
-                if cfg.size != 2 {
-                    return None;
-                }
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
                     grid.mat.copy_from_slice(&b.mat);
                     grid.aux.copy_from_slice(&b.aux);
