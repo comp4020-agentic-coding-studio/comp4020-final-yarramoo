@@ -1,6 +1,6 @@
 //! The simulation instance: grid + tick + queued inputs.
 
-use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX};
+use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX, TERRAIN_SOLID_BOX};
 use crate::entities::{self, Bag, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
@@ -44,9 +44,9 @@ pub struct Sim {
 }
 
 impl Sim {
-    /// Generate a world, tick = 0. Caves now generate at every size (R1); Solid box and Empty box at every
-    /// size land in a later commit this slice. Returns None for a config that has no terrain yet, or, via
-    /// `IntoRoom`, for an unknown world kind.
+    /// Generate a world, tick = 0. Caves generate at every size (R1); Solid box now does too. Empty box at
+    /// every size lands in a later commit this slice. Returns None for a config that has no terrain yet, or,
+    /// via `IntoRoom`, for an unknown world kind.
     pub fn new(seed: u64, cfg: impl IntoRoom) -> Option<Sim> {
         Self::new_with_base(seed, cfg, None)
     }
@@ -93,7 +93,28 @@ impl Sim {
                 }
                 Some(make(grid, Vec::new(), None))
             }
-            _ => None, // Solid box: R1
+            TERRAIN_SOLID_BOX => {
+                // Dirt over Rock, for digging and carving (plan-game-modes "Config fields"): a shallow Dirt
+                // layer under the sky, Rock below it, Bedrock floor and side walls (the same convention
+                // TERRAIN_EMPTY_BOX uses). No gen v2: this is a static layered fill, not a cave algorithm.
+                let dirt_depth = (h / 6).clamp(20, 120);
+                for y in 0..h {
+                    for x in 0..w {
+                        let m = if y >= h - FLOOR_ROWS || x < WALL_COLS || x >= w - WALL_COLS {
+                            BEDROCK
+                        } else if y < FLOOR_ROWS {
+                            EMPTY
+                        } else if y < FLOOR_ROWS + dirt_depth {
+                            DIRT
+                        } else {
+                            ROCK
+                        };
+                        grid.mat[y * w + x] = m;
+                    }
+                }
+                Some(make(grid, Vec::new(), None))
+            }
+            _ => None,
         }
     }
 
