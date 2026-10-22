@@ -513,12 +513,47 @@ and range-checked (2..=8) but not yet enforced against the live player count: on
 (entry 17), and is deferred, not forgotten (D-138) — it's strictly more permissive than before, not a new hole, but
 R2/R6 (Survival's lobby cap) must not assume it already works.
 
-**Evidence.** D-132, D-133, D-138; [plan-game-modes.md](plan-game-modes.md) "Config fields";
-[review-r0a.md](research/review-r0a.md);
+**R1: every (terrain, size) combination, not just the two presets.** A config's `terrain` and `size` fields were
+only real choices once every combination they could name actually produced a world. R1 generalised gen v2 (its
+traversal fix, D-083/`ec188a0`, had only ever run at Caves' one size, L) to Caves at S and M too, built Solid box
+(Dirt over Rock, a static layered fill, no cave algorithm) at every size, and opened Empty box (today's sandbox
+fill) up from size S only to every size. The traversal test (`traversable_to_every_band`) now loops all three
+sizes, each against its own target depth, rather than asserting only L reaches the deep band.
+
+Every absolute row/column constant the generator had baked in for L's 2048x1536 (band boundaries, repair depth,
+link-worm rows, material pile counts and spans) is now derived once per `generate` call by a `Scale` struct:
+depth/row quantities scale linearly by usable height (`h - FLOOR_ROWS`, exact at L by construction, so the
+`caves_pvp` preset's generation path is unchanged bit-for-bit), and counts (piles, trees, pickup spots) scale by
+area relative to L's, with hand-picked floors so a small world still gets a sensible minimum. This was checked
+independently, not just taken from the worker's report: the session model computed `classic_sandbox` (seed 42) and
+`caves_pvp` (seed 5) state hashes at ticks 0/40/80/120 in a separate git worktree at the pre-R1 commit and again at
+R1's head, and they match exactly.
+
+**Alternatives considered.** Scaling by raw height instead of usable height (simpler, but a bigger relative error
+at S, where the 64-row floor band is 12.5% of the world's 512). Scaling width-dependent spans by the same area
+ratio as counts (rejected for now as the less reversible choice — it would also need re-deriving every margin
+constant per size; keeping L's absolute wall margin was lower-risk without a preview to judge the alternative by
+eye, logged in FUTURE.md for a later look).
+
+**Why.** Rooms (R2) need Caves, Solid box and Empty box to actually be available at every size a room can request,
+not just the two combinations that happened to exist before R0a. Reproducing `caves_pvp`'s hash exactly, the same
+discipline R0a held to, meant R1 could also land with the existing determinism suite as its own regression test.
+
+**Cost / consequences.** Gen time doesn't scale down with world size the way cell count would suggest: S (512x512)
+measured 85 ms native, M (1024x768) 91.5 ms, L (2048x1536) 245.6 ms — S is barely cheaper than M despite a quarter
+of the area, because count floors and fixed-cost passes (noise setup, the repair-traversal flood) don't shrink
+with the grid in this range. Logged in FUTURE.md: this matters for R2's room-creation latency budget. The
+`scale_count` floor values and Solid box's dirt-depth formula are tuned by eye, not measurement; cosmetic only
+(the traversal guarantee doesn't depend on them), left for a look at the now-multi-size `gen-preview.html`.
+
+**Evidence.** D-132, D-133, D-137, D-138, D-139; [plan-game-modes.md](plan-game-modes.md) "Config fields",
+"Caves: gen v2 everywhere"; [review-r0a.md](research/review-r0a.md), [r1-worker-report.md](research/r1-worker-report.md);
 [`8ee79f3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8ee79f3)
 (config.rs and shared/room.ts),
 [`425cab4`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/425cab4)
-(snapshot format 4).
+(snapshot format 4),
+[`1964349`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/1964349)
+(Caves at every size, the scaled generator).
 
 ---
 
