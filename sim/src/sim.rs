@@ -44,9 +44,8 @@ pub struct Sim {
 }
 
 impl Sim {
-    /// Generate a world, tick = 0. Caves generate at every size (R1); Solid box now does too. Empty box at
-    /// every size lands in a later commit this slice. Returns None for a config that has no terrain yet, or,
-    /// via `IntoRoom`, for an unknown world kind.
+    /// Generate a world, tick = 0. Every (terrain, size) combination generates (R1): Caves, Solid box and
+    /// Empty box all exist at S, M and L. Returns None only via `IntoRoom`, for an unknown world kind.
     pub fn new(seed: u64, cfg: impl IntoRoom) -> Option<Sim> {
         Self::new_with_base(seed, cfg, None)
     }
@@ -80,10 +79,7 @@ impl Sim {
                 Some(make(grid, pickups, Some(base)))
             }
             TERRAIN_EMPTY_BOX => {
-                // The classic canvas: bedrock floor and side walls. Only at size S until R1 generalises terrain.
-                if cfg.size != 0 {
-                    return None;
-                }
+                // The classic canvas: bedrock floor and side walls, at every size (R1).
                 for y in 0..h {
                     for x in 0..w {
                         if y >= h - FLOOR_ROWS || x < WALL_COLS || x >= w - WALL_COLS {

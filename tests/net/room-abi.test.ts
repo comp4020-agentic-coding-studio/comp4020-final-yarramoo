@@ -31,9 +31,15 @@ describe("sim init with a room config", () => {
     expect(sim.width()).toBe(512); // still the old world
   });
 
-  it("refuses a config whose terrain does not exist yet (R1), rather than guessing", () => {
-    const sim = loadSim(wasmBytes);
-    const solid = { ...CLASSIC_SANDBOX, terrain: 1 };
-    expect(() => sim.init(1n, encodeConfig(solid))).toThrow(/-1/);
+  it("R1: every (terrain, size) combination generates, not just the two original presets", () => {
+    const dims: [number, number][] = [[512, 512], [1024, 768], [2048, 1536]];
+    for (let terrain = 0; terrain <= 2; terrain++) {
+      for (let size = 0; size <= 2; size++) {
+        const sim = loadSim(wasmBytes);
+        const cfg = { ...CLASSIC_SANDBOX, terrain, size, avatars: terrain === 0 ? 1 : 0 };
+        sim.init(1n, encodeConfig(cfg));
+        expect([sim.width(), sim.height()]).toEqual(dims[size]);
+      }
+    }
   });
 });

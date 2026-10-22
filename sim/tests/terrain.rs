@@ -1,5 +1,5 @@
-//! R1: Solid box terrain at every size (`plan-game-modes.md` "Config fields"). Caves' walkability is proved
-//! by `gen::tests::traversable_to_every_band`; Empty box at every size lands in a later commit this slice.
+//! R1: Solid box and Empty box terrain at every size (`plan-game-modes.md` "Config fields"). Caves'
+//! walkability is proved by `gen::tests::traversable_to_every_band`; this file covers the two static fills.
 use sim::config::RoomConfig;
 use sim::input::{encode_cast, encode_join, encode_pos};
 use sim::materials::{BEDROCK, DIRT, EMPTY, ROCK};
@@ -10,6 +10,10 @@ const DOWN: u16 = 16384;
 
 fn solid_box(size: u8) -> RoomConfig {
     RoomConfig { terrain: 1, size, avatars: 1, spells: 1, ..RoomConfig::caves_pvp() }
+}
+
+fn empty_box(size: u8) -> RoomConfig {
+    RoomConfig { terrain: 2, size, avatars: 0, brushes: 1, damage: 0, spells: 0, pickup_respawn: 0, ..RoomConfig::classic_sandbox() }
 }
 
 #[test]
@@ -88,4 +92,36 @@ fn a_player_can_dig_from_the_surface_to_the_floor_in_a_solid_box() {
         let dug = (start_y..floor_y).filter(|&yy| s.grid.mat[yy as usize * w + x as usize] == EMPTY).count();
         assert!(dug > 0, "size {size}: no open cells after digging");
     }
+}
+
+#[test]
+fn empty_box_is_a_walled_canvas_at_every_size() {
+    for size in 0u8..=2 {
+        let s = Sim::new(3, empty_box(size)).unwrap();
+        let g = &s.grid;
+        let (w, h) = (g.w, g.h);
+        for x in [0, w / 2, w - 1] {
+            assert_eq!(g.mat[(h - 1) * w + x], BEDROCK, "size {size}: floor at x={x}");
+        }
+        assert_eq!(g.mat[(h / 2) * w], BEDROCK, "size {size}: left wall");
+        assert_eq!(g.mat[(h / 2) * w + w - 1], BEDROCK, "size {size}: right wall");
+        assert_eq!(g.mat[h / 2 * w + w / 2], EMPTY, "size {size}: centre should be open canvas");
+    }
+}
+
+#[test]
+fn every_terrain_size_combination_either_generates_or_is_refused() {
+    for terrain in 0u8..=2 {
+        for size in 0u8..=2 {
+            let cfg = RoomConfig { terrain, size, avatars: u8::from(terrain != 2), ..RoomConfig::caves_pvp() };
+            assert!(Sim::new(9, cfg).is_some(), "terrain {terrain} size {size} did not generate");
+        }
+    }
+    // Reserved/garbage terrain and size values stay refused by `decode`, never silently accepted here.
+    assert!(RoomConfig::decode(&{
+        let mut b = RoomConfig::classic_sandbox().encode();
+        b[1] = 3;
+        b
+    })
+    .is_none());
 }
