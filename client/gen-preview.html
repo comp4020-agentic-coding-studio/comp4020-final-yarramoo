@@ -17,6 +17,20 @@
 <body>
 <form id="f">
   <label>Seed <input id="seed" value="1"></label>
+  <label>Terrain
+    <select id="terrain">
+      <option value="0">Caves</option>
+      <option value="1">Solid box</option>
+      <option value="2">Empty box</option>
+    </select>
+  </label>
+  <label>Size
+    <select id="size">
+      <option value="0">S (512x512)</option>
+      <option value="1">M (1024x768)</option>
+      <option value="2" selected>L (2048x1536)</option>
+    </select>
+  </label>
   <button>Generate</button>
   <button type="button" id="prev">-1</button>
   <button type="button" id="next">+1</button>
