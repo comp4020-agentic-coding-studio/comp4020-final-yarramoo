@@ -293,3 +293,27 @@ R1 scaled material pile/pool x-spans as `w - <L's margin constant>` (clamped to 
 
 - **Source:** R1 worker, flagged as the more-reversible choice taken under budget ("Architectural decisions for review" item 2, `docs/research/r1-worker-report.md`).
 - **Why:** cosmetic, not safety-critical (doesn't affect the traversal guarantee), so it's a good candidate for a later polish pass once there's a preview to judge by eye.
+
+## IP-based rate limiting for anonymous room creation
+
+R2a's `MAX_ROOMS_PER_CREATOR_PER_DAY` only tracks `creator_player_id`, so an anonymous creator (no registered
+player yet, since joining still goes through the two fixed worlds in this slice) has no cap at all. Once R2b
+makes joining real, an anonymous creator even makes sense as a concept worth limiting, and it should probably
+be limited by IP (`log.ipTag`-style hashing, not raw storage) the same way `/api/players` registration and
+`/ws` connections already are, rather than by a player id that doesn't exist yet.
+
+- **Source:** R2a worker, flagged by the brief itself ("the session model, once joining is real, is where an
+  anonymous creator even makes sense to rate-limit by IP").
+- **Why:** without it, R2b's room creation is open to an unlimited-room flood from one address until identity
+  is wired into the HTTP API path too.
+
+## Live player counts and a real sort for the public room list
+
+`RoomsStore.listPublicRooms()` currently sorts by `last_active` descending only, with a
+`// TODO(R2b): sort by live player count first` left in place, because no room is joinable yet in R2a so
+there is no live count to sort by. Once R2b loads rooms into `World` instances, the list should sort by
+member count first (matching the plan's "sorted by players, then most recent") and `GET /api/rooms` should
+include that count per the plan's API shape.
+
+- **Source:** R2a worker, per the brief's explicit instruction not to invent a fake count this slice.
+- **Why:** the room browser (R3) will want "busiest rooms first" to actually mean something.
