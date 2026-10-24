@@ -72,6 +72,8 @@ export interface IncidentRow {
 export interface DashboardDeps {
   /** Admin only: the newest desync incidents. */
   recentIncidents?(limit: number): IncidentRow[];
+  /** Admin only (R2a): stored room counts by mode, so rooms are visible without `sqlite3 game.db`. */
+  roomCounts?(): { total: number; byMode: Record<string, number> };
   /** Admin player page: null for an unknown id. */
   playerDetail?(id: number): PlayerDetail | null;
   /** Admin player index: one page of rows, plus how many are listed in all (capped). */
@@ -121,6 +123,7 @@ export function createDashboard(deps: DashboardDeps) {
         send("conns", deps.connections());
         send("achievements", deps.recentAchievements());
         send("incidents", deps.recentIncidents?.(INCIDENT_ROWS) ?? []);
+        send("rooms", deps.roomCounts?.() ?? { total: 0, byMode: {} });
       }
     };
     let unsub: (() => void) | undefined;
@@ -264,6 +267,13 @@ function renderInc(list){
   if(latest){g.style.gridTemplateColumns="repeat("+latest.grid.cw+",12px)";const bad=new Set(latest.chunks);
     for(let i=0;i<latest.grid.cw*latest.grid.ch;i++){const c=document.createElement("i");if(bad.has(i))c.className="d"+(latest.first&&latest.first.index===i?" f":"");c.title="chunk "+i;g.append(c)}}
 }
+function renderRooms(r){
+  const c=$("rooms");const dl=document.createElement("dl");
+  const row2=(k,v)=>{const dt=document.createElement("dt");dt.textContent=k;const dd=document.createElement("dd");dd.textContent=v;dl.append(dt,dd)};
+  row2("stored rooms",r.total);
+  for(const m of Object.keys(r.byMode).sort())row2(m,r.byMode[m]);
+  c.replaceChildren(dl);
+}
 const feed=$("feed"),MAXROWS=300;
 function passes(e){
   const w=$("fworld").value;if(w!=="all"&&String(e.world)!==w)return false;
@@ -286,6 +296,7 @@ function connect(){
   es.addEventListener("conns",(m)=>renderConns(JSON.parse(m.data)));
   es.addEventListener("achievements",(m)=>renderAch(JSON.parse(m.data)));
   es.addEventListener("incidents",(m)=>renderInc(JSON.parse(m.data)));
+  es.addEventListener("rooms",(m)=>renderRooms(JSON.parse(m.data)));
   es.addEventListener("backlog",(m)=>{feed.replaceChildren();for(const e of JSON.parse(m.data))addLog(e)});
   es.addEventListener("log",(m)=>addLog(JSON.parse(m.data)));
 }
@@ -315,6 +326,7 @@ function dashboardPage(build: string): string {
 <div class="box"><table><thead><tr><th>who</th><th>k/d</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
 <h2>Recent achievements</h2>
 <div class="box"><table><thead><tr><th>who</th><th>achievement</th><th>world</th><th>tick</th><th>when</th></tr></thead><tbody id="ach"></tbody></table></div>
+<h2>Rooms (R2a: stored only, not yet joinable)</h2><div id="rooms" class="card"></div>
 <h2>Desync incidents</h2>
 <div class="box"><table><thead><tr><th>when</th><th>world</th><th>tick</th><th>diverged</th><th>chunks</th><th>first diverging chunk</th><th>count</th></tr></thead><tbody id="inc"></tbody></table></div>
 <p id="incgridcap" class="muted"></p><div id="incgrid" class="cgrid"></div>
