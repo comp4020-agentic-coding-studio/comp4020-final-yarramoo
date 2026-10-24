@@ -27,6 +27,7 @@ import {
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
+import { RoomsStore, type RoomRow } from "./rooms.ts";
 import { createDashboard, INDEX_MAX_ROWS, type IncidentRow, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
 import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
@@ -241,6 +242,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
   const identity = new Identity(db, log);
+  // R2a: rooms are created and listed, but nothing joins through them yet (R2b wires them into the socket
+  // path). A memory-only server (dataDir: null, tests only) has nowhere to store rooms, so the routes 503.
+  const rooms = db ? new RoomsStore(db) : null;
   // Delivery goes through `live` (declared below; only called from message handlers, after it exists).
   const achievements = new Achievements(db, playerStats, log, (visitorId, id, tick) => {
     const frame = encodeAchievement(id, tick);
@@ -294,6 +298,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     connections: () => running.connections(),
     recentAchievements: () => running.recentAchievements(),
     recentIncidents: (limit) => incidentRows(limit),
+    roomCounts: () => (rooms ? { total: rooms.totalRooms(), byMode: rooms.countsByMode() } : { total: 0, byMode: {} }),
     playerDetail: (id) => playerDetail(id),
     playerIndex: (limit, offset) => playerIndex(limit, offset),
     build: hash.toString("hex").slice(0, 12),
@@ -396,6 +401,93 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     });
   }
 
+  const publicRoom = (r: RoomRow) => ({ id: r.id, code: r.code, name: r.name, mode: r.mode });
+
+  /** POST /api/rooms: create a room (R2a — the row only; R2b makes it joinable). */
+  function createRoomRoute(req: IncomingMessage, res: ServerResponse): void {
+    const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+    if (!rooms) {
+      res.writeHead(503, { "content-type": "text/plain" }).end("rooms unavailable");
+      return;
+    }
+    if (!originOk(req)) {
+      log.limited(`room_create:${ipTag}`, 10_000, "room.create_rejected", { reason: "origin", ip_tag: ipTag }, "warn");
+      res.writeHead(403).end("cross-origin room creation refused");
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let dead = false;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > 4096 && !dead) {
+        dead = true;
+        res.writeHead(413).end();
+        req.destroy();
+      } else if (!dead) chunks.push(c);
+    });
+    req.on("end", () => {
+      if (dead) return;
+      let body: { name?: unknown; mode?: unknown; config?: unknown; visibility?: unknown };
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad_body" }));
+        return;
+      }
+      let configBytes: Uint8Array;
+      try {
+        configBytes = typeof body.config === "string" ? new Uint8Array(Buffer.from(body.config, /^[0-9a-fA-F]+$/.test(body.config) && body.config.length === 32 ? "hex" : "base64")) : new Uint8Array(0);
+      } catch {
+        configBytes = new Uint8Array(0);
+      }
+      // Anonymous creation only in R2a: HELLO/auth is still the two fixed worlds' path, so there is no
+      // authenticated creator identity to attach here yet. See the worker report's "rate-limit gap" note.
+      const result = rooms.createRoom({
+        name: typeof body.name === "string" ? body.name : "",
+        mode: typeof body.mode === "string" ? body.mode : "",
+        config: configBytes,
+        visibility: typeof body.visibility === "string" ? body.visibility : "",
+        creatorPlayerId: null,
+      });
+      if (!result.ok) {
+        log.limited(`room_create:${ipTag}`, 10_000, "room.create_rejected", { reason: result.reason, ip_tag: ipTag }, "warn");
+        const status = result.reason === "rate_limited" ? 429 : 400;
+        res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify({ error: result.reason }));
+        return;
+      }
+      log.event("room.created", { room: result.room.id, mode: result.room.mode, visibility: result.room.visibility });
+      res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ id: result.room.id, code: result.room.code, name: result.room.name, mode: result.room.mode, visibility: result.room.visibility }));
+    });
+  }
+
+  /** GET /api/rooms: public rooms only, no player names or live counts (R2b adds counts once joining is real). */
+  function listRoomsRoute(req: IncomingMessage, res: ServerResponse): void {
+    if (!rooms) {
+      res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ rooms: [] }));
+      return;
+    }
+    // Not logged: a client polling the room list every few seconds must not flood the ring (CLAUDE.md).
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({ rooms: rooms.listPublicRooms().map(publicRoom) }));
+  }
+
+  /** GET /api/rooms/:code: config and world id for joining. Still inert in R2a (nothing can join yet). */
+  function getRoomRoute(req: IncomingMessage, res: ServerResponse, code: string): void {
+    if (!rooms) {
+      res.writeHead(503, { "content-type": "text/plain" }).end("rooms unavailable");
+      return;
+    }
+    const r = rooms.getRoomByCode(code);
+    if (!r) {
+      res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not_found" }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, config: Buffer.from(r.config).toString("base64") }));
+  }
+
   const http: Server = createServer((req, res) => {
     let path: string;
     try {
@@ -454,6 +546,29 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     if (path === "/api/admin/reset") {
       adminReset(req, res);
+      return;
+    }
+    if (path === "/api/rooms") {
+      if (req.method === "POST") {
+        createRoomRoute(req, res);
+      } else if (req.method === "GET") {
+        listRoomsRoute(req, res);
+      } else {
+        res.writeHead(405, { allow: "GET, POST" }).end();
+      }
+      return;
+    }
+    if (path.startsWith("/api/rooms/")) {
+      if (req.method !== "GET") {
+        res.writeHead(405, { allow: "GET" }).end();
+        return;
+      }
+      const code = path.slice("/api/rooms/".length);
+      if (!/^[A-Za-z0-9]{1,6}$/.test(code)) {
+        res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not_found" }));
+        return;
+      }
+      getRoomRoute(req, res, code);
       return;
     }
     if (dashboard.handle(req, res, path)) return;
