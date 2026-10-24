@@ -615,10 +615,22 @@ rejected join doesn't still pay the cost") turning out to be only half-true. The
 with a standalone script against the real server code before accepting either finding, and again after the fix,
 rather than trusting either report. D-143 has the full account.
 
-**Evidence.** D-140, D-141, D-142, D-143; [plan-game-modes.md](plan-game-modes.md) "Server: rooms instead of two
-fixed worlds"; [capacity-rooms.md](research/capacity-rooms.md);
+**R2c closes the question this milestone asked.** The plan's own acceptance line for R2 ("24 sockets over 4
+rooms, a forced verify; pass is under 200 MB") is a real number, not a code review, so it needed a bench over
+real rooms rather than the pre-R2 two-fixed-world one. 4 runs passed (171.82, 95.74, 103.90, 104.86 MB cgroup),
+but not evenly: one run used 86% of the budget while the other three used about half that, on an identical
+scenario run seconds apart. The report names this plainly rather than rounding it into "comfortably under 200
+MB" — the pre-R2 table's own "first activity" jump is the likely cause (now paid once per freshly-loaded room
+instead of once for two always-loaded worlds), but that split was left unmeasured rather than guessed at. The
+session model re-ran the bench twice more independently before accepting the numbers (106.7, 103.85 MB, both in
+the "normal" cluster) and confirmed the Docker container is cleaned up on every exit path, including the error
+path.
+
+**Evidence.** D-140, D-141, D-142, D-143, D-144; [plan-game-modes.md](plan-game-modes.md) "Server: rooms instead
+of two fixed worlds"; [capacity-rooms.md](research/capacity-rooms.md);
 [r2a-worker-report.md](research/r2a-worker-report.md), [r2b-worker-report.md](research/r2b-worker-report.md),
-[review-r2b.md](research/review-r2b.md), [r2b-fix-report.md](research/r2b-fix-report.md);
+[review-r2b.md](research/review-r2b.md), [r2b-fix-report.md](research/r2b-fix-report.md),
+[r2c-worker-report.md](research/r2c-worker-report.md);
 [`120075b`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/120075b)
 (the rooms table and `RoomsStore`),
 [`8be0076`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8be0076)
@@ -628,7 +640,9 @@ fixed worlds"; [capacity-rooms.md](research/capacity-rooms.md);
 [`b254084`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b254084)
 (the member-cap leak fix),
 [`8c11131`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8c11131)
-(the cancel-unload-ordering fix).
+(the cancel-unload-ordering fix),
+[`fa1f09a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/fa1f09a)
+(the real-room capacity bench).
 
 ---
 
