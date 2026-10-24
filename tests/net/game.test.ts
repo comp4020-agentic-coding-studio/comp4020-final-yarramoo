@@ -155,7 +155,10 @@ describe("two worlds on one server", () => {
     g.ws.send(encodeInput(2, 2, new Uint8Array(0)));
     g.ws.send(encodeInput(3, KIND_PAINT, encodePaint(0, 4, 1, 1, 9, 9, 3).subarray(5)));
     await waitFor(() => s.stats.rejected - before >= 3, 3000, "three rejections");
-    await expect(connect(s.port, hex, { world: 7 })).rejects.toThrow(/unknown world/);
+    // R2b: ids beyond the two fixed worlds now resolve through RoomsStore, so an id with no room row rejects
+    // with "unknown room" (the brief's item 2), not the old "unknown world" (world 0/1's own behavior is
+    // unaffected — see the "two fixed worlds" describe block in tests/net/room-join.test.ts).
+    await expect(connect(s.port, hex, { world: 7 })).rejects.toThrow(/unknown room/);
     g.close();
   });
 

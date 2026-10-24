@@ -24,6 +24,7 @@ import {
   WORLD_GAME,
   encodeAchievement,
 } from "../shared/protocol.ts";
+import { decodeConfig, type RoomConfig } from "../shared/room.ts";
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
@@ -48,7 +49,7 @@ import {
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
-import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
+import { GAME_ID, SANDBOX_ID, World, type Peer } from "./world.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");
@@ -66,6 +67,26 @@ const TIMER_MS = 4;
 const HELLO_TIMEOUT_MS = 10_000;
 export const INPUT_SUMMARY_MS = 10_000;
 const STATS_FLUSH_MS = 1000;
+
+// R2b admission caps (docs/research/capacity-rooms.md "Recommended caps"): count members first, rooms second,
+// since per-member cost (CPU relay, memory) drives the ceiling far more than the near-zero cost of a room itself.
+/** Total members (every connection, spectators included) across every loaded world before new joins are refused. */
+export const MAX_MEMBERS_SOFT = 32;
+/** Hard refusal past this; nothing is ever admitted above it regardless of role. */
+export const MAX_MEMBERS_HARD = 48;
+/** Loaded rooms (not counting the two fixed worlds, which never unload and are not "rooms" in this budget). */
+export const MAX_LOADED_ROOMS = 16;
+/** An L-size room (RoomConfig.size === 2) costs 2 of the 16 loaded-room slots: its verify is 4-16x dearer. */
+export const L_ROOM_SLOT_WEIGHT = 2;
+/** At most this many L rooms loaded at once, regardless of total slot budget. */
+export const MAX_LOADED_L_ROOMS = 4;
+/** Cgroup memory budget (capacity note's "budget 200 MB cgroup"): a lazy room load is refused above this, so a
+ * burst of room creation cannot push the process into the kernel's OOM killer before the member caps would bite. */
+export const ROOM_LOAD_MEMORY_CAP_BYTES = 200 * 1024 * 1024;
+/** How long a room (not the two fixed worlds) stays loaded after its last member leaves before it unloads. One
+ * uniform value for every mode in this slice — the mode-specific archive/delete timing (plan: Creative's 1h/7d,
+ * Deathmatch/Survival delete-on-empty) is a deferred follow-up, not built here. */
+export const ROOM_UNLOAD_MS = 2 * 60_000;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -208,6 +229,16 @@ export interface ServerOptions {
   inputSummaryMs?: number;
   /** Admin token for /dashboard. Default ADMIN_TOKEN. Unset or empty disables the admin view. */
   adminToken?: string;
+  /** Override ROOM_UNLOAD_MS (tests: a short timer to exercise unload-after-empty without waiting 2 minutes). */
+  roomUnloadMs?: number;
+  /** Override ROOM_LOAD_MEMORY_CAP_BYTES (tests: force the memory-cap-refused path without a real cgroup). */
+  roomLoadMemoryCapBytes?: number;
+  /** Override MAX_MEMBERS_SOFT/MAX_MEMBERS_HARD (tests: exercise the member cap without 32 real connections). */
+  maxMembersSoft?: number;
+  maxMembersHard?: number;
+  /** Override MAX_LOADED_ROOMS/MAX_LOADED_L_ROOMS (tests: exercise the loaded-room cap without 16 real rooms). */
+  maxLoadedRooms?: number;
+  maxLoadedLRooms?: number;
 }
 
 /** ws ping period for the server-measured RTT. */
@@ -223,9 +254,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const db = dataDir === null ? null : new GameDb(dataDir);
   const verifier = db ? new SnapshotVerifier(wasmPath, { timeoutMs: opts.verifyTimeoutMs, workerUrl: opts.verifierWorkerUrl }) : undefined;
   const playerStats = new PlayerStats(db, log);
-  const mk = (id: number) =>
+  const mk = (id: number, cfg?: RoomConfig, seed?: bigint) =>
     new World({
       id,
+      cfg,
+      seed,
       now: () => performance.now(),
       db: db ?? undefined,
       verifier,
@@ -242,9 +275,169 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
   const identity = new Identity(db, log);
-  // R2a: rooms are created and listed, but nothing joins through them yet (R2b wires them into the socket
-  // path). A memory-only server (dataDir: null, tests only) has nowhere to store rooms, so the routes 503.
+  // R2a built the table and HTTP API; R2b (here) wires rooms into the socket path: HELLO with a room id loads
+  // its World on demand (getOrLoadRoom below). A memory-only server (dataDir: null, tests only) has nowhere to
+  // store rooms, so both the HTTP routes and HELLO's room lookup degrade to "unknown room" rather than crash.
   const rooms = db ? new RoomsStore(db) : null;
+  if (db) {
+    // Real, pre-existing bug this slice surfaces (not introduced by R2a, which never let anything join a room):
+    // `rooms.id` is `integer primary key` with no gap reserved for the two fixed world ids, so sqlite hands out
+    // 1 as the very first real room's id — exactly GAME_ID. That room would then collide with the cave world
+    // in the `worlds` map (`getOrLoadRoom` would find `worlds.get(1)` already populated at startup and hand the
+    // joiner the wrong world's config and state instead of their own room). Reserving rows 0 and 1 here (inert
+    // placeholders, idempotent across restarts, never returned by any RoomsStore read since nothing looks up a
+    // room by these codes) pushes every real room's id to 2+. `server/db.ts`'s schema and `server/rooms.ts`'s
+    // `createRoom` are both out of this brief's "Files you may touch" list, so the reservation lives here
+    // rather than as an `AUTOINCREMENT` + seeded `sqlite_sequence` row, which would need a migration. Flagged
+    // under "Architectural decisions for review": the more reversible fix (bumping `sqlite_sequence` directly,
+    // or adding `AUTOINCREMENT` in a migration) belongs in `server/db.ts` once that file is back in scope.
+    db.db
+      .prepare(
+        "insert into rooms (id, code, name, mode, config, visibility, creator_player_id, created_at, last_active) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do nothing",
+      )
+      .run(0, "__reserved_sandbox__", "(reserved)", "sandbox", Buffer.alloc(16), "unlisted", null, 0, 0);
+    db.db
+      .prepare(
+        "insert into rooms (id, code, name, mode, config, visibility, creator_player_id, created_at, last_active) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do nothing",
+      )
+      .run(1, "__reserved_game__", "(reserved)", "sandbox", Buffer.alloc(16), "unlisted", null, 0, 0);
+  }
+  /**
+   * Deterministic per-room seed (R2b): the `rooms` table has no `seed` column yet (plan's "a seed plus a
+   * config" storage field is out of this slice's "Files you may touch" — `server/db.ts` is not on that list),
+   * so every member of a room must still agree on one without a database round trip adding real entropy. The
+   * room's own id is already unique and stable for its lifetime, so it doubles as the seed. Flagged under
+   * "Architectural decisions for review": a real per-room random seed (closer to the plan's intent, and better
+   * against a creator picking a room id to get a chosen cave layout) is the more reversible follow-up once
+   * `server/db.ts` migrations are back in scope; using the id now costs nothing to change later, since no
+   * room's sim state is live yet (the game is not live, D-132-style).
+   */
+  const seedForRoom = (id: number): bigint => BigInt(id);
+  /** In-flight room loads, keyed by room id: closes the lazy-loading race (two near-simultaneous HELLOs for the
+   * same not-yet-loaded room must not both construct and insert a World). The check (`worlds.get`/`loadingRooms.get`)
+   * and the set (`loadingRooms.set`) below run with no `await` between them, so a second HELLO's synchronous
+   * lookup always sees the first's in-flight promise, never races past it. */
+  const loadingRooms = new Map<number, Promise<World>>();
+  /** Scheduled unload timers for empty rooms, keyed by room id (never the two fixed worlds, which don't unload). */
+  const roomUnloadTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  function cancelUnload(id: number): void {
+    const t = roomUnloadTimers.get(id);
+    if (t !== undefined) {
+      clearTimeout(t);
+      roomUnloadTimers.delete(id);
+    }
+  }
+
+  /** Start (or restart) a room's empty-unload timer. A join before it fires cancels it via `cancelUnload`. */
+  function scheduleUnload(w: World): void {
+    if (w.id === SANDBOX_ID || w.id === GAME_ID) return;
+    cancelUnload(w.id);
+    const ms = opts.roomUnloadMs ?? ROOM_UNLOAD_MS;
+    const t = setTimeout(() => {
+      roomUnloadTimers.delete(w.id);
+      if (w.playerCount > 0 || worlds.get(w.id) !== w) return; // rejoined, or already replaced/unloaded
+      w.shutdown(); // closes the open tick and flushes pending ticks before the World is freed (no lost play)
+      worlds.delete(w.id);
+      log.event("room.unloaded", { world: w.id });
+    }, ms);
+    roomUnloadTimers.set(w.id, t);
+  }
+
+  function totalMembers(): number {
+    let n = 0;
+    for (const w of worlds.values()) n += w.playerCount;
+    return n;
+  }
+
+  /** Loaded-room slot usage (the two fixed worlds are not "rooms" in this budget and never count). */
+  function loadedRoomSlots(): { slots: number; lRooms: number } {
+    let slots = 0;
+    let lRooms = 0;
+    for (const [id, w] of worlds) {
+      if (id === SANDBOX_ID || id === GAME_ID) continue;
+      if (w.cfg.size === 2) {
+        slots += L_ROOM_SLOT_WEIGHT;
+        lRooms++;
+      } else {
+        slots++;
+      }
+    }
+    return { slots, lRooms };
+  }
+
+  /** `register.refused` with a "server busy" reason a lobby can show (plan's menu-facing language), logged. */
+  function memberCapReason(): string | null {
+    const total = totalMembers();
+    const hard = opts.maxMembersHard ?? MAX_MEMBERS_HARD;
+    const soft = opts.maxMembersSoft ?? MAX_MEMBERS_SOFT;
+    // The hard cap is a defensive second ceiling: in normal operation the soft cap below always fires first.
+    // Hitting it without having hit the soft cap first would itself be a bug worth the louder log level.
+    if (total >= hard) {
+      log.event("register.refused", { reason: "cap", scope: "members_hard", total }, "error");
+      return "server busy";
+    }
+    if (total >= soft) {
+      log.event("register.refused", { reason: "cap", scope: "members_soft", total }, "warn");
+      return "server busy";
+    }
+    return null;
+  }
+
+  /**
+   * Resolve a HELLO's room id to a loaded `World`: already loaded (fixed or a warm room), in-flight (a second
+   * HELLO for the same not-yet-loaded id), or a fresh lazy load from `RoomsStore`. Returns "unknown" for an id
+   * with no room row, "cap" if loading it would exceed the loaded-room budget (checked before construction, so
+   * a rejected join never pays the cost of loading).
+   */
+  async function getOrLoadRoom(id: number): Promise<World | "unknown" | "cap"> {
+    const existing = worlds.get(id);
+    if (existing) return existing;
+    const inFlight = loadingRooms.get(id);
+    if (inFlight) return await inFlight;
+    if (!rooms) return "unknown";
+    const row = rooms.getRoomById(id);
+    if (!row) return "unknown";
+    const cfg = decodeConfig(row.config);
+    if (!cfg) return "unknown"; // a config RoomsStore.createRoom already validated; defence only
+    const weight = cfg.size === 2 ? L_ROOM_SLOT_WEIGHT : 1;
+    const { slots, lRooms } = loadedRoomSlots();
+    const maxSlots = opts.maxLoadedRooms ?? MAX_LOADED_ROOMS;
+    const maxL = opts.maxLoadedLRooms ?? MAX_LOADED_L_ROOMS;
+    if (slots + weight > maxSlots || (cfg.size === 2 && lRooms + 1 > maxL)) {
+      log.event("register.refused", { reason: "cap", scope: "loaded_rooms", slots, lRooms, world: id }, "warn");
+      return "cap";
+    }
+    const mem = cgroupMemoryBytes();
+    if (mem !== undefined && mem >= (opts.roomLoadMemoryCapBytes ?? ROOM_LOAD_MEMORY_CAP_BYTES)) {
+      log.event("register.refused", { reason: "cap", scope: "memory", cgroup_mb: Math.round(mem / 1048576), world: id }, "warn");
+      return "cap";
+    }
+    const p = (async () => {
+      const w = mk(id, cfg, seedForRoom(id));
+      await w.load();
+      worlds.set(id, w); // inserted only once load() has finished, so a racing join never sees a half-loaded room
+      log.event("room.loaded", { world: id, code: row.code, mode: row.mode, size: cfg.size });
+      return w;
+    })();
+    loadingRooms.set(id, p);
+    try {
+      return await p;
+    } finally {
+      loadingRooms.delete(id);
+    }
+  }
+
+  /** cgroup memory in bytes (the capacity note: RSS overstates by about 50 MB; the OOM killer uses this figure).
+   * Linux-only (`/sys/fs/cgroup/memory.current`, cgroup v2); undefined off Linux or without cgroups (dev, tests),
+   * in which case the memory admission check is skipped rather than refusing every join. */
+  function cgroupMemoryBytes(): number | undefined {
+    try {
+      return Number(readFileSync("/sys/fs/cgroup/memory.current", "utf8").trim());
+    } catch {
+      return undefined;
+    }
+  }
   // Delivery goes through `live` (declared below; only called from message handlers, after it exists).
   const achievements = new Achievements(db, playerStats, log, (visitorId, id, tick) => {
     const frame = encodeAchievement(id, tick);
@@ -738,6 +931,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   function onConnection(ws: WebSocket, userAgent: string, ipTag: string) {
     let joined: { world: World; conn: number; playerId: number; visitorId: number; visitorName: string; counts: InputCounts; at: number } | null = null;
+    /** True while this connection's one HELLO is being resolved (room lookup, a possible lazy load). A second
+     * frame in that window closes the socket rather than racing a second resolution for the same connection. */
+    let handshaking = false;
     ws.on("pong", () => {
       if (!joined) return;
       const l = live.get(liveKey(joined.world.id, joined.conn));
@@ -778,85 +974,108 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         if (msg.t !== "hello") return ws.close(1002, "hello first");
         if (buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
         clearTimeout(helloTimer);
-        const w = worlds.get(msg.worldId);
         if (msg.version !== PROTOCOL_VERSION) return rej("protocol version mismatch: new version, reload", msg.worldId);
         if (!Buffer.from(msg.buildHash).equals(hash)) return rej("sim build mismatch: new version, reload", msg.worldId);
-        if (!w || worldKindOf(msg.worldId) === null) return rej("unknown world", msg.worldId);
-        if (w.closing) return rej("server is shutting down", msg.worldId);
-        // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
-        if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
-          stats.capRefused++;
-          log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
-          return rej("world is full; try again later", msg.worldId);
-        }
-        // Identity for every world and role. A game-world player must hold a known token (its id is the sim id);
-        // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
-        // anonymous resolve touches nothing in the database. Identity never reaches the sim.
-        const spectating = !!(msg.flags & HELLO_SPECTATE);
-        const gamePlayer = w.kind === WORLD_GAME && !spectating;
-        const who = identity.resolve(msg.token, gamePlayer);
-        if (who === "unknown" && gamePlayer) return rej("unknown token", msg.worldId);
-        const visitorId = who === "unknown" ? 0 : who.id;
-        const visitorName = who === "unknown" ? "" : who.name;
-        const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
-        const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
-        joined = me;
-        playerStats.bump(visitorId, STAT_SESSIONS);
-        const entry: Live = {
-          world: w,
-          conn: j.conn,
-          visitorId,
-          who: j.who,
-          role: roleOf(w, j.playerId),
-          counts: j.counts,
-          timing: j.timing,
-          ws,
-          pingAt: 0,
-          at: me.at,
-          finish: (code) => {
-            if (!live.delete(liveKey(w.id, j.conn))) return;
-            w.leave(j.conn);
-            log.forget(`rate:${j.conn}`);
-            log.forget(`pos:${j.conn}`);
-            log.forget(`bad:${j.conn}`);
-            log.forget(`held:${j.conn}`);
-            const ms = Date.now() - me.at;
-            playerStats.bump(visitorId, STAT_PLAY_MS, ms);
-            if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
-            // The line to read at the crit: one per session, with its totals.
-            log.event("leave", {
-              world: w.id,
-              who: j.who,
-              conn: j.conn,
-              role: entry.role,
-              online: w.playerCount,
-              tick: w.clock.lastClosed,
-              duration_s: Math.round(ms / 1000),
-              code,
-              casts: compactCounts(j.counts.casts),
-              paints: compactCounts(j.counts.paints),
-              max_depth: j.counts.maxDepth,
-              resyncs: j.counts.resyncs,
-              pos_rejected: j.counts.posRejected,
-              ...timingFields(entry),
-              ip_tag: ipTag,
-            });
-            const rest = j.counts.takeWindow();
-            if (rest) log.event("input.summary", { ...summaryFields(entry, rest), final: true });
-          },
-        };
-        live.set(liveKey(w.id, j.conn), entry);
-        log.event("join", {
-          world: w.id,
-          who: j.who,
-          visitor: visitorId,
-          name: visitorName || undefined,
-          conn: j.conn,
-          role: roleOf(w, j.playerId),
-          online: w.playerCount,
-          tick: w.clock.lastClosed,
-          ip_tag: ipTag,
-          ua: userAgent.slice(0, 80),
+        if (handshaking) return ws.close(1002, "hello already in flight"); // an honest client sends exactly one
+        handshaking = true;
+        // Fixed worlds are always already in `worlds`; anything else resolves through RoomsStore, lazily
+        // loading the room's World on first HELLO for it (R2b). `getOrLoadRoom` is synchronous up to the point
+        // where it registers an in-flight promise, so two near-simultaneous HELLOs for the same unloaded room
+        // id always see the first one's promise rather than racing to construct two Worlds (see its comment).
+        void getOrLoadRoom(msg.worldId).then((resolved) => {
+          handshaking = false;
+          if (ws.readyState !== ws.OPEN || joined) return; // closed, or a stray second frame already failed us
+          if (resolved === "unknown") return rej("unknown room", msg.worldId);
+          if (resolved === "cap") return rej("server busy", msg.worldId);
+          const w = resolved;
+          if (w.closing) return rej("server is shutting down", msg.worldId);
+          // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
+          if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
+            stats.capRefused++;
+            log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
+            return rej("world is full; try again later", msg.worldId);
+          }
+          // The member caps (docs/research/capacity-rooms.md: count members, not rooms) cover every connection,
+          // spectators included, across every loaded world. A brand-new room's loaded-room-slot cap is already
+          // checked inside getOrLoadRoom, before construction; this is the member-count cap, checked here
+          // because it is cheap either way and belongs with the per-world cap just above it.
+          const capReason = memberCapReason();
+          if (capReason) {
+            stats.capRefused++;
+            return rej(capReason, msg.worldId);
+          }
+          cancelUnload(w.id); // a join before the empty-room timer fired keeps this room hot
+          // Identity for every world and role. A game-world player must hold a known token (its id is the sim id);
+          // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
+          // anonymous resolve touches nothing in the database. Identity never reaches the sim.
+          const spectating = !!(msg.flags & HELLO_SPECTATE);
+          const gamePlayer = w.kind === WORLD_GAME && !spectating;
+          const who = identity.resolve(msg.token, gamePlayer);
+          if (who === "unknown" && gamePlayer) return rej("unknown token", msg.worldId);
+          const visitorId = who === "unknown" ? 0 : who.id;
+          const visitorName = who === "unknown" ? "" : who.name;
+          const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
+          const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
+          joined = me;
+          playerStats.bump(visitorId, STAT_SESSIONS);
+          const entry: Live = {
+            world: w,
+            conn: j.conn,
+            visitorId,
+            who: j.who,
+            role: roleOf(w, j.playerId),
+            counts: j.counts,
+            timing: j.timing,
+            ws,
+            pingAt: 0,
+            at: me.at,
+            finish: (code) => {
+              if (!live.delete(liveKey(w.id, j.conn))) return;
+              w.leave(j.conn);
+              log.forget(`rate:${j.conn}`);
+              log.forget(`pos:${j.conn}`);
+              log.forget(`bad:${j.conn}`);
+              log.forget(`held:${j.conn}`);
+              const ms = Date.now() - me.at;
+              playerStats.bump(visitorId, STAT_PLAY_MS, ms);
+              if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
+              // The line to read at the crit: one per session, with its totals.
+              log.event("leave", {
+                world: w.id,
+                who: j.who,
+                conn: j.conn,
+                role: entry.role,
+                online: w.playerCount,
+                tick: w.clock.lastClosed,
+                duration_s: Math.round(ms / 1000),
+                code,
+                casts: compactCounts(j.counts.casts),
+                paints: compactCounts(j.counts.paints),
+                max_depth: j.counts.maxDepth,
+                resyncs: j.counts.resyncs,
+                pos_rejected: j.counts.posRejected,
+                ...timingFields(entry),
+                ip_tag: ipTag,
+              });
+              const rest = j.counts.takeWindow();
+              if (rest) log.event("input.summary", { ...summaryFields(entry, rest), final: true });
+              // A room (not the two fixed worlds) that just lost its last member starts its unload timer.
+              if (w.playerCount === 0) scheduleUnload(w);
+            },
+          };
+          live.set(liveKey(w.id, j.conn), entry);
+          log.event("join", {
+            world: w.id,
+            who: j.who,
+            visitor: visitorId,
+            name: visitorName || undefined,
+            conn: j.conn,
+            role: roleOf(w, j.playerId),
+            online: w.playerCount,
+            tick: w.clock.lastClosed,
+            ip_tag: ipTag,
+            ua: userAgent.slice(0, 80),
+          });
         });
         return;
       }
@@ -1053,6 +1272,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         clearInterval(statsTimer);
         clearInterval(pingTimer);
         clearInterval(sampleTimer);
+        for (const t of roomUnloadTimers.values()) clearTimeout(t);
+        roomUnloadTimers.clear();
         loopLag.disable();
         dashboard.closeAll();
         log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });

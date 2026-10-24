@@ -35,9 +35,11 @@ export const EVENT_NAMES = [
   "snapshot.accepted",
   "snapshot.rejected",
   "snapshot.abandoned",
-  // Rooms (R2a: table and HTTP API only, nothing on the socket path yet)
+  // Rooms (R2a: table and HTTP API. R2b: lazy load/unload on the socket path)
   "room.created",
   "room.create_rejected",
+  "room.loaded",
+  "room.unloaded",
   // Housekeeping
   "tick_log.flush_failed",
   "identity.evicted",
