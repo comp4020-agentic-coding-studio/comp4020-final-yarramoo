@@ -344,6 +344,20 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     roomUnloadTimers.set(w.id, t);
   }
 
+  /** A HELLO that reaches `getOrLoadRoom` and gets a `World` back, but is then rejected by a check that only
+   * runs after the room is loaded (member caps; see docs/research/review-r2b.md finding 1), must not leave a
+   * freshly-loaded, zero-member room pinned in `worlds` forever — `scheduleUnload` is only ever armed from a
+   * real member leaving, which never happens for a join that never completed. Only discards rooms THIS call
+   * loaded (never a pre-existing warm room, which may have members from elsewhere even though this join was
+   * refused on the global member cap). */
+  function discardIfFreshlyLoaded(w: World, wasWarm: boolean): void {
+    if (wasWarm || w.playerCount > 0) return;
+    if (worlds.get(w.id) !== w) return; // already replaced or unloaded by something else
+    w.shutdown();
+    worlds.delete(w.id);
+    log.event("room.unloaded", { world: w.id });
+  }
+
   function totalMembers(): number {
     let n = 0;
     for (const w of worlds.values()) n += w.playerCount;
@@ -982,6 +996,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         // loading the room's World on first HELLO for it (R2b). `getOrLoadRoom` is synchronous up to the point
         // where it registers an in-flight promise, so two near-simultaneous HELLOs for the same unloaded room
         // id always see the first one's promise rather than racing to construct two Worlds (see its comment).
+        const wasWarm = worlds.has(msg.worldId); // before any lazy load this call might trigger (finding 1)
         void getOrLoadRoom(msg.worldId).then((resolved) => {
           handshaking = false;
           if (ws.readyState !== ws.OPEN || joined) return; // closed, or a stray second frame already failed us
@@ -993,15 +1008,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
             stats.capRefused++;
             log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
+            discardIfFreshlyLoaded(w, wasWarm);
             return rej("world is full; try again later", msg.worldId);
           }
           // The member caps (docs/research/capacity-rooms.md: count members, not rooms) cover every connection,
           // spectators included, across every loaded world. A brand-new room's loaded-room-slot cap is already
           // checked inside getOrLoadRoom, before construction; this is the member-count cap, checked here
-          // because it is cheap either way and belongs with the per-world cap just above it.
+          // because it is cheap either way and belongs with the per-world cap just above it. A rejection here
+          // must still discard a room THIS call freshly loaded (review-r2b.md finding 1): nobody ever joins it,
+          // so nothing else would ever schedule its unload.
           const capReason = memberCapReason();
           if (capReason) {
             stats.capRefused++;
+            discardIfFreshlyLoaded(w, wasWarm);
             return rej(capReason, msg.worldId);
           }
           cancelUnload(w.id); // a join before the empty-room timer fired keeps this room hot

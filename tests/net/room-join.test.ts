@@ -221,6 +221,18 @@ describe("unload when empty (brief item 3: uniform 2-minute timer, shortened her
   });
 });
 
+describe("R2b fix: a first-ever HELLO rejected by caps must not leak the freshly-loaded room (review-r2b.md finding 1)", () => {
+  // RED (before the fix): a brand-new room's very first HELLO, rejected by the member cap, left the just-loaded
+  // World sitting in `worlds` forever (nobody ever joined it, so nothing ever calls scheduleUnload). This test
+  // fails on the pre-fix code with `s.worlds.has(created.id)` true after the rejected join.
+  it("a room's first HELLO, rejected by the member soft cap, is not left loaded", async () => {
+    const s = await boot(tmp(), { maxMembersSoft: 0, maxMembersHard: 2 });
+    const created = await createRoom(s.port);
+    await expect(connect(s.port, hex, { world: created.id })).rejects.toThrow(/server busy/);
+    expect(s.worlds.has(created.id)).toBe(false);
+  });
+});
+
 describe("admission caps (brief item 4)", () => {
   it("rejects a join past the member hard cap with a clear reason", async () => {
     const s = await boot(tmp(), { maxMembersSoft: 1, maxMembersHard: 2 });
