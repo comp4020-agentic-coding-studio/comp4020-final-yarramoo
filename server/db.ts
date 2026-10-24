@@ -76,6 +76,25 @@ const MIGRATIONS: string[] = [
     primary key (player_id, achievement)
   );
   `,
+  // R2a (plan-game-modes.md "Server: rooms instead of two fixed worlds"): rooms are created and listed, but
+  // joining still goes through the existing two fixed worlds (R2b wires rooms into the socket path). A
+  // room's id doubles as its eventual world id once R2b loads it, so this table deliberately mirrors
+  // `worlds` rather than replacing it. No lifecycle columns yet (archived_at etc.) — that's R2b's job.
+  `
+  create table rooms (
+    id integer primary key,
+    code text unique not null,
+    name text not null,
+    mode text not null check (mode in ('survival','deathmatch','creative','sandbox')),
+    config blob not null,
+    visibility text not null check (visibility in ('public','unlisted')),
+    creator_player_id integer references players(id),
+    created_at integer not null,
+    last_active integer not null
+  );
+  create index rooms_visibility_last_active on rooms (visibility, last_active desc);
+  create index rooms_creator_created on rooms (creator_player_id, created_at);
+  `,
 ];
 
 export interface WorldRow {

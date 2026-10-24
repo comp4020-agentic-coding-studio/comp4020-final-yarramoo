@@ -35,6 +35,9 @@ export const EVENT_NAMES = [
   "snapshot.accepted",
   "snapshot.rejected",
   "snapshot.abandoned",
+  // Rooms (R2a: table and HTTP API only, nothing on the socket path yet)
+  "room.created",
+  "room.create_rejected",
   // Housekeeping
   "tick_log.flush_failed",
   "identity.evicted",
