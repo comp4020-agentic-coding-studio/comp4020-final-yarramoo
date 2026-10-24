@@ -65,7 +65,10 @@ export async function connect(
   ws.binaryType = "nodebuffer";
   let seq = 0;
   let seed = 0n;
-  let kind = 0;
+  // R2b: WELCOME carries the room's 16-byte config, not a bare kind; `sim.init` accepts either, and the real
+  // config is what every member of a real room must share to init identically (a bare kind only ever worked
+  // for the two fixed worlds, which still round-trip through it fine since their configs ARE the old presets).
+  let cfg: Uint8Array = new Uint8Array(0);
   let wantAt = 0;
   let corrupt = false;
   const c = {
@@ -91,7 +94,7 @@ export async function connect(
 
   const fresh = (target: number) => {
     const sim = loadSim(wasmBytes);
-    sim.init(seed, kind);
+    sim.init(seed, cfg);
     c.ls = new Lockstep(sim);
     c.ls.catchUpTarget = target;
     c.ls.onStepped = (tick) => {
@@ -122,7 +125,7 @@ export async function connect(
       switch (m.t) {
         case "welcome":
           seed = m.seed;
-          kind = m.worldKind;
+          cfg = m.cfg;
           fresh(m.tick);
           c.playerId = m.playerId;
           if (m.tick === 0 && !c.holdLive) ws.send(encodeLive(0));

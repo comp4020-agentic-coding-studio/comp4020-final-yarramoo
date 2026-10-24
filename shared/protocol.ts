@@ -1,10 +1,18 @@
 // Binary WebSocket protocol (plan 7.2). Little-endian, u8 type tag first. Shared by client and server.
 import { unzlibSync, zlibSync } from "fflate";
-import { SIZE_DIMS, type RoomConfig } from "./room.ts";
+import { configForKind, CONFIG_BYTES, SIZE_DIMS, type RoomConfig } from "./room.ts";
+
+const SANDBOX_CFG_BYTES = configForKind(0);
+const GAME_CFG_BYTES = configForKind(1);
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 8;
+/**
+ * v9 (R2b): WELCOME carries the room's 16-byte config (byte 13..28) instead of a bare world-kind byte, so a
+ * joining client inits its sim from the same bytes every member of the room shares, not a kind number that
+ * only meant something for the two fixed worlds. HELLO is unchanged: its `worldId` field now names a room id.
+ */
+export const PROTOCOL_VERSION = 9;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -115,7 +123,7 @@ export type ClientMsg =
   | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array };
 
 export type ServerMsg =
-  | { t: "welcome"; playerId: number; seed: bigint; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
+  | { t: "welcome"; playerId: number; seed: bigint; cfg: Uint8Array; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
   | { t: "reject"; reason: string }
   | { t: "tick"; tick: number; inputs: TickInput[] }
   | { t: "pong"; ts: number }
@@ -167,18 +175,42 @@ export function encodePing(ts: number): Uint8Array {
   return b;
 }
 
-/** `playersAtBase`: players online as of the first tick the client will replay (UI presence count only). */
-export function encodeWelcome(playerId: number, seed: bigint, worldKind: number, tickHz: number, tick: number, playersAtBase = 0): Uint8Array {
-  const b = new Uint8Array(21);
+/**
+ * v9 (R2b) layout, 36 bytes fixed:
+ * `tag u8(0), playerId u32(1..5), seed u64(5..13), config 16 bytes(13..29), tickHz u8(29), tick u32(30..34),
+ * playersAtBase u16(34..36)`. `cfg` replaces the old bare `worldKind: u8` at byte 13 so a joiner inits its sim
+ * from the room's actual config, not a kind number that only ever meant something for the two fixed worlds.
+ */
+export function encodeWelcome(playerId: number, seed: bigint, cfg: Uint8Array, tickHz: number, tick: number, playersAtBase = 0): Uint8Array {
+  if (cfg.length !== CONFIG_BYTES) throw new Error("bad welcome config length");
+  const b = new Uint8Array(36);
   const v = view(b);
   b[0] = S_WELCOME;
   v.setUint32(1, playerId, true);
   v.setBigUint64(5, BigInt.asUintN(64, seed), true);
-  b[13] = worldKind;
-  b[14] = tickHz;
-  v.setUint32(15, tick, true);
-  v.setUint16(19, Math.min(0xffff, playersAtBase), true);
+  b.set(cfg, 13);
+  b[29] = tickHz;
+  v.setUint32(30, tick, true);
+  v.setUint16(34, Math.min(0xffff, playersAtBase), true);
   return b;
+}
+
+/**
+ * Back-compat `worldKind` for WELCOME decode (R2b): the two fixed worlds' configs map back to their old kind
+ * byte exactly, so `client/`'s existing call sites (still reading `m.worldKind`, unchanged in this slice —
+ * R3 wires real room ids into the client) keep working unmodified. -1 for any other config: only a real joined
+ * room (not `/sandbox` or the cave world) can produce one, and nothing in `client/` joins a real room yet.
+ */
+function kindOfWelcomeConfig(cfg: Uint8Array): number {
+  if (bytesEqual(cfg, SANDBOX_CFG_BYTES)) return WORLD_SANDBOX;
+  if (bytesEqual(cfg, GAME_CFG_BYTES)) return WORLD_GAME;
+  return -1;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 export function encodeReject(reason: string): Uint8Array {
@@ -419,17 +451,20 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
   if (b.length < 1) return null;
   const v = view(b);
   switch (b[0]) {
-    case S_WELCOME:
-      if (b.length !== 21) return null;
+    case S_WELCOME: {
+      if (b.length !== 36) return null;
+      const cfg = b.slice(13, 29);
       return {
         t: "welcome",
         playerId: v.getUint32(1, true),
         seed: v.getBigUint64(5, true),
-        worldKind: b[13],
-        tickHz: b[14],
-        tick: v.getUint32(15, true),
-        playersAtBase: v.getUint16(19, true),
+        cfg,
+        worldKind: kindOfWelcomeConfig(cfg),
+        tickHz: b[29],
+        tick: v.getUint32(30, true),
+        playersAtBase: v.getUint16(34, true),
       };
+    }
     case S_REJECT:
       if (b.length - 1 > MAX_REASON_BYTES) return null;
       try {

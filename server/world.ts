@@ -3,7 +3,7 @@
 // (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
 import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
-import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
+import { POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
   CHUNK_CELLS,
   chunkCountFor,
@@ -29,7 +29,7 @@ import { MAX_CLIENT_INPUTS_PER_TICK, TickClock, type ClosedTick } from "./clock.
 import type { GameDb } from "./db.ts";
 import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
-import { CAVES_PVP, CLASSIC_SANDBOX, type RoomConfig } from "../shared/room.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import type { SnapshotVerifier } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
@@ -160,6 +160,14 @@ interface SnapshotRequest {
 
 export interface WorldOptions {
   id?: number;
+  /**
+   * The room's config (R2b). The two fixed worlds (ids 0/1) still default from `worldKindOf` when omitted, so
+   * startup's eager `mk(SANDBOX_ID)`/`mk(GAME_ID)` is unchanged; every lazily-loaded room passes its own config,
+   * decoded from the `rooms` row, since a bare "kind" no longer says what rules apply (R0a/D-132).
+   */
+  cfg?: RoomConfig;
+  /** This room's own seed (its row's `seed` column); the two fixed worlds keep their hardcoded seeds when omitted. */
+  seed?: bigint;
   now: () => number;
   db?: GameDb;
   verifier?: SnapshotVerifier;
@@ -196,7 +204,12 @@ export class World {
   readonly id: number;
   seed: bigint;
   readonly kind: number;
-  /** The room config for this world id, mapped locally from the kind (R0a: the protocol still carries only the kind). */
+  /**
+   * This world's config: a lazily-loaded room's own stored config, or (R0a) the fixed preset for ids 0/1 when
+   * none is passed. `acceptPos` and every size-derived cap (chunk grid, snapshot ceiling) read this, not a
+   * hardcoded constant, so a room's own size always governs its own bounds (R2b fixes the pre-existing bug
+   * where `acceptPos` used the L-sized `GAME_W`/`GAME_H` for every world).
+   */
   readonly cfg: RoomConfig;
   /** log[i] is the encoded TICK frame for tick logBase + 1 + i: only ticks after the latest verified snapshot. */
   readonly log: Uint8Array[] = [];
@@ -264,9 +277,14 @@ export class World {
 
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
-    this.kind = worldKindOf(this.id) ?? WORLD_SANDBOX;
-    this.cfg = this.kind === WORLD_GAME ? CAVES_PVP : CLASSIC_SANDBOX;
-    this.seed = this.id === GAME_ID ? GAME_SEED : SANDBOX_SEED;
+    // A lazily-loaded room (R2b) carries its own config from its `rooms` row; the two fixed worlds keep their
+    // R0a presets when none is passed, so their boot path (mk(SANDBOX_ID)/mk(GAME_ID) in server/main.ts) is
+    // unchanged. `kind` (the existing WORLD_SANDBOX/WORLD_GAME switch every avatar/Pos/Cast code path already
+    // reads) is derived from `cfg.avatars`, not the id, so it generalizes to any room without widening that
+    // switch into a full per-mode taxonomy (deliberately deferred; see the brief's scope boundary).
+    this.cfg = opts.cfg ?? (worldKindOf(this.id) === WORLD_GAME ? CAVES_PVP : CLASSIC_SANDBOX);
+    this.kind = this.cfg.avatars === 1 ? WORLD_GAME : WORLD_SANDBOX;
+    this.seed = opts.seed ?? (this.id === GAME_ID ? GAME_SEED : SANDBOX_SEED);
     this.now = opts.now;
     this.db = opts.db;
     this.verifier = opts.verifier;
@@ -575,7 +593,7 @@ export class World {
     const conn = this.nextSeq++;
     const names: [number, string][] = [];
     for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
-    const sentOk = this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
+    const sentOk = this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, encodeConfig(this.cfg), TICK_HZ, this.clock.lastClosed, base));
     for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
     const counts = new InputCounts();
     const timing = new ConnTiming();
@@ -677,7 +695,10 @@ export class World {
       this.stats.posRejected++;
       return false;
     };
-    if (facing > 1 || x < 0 || y < 0 || x >= GAME_W * POS_ONE || y >= GAME_H * POS_ONE) return bad();
+    // R2b: bound against this room's own size, not the fixed GAME_W/GAME_H (L's dimensions), which wrongly
+    // accepted or rejected Pos in every non-L room once R1 made S/M sizes real (the brief's pre-existing bug).
+    const [w, h] = SIZE_DIMS[this.cfg.size];
+    if (facing > 1 || x < 0 || y < 0 || x >= w * POS_ONE || y >= h * POS_ONE) return bad();
     const openTick = this.clock.lastClosed + 1;
     // One baseline per life (D-078): a claimed life + 1 starts its own baseline and cannot move the real one.
     let bl = this.lastPosOf.get(m.playerId);

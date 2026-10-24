@@ -215,7 +215,7 @@ describe("persistence", () => {
 
 describe("S_ACHIEVEMENT frame", () => {
   it("round trips and has a literal layout", () => {
-    expect(PROTOCOL_VERSION).toBe(8);
+    expect(PROTOCOL_VERSION).toBe(9);
     const f = encodeAchievement("waterworks", 0x01020304);
     expect(Array.from(f)).toEqual([S_ACHIEVEMENT, 10, ...Buffer.from("waterworks"), 4, 3, 2, 1]);
     expect(decodeServer(f)).toEqual({ t: "achievement", id: "waterworks", tick: 0x01020304 });

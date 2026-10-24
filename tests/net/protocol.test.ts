@@ -32,14 +32,15 @@ import {
   PAINT_PAYLOAD_LEN,
   simInputBytes,
 } from "../../shared/protocol.ts";
-import { CAVES_PVP, CLASSIC_SANDBOX } from "../../shared/room.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig } from "../../shared/room.ts";
 
 const hash = Uint8Array.from({ length: 32 }, (_, i) => i);
+const sandboxCfg = encodeConfig(CLASSIC_SANDBOX);
 
 describe("protocol codec", () => {
   it("round-trips HELLO, INPUT, PING", () => {
     const h = decodeClient(encodeHello(hash, 7));
-    expect(h).toMatchObject({ t: "hello", version: 8, worldId: 7, flags: 0 });
+    expect(h).toMatchObject({ t: "hello", version: PROTOCOL_VERSION, worldId: 7, flags: 0 });
     expect(h && h.t === "hello" && Array.from(h.buildHash)).toEqual(Array.from(hash));
     const payload = encodePaint(0, 4, -3, 5, 100, 200, 6).subarray(5);
     expect(payload.length).toBe(PAINT_PAYLOAD_LEN);
@@ -49,8 +50,8 @@ describe("protocol codec", () => {
   });
 
   it("round-trips WELCOME, REJECT, PONG", () => {
-    expect(decodeServer(encodeWelcome(5, 1n, 0, 60, 4242))).toEqual({
-      t: "welcome", playerId: 5, seed: 1n, worldKind: 0, tickHz: 60, tick: 4242, playersAtBase: 0,
+    expect(decodeServer(encodeWelcome(5, 1n, sandboxCfg, 60, 4242))).toEqual({
+      t: "welcome", playerId: 5, seed: 1n, cfg: sandboxCfg, worldKind: 0, tickHz: 60, tick: 4242, playersAtBase: 0,
     });
     expect(decodeServer(encodeReject("new version, reload"))).toEqual({ t: "reject", reason: "new version, reload" });
     expect(decodeServer(encodePong(77))).toEqual({ t: "pong", ts: 77 });
@@ -77,7 +78,7 @@ describe("protocol codec", () => {
       encodeHello(hash),
       encodeInput(1, KIND_PAINT, new Uint8Array(10)),
       encodePing(1),
-      encodeWelcome(1, 1n, 0, 60, 0),
+      encodeWelcome(1, 1n, sandboxCfg, 60, 0),
       encodePong(1),
       encodeTick(5, [{ player: 1, kind: 5, payload: new Uint8Array(10) }]),
     ];
@@ -142,7 +143,7 @@ describe("protocol codec", () => {
   });
 
   it("round-trips CLAIM at protocol v6 and refuses any other length", () => {
-    expect(PROTOCOL_VERSION).toBe(8);
+    expect(PROTOCOL_VERSION).toBe(9);
     expect(C_CLAIM).toBe(6);
     const f = encodeClaim(123456, 7, 9, 4, 1);
     expect(f.length).toBe(15);
@@ -179,7 +180,7 @@ describe("protocol codec", () => {
   });
 
   it("round-trips REQUEST_CHUNK_HASHES and CHUNK_HASHES at protocol v8", () => {
-    expect(PROTOCOL_VERSION).toBe(8);
+    expect(PROTOCOL_VERSION).toBe(9);
     expect(C_CHUNK_HASHES).toBe(8);
     expect(S_REQUEST_CHUNK_HASHES).toBe(0x8a);
     const rq = encodeRequestChunkHashes(0x01020304);
