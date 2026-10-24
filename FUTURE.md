@@ -316,4 +316,52 @@ member count first (matching the plan's "sorted by players, then most recent") a
 include that count per the plan's API shape.
 
 - **Source:** R2a worker, per the brief's explicit instruction not to invent a fake count this slice.
-- **Why:** the room browser (R3) will want "busiest rooms first" to actually mean something.
+- **Why:** the room browser (R3) will want "busiest rooms first" to actually mean something. **Update (R2b):**
+  rooms now load into real `World` instances with a live `playerCount`, so this is now buildable — `GET
+  /api/rooms` would need to join against the in-memory `worlds` map (not stored in `RoomsStore`, which only
+  ever sees the database) for a room that's currently loaded, and fall back to 0 for an unloaded one.
+
+## Reserve the rooms table's id space properly, in server/db.ts
+
+R2b found that `rooms.id` (`integer primary key`, no `AUTOINCREMENT`) hands the very first room ever created
+id 1 — colliding with the fixed `GAME_ID`. The workaround (two idempotent placeholder rows for ids 0/1,
+inserted from `server/main.ts` at startup) works but lives outside the schema file because `server/db.ts` was
+out of this brief's "Files you may touch" list. The real fix belongs in `server/db.ts`: either add
+`AUTOINCREMENT` to the `rooms` table (forces monotonically increasing ids, but doesn't itself skip 0/1) and
+seed `sqlite_sequence` past 1 in a migration, or keep the placeholder-row approach but move it into a
+migration so it runs once, in the schema, rather than as an idempotent insert on every boot.
+
+- **Source:** R2b worker, flagged in "Architectural decisions for review" as a workaround from outside the
+  file it belongs in, not the real fix.
+- **Why:** `server/db.ts` migrations are append-only; whoever next touches that file should fold this in
+  rather than leaving the startup-time workaround as the permanent home for an id-space reservation.
+
+## Per-mode room lifecycle timing (Creative archive/delete, Deathmatch/Survival delete-on-empty)
+
+R2b built the unload-when-empty *mechanism* (one uniform 2-minute timer, any room, any mode) deliberately
+without the mode-specific timing the plan calls for: Creative's 1-hour-archive/7-day-delete, Deathmatch's
+delete-as-soon-as-empty (no archive snapshot at all), Survival's delete-on-win-or-empty. This is the brief's
+own named deferred follow-up, logged here so it isn't lost between slices.
+
+- **Source:** `docs/briefs/r2b-protocol-and-lifecycle.md`'s own scope boundary; confirmed still open after
+  R2b landed only the uniform timer.
+- **Why:** without it, every room (including a Creative room someone wants to keep) unloads from memory after
+  2 minutes empty just like a Deathmatch room — which is fine (unloading just means "not in RAM right now,"
+  not "deleted"; a join reloads it from its stored row), but nothing yet implements the archive step
+  (recompress at level 9, drop the tick log and older snapshots) or the delete-on-win/delete-on-empty rules
+  that actually remove a room's row.
+
+## A real per-room seed, not the room's own id
+
+R2b needed every member of a room to agree on a seed without a database round trip adding real entropy, and
+`rooms` has no `seed` column yet (`server/db.ts` is append-only migrations, out of scope this slice). The
+room's own id is unique and stable, so it doubles as the seed for now — flagged in the worker report as the
+more reversible choice taken under budget. A real random seed, generated at room-creation time and stored
+alongside the config (closer to the plan's "a room is a seed plus a config"), is the proper fix, and also
+closes a minor griefing angle: with id-as-seed, a creator who can predict or choose the next room id can
+predict or choose the room's starting cave layout.
+
+- **Source:** R2b worker, "Architectural decisions for review."
+- **Why:** a `seed` column is a one-line migration once `server/db.ts` is back in scope for a slice; doing it
+  now would have meant touching a file outside this brief's list for a cosmetic-not-yet-urgent gap (the game
+  is not live, so no deployed room's layout needs to survive this change).

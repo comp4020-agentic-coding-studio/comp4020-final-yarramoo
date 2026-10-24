@@ -133,4 +133,149 @@ from the identical 16-byte config carried in WELCOME, step to byte-identical sta
 
 `pnpm typecheck && pnpm test:determinism && pnpm test:net && git commit ...` — never `;` or a grep-piped
 check, per CLAUDE.md. `pnpm typecheck` is clean throughout; `pnpm test:determinism` is 41/41 unaffected (no
-`sim/` changes in this slice); `pnpm test:net` results are appended per commit below.
+`sim/` changes in this slice).
+
+A first full `pnpm test:net` run found one more existing-test assertion that needed a genuine (not cosmetic)
+update: `tests/net/game.test.ts`'s "clients cannot Join, Leave or Paint in the game world, and an unknown
+world is refused" asserted `connect(..., { world: 7 })` throws `/unknown world/`. Per the brief's item 2, an
+id beyond the two fixed worlds now resolves through `RoomsStore` and rejects with "unknown room" when no row
+exists — this is the intended new behaviour for every id except 0/1, not a change to world 0/1's own
+behaviour, so it's exactly the kind of test update the brief allows rather than the "stop and reconsider"
+case (which is reserved for edits to an assertion *about world 0 or 1 itself*). Updated the assertion and
+re-ran: full suite green.
+
+Two full `pnpm test:net` runs: the first (before the `game.test.ts` fix) was 297/298 (one known failure,
+above); after the fix, **298/298 passed, 37/37 files**, exit code 0.
+
+## Docker check and manual end-to-end room-join against the live container
+
+`docker build -t r2b-worker-check -f Dockerfile .` succeeded (three-stage build, consistent with
+CLAUDE.md's "server/ and shared/ never import client/" — the runtime image only copies `server/`+`shared/`).
+Ran on port 8093 (never 8080, per repo convention): `docker run -d --name r2b-worker-check -p 8093:8093 -e
+PORT=8093 r2b-worker-check`. `server.start` logged with `"protocol":9` and the real build hash.
+
+`APP_URL=http://localhost:8093 pnpm check`:
+```
+$ pnpm typecheck && pnpm test
+$ tsc --noEmit
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+```
+
+Manual end-to-end room-join against the live container (not `pnpm test:net`'s in-process harness):
+```
+$ curl -s -i -X POST http://localhost:8093/api/rooms -d '{"name":"Docker Check Room","mode":"deathmatch","config":"AQACAQIAAAADAQAIAAAAAA==","visibility":"public"}'
+HTTP/1.1 201 Created
+{"id":2,"code":"MBET3N","name":"Docker Check Room","mode":"deathmatch","visibility":"public"}
+```
+Room id **2**, not 1 — confirms the id-reservation fix (see below) actually works against the real schema in
+the real container, not just an in-memory test database.
+```
+$ curl -s http://localhost:8093/api/rooms/MBET3N
+{"id":2,"code":"MBET3N","name":"Docker Check Room","mode":"deathmatch","visibility":"public","config":"AQACAQIAAAADAQAIAAAAAA=="}
+```
+A raw WebSocket client (built outside the test harness, using the container's own `sim.wasm` for the build
+hash, extracted via `docker cp`) HELLOed with room id 2, flags=1 (spectate, no identity needed):
+```
+WELCOME ok, frame length: 36 (expect 36)
+playerId: 0 seed: 2
+config bytes (base64): AQACAQIAAAADAQAIAAAAAA==
+```
+The WELCOME frame is 36 bytes (the v9 layout) and its config bytes are byte-identical to what was POSTed at
+room creation — the real join flow round-trips correctly in the deployed artifact. Container logs confirm:
+```
+{"ev":"room.created","room":2,"mode":"deathmatch","visibility":"public"}
+{"ev":"room.loaded","world":2,"code":"MBET3N","mode":"deathmatch","size":2}
+```
+`GET /api/summary` lists worlds `[0, 1, 2]` — the loaded room appears alongside the two fixed worlds.
+Container and image removed by their literal names afterward: `docker rm -f r2b-worker-check` then `docker
+rmi r2b-worker-check` (no variables, no globs, per CLAUDE.md's explicit-rm-path rule).
+
+## Architectural decisions for review
+
+1. **WELCOME byte layout.** `tag u8(0), playerId u32(1..5), seed u64(5..13), config 16 bytes(13..29), tickHz
+   u8(29), tick u32(30..34), playersAtBase u16(34..36)` — 36 bytes fixed, up from 21. The config simply
+   replaces the old `worldKind: u8` at byte 13 and every field after it shifts down by 15 bytes (16 - 1, the
+   config's length minus the byte it replaces), keeping every field's *relative order* exactly as before (the
+   brief's instruction). Alternative considered: putting the config at the *end* of the frame instead of
+   splicing it into the middle, which would have kept every earlier field's offset unchanged and only
+   `playersAtBase` would move. Chose the splice-in-place layout anyway because it keeps the frame's field
+   order matching its conceptual order (identity, then "what world is this", then timing) the way the old
+   `worldKind` position already did, and because nothing outside `encodeWelcome`/`decodeServer` reads a raw
+   byte offset directly (every call site goes through the decoded `ServerMsg` object) so no one else's offset
+   math breaks either way. Reversible: this is a wire format, not a stored one (WELCOME is never persisted),
+   so a later slice can re-lay it out with no migration cost.
+
+2. **The uniform 2-minute unload timer as a deliberately simpler stand-in for mode-specific timing.** The plan
+   specifies different lifecycles per mode (Creative: 2-min-unload/1-hour-archive/7-day-delete; Deathmatch:
+   delete-on-empty with no archive; Survival: delete-on-win-or-empty). This slice builds only the *mechanism*
+   — a room (not the two fixed worlds) unloads from memory 2 minutes after its last member leaves, reloads
+   fresh from its stored row on the next join — using Creative's own 2-minute number as the one uniform value,
+   per the brief's explicit instruction. This is the most reversible choice available: "unload after N minutes
+   empty" is one `setTimeout` whose duration can become mode-dependent (`cfg`-derived) without touching its
+   cancel/fire logic at all, and nothing about archiving or deleting a row is built yet, so there's no delete
+   behavior to later walk back. Logged as its own FUTURE.md entry.
+
+3. **The cgroup-memory-reading approach.** `cgroupMemoryBytes()` reads `/sys/fs/cgroup/memory.current` directly
+   (cgroup v2; the capacity note's own measurement path) and is treated as *advisory, not required*: when the
+   file can't be read (anything off Linux, a dev machine, CI without cgroups), the memory check is skipped
+   rather than refusing every room load. This matches the capacity note's finding that RSS overstates cgroup
+   usage by about 50 MB, and keeps the existing `/api/summary` RSS-based 200 MB warning (`server/main.ts`'s
+   `process.minute`) completely untouched — this slice adds a *second*, independent cgroup-based admission
+   check rather than replacing the RSS one, since the brief's "Files you may touch" list doesn't include that
+   warning's surrounding code and changing it wasn't asked for. Flagged as a candidate to unify later (the
+   capacity note's own item 3 under its "Architectural decisions for review": "changing the 200 MB warning to
+   read cgroup memory is a server change, not done here" — still not done here either, now logged twice).
+
+4. **Hard-to-reverse choices where the more reversible option was taken, flagged:**
+   - **Per-room seed = room id**, not a real random seed, because `rooms` has no `seed` column yet and
+     `server/db.ts` is out of this brief's file list. Flagged in detail above and in `FUTURE.md`; reversible
+     at zero cost later since no room's generated state is live yet.
+   - **Room id-space collision workaround lives in `server/main.ts`, not `server/db.ts`.** The real, more
+     permanent fix (an `AUTOINCREMENT` + seeded `sqlite_sequence`, or a migration-time reservation) belongs in
+     the schema file; today's idempotent placeholder-row insert at startup is a correct but not final fix,
+     logged in `FUTURE.md` so whoever next touches `server/db.ts` folds it in properly.
+   - **`World.kind` now derived from `cfg.avatars` instead of the world id.** This generalizes an existing
+     distinction (every `WORLD_SANDBOX`/`WORLD_GAME` branch in `server/world.ts` and `server/main.ts`) to work
+     for any room, not just the two fixed ones, without inventing new branching. The alternative — leaving
+     `kind` tied to `worldKindOf(id)` and adding a *third* concept ("is this an avatar room") everywhere that
+     today checks `kind === WORLD_GAME` — would have meant touching every one of those call sites twice (once
+     now, once when a real mode taxonomy lands in a later milestone). Chosen because it's strictly fewer
+     moving parts today and doesn't foreclose a richer mode taxonomy later (nothing stops a future slice from
+     deriving `kind` from `cfg.terrain`/`cfg.round`/etc. too, alongside `cfg.avatars`).
+
+## FUTURE.md entries written this slice
+
+Four new entries added directly to `FUTURE.md` (not just mentioned here, per CLAUDE.md): "Live player counts
+and a real sort for the public room list" (updated the existing R2a entry — now buildable since rooms load
+into real `World`s with a live count), "Reserve the rooms table's id space properly, in server/db.ts", "Per-
+mode room lifecycle timing (Creative archive/delete, Deathmatch/Survival delete-on-empty)", and "A real
+per-room seed, not the room's own id."
+
+## Final state
+
+Three code commits on `multa` (plus this report's own commit), each gated on `pnpm typecheck && pnpm
+<targeted-or-full-test> ` exit codes, never `;` or grep-piped output:
+
+1. `R2b (1/6): red — tests/net/room-join.test.ts against the pre-R2b server`
+2. `R2b (2/6): protocol v9 — WELCOME carries the room's config; acceptPos uses the room's own size`
+3. `R2b (3/6): lazy room loading, unload-when-empty, admission caps (checklist items 3-5)`
+
+Checklist items 3, 4 and 5 landed in one commit (see that commit's message for why — they share one code path
+in `server/main.ts` and don't compile to a coherent intermediate split three ways). Item 6 (Docker boot, `pnpm
+check`, manual end-to-end check) is done and reported above, as its own final verification step rather than a
+fourth code commit (nothing needed fixing).
+
+Full final gate: `pnpm typecheck` clean, `pnpm test:determinism` 41/41 (unaffected — no `sim/` changes),
+`pnpm test:net` 298/298 (37 files), Docker build + boot + `pnpm check` (9/9) + manual room-join all green.
+
+Files changed (all within the brief's "Files you may touch" list): `shared/protocol.ts` (WELCOME layout,
+`PROTOCOL_VERSION`), `shared/events.ts` (`room.loaded`, `room.unloaded`), `server/world.ts` (`World`
+constructor `cfg`/`seed` options, `acceptPos`'s size fix), `server/main.ts` (lazy room lookup/load, unload
+timers, admission caps, the id-reservation workaround), `tests/net/room-join.test.ts` (new),
+`tests/net/helpers.ts`, `tests/net/protocol.test.ts`, `tests/net/achievements-live.test.ts`,
+`tests/net/lockstep.test.ts`, `tests/net/game.test.ts` (existing-test updates, all either frame-growth or the
+intended new "unknown room" behaviour, not scope creep into world 0/1's own behaviour). `server/rooms.ts` was
+**not** touched (no new read method was needed — `getRoomById` already existed from R2a). Nothing in `sim/`,
+`shared/room.ts`'s config layout, `shared/avatar.ts`'s exported constants, `client/`, or `server/dashboard.ts`
+was touched. Not pushed — left for the session model and the independent reviewer.
