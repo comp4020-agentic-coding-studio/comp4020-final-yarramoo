@@ -595,12 +595,40 @@ returned 201. This is an open flood vector until R2b wires identity onto the pat
 existing tests' hardcoded `schemaVersion` assertions needed a one-line bump (5 to 6) for the new migration,
 a mechanical cost every future migration will repeat unless a later slice makes the assertion self-deriving.
 
-**Evidence.** D-140, D-141; [plan-game-modes.md](plan-game-modes.md) "Server: rooms instead of two fixed worlds";
-[capacity-rooms.md](research/capacity-rooms.md); [r2a-worker-report.md](research/r2a-worker-report.md);
+**R2b: rooms become joinable, and the independent review earns its place.** Protocol v9 lets WELCOME carry a
+room's actual 16-byte config instead of a bare world-kind byte, so a joiner inits from the exact bytes every
+other member of the room shares; `getOrLoadRoom` loads a room's `World` on first HELLO for it, keyed by an
+in-flight-promise map so two near-simultaneous HELLOs for the same unloaded room id converge on one load rather
+than racing to construct two. A room unloads on a uniform 2-minute empty timer (mode-specific archive/delete
+timing stays deferred). Admission caps from `capacity-rooms.md` (32/48 members, 16 loaded-room slots, an L room
+weighted 2) are checked before a room is constructed, reading cgroup memory per that note's own finding that RSS
+overstates it. In passing, R2b also fixed a real bug the brief had to name explicitly: `World.acceptPos` bounded
+every Pos against the fixed L-sized `GAME_W`/`GAME_H`, silently wrong for any S or M room now that R1 made those
+sizes real.
+
+The independent reviewer this slice was built to get (D-140's rationale) found two HIGH-severity bugs neither the
+worker nor the session model's own reading had caught: a join rejected by the member cap, and separately a
+bad-token HELLO that fired after the unload timer had already been canceled, both left a freshly-loaded,
+zero-member room pinned in memory permanently — exactly the resource the new admission caps exist to protect,
+and exactly the question the reviewer's brief asked ("are caps checked before a `World` is constructed, so a
+rejected join doesn't still pay the cost") turning out to be only half-true. The session model reproduced both
+with a standalone script against the real server code before accepting either finding, and again after the fix,
+rather than trusting either report. D-143 has the full account.
+
+**Evidence.** D-140, D-141, D-142, D-143; [plan-game-modes.md](plan-game-modes.md) "Server: rooms instead of two
+fixed worlds"; [capacity-rooms.md](research/capacity-rooms.md);
+[r2a-worker-report.md](research/r2a-worker-report.md), [r2b-worker-report.md](research/r2b-worker-report.md),
+[review-r2b.md](research/review-r2b.md), [r2b-fix-report.md](research/r2b-fix-report.md);
 [`120075b`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/120075b)
 (the rooms table and `RoomsStore`),
 [`8be0076`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8be0076)
-(the HTTP API).
+(the HTTP API),
+[`064613c`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/064613c)
+(protocol v9 and the `acceptPos` fix),
+[`b254084`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b254084)
+(the member-cap leak fix),
+[`8c11131`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8c11131)
+(the cancel-unload-ordering fix).
 
 ---
 
