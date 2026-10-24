@@ -84,3 +84,78 @@ CPU: the member-driven limit holds at **32 members for sustained play** (60 tps 
 - Lag histogram window that excludes startup, so p99 is usable as an alarm.
 - Compress or coalesce tick frames per member (empty ticks are 420 B/s per member for nothing).
 - Re-run with a heavily dug 2048x1536 world to measure a real snapshot ceiling.
+
+## R2c: real rooms, measured (24 Oct)
+
+Plan's milestone-R2 ask: "the capacity measurement (Docker image, 24 sockets over 4 rooms, a forced verify;
+pass is under 200 MB)." Bench: `pnpm soak:capacity-rooms` (`tests/soak/capacity-rooms.ts`), new in R2c. Same
+real Docker image (`--memory=256m`, tmpfs `/data`, `--cpus=1`) and the same real bot machinery (`Lockstep`,
+`reactToTick`, full WASM sim per bot) as the pre-R2 `capacity.ts` bench above, but this one creates its rooms
+the real way the game now does: `POST /api/rooms` (not a direct DB write or a fixed world id), then HELLOs 6
+bots into each room's real id. Raw numbers: `docs/research/capacity-rooms-results.json`.
+
+**Room mix**: 4 real rooms, all Caves-preset (`CAVES_PVP`, `avatars: 1`) so every bot is a real Pos-sending
+avatar (~30/s, no casts) — the same per-tick, per-member cost already measured for world 1 in the pre-R2 table
+above, now over real rooms instead of the one fixed cave. 2 rooms at size M, 2 at size S (not L): the brief's
+own guidance (item 3) is that an L room's 2-slot weight against `MAX_LOADED_ROOMS = 16` isn't this slice's
+concern, so M/S keeps comfortably clear of that cap while still mixing world sizes. A Creative/painter room's
+Paint traffic isn't re-measured here; it's already in the pre-R2 table (world 0).
+
+**Forced verify**: `World.requestSnapshot()` is not reachable from outside the process today — no HTTP route
+calls it, and the brief's two described paths were "add a thin debug trigger" or "wait out a natural cycle."
+This bench took the second, less invasive option: it waits (up to 75 s) for each room's own natural
+`SNAPSHOT_EVERY_TICKS` cycle (1800 ticks at 60 Hz = 30 s) to fire and verify, exactly the mechanism the pre-R2
+bench already relies on for its own `snapshotsAccepted` numbers, rather than adding a new server route for this
+one measurement script. **Flagged under "Architectural decisions for review": this is the choice the brief
+asked to have flagged, not a design decision made here** — no debug endpoint was added, so nothing here changes
+`server/main.ts`'s route surface.
+
+### Numbers, 4 runs
+
+24/24 bots joined every run, every room's snapshot verified within the wait window, no hash failures, no
+resyncs, no bot closed early, no rejects, 60 (±0.1) ticks/s in every room every run.
+
+| Run | cgroup MB post-verify | cgroup MB peak | RSS MB (last) | Verify time per room (ms: M, M, S, S) | Pass (<200 MB)? |
+|---|---|---|---|---|---|
+| 1 | 171.82 | 172.71 | 154 | 791, 171, 48, 100 | yes |
+| 2 | 95.74 | 96.92 | 145 | 632, 183, 29, 106 | yes |
+| 3 | 103.90 | 104.49 | 154 | 905, 181, 50, 89 | yes |
+| 4 | 104.86 | 107.32 | - | - | yes |
+
+**Pass/fail against the 200 MB bar: PASS, in all 4 runs** — but not by a comfortable, consistent margin. Run 1
+sat at 171.82 MB, only ~28 MB under the 200 MB line (86% of budget); runs 2, 3 and 4 landed in a tight ~95-105
+MB cluster, roughly half that. This is reported plainly rather than rounded to "well under 200 MB": one run in
+four used most of the budget, and nothing in these runs explains why run 1 differs from the rest by roughly
+65-75 MB while online count, tick rate, and snapshot behaviour were identical across all of them. The likely
+cause (not confirmed here) is the same "first activity" jump the pre-R2 table already found between 0 and 8
+members on the fixed worlds (idle 49 MB -> 108 MB at first load) — loading 4 fresh rooms plus their first
+snapshot cycle and verify worker spin-up is exactly that kind of one-off cost, and run 1 may have caught more
+of it inside the measurement window (its verify times were also the run's slowest for its first room: 791 ms,
+though run 3's M-room verify was slower still at 905 ms without the memory to match, so verify time alone does
+not explain the gap). **This 1-in-4 outlier is itself the most useful finding**: a single run, or even three
+clustered runs, reporting "~100 MB, comfortably under 200 MB" would have been true most of the time and
+misleading about the tail.
+
+### Comparison against the pre-R2 two-fixed-world baseline
+
+The pre-R2 table above measured cgroup memory by member count on the two always-loaded fixed worlds (idle 49
+MB, 108 MB at 8 members, 130 MB at 32, 153 MB at 64) and modelled per-member cost at about 0.7 MB. This run's
+24 members across 4 freshly-loaded rooms (not fixed, always-loaded worlds) landed at 95.74-171.82 MB cgroup —
+within or close to the range the old model predicts for 24-32 members on the fixed worlds (it would predict
+roughly 49 + 24 x 0.7 ≈ 66 MB plus the ~50 MB "first activity" jump ≈ 116 MB), which the middle two runs (96,
+104 MB) roughly match, and the first run exceeds by about 55 MB. The old model was built on worlds that are
+already loaded before any bot connects; this bench's 4 rooms incur their "first activity" cost (log, verify
+worker, first snapshot per room) four times over, freshly, inside the measurement window — the old model's
+~50 MB single fixed jump may not directly transfer to "N freshly-loaded rooms load N times over," and these 3
+runs are not enough to separate per-room first-load cost from per-member cost. That split is flagged as unmeasured
+rather than guessed at.
+
+### Surprising
+
+- The ~76 MB spread between run 1 and runs 2/3 on an otherwise identical scenario (same code, same bot count,
+  same room mix, consecutive runs seconds apart) is larger than anything in the pre-R2 table's own measured
+  jumps. It was not chased down further here (see "architectural decisions" above: this slice is a measurement
+  job, not a product-code change) but is flagged for anyone relying on a single run's number.
+- All 4 rooms' snapshots verified well inside the 75 s wait window in every run (max 905 ms), i.e. forcing a
+  verify by waiting out a natural cycle cost at most ~40 s of wall time beyond the join settle, not the 75 s
+  budgeted.

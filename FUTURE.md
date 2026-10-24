@@ -365,3 +365,30 @@ predict or choose the room's starting cave layout.
 - **Why:** a `seed` column is a one-line migration once `server/db.ts` is back in scope for a slice; doing it
   now would have meant touching a file outside this brief's list for a cosmetic-not-yet-urgent gap (the game
   is not live, so no deployed room's layout needs to survive this change).
+
+## A debug route to force `World.requestSnapshot()` for test benches
+
+R2c's capacity-rooms bench needed to force a verify on 4 fresh rooms but found no way to reach
+`World.requestSnapshot()` from outside the server process — no HTTP route calls it, so the bench instead waits
+out a natural `SNAPSHOT_EVERY_TICKS` cycle (up to 30 s per room). That's workable but slow and a little fragile
+(a 75 s wait budget that could, on a bad run, time out before a cycle fires). A test-only route gated behind
+`ADMIN_TOKEN` (same gate `/dashboard` already uses) that calls `requestSnapshot()` on a named world id would let
+any future soak bench force a verify in milliseconds instead of waiting on the clock, without adding any new
+unauthenticated surface.
+
+- **Source:** R2c worker (`docs/briefs/r2c-capacity-remeasure.md`), building `tests/soak/capacity-rooms.ts`.
+- **Why:** every future capacity/soak bench that wants to measure "memory/CPU right after a verify" pays the
+  same up-to-30s wait this one did; a gated debug route removes that tax once, cheaply.
+
+## Capacity benches should run N>=3 times by default, not once
+
+This slice's own numbers are the argument: 4 runs of an identical 24-bots/4-rooms scenario landed at 171.82,
+95.74, 103.90 and 104.86 MB cgroup memory — one run in four nearly 70 MB higher than the rest, for reasons not
+yet identified (see `docs/research/capacity-rooms.md`'s R2c section). A single run would have reported either
+"borderline" or "comfortable" depending on luck. Worth considering making multi-run-by-default (and reporting
+the spread, not just one number) the house style for every future capacity bench, not just this one.
+
+- **Source:** R2c worker, measuring `docs/research/capacity-rooms.md`'s R2c section.
+- **Why:** a capacity number that silently picks its best (or only) run is exactly the kind of overconfident
+  result CLAUDE.md's "treat a red check as authoritative" spirit warns against for correctness; the same logic
+  applies to a measurement that looks green by chance.
