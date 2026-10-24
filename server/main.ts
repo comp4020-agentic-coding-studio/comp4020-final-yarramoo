@@ -1023,14 +1023,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             discardIfFreshlyLoaded(w, wasWarm);
             return rej(capReason, msg.worldId);
           }
-          cancelUnload(w.id); // a join before the empty-room timer fired keeps this room hot
           // Identity for every world and role. A game-world player must hold a known token (its id is the sim id);
           // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
           // anonymous resolve touches nothing in the database. Identity never reaches the sim.
           const spectating = !!(msg.flags & HELLO_SPECTATE);
           const gamePlayer = w.kind === WORLD_GAME && !spectating;
           const who = identity.resolve(msg.token, gamePlayer);
-          if (who === "unknown" && gamePlayer) return rej("unknown token", msg.worldId);
+          if (who === "unknown" && gamePlayer) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("unknown token", msg.worldId);
+          }
+          cancelUnload(w.id); // the join is now known to succeed: keep this room hot (review-r2b.md finding 2 —
+          // this must not run any earlier, or a rejected join here could cancel a legitimate pending unload)
           const visitorId = who === "unknown" ? 0 : who.id;
           const visitorName = who === "unknown" ? "" : who.name;
           const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });

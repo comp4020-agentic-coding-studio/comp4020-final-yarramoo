@@ -233,6 +233,26 @@ describe("R2b fix: a first-ever HELLO rejected by caps must not leak the freshly
   });
 });
 
+describe("R2b fix: a cancelUnload before identity resolution can still reject must not leak a pending unload (review-r2b.md finding 2)", () => {
+  // RED (before the fix): cancelUnload(w.id) ran before identity.resolve's unknown-token check, so a single
+  // bad-token HELLO against a room whose unload timer was armed (its last real member just left) permanently
+  // canceled that timer — the rejected join never calls w.join, so nothing ever re-arms it. This test fails on
+  // the pre-fix code: the room is still loaded well past the (short, test-only) unload deadline.
+  it("a bad-token HELLO to a room whose unload timer is armed does not cancel it; the room still unloads on schedule", async () => {
+    const s = await boot(tmp(), { roomUnloadMs: 200 });
+    const created = await createRoom(s.port, { mode: "deathmatch", cfg: { ...CAVES_PVP, size: 0 } });
+    const who = await register(s.port, "GameJoiner");
+    const a = await connect(s.port, hex, { world: created.id, token: who.token });
+    expect(s.worlds.has(created.id)).toBe(true);
+    a.close(); // last real member leaves: arms the unload timer
+    await sleep(50); // well before the 200ms timer fires
+    // A second HELLO to the same (now-empty, timer-armed) room, with no/unknown token: a game-mode room rejects
+    // a non-spectating join with an unknown token. This must NOT cancel the already-armed unload timer.
+    await expect(connect(s.port, hex, { world: created.id })).rejects.toThrow(/unknown token/);
+    await waitFor(() => !s.worlds.has(created.id), 3000, "room still unloads on schedule, not leaked");
+  });
+});
+
 describe("admission caps (brief item 4)", () => {
   it("rejects a join past the member hard cap with a clear reason", async () => {
     const s = await boot(tmp(), { maxMembersSoft: 1, maxMembersHard: 2 });
