@@ -33,18 +33,19 @@ Decisions
 11. [A config replaces the world kind, and ends a compatibility guarantee](#11-a-config-replaces-the-world-kind-and-ends-a-compatibility-guarantee)
 12. [Rooms land in three slices, the first one inert](#12-rooms-land-in-three-slices-the-first-one-inert)
 13. [The menu wires the client into real rooms for the first time](#13-the-menu-wires-the-client-into-real-rooms-for-the-first-time)
+14. [Creative, and the server split that would have broken its brush](#14-creative-and-the-server-split-that-would-have-broken-its-brush)
 
 Challenges
-14. [The live site went down on 18 October](#14-the-live-site-went-down-on-18-october)
-15. [Snapshot timing, and the correction](#15-snapshot-timing-and-the-correction)
-16. [The late-join test that failed after the world cache](#16-the-late-join-test-that-failed-after-the-world-cache)
-17. [Liquids "stuck in staircases"](#17-liquids-stuck-in-staircases)
-18. [Performance gate P1](#18-performance-gate-p1)
-19. [What independent reviews caught that tests missed](#19-what-independent-reviews-caught-that-tests-missed)
-20. [Snapshot format 3 before any game snapshot exists](#20-snapshot-format-3-before-any-game-snapshot-exists)
-21. [A cross-browser check that tested nothing it named](#21-a-cross-browser-check-that-tested-nothing-it-named)
-22. [An achievement the sim's outputs cannot express](#22-an-achievement-the-sims-outputs-cannot-express)
-23. [The merge rehearsal: two bugs only the real image could show](#23-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
+15. [The live site went down on 18 October](#15-the-live-site-went-down-on-18-october)
+16. [Snapshot timing, and the correction](#16-snapshot-timing-and-the-correction)
+17. [The late-join test that failed after the world cache](#17-the-late-join-test-that-failed-after-the-world-cache)
+18. [Liquids "stuck in staircases"](#18-liquids-stuck-in-staircases)
+19. [Performance gate P1](#19-performance-gate-p1)
+20. [What independent reviews caught that tests missed](#20-what-independent-reviews-caught-that-tests-missed)
+21. [Snapshot format 3 before any game snapshot exists](#21-snapshot-format-3-before-any-game-snapshot-exists)
+22. [A cross-browser check that tested nothing it named](#22-a-cross-browser-check-that-tested-nothing-it-named)
+23. [An achievement the sim's outputs cannot express](#23-an-achievement-the-sims-outputs-cannot-express)
+24. [The merge rehearsal: two bugs only the real image could show](#24-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
 
 ---
 
@@ -171,7 +172,7 @@ by platform. 1024 entries is 2 KB, against 128 KB for a full 16-bit
 table, and the aim resolution is about 0.35 degrees (D-075).
 
 **Cost / consequences.** Every random draw costs three mix rounds, and profiling
-later found draws that could not matter (entry 18). Long-range spells would
+later found draws that could not matter (entry 19). Long-range spells would
 need a finer table.
 
 **Evidence.** [plan.md section 6.3](plan.md); D-051, D-075, D-087;
@@ -422,7 +423,7 @@ Refusing anonymous painters, which would break old tabs.
 **Why.** A stored hash means a database leak does not leak sessions. The id is
 the sim id so the entity returns without a lookup table.
 
-**Cost / consequences.** Anti-teleport was harder than it looked, see entry 19
+**Cost / consequences.** Anti-teleport was harder than it looked, see entry 20
 for the exploit. A zero token once minted a permanent player on every connect,
 so an unclaimable token no longer gets a player (D-069).
 
@@ -512,7 +513,7 @@ live and world resets are fine until the user says otherwise. If the sandbox is 
 protocol-level config, this needs a migration path first. Separately, `RoomConfig.max_players` is decoded, hashed
 and range-checked (2..=8) but not yet enforced against the live player count: only the pre-existing global
 `MAX_PLAYERS = 1024` gates joins. This was flagged independently by the worker and by a cold second review
-(entry 19), and is deferred, not forgotten (D-138) — it's strictly more permissive than before, not a new hole, but
+(entry 20), and is deferred, not forgotten (D-138) — it's strictly more permissive than before, not a new hole, but
 R2/R6 (Survival's lobby cap) must not assume it already works.
 
 **R1: every (terrain, size) combination, not just the two presets.** A config's `terrain` and `size` fields were
@@ -690,9 +691,54 @@ red check as authoritative" sections exist for: the full suite was green the who
 [`3c9d465`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3c9d465)
 (the `/game` route fix found by the Docker boot).
 
+## 14. Creative, and the server split that would have broken its brush
+
+**Context.** Creative is the first room with both `avatars: 1` and `brushes: 1` — every earlier room had one or
+the other, never both. The sim side of that was straightforward: `cfg.paint_allowed()` (R0a) already checks
+`brushes` independently of `avatars`, so nothing in `sim/` needed to change to let an avatar-capable room also
+paint. The rest of R4 followed the same shape as every config-driven milestone since R0a: a fill-empty Paint
+flag (one bit reused in the existing frame, not a protocol bump), two already-defined but inert config helpers
+(`cfg.all_spells()`, `cfg.damage_from_players()`/`damage_from_env()`) finally wired into real sim rules, and a
+new preset.
+
+**What the worker found, and correctly didn't fix.** Booting the real server and joining a real Creative room
+(the brief's own commit 7) found that every Paint input was rejected, server-side, before the sim ever saw it.
+`server/main.ts`'s input dispatch — written in R2b, before a room's config could set `avatars` and `brushes`
+independently — treated `World.kind === WORLD_GAME` and "accepts Paint" as mutually exclusive: a game-world
+connection could only send Pos or Cast, a sandbox connection only Paint. Every sim-level test for the fill-empty
+flag, unlimited spells and damage-off passed, because none of them went through the real socket dispatch — the
+gap was invisible to everything this slice's own brief asked it to test. The worker diagnosed the exact cause
+and the exact fix, but correctly left it alone: `server/*` was outside this brief's file list, and brief
+discipline cuts both ways — a worker that oversteps its scope to "just fix it" is the same failure mode as one
+that silently papers over a gap.
+
+**The fix.** The session model reproduced the rejection directly (a standalone script joining a real Creative
+room, confirmed rejected), wrote a red-then-green regression test, then made the dispatch's game-world branch
+accept Paint when `w.cfg.brushes === 1`, falling through to the same `stampClient` path every other input kind
+already uses — a few-line change, not a redesign, exactly as diagnosed. Re-verified end to end against a fresh
+Docker container: the room's own session summary logged `"paints":"sand:1","rejected":0`. In the same pass,
+fixed `client/menu.ts`'s Creative mode card, which had a hand-duplicated `avatars: 0` config predating the real
+`CREATIVE` preset — the menu's own Creative button would have created an avatar-less room with no brush/spell
+toggle, now imports `CREATIVE` from `shared/room.ts` directly so the two can never drift apart again.
+
+**Why this is worth recording.** This is the same lesson as R3's `/game` 404 (entry 13) and the M3/M4b findings
+in entry 20, told from the opposite direction: there, an independent reviewer or a Docker boot caught a bug
+*despite* a green suite. Here, a worker's own Docker boot caught it, correctly scoped the fix as out of bounds,
+and reported it clearly enough that closing the gap took minutes, not a re-investigation. A brief's file-list
+boundary is there so one slice's worker doesn't accidentally destabilise a file another slice owns — it is not
+a reason to ship a feature whose headline mechanic doesn't work over the wire. The fix belongs to whoever is
+reviewing the slice, immediately, not to a future "fix the Paint bug" brief.
+
+**Evidence.** D-146, D-147; [plan-game-modes.md](plan-game-modes.md) "Sandspiel-style brushes (Creative)";
+[r4-worker-report.md](research/r4-worker-report.md);
+[`6ae0b66`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/6ae0b66)
+(spells and damage wired to config, the `respawn_secs` bug fix),
+[`8d473dd`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8d473dd)
+(the server dispatch fix and the menu.ts correction).
+
 ---
 
-## 14. The live site went down on 18 October
+## 15. The live site went down on 18 October
 
 **What happened.** The sandbox stopped serving. Every cold start threw
 `RangeError: Maximum call stack size exceeded` in `loadFromDb`, and Fly gave up
@@ -709,7 +755,7 @@ HTTP; fixed, 150,000 ticks loaded and HTTP 200 (D-099).
 
 **How it broke.** A cold start restores the last snapshot, then replays every
 tick logged since. The log should stay short, because each new snapshot lets the
-server drop the log before it. Snapshots had stopped for days (entry 15), so the
+server drop the log before it. Snapshots had stopped for days (entry 16), so the
 log kept growing until one ordinary restart crossed a line nobody knew was there:
 
 ```mermaid
@@ -749,14 +795,14 @@ cold-starts, and fails with the same RangeError without the fix.
 
 **What changed.** The log is appended one frame at a time. The fix went onto
 `main` first and then `multa`. Why the log had grown so long was not answered
-by D-099; entry 15 is that investigation.
+by D-099; entry 16 is that investigation.
 
 **Evidence.** D-099;
 [`2c70ceb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2c70ceb)
 (hotfix on `main`),
 [`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2).
 
-## 15. Snapshot timing, and the correction
+## 16. Snapshot timing, and the correction
 
 **What happened.** A log that should be short, because verified snapshots
 normally truncate it, had grown past 130,000 ticks. Research
@@ -808,7 +854,7 @@ The visitors-leaving explanation is inferred, because visit lengths were not log
 [`70355c5`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/70355c5),
 [`943cefc`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/943cefc).
 
-## 16. The late-join test that failed after the world cache
+## 17. The late-join test that failed after the world cache
 
 **What happened.** After caching the generated world so a join did not generate
 twice (D-088, joins went from 1170 ms to 320 to 520 ms, measured in Node wasm),
@@ -831,7 +877,7 @@ had passed two runs in three before is not established.
 [`4ad1435`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/4ad1435),
 [`5e417ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5e417ed).
 
-## 17. Liquids "stuck in staircases"
+## 18. Liquids "stuck in staircases"
 
 **What happened.** From play, a lava heap looked like a staircase on chunk edges,
 48 rows high after 100 s.
@@ -854,7 +900,7 @@ the user sees.
 [`f48a500`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f48a500),
 [`42e167a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/42e167a).
 
-## 18. Performance gate P1
+## 19. Performance gate P1
 
 **What happened.** The plan set a worst-case budget: step time p95 of at most
 8 ms with four players each lighting a fire and a flood. The G2 run found N1,
@@ -881,7 +927,7 @@ spell can make, and a real phone was never measured.
 [`3111461`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3111461),
 [`3c5188a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3c5188a).
 
-## 19. What independent reviews caught that tests missed
+## 20. What independent reviews caught that tests missed
 
 **What happened.** Slices that set structure were read cold by a fresh reviewer.
 Three findings show why.
@@ -915,7 +961,7 @@ from where the system ships.
 [`08b1dd7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/08b1dd7),
 [`e46c83f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e46c83f).
 
-## 20. Snapshot format 3 before any game snapshot exists
+## 21. Snapshot format 3 before any game snapshot exists
 
 **Context.** Dropped bags (M5 slice 3) add a section to the entity bytes, which
 are inside every game snapshot and the state hash. The live sandbox is the one
@@ -955,7 +1001,7 @@ untouched (D-112).
 [`b71a386`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b71a386).
 
 
-## 21. A cross-browser check that tested nothing it named
+## 22. A cross-browser check that tested nothing it named
 
 **What happened.** M5 added damage, death, respawn, Fire bolt, Bomb and dropped
 bags (D-102 to D-113). The determinism suite had a game-world test called "D2
@@ -988,7 +1034,7 @@ sim changes. Bag expiry, bag merging and lava deaths are not in it yet.
 [`94290ce`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/94290ce),
 [`5b5de22`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5b5de22).
 
-## 22. An achievement the sim's outputs cannot express
+## 23. An achievement the sim's outputs cannot express
 
 **What happened.** Plan 10 defined "Shoved to their doom" as a kill whose last hit
 was Push or Blast. Slice b awards kill achievements from a majority claim about
@@ -1031,7 +1077,7 @@ Before review S1, anonymous tabs could vote and raise the quorum, so a dozen of 
 
 **Evidence.** D-118 to D-120; commit `89988b1`.
 
-## 23. The merge rehearsal: two bugs only the real image could show
+## 24. The merge rehearsal: two bugs only the real image could show
 
 **What happened.** Before merging `multa` into `main` for crit 10, the merge was rehearsed in a scratch copy: merge locally, build the real Docker image, and boot it on data written by the build then deployed. Every test was green at the time.
 
