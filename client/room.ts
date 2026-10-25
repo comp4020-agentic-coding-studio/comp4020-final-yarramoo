@@ -56,6 +56,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
 
   let selected = 4;
   let radius = 4;
+  let fillEmpty = false;
 
   // Palette
   const palette = $("palette");
@@ -81,6 +82,42 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     radius = Number(brush.value);
     $("brushOut").textContent = brush.value;
   };
+  // Fill-empty toggle (R4): paint sand without erasing rock. Client-side state only — the flag rides in
+  // the Paint input's mat byte (shared/inputs.ts's encodePaint, sim/src/input.rs's FILL_EMPTY_BIT).
+  const fillEmptyEl = document.getElementById("fillEmpty") as HTMLInputElement | null;
+  if (fillEmptyEl) {
+    fillEmptyEl.onchange = () => {
+      fillEmpty = fillEmptyEl.checked;
+    };
+  }
+
+  // Brush/spell-bar switch (R4): Creative is the first room with both avatars and brushes on at once
+  // (cfg.brushes === 1 && cfg.avatars === 1), so the two panels need a way to coexist without one hiding
+  // the other outright. Defaults to Brush; the switch itself only shows when both panels would otherwise
+  // compete (see `body.dual-tools` below), which the config check after `cfg` is known sets.
+  let toolMode: "brush" | "spells" = "brush";
+  const toolBrushBtn = document.getElementById("toolBrush") as HTMLButtonElement | null;
+  const toolSpellsBtn = document.getElementById("toolSpells") as HTMLButtonElement | null;
+  function applyToolMode() {
+    const showBrush = toolMode === "brush";
+    palette.hidden = !showBrush;
+    const brushRow = document.querySelector(".brush-row") as HTMLElement | null;
+    if (brushRow) brushRow.hidden = !showBrush;
+    toolBrushBtn?.setAttribute("aria-pressed", String(showBrush));
+    toolSpellsBtn?.setAttribute("aria-pressed", String(!showBrush));
+  }
+  if (toolBrushBtn && toolSpellsBtn) {
+    toolBrushBtn.onclick = () => {
+      toolMode = "brush";
+      applyToolMode();
+      spellBar.hidden = true;
+    };
+    toolSpellsBtn.onclick = () => {
+      toolMode = "spells";
+      applyToolMode();
+      spellBar.hidden = !steersAvatar() || !(lastPlayers?.spells ?? false);
+    };
+  }
 
   // Dev route: ?world=game runs a LOCAL single-player sim of the game world (no networking, the dev-only
   // wasm where Paint works). The networked path is untouched and stays on the sandbox.
@@ -95,6 +132,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   // the old fixed id 1). ?spectate=1 forces it for testing.
   const spectate = avatarCapable && (params.get("spectate") === "1" || (matchMedia("(pointer: coarse)").matches && innerWidth < 900));
   document.body.classList.toggle("game", avatarCapable);
+  // R4: Creative is the first room with both avatars and brushes on at once. Only then does the brush/
+  // spell-bar switch need to show; every other room still has exactly one of the two panels, as before.
+  const dualTools = avatarCapable && cfg.brushes === 1 && !spectate;
+  document.body.classList.toggle("dual-tools", dualTools);
+  if (dualTools) applyToolMode();
   // Dev-only: the production build serves no sim-dev.wasm, so the route must not exist there.
   const localKind = import.meta.env.DEV && params.get("world") === "game" ? 1 : null;
   /** Dev route + ?avatar=1: a local avatar (player 1) that can cast and die; painting then goes through window.__devPaint. */
@@ -211,8 +253,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   let selectedSpell = 0;
   let castHeld = false;
   let aimAt: { x: number; y: number } | null = null;
-  /** Only a player in an avatar-capable room casts; the sandbox paints and a spectator watches. */
-  const castsOnClick = () => avatarCapable && !spectate && (localKind === null || devAvatar) && worldKind === 1;
+  /** Only a player in an avatar-capable room casts; the sandbox paints and a spectator watches. In a
+   * dual-tools room (Creative), the brush/spell switch decides which the click does. */
+  const castsOnClick = () => avatarCapable && !spectate && (localKind === null || devAvatar) && worldKind === 1 && (!dualTools || toolMode === "spells");
 
   /** Angle from my chest to the pointer, quantised to u16 here so the input never carries a float (invariant 2). */
   function castNow() {
@@ -251,11 +294,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       };
     };
     const post = (kind: "down" | "move" | "up", e: PointerEvent) => {
-      // The game world has no painting: Paint is sandbox-only (the dev route aside).
-      if (worldKind !== 0 && localKind === null) return;
+      // A plain avatar room has no painting (Paint is sandbox-only, the dev route aside); a dual-tools
+      // room (Creative) paints whenever the brush/spell switch is set to Brush (R4).
+      const paintsHere = worldKind === 0 || (dualTools && toolMode === "brush");
+      if (!paintsHere && localKind === null) return;
       if (devAvatar) return;
       const p = toCell(e);
-      send({ type: "pointer", kind, x: p.x, y: p.y, mat: selected, radius });
+      send({ type: "pointer", kind, x: p.x, y: p.y, mat: selected, radius, fillEmpty });
     };
     let down = false;
     let panning = false;
@@ -588,7 +633,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     placeLabels();
     socialTick(false);
     hud.hidden = !steersAvatar();
-    spellBar.hidden = !steersAvatar() || !m.spells;
+    // In a dual-tools room (Creative), the spell bar only shows while the switch is set to Spells, so it
+    // never competes with the brush panel for the same screen space.
+    spellBar.hidden = !steersAvatar() || !m.spells || (dualTools && toolMode !== "spells");
     renderSpellBar();
     const bars = hud.querySelectorAll<HTMLElement>(".bar i");
     bars[0].style.width = `${Math.round((m.energy / m.energyMax) * 100)}%`;
@@ -827,8 +874,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   };
   (window as unknown as Record<string, unknown>).__devPaint = (x: number, y: number, mat: number, r: number) => {
     if (!devAvatar) return;
-    send({ type: "pointer", kind: "down", x, y, mat, radius: r });
-    send({ type: "pointer", kind: "up", x, y, mat, radius: r });
+    send({ type: "pointer", kind: "down", x, y, mat, radius: r, fillEmpty: false });
+    send({ type: "pointer", kind: "up", x, y, mat, radius: r, fillEmpty: false });
   };
   if (import.meta.env.DEV) {
     // Dev route only: walk the local avatar onto the nearest pickup (4 = Fire bolt, 5 = Bomb) to see those visuals.

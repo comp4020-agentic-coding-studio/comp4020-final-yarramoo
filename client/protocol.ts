@@ -39,7 +39,7 @@ export type ToWorker =
   /** Switch to sending frames to the main thread (render fallback). */
   | { type: "frames" }
   | { type: "devgoto"; spell: number }
-  | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number };
+  | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number; fillEmpty: boolean };
 
 export type FromWorker =
   | { type: "ready"; path: "worker-webgl2" | "main-thread-fallback" }

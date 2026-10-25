@@ -24,6 +24,12 @@
     .brush { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 13px; }
     .brush input { flex: 1; max-width: 260px; height: 28px; }
     .brush output { min-width: 2ch; color: var(--fg); }
+    .brush-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .fill-toggle { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; white-space: nowrap; }
+    #toolSwitch { display: none; gap: 6px; padding-bottom: 6px; }
+    #toolSwitch button { font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--dim); cursor: pointer; }
+    #toolSwitch button[aria-pressed="true"] { border-color: var(--accent); color: var(--fg); background: #17202f; }
+    body.dual-tools #toolSwitch { display: flex; }
     #catchup { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(340px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px 18px; background: rgba(20, 22, 28, 0.92); border: 1px solid #3a3f4b; border-radius: 10px; color: #e6e6e6; font-size: 14px; z-index: 20; pointer-events: none; }
     #catchup[hidden] { display: none; }
     #catchup h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
@@ -95,6 +101,8 @@
     #join button { font: inherit; padding: 9px 12px; border-radius: 6px; border: 0; background: var(--accent); color: #0b0e14; font-weight: 600; cursor: pointer; }
     body.game footer { display: none; }
     body.game canvas { cursor: crosshair; }
+    /* R4: Creative keeps the footer (brush panel) visible even though it is also an avatar room. */
+    body.game.dual-tools footer { display: block; }
 
     /* R3: the main menu (docs/plan-game-modes.md "The main menu"). */
     .menu { max-width: 960px; margin: 0 auto; padding: 0 0 40px; }
@@ -188,8 +196,15 @@
     </div>
     <div id="note" hidden></div>
     <footer>
+      <div id="toolSwitch" role="group" aria-label="Tool">
+        <button type="button" id="toolBrush" aria-pressed="true">Brush</button>
+        <button type="button" id="toolSpells" aria-pressed="false">Spells</button>
+      </div>
       <div id="palette" role="group" aria-label="Material"></div>
-      <label class="brush">Brush <input id="brush" type="range" min="1" max="16" value="4" /> <output id="brushOut">4</output></label>
+      <div class="brush-row">
+        <label class="brush">Brush <input id="brush" type="range" min="1" max="32" value="4" /> <output id="brushOut">4</output></label>
+        <label class="fill-toggle"><input id="fillEmpty" type="checkbox" /> Fill empty only</label>
+      </div>
     </footer>
   </div>
   <script type="module" src="./main.ts"></script>

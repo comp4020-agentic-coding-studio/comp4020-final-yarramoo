@@ -141,7 +141,7 @@ let lastFxAt = 0;
 
 // Paint stroke assembly: a drag sends one segment per SEND_EVERY_MS from the last sent point.
 let anchor: { x: number; y: number } | null = null;
-let latest: { x: number; y: number; mat: number; radius: number } | null = null;
+let latest: { x: number; y: number; mat: number; radius: number; fillEmpty: boolean } | null = null;
 let dirty = false;
 let lastSend = 0;
 
@@ -166,13 +166,13 @@ function postStatus() {
   });
 }
 
-function sendPaint(mat: number, x0: number, y0: number, x1: number, y1: number, radius: number) {
+function sendPaint(mat: number, x0: number, y0: number, x1: number, y1: number, radius: number, fillEmpty: boolean) {
   if (localSim) {
-    localSim.pushInput(encodePaint(0, mat, x0, y0, x1, y1, radius));
+    localSim.pushInput(encodePaint(0, mat, x0, y0, x1, y1, radius, fillEmpty));
     return;
   }
   if (!ws || ws.readyState !== WebSocket.OPEN || net !== "live") return;
-  const payload = encodePaint(0, mat, x0, y0, x1, y1, radius).subarray(5);
+  const payload = encodePaint(0, mat, x0, y0, x1, y1, radius, fillEmpty).subarray(5);
   if (payload.length !== PAINT_PAYLOAD_LEN) return;
   ws.send(encodeInput(++inputSeq, KIND_PAINT, payload) as BufferSource);
   sentAt.push(performance.now());
@@ -182,7 +182,7 @@ function flushStroke(force: boolean) {
   if (!dirty || !anchor || !latest) return;
   const now = performance.now();
   if (!force && now - lastSend < SEND_EVERY_MS) return;
-  sendPaint(latest.mat, anchor.x, anchor.y, latest.x, latest.y, latest.radius);
+  sendPaint(latest.mat, anchor.x, anchor.y, latest.x, latest.y, latest.radius, latest.fillEmpty);
   anchor = { x: latest.x, y: latest.y };
   dirty = false;
   lastSend = now;
@@ -204,12 +204,12 @@ function onPointer(m: Extract<ToWorker, { type: "pointer" }>) {
   }
   if (m.kind === "down" || !anchor) {
     anchor = { x, y };
-    latest = { x, y, mat: m.mat, radius: m.radius };
+    latest = { x, y, mat: m.mat, radius: m.radius, fillEmpty: m.fillEmpty };
     dirty = true;
     flushStroke(true);
     return;
   }
-  latest = { x, y, mat: m.mat, radius: m.radius };
+  latest = { x, y, mat: m.mat, radius: m.radius, fillEmpty: m.fillEmpty };
   dirty = true;
   flushStroke(false);
 }
