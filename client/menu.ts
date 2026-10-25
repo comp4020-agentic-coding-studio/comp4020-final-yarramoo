@@ -2,7 +2,7 @@
 // sheet with a share bar, and the name sheet on first join/create. Live preview is deferred (see FUTURE.md
 // and the worker report's "Architectural decisions for review" — not built in this slice, flagged rather than
 // rushed, per the brief's own conditional wording for commit 6).
-import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, CREATIVE, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 interface ModeDef {
@@ -37,7 +37,10 @@ const MODES: ModeDef[] = [
     rule: "Build together. No damage.",
     pvp: false,
     icon: "/icons/creative.png",
-    cfg: { terrain: 1, size: 1, avatars: 0, damage: 0, spells: 1, brushes: 1, death: 0, respawnSecs: 1, pickupRespawn: 1, round: 0, maxPlayers: 8 },
+    // R4: CREATIVE from shared/room.ts (avatars: 1), not a hand-duplicated literal — this card previously had
+    // avatars: 0, which would have created an avatar-less room indistinguishable from an upgraded sandbox and
+    // never shown the brush/spell-bar toggle R4 built. Found during R4's review, fixed here.
+    cfg: CREATIVE,
   },
 ];
 

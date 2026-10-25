@@ -1131,7 +1131,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             return;
           }
           if (w.kind === WORLD_GAME) {
-            // Game world: only Pos (validated) and Cast. Join/Leave are the server's; Paint is sandbox-only.
+            // Game world: Pos (validated) and Cast for every avatar room; Paint too when the room's own config
+            // allows brushes (R4: Creative has both avatars and brushes, so Paint is no longer sandbox-only —
+            // the old "Game world never paints" split predates a config that can set brushes independently of
+            // avatars). Join/Leave are still the server's.
             if (!joined.playerId) return void badInput(w, joined.conn, "spectator_input", msg.kind);
             if (msg.kind === KIND_POS && msg.payload.length === POS_PAYLOAD_LEN) {
               if (!w.acceptPos(joined.conn, msg.payload)) {
@@ -1147,12 +1150,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               joined.counts.position(depth);
               // Only a deeper maximum can newly satisfy Spelunker, so most Pos inputs stop here.
               if (playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth)) achievements.onStat(joined.visitorId, STAT_MAX_DEPTH, { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
-            } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
-            else {
+            } else if (msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN) {
               // Counted as an attempt (plan 10). Never one log line per cast: input.summary carries the counts.
               joined.counts.cast(spellKey(msg.payload[0]));
               playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
               achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+            } else if (w.cfg.brushes === 1 && msg.kind === KIND_PAINT && msg.payload.length === PAINT_PAYLOAD_LEN) {
+              joined.counts.paint(materialKey(msg.payload[0]));
+              playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+            } else {
+              return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
             }
             if (!w.stampClient({ player: joined.playerId, kind: msg.kind, payload: msg.payload })) dropHeld(w, joined.conn);
             return;

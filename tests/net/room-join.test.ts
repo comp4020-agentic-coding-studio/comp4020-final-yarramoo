@@ -9,7 +9,7 @@ import { startServer, type RunningServer } from "../../server/main.ts";
 import { GameDb } from "../../server/db.ts";
 import { RoomsStore } from "../../server/rooms.ts";
 import { World, SANDBOX_SEED } from "../../server/world.ts";
-import { CLASSIC_SANDBOX, CAVES_PVP, encodeConfig, SIZE_DIMS, type RoomConfig } from "../../shared/room.ts";
+import { CLASSIC_SANDBOX, CAVES_PVP, CREATIVE, encodeConfig, SIZE_DIMS, type RoomConfig } from "../../shared/room.ts";
 import { POS_ONE } from "../../shared/avatar.ts";
 import { encodeHello, PROTOCOL_VERSION, decodeServer } from "../../shared/protocol.ts";
 import WebSocket from "ws";
@@ -284,5 +284,56 @@ describe("admission caps (brief item 4)", () => {
     const another = await createRoom(s.port);
     await expect(connect(s.port, hex, { world: another.id })).rejects.toThrow(/server busy/);
     a.close();
+  });
+});
+
+describe("R4 fix: a Creative room (avatars and brushes both on) accepts Paint over the real socket path", () => {
+  // RED (before the fix): server/main.ts's input dispatch treated `World.kind === WORLD_GAME` and "accepts
+  // Paint" as mutually exclusive (a pre-existing split from before a room's config could set `avatars` and
+  // `brushes` independently). Creative has both, so every Paint input was rejected as "bad_kind_or_length"
+  // before it ever reached the sim, even though sim.rs's own cfg.paint_allowed() (R0a) already allows it.
+  // Found by booting the real server and joining a real Creative room during R4, not by any existing test.
+  it("Paint is stamped into the tick log, not rejected as bad_kind_or_length", async () => {
+    const s = await boot(tmp());
+    const created = await createRoom(s.port, { mode: "creative", cfg: CREATIVE });
+    const who = await register(s.port, "Painter");
+    const a = await connect(s.port, hex, { world: created.id, token: who.token });
+    const before = s.stats.rejected;
+    a.paint(4, 10, 10, 20, 20, 3); // Sand, a short stroke
+    await sleep(150);
+    expect(s.stats.rejected, "Paint must not be rejected in a brushes:1 game-mode room").toBe(before);
+    a.close();
+  });
+
+  it("Pos and Cast still work in the same Creative room (the avatar half is unaffected by the fix)", async () => {
+    const s = await boot(tmp());
+    const created = await createRoom(s.port, { mode: "creative", cfg: CREATIVE });
+    const who = await register(s.port, "Avatar");
+    const a = await connect(s.port, hex, { world: created.id, token: who.token });
+    const before = s.stats.rejected;
+    a.move(5, 5);
+    await sleep(150);
+    expect(s.stats.rejected, "Pos must still be accepted in an avatar room").toBe(before);
+    a.close();
+  });
+
+  it("the sandbox still refuses Pos/Cast, and a non-brushes game room still refuses Paint", async () => {
+    const s = await boot(tmp());
+    const sandbox = await createRoom(s.port, { mode: "sandbox", cfg: CLASSIC_SANDBOX });
+    const sb = await connect(s.port, hex, { world: sandbox.id });
+    const beforeSb = s.stats.rejected;
+    sb.move(5, 5);
+    await sleep(150);
+    expect(s.stats.rejected, "Pos must still be refused in a brushes-only room").toBeGreaterThan(beforeSb);
+    sb.close();
+
+    const dm = await createRoom(s.port, { mode: "deathmatch", cfg: { ...CAVES_PVP, size: 0 } });
+    const who = await register(s.port, "NoBrush");
+    const g = await connect(s.port, hex, { world: dm.id, token: who.token });
+    const beforeDm = s.stats.rejected;
+    g.paint(4, 10, 10, 20, 20, 3);
+    await sleep(150);
+    expect(s.stats.rejected, "Paint must still be refused in an avatars-only room").toBeGreaterThan(beforeDm);
+    g.close();
   });
 });
