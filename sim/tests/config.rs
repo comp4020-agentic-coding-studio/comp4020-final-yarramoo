@@ -10,16 +10,18 @@ fn hex(s: &str) -> Vec<u8> {
 const CLASSIC: &str = "01020000000001000000000800000000";
 const CAVES: &str = "01000201020000000301000800000000";
 const SURVIVAL: &str = "01000101020000010000010400000000";
+const CREATIVE: &str = "01010101000101000101000800000000";
 
 #[test]
 fn presets_encode_to_the_shared_vectors() {
     assert_eq!(RoomConfig::classic_sandbox().encode().to_vec(), hex(CLASSIC));
     assert_eq!(RoomConfig::caves_pvp().encode().to_vec(), hex(CAVES));
+    assert_eq!(RoomConfig::creative().encode().to_vec(), hex(CREATIVE));
 }
 
 #[test]
 fn good_vectors_round_trip() {
-    for h in [CLASSIC, CAVES, SURVIVAL] {
+    for h in [CLASSIC, CAVES, SURVIVAL, CREATIVE] {
         let b = hex(h);
         let c = RoomConfig::decode(&b).unwrap_or_else(|| panic!("{h} refused"));
         assert_eq!(c.encode().to_vec(), b);

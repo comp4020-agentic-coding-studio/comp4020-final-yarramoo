@@ -1,6 +1,6 @@
 // R0a: the room config table in shared/room.ts, checked against the same byte vectors as sim/tests/config.rs.
 import { describe, expect, it } from "vitest";
-import { CAVES_PVP, CLASSIC_SANDBOX, decodeConfig, encodeConfig } from "../../shared/room.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, CREATIVE, decodeConfig, encodeConfig } from "../../shared/room.ts";
 
 const hex = (s: string) => Uint8Array.from(s.match(/../g) ?? [], (h) => parseInt(h, 16));
 const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
@@ -8,6 +8,7 @@ const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2,
 const CLASSIC = "01020000000001000000000800000000";
 const CAVES = "01000201020000000301000800000000";
 const SURVIVAL = "01000101020000010000010400000000";
+const CREATIVE_HEX = "01010101000101000101000800000000";
 
 // (why, byte index, new value) applied to the classic vector; same table as sim/tests/config.rs.
 const MUTATIONS: [string, number, number][] = [
@@ -34,10 +35,11 @@ describe("room config (shared/room.ts)", () => {
   it("presets encode to the shared vectors", () => {
     expect(toHex(encodeConfig(CLASSIC_SANDBOX))).toBe(CLASSIC);
     expect(toHex(encodeConfig(CAVES_PVP))).toBe(CAVES);
+    expect(toHex(encodeConfig(CREATIVE))).toBe(CREATIVE_HEX);
   });
 
   it("good vectors round-trip", () => {
-    for (const h of [CLASSIC, CAVES, SURVIVAL]) {
+    for (const h of [CLASSIC, CAVES, SURVIVAL, CREATIVE_HEX]) {
       const c = decodeConfig(hex(h));
       expect(c, h).not.toBeNull();
       expect(toHex(encodeConfig(c!))).toBe(h);

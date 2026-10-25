@@ -55,6 +55,11 @@ export const CLASSIC_SANDBOX: RoomConfig = {
 export const CAVES_PVP: RoomConfig = {
   terrain: 0, size: 2, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawnSecs: 3, pickupRespawn: 1, round: 0, maxPlayers: 8,
 };
+/** R4: brushes and avatars together (plan-game-modes.md "Presets"). Solid box, not Caves (see
+ * sim/src/config.rs's `creative()` for why); Caves is an equally valid advanced-sheet choice. */
+export const CREATIVE: RoomConfig = {
+  terrain: 1, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawnSecs: 1, pickupRespawn: 1, round: 0, maxPlayers: 8,
+};
 
 export function encodeConfig(c: RoomConfig): Uint8Array {
   const b = new Uint8Array(CONFIG_BYTES);
