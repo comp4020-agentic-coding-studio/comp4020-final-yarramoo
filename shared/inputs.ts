@@ -41,6 +41,10 @@ export function encodeCast(player: number, spell: number, angle: number, castSeq
   return b;
 }
 
+/** Bit 7 of the Paint input's `mat` byte: "fill empty only" (ids 0-14 use only the low 4 bits). Matches
+ * `sim/src/input.rs`'s `FILL_EMPTY_BIT`. */
+export const FILL_EMPTY_BIT = 0x80;
+
 export function encodePaint(
   player: number,
   mat: number,
@@ -49,9 +53,10 @@ export function encodePaint(
   x1: number,
   y1: number,
   radius: number,
+  fillEmpty = false,
 ): Uint8Array {
   const { b, v } = make(15, KIND_PAINT, player);
-  v.setUint8(5, mat);
+  v.setUint8(5, mat | (fillEmpty ? FILL_EMPTY_BIT : 0));
   v.setInt16(6, x0, true);
   v.setInt16(8, y0, true);
   v.setInt16(10, x1, true);

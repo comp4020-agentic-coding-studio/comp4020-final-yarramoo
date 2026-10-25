@@ -6,8 +6,14 @@ pub enum Input {
     Leave { player: u32 },
     Pos { player: u32, life: u16, x: i32, y: i32, facing: u8 },
     Cast { player: u32, spell: u8, angle: u16, cast_seq: u16 },
-    Paint { player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, radius: u8 },
+    // `mat`'s bit 7 is extracted into `fill_empty` at decode (material ids are 0-14, 4 bits); `mat` itself
+    // is already masked down to the plain material id, so nothing downstream needs to know about the flag
+    // bit at all (R4, plan-game-modes.md "Paint modes").
+    Paint { player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, radius: u8, fill_empty: bool },
 }
+
+/// The fill-empty flag bit within the Paint input's `mat` byte (bit 7; ids 0-14 use only the low 4 bits).
+pub const FILL_EMPTY_BIT: u8 = 0x80;
 
 struct R<'a>(&'a [u8], usize);
 impl R<'_> {
@@ -57,22 +63,34 @@ pub fn decode(b: &[u8]) -> Result<Input, ()> {
         2 => Input::Leave { player },
         3 => Input::Pos { player, life: r.u16(), x: r.i32(), y: r.i32(), facing: r.u8() },
         4 => Input::Cast { player, spell: r.u8(), angle: r.u16(), cast_seq: r.u16() },
-        _ => Input::Paint {
-            player,
-            mat: r.u8(),
-            x0: r.i16(),
-            y0: r.i16(),
-            x1: r.i16(),
-            y1: r.i16(),
-            radius: r.u8(),
-        },
+        _ => {
+            let raw = r.u8();
+            Input::Paint {
+                player,
+                mat: raw & !FILL_EMPTY_BIT,
+                x0: r.i16(),
+                y0: r.i16(),
+                x1: r.i16(),
+                y1: r.i16(),
+                radius: r.u8(),
+                fill_empty: raw & FILL_EMPTY_BIT != 0,
+            }
+        }
     })
 }
 
 pub fn encode_paint(player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, radius: u8) -> Vec<u8> {
+    encode_paint_mode(player, mat, x0, y0, x1, y1, radius, false)
+}
+
+/// As `encode_paint`, with the fill-empty flag (bit 7 of the `mat` byte) set when `fill_empty` is true.
+/// One argument per wire field, matching `encode_paint`'s own shape; a struct would need its own
+/// unpacking at both call sites for no real gain (this is a thin, mechanical test/bench helper).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_paint_mode(player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, radius: u8, fill_empty: bool) -> Vec<u8> {
     let mut v = vec![5];
     v.extend_from_slice(&player.to_le_bytes());
-    v.push(mat);
+    v.push(mat | if fill_empty { FILL_EMPTY_BIT } else { 0 });
     for n in [x0, y0, x1, y1] {
         v.extend_from_slice(&n.to_le_bytes());
     }
@@ -131,8 +149,19 @@ mod tests {
         );
         assert_eq!(
             decode(&encode_paint(2, 4, -1, 2, 300, 4, 3)),
-            Ok(Input::Paint { player: 2, mat: 4, x0: -1, y0: 2, x1: 300, y1: 4, radius: 3 })
+            Ok(Input::Paint { player: 2, mat: 4, x0: -1, y0: 2, x1: 300, y1: 4, radius: 3, fill_empty: false })
         );
+    }
+
+    #[test]
+    fn fill_empty_bit_round_trips_without_disturbing_mat() {
+        let b = encode_paint_mode(2, 4, -1, 2, 300, 4, 3, true);
+        assert_eq!(
+            decode(&b),
+            Ok(Input::Paint { player: 2, mat: 4, x0: -1, y0: 2, x1: 300, y1: 4, radius: 3, fill_empty: true })
+        );
+        // A mat byte with the flag already set (hostile/malformed input) is masked, never misread as mat 0x84.
+        assert_eq!(decode(&encode_paint(2, 0x84, 0, 0, 0, 0, 1)), Ok(Input::Paint { player: 2, mat: 4, x0: 0, y0: 0, x1: 0, y1: 0, radius: 1, fill_empty: true }));
     }
 
     #[test]

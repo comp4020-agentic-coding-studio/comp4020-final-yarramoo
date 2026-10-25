@@ -186,9 +186,9 @@ impl Sim {
 
     fn apply(&mut self, i: Input) {
         match i {
-            Input::Paint { mat, x0, y0, x1, y1, radius, .. } => {
+            Input::Paint { mat, x0, y0, x1, y1, radius, fill_empty, .. } => {
                 if self.cfg.paint_allowed() || cfg!(feature = "dev_paint") {
-                    self.paint(mat, x0 as i32, y0 as i32, x1 as i32, y1 as i32, radius as i32);
+                    self.paint(mat, x0 as i32, y0 as i32, x1 as i32, y1 as i32, radius as i32, fill_empty);
                 }
             }
             // Players live in game worlds only: a sandbox visitor has no entity to grow without bound.
@@ -228,7 +228,14 @@ impl Sim {
                     return;
                 }
                 let (x, y) = self.spawn_point(id);
-                self.players.insert(at, Player::new(id, x, y));
+                let mut p = Player::new(id, x, y);
+                if self.cfg.all_spells() {
+                    // Creative: every spell unlimited, reusing the same INFINITE sentinel Push/Blast
+                    // already use (D-109's bag rules), rather than inventing a second "unlimited"
+                    // concept. Every charge check and decrement already special-cases INFINITE.
+                    p.charges = [INFINITE; NUM_SPELLS];
+                }
+                self.players.insert(at, p);
                 at
             }
         };
@@ -295,7 +302,8 @@ impl Sim {
         }
     }
 
-    fn paint(&mut self, mat: u8, x0: i32, y0: i32, x1: i32, y1: i32, r: i32) {
+    #[allow(clippy::too_many_arguments)] // one argument per wire field of the decoded Paint input
+    fn paint(&mut self, mat: u8, x0: i32, y0: i32, x1: i32, y1: i32, r: i32, fill_empty: bool) {
         if !paintable(mat) {
             return;
         }
@@ -308,11 +316,14 @@ impl Sim {
         let n = dx.abs().max(dy.abs());
         for k in 0..=n {
             let (cx, cy) = if n == 0 { (x0, y0) } else { (x0 + dx * k / n, y0 + dy * k / n) };
-            self.disc(mat, cx, cy, r);
+            self.disc(mat, cx, cy, r, fill_empty);
         }
     }
 
-    fn disc(&mut self, mat: u8, cx: i32, cy: i32, r: i32) {
+    /// `fill_empty` (R4, plan-game-modes.md "Paint modes"): skip any cell that is not currently writable
+    /// under `fill_empty_writable` (Empty or a gas), so a stroke never overwrites a solid or liquid.
+    /// This only skips writes within the same already-bounded disc: no extra pass, no new loop.
+    fn disc(&mut self, mat: u8, cx: i32, cy: i32, r: i32, fill_empty: bool) {
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
         for y in (cy - r).max(0)..=(cy + r).min(h - 1) {
             for x in (cx - r).max(0)..=(cx + r).min(w - 1) {
@@ -321,7 +332,8 @@ impl Sim {
                     continue;
                 }
                 let i = (y * w + x) as usize;
-                if self.grid.mat[i] == BEDROCK {
+                let cur = self.grid.mat[i];
+                if cur == BEDROCK || (fill_empty && !fill_empty_writable(cur)) {
                     continue;
                 }
                 self.grid.set(i, mat, 0);
