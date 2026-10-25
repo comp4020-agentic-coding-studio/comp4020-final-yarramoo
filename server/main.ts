@@ -801,7 +801,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return;
     }
     const isRoomPath = /^\/r\/[A-Za-z0-9]{1,6}$/.test(path);
-    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" || isRoomPath ? "index.html" : path));
+    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" || path === "/game" || isRoomPath ? "index.html" : path));
     if (file !== clientDir && !file.startsWith(clientDir + sep)) {
       res.writeHead(403).end();
       return;
