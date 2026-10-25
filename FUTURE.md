@@ -392,3 +392,32 @@ the spread, not just one number) the house style for every future capacity bench
 - **Why:** a capacity number that silently picks its best (or only) run is exactly the kind of overconfident
   result CLAUDE.md's "treat a red check as authoritative" spirit warns against for correctness; the same logic
   applies to a measurement that looks green by chance.
+
+## Live preview on the menu (M1's "yes, it stays") still needs building
+
+R3 built the menu shell, mode cards, room list, create sheet with a real joinable room, the name sheet and the
+first-visit hint, but not the muted spectator preview of the busiest public room behind the hero text (plan's
+commit 6, M1: "the live preview stays live"). It needs: a second worker (or a lightweight second connection
+multiplexed through the existing one) run on the menu page itself as a spectator, a "busiest public room"
+selection, and a fallback to `/sandbox` if nothing else is live — plus a measurement that it doesn't meaningfully
+slow the menu's first paint on a cold phone visit (the plan's own 5-second framing). It's blocked on one more
+thing: `GET /api/rooms` doesn't return live player counts yet (an R2a/R2b TODO, explicitly out of scope for
+R2a/R2b and for R3's own room list, which the plan says is fine to ship counts-free) — "busiest" needs exactly
+that number, so this probably wants to land together with whichever slice finally adds live counts to the room
+list, rather than inventing a one-off count just for the preview.
+
+- **Source:** R3 worker (`docs/briefs/r3-menu.md`), stopped before commit 6 per its own conditional wording.
+- **Why:** the user has already said yes to live preview (M1, 21 Oct); it's not cut, just not yet built, and the
+  room-list live-count dependency is worth not rediscovering from scratch next time.
+
+## Full touch controls for avatar modes
+
+The menu shows "Watch" instead of "Join" for Deathmatch/Survival/avatar-Creative rooms on a touch device
+(generalizing D-011's existing game-world behaviour to every avatar-capable mode), so phones stay spectate-only
+for PvP. Real touch controls (movement stick, a cast gesture) would let phones actually play avatar modes, which
+the plan already calls out as future work rather than this milestone's job.
+
+- **Source:** `docs/plan-game-modes.md`, "Phones" section, restated here so it's tracked alongside the rest of
+  R3's deferrals rather than only living in the plan doc.
+- **Why:** a marker on a phone is exactly who D-011 and this menu are both designed around; full touch support
+  would widen who can actually play, not just watch.
