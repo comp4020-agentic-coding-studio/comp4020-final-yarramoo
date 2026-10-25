@@ -90,11 +90,44 @@ with the config intact, and the room did not appear in `GET /api/rooms`'s public
 
 ## Docker check
 
-(filled in once the Docker build step runs — see the end of this report for the final status)
+Built the real image (`docker build -t sand-r3-check .`) and ran it on port 8093 (never 8080, per convention),
+`docker run -d -p 8093:8080 -e DATA_DIR=/data sand-r3-check`. Curled every route by hand before trusting any
+test's green run:
+
+- `/` → 200 (menu), `/sandbox` → 200, `/readme/` → 200, `/icons/survival.png` → 200.
+- `/game` → **404 on the first build.** `client/room.ts`'s `resolveRoomTarget` already handled `/game`
+  client-side, but `server/main.ts`'s static-file route only special-cased `/`, `/sandbox` and `/r/<code>` to
+  serve `index.html`; `/game` fell through to a literal file lookup and 404'd. No test caught this because
+  every net/spec test joins by raw socket with a numeric world id, never by fetching the page at `/game` first —
+  exactly the gap CLAUDE.md's "open it and look" / "treat a red check as authoritative" sections warn a green
+  suite can hide. Fixed in a follow-up commit (`server/main.ts`'s `isRoomPath` check gained `|| path === "/game"`
+  ), rebuilt the image, and reran: `/game` → 200, and `GET /r/4MTU9X` (after `POST /api/rooms`) also → 200 with
+  the real client bundle.
+- `POST /api/rooms` against the live container created a real unlisted room; `GET /r/<code>` served it.
+- `APP_URL=http://localhost:8093 pnpm check` (the course spec, `spec/invariants.test.ts` + `spec/game.test.ts`'s
+  equivalents under `pnpm typecheck && pnpm test`) **passed**: 2 test files, 9 tests, all green against the menu
+  now living at `/`.
 
 ## Screenshots
 
-(described once captured — see the end of this report)
+Four PNGs under `docs/art/shots/`, captured with Playwright (chromium) against the running container:
+
+- **`r3-menu-1280.png`** (1280x900, desktop): the full menu — header ("Falling Sand", "set a name", README),
+  the hero ("A shared world of sand, water, fire and spells." + "Create a room"), four cards in a row (Survival
+  and Deathmatch with a red PVP badge, Creative and Sandbox with a green "No damage" badge, each with
+  Browse/New or a single Join), the room list showing "No rooms yet. Make one." (no rooms existed when this
+  shot was taken), and the code box ("Have a code?").
+- **`r3-menu-375.png`** (375x812, phone): the same content in one column — cards stack vertically with large
+  tap targets, confirming the phone-first layout the plan's ASCII diagram calls for.
+- **`r3-create-sheet-1280.png`** (1280x900, desktop): the create sheet open (triggered via the hero's "Create a
+  room" button) over a dimmed menu background — room name field (placeholder "Survival room", the preset's
+  default name), Preset and Size selectors, an "Unlisted (link only)" checkbox, a collapsed "Advanced"
+  disclosure, and Cancel/Create buttons.
+- **`r3-room-sandbox-375.png`** (375x812, phone): the sandbox room page after submitting the name sheet —
+  header shows "← Menu | Sandbox | README | live · 1 player · tick 59", the (empty, newly-joined) canvas, the
+  material palette and brush slider in the footer, and the first-visit hint overlay at the bottom ("Paint: pick
+  a material, drag to place it.") — confirms the "← Menu" link (replacing the old Game/Sandbox nav) and the
+  hint both render correctly together on a real joined room.
 
 ## Architectural decisions for review
 
