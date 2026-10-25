@@ -46,6 +46,13 @@ impl RoomConfig {
         RoomConfig { terrain: TERRAIN_CAVES, size: 2, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawn_secs: 3, pickup_respawn: 1, round: 0, max_players: 8 }
     }
 
+    /// R4: a shared world of brushes and avatars at once (plan-game-modes.md "Presets"). Solid box (Dirt over
+    /// Rock), not Caves: Solid box has no traversal guarantee to maintain and digging/building both work on
+    /// it immediately (Caves is an equally valid advanced-sheet choice, not defaulted to here).
+    pub const fn creative() -> RoomConfig {
+        RoomConfig { terrain: TERRAIN_SOLID_BOX, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawn_secs: 1, pickup_respawn: 1, round: 0, max_players: 8 }
+    }
+
     pub fn encode(&self) -> [u8; CONFIG_BYTES] {
         let mut b = [0u8; CONFIG_BYTES];
         b[..12].copy_from_slice(&[
@@ -96,6 +103,13 @@ impl RoomConfig {
     /// Every spell with unlimited charges (Creative).
     pub fn all_spells(&self) -> bool {
         self.spells == 1
+    }
+    /// Ticks a dead player stays dead before respawning (plan.md "Tick rate: 60 Hz"). `caves_pvp`'s
+    /// `respawn_secs: 3` gives 180 ticks, the same constant (`DEATH_TICKS`) this replaces, so existing
+    /// determinism is unaffected; Creative's `respawn_secs: 1` gives 60 ticks, not a hardcoded Deathmatch
+    /// constant (R4, "respawn/pickup-respawn fields confirmed working for non-Deathmatch values").
+    pub fn respawn_ticks(&self) -> u32 {
+        u32::from(self.respawn_secs) * 60
     }
     pub fn dims(&self) -> (usize, usize) {
         SIZES[usize::from(self.size.min(2))]

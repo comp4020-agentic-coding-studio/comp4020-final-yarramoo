@@ -336,7 +336,20 @@ impl Sim {
     /// Take `amount` health from the player at `victim_index`, saturating at 0. Only an alive player takes
     /// damage (a corpse takes none). At 0 the player dies: `dead_until`, then `EV_DEATH` with the killer
     /// (the last other hitter within `KILL_CREDIT_TICKS`, else 0) and `cause`.
+    ///
+    /// R4: gated by the room's `damage` config (D-103/D-106/D-107 computed the amount; this is the single
+    /// choke point every damage source already goes through, so the gate lives here rather than at each
+    /// of the four call sites). `cause` 0..`NUM_SPELLS` is a spell id (a player's own cast: Fire bolt direct
+    /// hit, Bomb's explosion), gated by `damage_from_players()`; `CAUSE_FIRE`/`CAUSE_LAVA`/`CAUSE_GUNPOWDER`
+    /// are environment-caused (hazard contact, gunpowder's own chain reaction, owner 0), gated by
+    /// `damage_from_env()`. Terrain effects (ignite, carve, knockback, bursts) are never gated: a Creative
+    /// Blast still carves and knocks back, it just never takes health.
     pub(crate) fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
+        let player_caused = usize::from(cause) < NUM_SPELLS;
+        let allowed = if player_caused { self.cfg.damage_from_players() } else { self.cfg.damage_from_env() };
+        if !allowed {
+            return;
+        }
         let tick = self.tick;
         let p = &mut self.players[victim_index];
         if !p.alive(tick) || amount == 0 {
@@ -346,7 +359,7 @@ impl Sim {
         if p.health > 0 {
             return;
         }
-        p.dead_until = tick.wrapping_add(DEATH_TICKS);
+        p.dead_until = tick.wrapping_add(self.cfg.respawn_ticks());
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
         let (id, px, py) = (p.id, p.x, p.y);
