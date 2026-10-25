@@ -238,6 +238,46 @@ Export a region of the creative world as a PNG or a link (a Sandspiel-style gall
 - **Source:** the game-modes research, from Sandspiel.
 - **Why:** gives creative play an outcome to show off; rendering only, no sim change.
 
+## Sandspiel cloner/wind tools, new materials, spray density
+
+A cloner brush (copy a region and stamp it elsewhere), a wind tool (a directional force on gas/particles),
+new materials (ice, oil, gas), and a spray-density slider for the existing brushes.
+
+- **Source:** `docs/plan-game-modes.md`'s "Sandspiel-style brushes" section ("Out of scope, kept in
+  FUTURE.md"), explicitly deferred past R4 (this slice built the fill-empty flag and the brush/spell switch
+  only). Logged here as its own entry since the plan named it but no FUTURE.md row existed yet.
+- **Why:** these round out the Sandspiel feel but each needs real sim work (a cloner needs a bounded
+  region-copy input shape; wind needs a new per-cell force pass; new materials need their own `grid.rs`
+  update rules) rather than reusing the existing Paint/disc machinery R4's fill-empty flag did, so they are
+  real slices of their own, not small additions.
+
+## pickup_respawn has no sim-side effect
+
+The `pickup_respawn` config field (0 off, 1 on) is validated, hashed and round-trips correctly, but nothing
+in `sim/src/sim.rs` reads it: pickups are generated once per world and always recharge on the fixed
+`PICKUP_RESPAWN` (3600-tick) timer in `tuning.rs` regardless of the field's value.
+
+- **Source:** R4 worker, found while wiring `cfg.all_spells()`/damage into sim rules and reading every
+  pickup-related path per the brief's "respawn/pickup-respawn fields confirmed working for non-Deathmatch
+  values" instruction. Creative's `pickup_respawn: 1` happens to match today's only behaviour (always
+  respawn), so nothing broke, but a future Survival-shaped preset needing `pickup_respawn: 0` ("pickups that
+  never come back", per the plan's Presets table) will find the field currently does nothing.
+- **Why:** this is exactly the kind of latent gap a new preset with a genuinely different value would
+  surface; better to log it now than have R6 (Survival) discover it mid-slice.
+
+## Creative two-player interaction has no "who built what" attribution
+
+Testing Creative with two simultaneous painters (one fill-empty building a pile over rock, one casting
+unlimited spells) showed both work correctly side by side, but there is no way to tell afterward who placed
+a given cell — `grid.aux` carries per-cell metadata already (chunk/plant state) but not a "last painter"
+tag, and invariant 11 (no per-cell ownership tags) forbids adding one for gameplay reasons anyway.
+
+- **Source:** R4 worker, manual two-context check (one fill-empty painter, one caster) while verifying
+  commit 3's damage-off behaviour.
+- **Why:** a griefing/moderation feature (undo the last N cells a specific player placed) would need this,
+  but invariant 11 exists for a reason (no new hashed per-cell state, bounded work); any version of this
+  would need its own design pass, not a quick addition.
+
 ## Dig preview and depth-scaled digging
 
 Show Blast's dig disc in the aim preview, and make digging slower in deep bands or in harder materials.
