@@ -1,4 +1,5 @@
 // Messages between main thread and worker.
+import type { RoomConfig } from "../shared/room.ts";
 import type { Rect } from "./render.ts";
 export type NetState = "connecting" | "catching-up" | "live" | "reconnecting" | "rejected";
 
@@ -12,7 +13,7 @@ export type ToWorker =
       height: number;
       /** Dev: run a local single-player sim of this world kind instead of connecting (no networking). */
       local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean };
-      /** Which server world to join: 0 sandbox, 1 game. */
+      /** Which server world/room to join: 0 sandbox, 1 game, or any real room id from GET /api/rooms/:code (R3). */
       worldId: number;
       /** The player token, 64 hex characters, or "" (spectators and the sandbox send none). */
       token: string;
@@ -43,7 +44,8 @@ export type ToWorker =
 export type FromWorker =
   | { type: "ready"; path: "worker-webgl2" | "main-thread-fallback" }
   | { type: "render-failed"; error: string }
-  | { type: "world"; width: number; height: number; kind: number }
+  /** `kind` is just "has avatars" (0/1), for the existing render checks. `cfg` is the real decoded room config (R3), null only for a config the server rejects (never for a real WELCOME). */
+  | { type: "world"; width: number; height: number; kind: number; cfg: RoomConfig | null }
   | { type: "frame"; mat: Uint8Array; aux: Uint8Array; tick: number; rects: Rect[] }
   | { type: "stats"; tick: number; stepsPerSec: number; buffered: number; stepP50: number; stepP95: number; ranChunks: number; uploadCells: number }
   | {

@@ -792,12 +792,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       }
       return;
     }
-    // The same client serves both worlds: "/" is the game world, "/sandbox" the sandbox (it reads its URL).
+    // The same client bundle serves the menu, both fixed worlds and every real room: "/" is the menu, "/sandbox"
+    // the permanent sandbox, "/r/<code>" a room by code (R3: plan-game-modes.md "All routes serve the same
+    // bundle"). The client reads location.pathname to pick which of those to render; this route just has to
+    // hand back index.html for any of those paths instead of trying (and failing) a static-file lookup.
     if (path === "/sandbox/") {
       res.writeHead(301, { location: "/sandbox" }).end(); // the client's assets are relative to "/sandbox"
       return;
     }
-    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" ? "index.html" : path));
+    const isRoomPath = /^\/r\/[A-Za-z0-9]{1,6}$/.test(path);
+    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" || isRoomPath ? "index.html" : path));
     if (file !== clientDir && !file.startsWith(clientDir + sep)) {
       res.writeHead(403).end();
       return;

@@ -13,6 +13,7 @@ import {
   encodePing,
   encodeSnapshotUpload,
 } from "../shared/protocol.ts";
+import { decodeConfig } from "../shared/room.ts";
 import {
   ENT_BAG,
   ENT_PICKUP,
@@ -77,7 +78,8 @@ let ranChunks = 0;
 let ws: WebSocket | null = null;
 let ls: Lockstep | null = null;
 let myId = 0;
-let seedInfo: { seed: bigint; kind: number } | null = null;
+/** The real config bytes from WELCOME, kept for a resync's beginReplay (R3: a real room has no bare "kind"). */
+let seedInfo: { seed: bigint; cfg: Uint8Array } | null = null;
 let players = 0;
 let net: NetState = "connecting";
 let attempt = 0;
@@ -261,10 +263,15 @@ function countPresence(inputs: { kind: number }[]) {
   }
 }
 
-/** A fresh sim per connection or resync; it is restored from the snapshot (if any) and fast-forwarded. */
-function beginReplay(seed: bigint, worldKind: number, target: number, playersAtBase: number) {
+/**
+ * A fresh sim per connection or resync; it is restored from the snapshot (if any) and fast-forwarded.
+ * `cfg` is WELCOME's real 16-byte room config (R3), not the derived bare `worldKind` byte — a real joined
+ * room's config never matches either fixed world's, so initing from the bare kind would hand the sim the
+ * wrong world entirely. `shared/sim.ts`'s `init` already accepts a `Uint8Array` config directly.
+ */
+function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBase: number) {
   const sim: Sim = loadSim(wasmBytes);
-  sim.init(seed, worldKind);
+  sim.init(seed, cfg);
   names.clear();
   shown.clear();
   avatar = null;
@@ -281,7 +288,11 @@ function beginReplay(seed: bigint, worldKind: number, target: number, playersAtB
   wantSnapshotAt = 0;
   setNet(target > 0 ? "catching-up" : "live");
   if (target === 0) sendLive(); // nothing to replay: live at once (after a reset or on a fresh world)
-  send({ type: "world", width: sim.width(), height: sim.height(), kind: worldKind });
+  // `kind` here is just "has avatars" (0/1), kept for main.ts's existing worldKind !== 0 render checks; the
+  // real per-mode decisions (casting, damage, brushes...) read `cfg` itself, decoded below.
+  const rc = decodeConfig(cfg);
+  const kind = rc?.avatars === 1 ? 1 : 0;
+  send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc });
   renderer?.setWorld(sim.width(), sim.height());
 }
 
@@ -303,8 +314,8 @@ function connect() {
     if (!m) return sock.close();
     switch (m.t) {
       case "welcome": {
-        seedInfo = { seed: m.seed, kind: m.worldKind };
-        beginReplay(m.seed, m.worldKind, m.tick, m.playersAtBase);
+        seedInfo = { seed: m.seed, cfg: m.cfg };
+        beginReplay(m.seed, m.cfg, m.tick, m.playersAtBase);
         myId = m.playerId;
         attempt = 0;
         pingTimer = setInterval(() => sock.send(encodePing(Math.round(performance.now()) >>> 0) as BufferSource), 2000);
@@ -322,7 +333,7 @@ function connect() {
       case "resync":
         if (!seedInfo) return sock.close();
         resyncs++;
-        beginReplay(seedInfo.seed, seedInfo.kind, m.tick, m.playersAtBase);
+        beginReplay(seedInfo.seed, seedInfo.cfg, m.tick, m.playersAtBase);
         break;
       case "request-snapshot":
         wantSnapshotAt = m.tick;
@@ -785,7 +796,7 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
       sim.pushInput(encodeJoin(DEV_ID));
     }
     setNet("live");
-    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind });
+    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null });
     renderer?.setWorld(sim.width(), sim.height());
   } else {
     connect();
