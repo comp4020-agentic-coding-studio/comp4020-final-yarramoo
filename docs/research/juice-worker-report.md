@@ -39,3 +39,5 @@ Client-only. Nothing in `sim/`, `shared/` or `server/` was touched; nothing here
 - Ring drawn in world space with an actual dig-disc cell mask preview.
 - Per-material impact sounds (sand hiss, water plop) by reading the impact cell.
 - Respect `prefers-reduced-motion` for screen shake.
+
+`pnpm test:net` result: 39 files, 308 tests passed (run on the commit-4 tree).
