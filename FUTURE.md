@@ -461,3 +461,16 @@ the plan already calls out as future work rather than this milestone's job.
   R3's deferrals rather than only living in the plan doc.
 - **Why:** a marker on a phone is exactly who D-011 and this menu are both designed around; full touch support
   would widen who can actually play, not just watch.
+
+## Sound: a volume slider, ambient beds, per-material impacts
+
+A volume slider beside the mute button; a quiet ambient bed (drips in the caves, wind on the surface);
+impact sounds by the material hit (sand hiss, water plop, rock clack), read from the impact cell.
+
+- **Source:** the juice worker's report (`docs/research/juice-worker-report.md`), 31 Oct.
+- **Why:** sound is most of the feel in a sand game, and these are client-only.
+
+## Respect `prefers-reduced-motion` for screen shake
+
+- **Source:** the juice worker's report, 31 Oct.
+- **Why:** the shake is now on knocks, Blast casts and explosions, which is a lot for some players.
