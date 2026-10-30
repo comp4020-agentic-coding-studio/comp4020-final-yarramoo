@@ -26,3 +26,9 @@ mise.local.toml
 sim/target/
 sim/target-canary/
 tests/determinism/.cache/
+
+# Session handover notes: local only, not part of the submission
+HANDOVER.md
+
+# Local admin notes (URL and token): never committed
+ADMIN.local.md
