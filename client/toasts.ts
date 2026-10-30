@@ -6,7 +6,7 @@ export interface DeathInfo {
   victim: number;
   /** 0 when nobody is credited. */
   killer: number;
-  /** A spell id 0..5 or a CAUSE_* constant. */
+  /** A spell id 0..NUM_SPELLS or a CAUSE_* constant. */
   cause: number;
   bagDropped: boolean;
 }

@@ -37,7 +37,7 @@ export const FIRST_BLOOD_KILLS = 1;
 export const FIVE_KILLS = 5;
 export const BACK_FROM_THE_DEAD_DEATHS = 10;
 /** `EV_DEATH.b` values for an environmental death (CAUSE_FIRE, CAUSE_LAVA, CAUSE_GUNPOWDER in shared/sim.ts). */
-export const SHOVE_CAUSES: readonly number[] = [6, 7, 8];
+export const SHOVE_CAUSES: readonly number[] = [32, 33, 34];
 
 export const ACHIEVEMENTS: readonly Achievement[] = [
   {

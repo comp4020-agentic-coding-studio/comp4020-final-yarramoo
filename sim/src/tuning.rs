@@ -80,10 +80,10 @@ pub const KNOCK_EXPLOSION: i32 = 96;
 pub const DEATH_TICKS: u32 = 180;
 /// A hit counts toward a kill credit for this many ticks.
 pub const KILL_CREDIT_TICKS: u32 = 300;
-/// Cause codes carried by `EV_DEATH`: a spell id 0..=5 is that spell, then:
-pub const CAUSE_FIRE: u8 = 6;
-pub const CAUSE_LAVA: u8 = 7;
-pub const CAUSE_GUNPOWDER: u8 = 8;
+/// Cause codes carried by `EV_DEATH`: a spell id 0..NUM_SPELLS is that spell; environmental causes sit in a separate range so adding spells never collides:
+pub const CAUSE_FIRE: u8 = 32;
+pub const CAUSE_LAVA: u8 = 33;
+pub const CAUSE_GUNPOWDER: u8 = 34;
 
 // ---- Fire bolt and Bomb (M5 slice 2, plan 6.7) ---------------------------------------------------------
 

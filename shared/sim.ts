@@ -37,9 +37,9 @@ export const EV_EXPLODE = 8;
 export const EV_DEATH = 9;
 export const EV_BAG_PICKUP = 10;
 /** Cause of a death (`EV_DEATH.b`): a spell id 0..5 is that spell, then these. */
-export const CAUSE_FIRE = 6;
-export const CAUSE_LAVA = 7;
-export const CAUSE_GUNPOWDER = 8;
+export const CAUSE_FIRE = 32;
+export const CAUSE_LAVA = 33;
+export const CAUSE_GUNPOWDER = 34;
 /** Why a cast was refused (`CastRejected.b`). */
 export const REJECT_SPELL = 1;
 export const REJECT_CHARGES = 2;
