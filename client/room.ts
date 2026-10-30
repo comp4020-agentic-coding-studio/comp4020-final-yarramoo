@@ -9,6 +9,7 @@ import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { BAR, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
+import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { formatAchievement } from "./toasts.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, decodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
@@ -146,6 +147,19 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   if (menuLink) menuLink.setAttribute("href", "/");
 
   // Share bar (commit 3): shown once inside a real, just-created or just-joined room.
+  // Sound: the context may only start from a gesture (phone autoplay rules), so the first pointer or key resumes it.
+  for (const ev of ["pointerdown", "keydown"] as const) addEventListener(ev, unlock, { capture: true });
+  const muteBtn = $<HTMLButtonElement>("muteBtn");
+  const showMute = () => {
+    muteBtn.textContent = isMuted() ? "Sound off" : "Sound on";
+    muteBtn.setAttribute("aria-pressed", String(isMuted()));
+  };
+  showMute();
+  muteBtn.onclick = () => {
+    unlock();
+    setMuted(!isMuted());
+    showMute();
+  };
   const shareBtn = document.getElementById("shareBtn") as HTMLButtonElement | null;
   if (shareBtn && target.code) {
     shareBtn.hidden = false;
@@ -510,6 +524,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         break;
       case "players":
         onPlayers(m);
+        break;
+      case "sfx":
+        play(m.name, m.vol, m.pan, m.mag);
         break;
       case "toast":
         addToast(m.text);

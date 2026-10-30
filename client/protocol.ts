@@ -1,6 +1,7 @@
 // Messages between main thread and worker.
 import type { RoomConfig } from "../shared/room.ts";
 import type { Rect } from "./render.ts";
+import type { SfxName } from "./sfx.ts";
 export type NetState = "connecting" | "catching-up" | "live" | "reconnecting" | "rejected";
 
 export type ToWorker =
@@ -81,6 +82,8 @@ export type FromWorker =
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
     }
+  /** A sound for the main thread to synthesise (client/sfx.ts). `vol` 0..1 and `pan` -1..1 are already worked out from the camera distance; `mag` 0..1 scales explosions. Never sent during replay. */
+  | { type: "sfx"; name: SfxName; vol: number; pan: number; mag: number }
   /** A line for the death feed, already formatted from a plain-name death event. */
   | { type: "toast"; text: string }
   /** The server says this player earned an achievement (by id; the main thread looks the text up). */
