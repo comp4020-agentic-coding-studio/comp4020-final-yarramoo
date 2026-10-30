@@ -3,7 +3,7 @@
 
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::BLAST_DIG_RADIUS;
+use crate::tuning::{DIG_RADIUS, DIG_REACH};
 
 pub const CHUNK: usize = 64;
 /// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
@@ -645,13 +645,24 @@ impl Grid {
         }
     }
 
-    /// Blast's dig: clear solids and plants in the disc of radius `r` (clamped to `BLAST_DIG_RADIUS`) around
-    /// (`cx`, `cy`). Bedrock, liquids, fire, smoke and steam stay; Gunpowder is primed; no fire rim.
-    pub fn dig(&mut self, cx: i32, cy: i32, r: i32) {
-        let r = r.clamp(0, BLAST_DIG_RADIUS);
-        for y in (cy - r).max(0)..=(cy + r).min(self.h as i32 - 1) {
-            for x in (cx - r).max(0)..=(cx + r).min(self.w as i32 - 1) {
-                if (x - cx) * (x - cx) + (y - cy) * (y - cy) > r * r {
+    /// Dig: clear solids and plants in the capsule of radius `r` (clamped to `DIG_RADIUS`) around the segment
+    /// from (`ax`, `ay`) to (`bx`, `by`). Each segment component is clamped to `DIG_REACH` from the start, so the
+    /// box is at most (reach + 2r + 1)^2 cells. Bedrock, liquids, fire, smoke and steam stay; Gunpowder is
+    /// primed; no fire rim. Integers only: a cell is inside when its squared distance to the segment is at
+    /// most r^2, compared without division as `|p * L2 - d * t|^2 <= r^2 * L2^2` (L2 = |d|^2, t = clamp(p.d)).
+    pub fn dig(&mut self, ax: i32, ay: i32, bx: i32, by: i32, r: i32) {
+        let r = r.clamp(0, DIG_RADIUS);
+        let (dx, dy) = ((bx - ax).clamp(-DIG_REACH, DIG_REACH), (by - ay).clamp(-DIG_REACH, DIG_REACH));
+        let l2 = i64::from(dx * dx + dy * dy);
+        let (x0, x1) = (ax.min(ax + dx) - r, ax.max(ax + dx) + r);
+        let (y0, y1) = (ay.min(ay + dy) - r, ay.max(ay + dy) + r);
+        for y in y0.max(0)..=y1.min(self.h as i32 - 1) {
+            for x in x0.max(0)..=x1.min(self.w as i32 - 1) {
+                let (px, py) = (i64::from(x - ax), i64::from(y - ay));
+                let t = (px * i64::from(dx) + py * i64::from(dy)).clamp(0, l2);
+                let (ex, ey) = (px * l2 - i64::from(dx) * t, py * l2 - i64::from(dy) * t);
+                let outside = if l2 == 0 { px * px + py * py > i64::from(r * r) } else { ex * ex + ey * ey > i64::from(r * r) * l2 * l2 };
+                if outside {
                     continue;
                 }
                 let i = y as usize * self.w + x as usize;
@@ -709,7 +720,7 @@ mod tests {
         for (&(x, y), &m) in cells.iter().zip(&mats) {
             g.set(y * 64 + x, m, 0);
         }
-        g.dig(20, 30, 4);
+        g.dig(20, 30, 20, 30, 4);
         for (k, (&(x, y), &m)) in cells.iter().zip(&mats).enumerate() {
             let removed = k < 7;
             assert_eq!(g.at(x, y) == EMPTY && m != EMPTY, removed, "material {m} at {x},{y}");
@@ -726,23 +737,38 @@ mod tests {
         for x in 20..29 {
             g.set(30 * 64 + x, ROCK, 0);
         }
-        g.dig(30, 30, 4);
+        g.dig(30, 30, 30, 30, 4);
         assert_eq!(g.mat[30 * 64 + 30], GUNPOWDER);
         assert_eq!(g.aux[30 * 64 + 30], 1);
         assert!((0..64 * 64).all(|i| g.mat[i] != FIRE));
     }
 
     #[test]
-    fn dig_radius_is_clamped_so_work_is_bounded() {
+    fn dig_work_is_bounded_by_clamping_radius_and_reach() {
         let mut g = Grid::new(256, 256);
         for i in 0..256 * 256 {
             g.mat[i] = ROCK;
         }
-        g.dig(128, 128, 10_000);
+        g.dig(128, 128, 128 + 10_000, 128 + 10_000, 10_000);
         let gone = g.mat.iter().filter(|&&m| m == EMPTY).count() as i32;
-        let r = BLAST_DIG_RADIUS;
-        assert!(gone > 0 && gone <= (2 * r + 1) * (2 * r + 1), "cleared {gone}");
-        assert_eq!(g.at((128 + r + 1) as usize, 128), ROCK);
+        let (r, k) = (DIG_RADIUS, DIG_REACH);
+        assert!(gone > 0 && gone <= (k + 2 * r + 1) * (k + 2 * r + 1), "cleared {gone}");
+        assert_eq!(g.at((128 + k + r + 1) as usize, 128), ROCK);
+        assert_eq!(g.at(128, (128 + k + r + 1) as usize), ROCK);
+    }
+
+    #[test]
+    fn dig_capsule_is_body_wide_and_reach_long() {
+        let mut g = Grid::new(128, 128);
+        for i in 0..128 * 128 {
+            g.mat[i] = ROCK;
+        }
+        g.dig(20, 60, 20 + DIG_REACH, 60, DIG_RADIUS);
+        // Along the aim: reach plus the end cap; across it: the full radius, no more.
+        assert_eq!((g.at(20 - DIG_RADIUS as usize, 60), g.at(20 - DIG_RADIUS as usize - 1, 60)), (EMPTY, ROCK));
+        assert_eq!((g.at(20 + (DIG_REACH + DIG_RADIUS) as usize, 60), g.at(20 + (DIG_REACH + DIG_RADIUS) as usize + 1, 60)), (EMPTY, ROCK));
+        assert_eq!((g.at(30, 60 - DIG_RADIUS as usize), g.at(30, 60 - DIG_RADIUS as usize - 1)), (EMPTY, ROCK));
+        assert_eq!((g.at(30, 60 + DIG_RADIUS as usize), g.at(30, 60 + DIG_RADIUS as usize + 1)), (EMPTY, ROCK));
     }
 
     #[test]

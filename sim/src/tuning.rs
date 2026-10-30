@@ -1,13 +1,13 @@
 //! Gameplay constants (plan 6.6, 6.7). All integers; one place so balance changes never touch logic.
 
-/// Spell ids: 0 Push, 1 Blast, 2 Water, 3 Rose seed, 4 Fire bolt, 5 Bomb (plan 6.7).
-pub const NUM_SPELLS: usize = 6;
+/// Spell ids: 0 Push, 1 Blast, 2 Water, 3 Rose seed, 4 Fire bolt, 5 Bomb, 6 Dig (plan 6.7; Dig appended so ids stay stable).
+pub const NUM_SPELLS: usize = 7;
 /// Infinite charges (the starter spells).
 pub const INFINITE: u16 = u16::MAX;
 /// Charges a player starts with, per spell: Push and Blast are infinite.
-pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0];
+pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0, INFINITE];
 /// Charges one pickup of each spell grants (plan 6.7).
-pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5];
+pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5, 0];
 /// Ticks before a collected pickup is available again (plan 14: 60 s).
 pub const PICKUP_RESPAWN: u32 = 3600;
 
@@ -46,22 +46,22 @@ pub const PROJ_MAX_SPEED: i32 = 8 * PROJ_ONE;
 pub const MAX_SUBSTEPS: i32 = 8;
 
 /// Spells the sim implements; a disabled spell's cast is refused.
-pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true];
+pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true];
 /// Ticks between casts of the same spell.
-pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60];
+pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18];
 /// Launch speed, 1/256 cell per tick (Push 5 cells a tick; Water and Rose are lobbed slower).
-pub const SPEED: [i32; NUM_SPELLS] = [1280, 0, 768, 768, 896, 640];
+pub const SPEED: [i32; NUM_SPELLS] = [1280, 0, 768, 768, 896, 640, 0];
 /// Downward acceleration, 1/256 cell per tick per tick.
-pub const GRAVITY_Q8: [i32; NUM_SPELLS] = [0, 0, 10, 10, 4, 20];
+pub const GRAVITY_Q8: [i32; NUM_SPELLS] = [0, 0, 10, 10, 4, 20, 0];
 /// Knockback impulses in 1/16 cell per tick (plan 6.7).
 pub const KNOCK_PUSH: i32 = 64;
 pub const KNOCK_BLAST: i32 = 96;
 /// Blast reach in cells, and the half-angle of its cone: 45 degrees (the test is `2 * dot^2 >= |d|^2`).
 pub const BLAST_RADIUS_CELLS: i32 = 24;
-/// Blast also digs: a disc of this radius (cells), centred `BLAST_DIG_REACH` cells along the aim from the chest.
-/// `Grid::dig` clamps its radius to this, so one cast clears at most (2r+1)^2 cells.
-pub const BLAST_DIG_RADIUS: i32 = 4;
-pub const BLAST_DIG_REACH: i32 = 6;
+/// Dig clears a capsule: the segment from the chest `DIG_REACH` cells along the aim, thickened by `DIG_RADIUS`
+/// cells. `Grid::dig` clamps both, so one cast clears at most (2r+1) x (reach+2r+1) cells.
+pub const DIG_RADIUS: i32 = 7;
+pub const DIG_REACH: i32 = 14;
 /// Height of a player's chest above the feet, in cells: where bolts leave and what the cone aims at.
 pub const CHEST: i32 = 5;
 pub const WATER_BURST_CELLS: usize = 60;

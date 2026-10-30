@@ -39,7 +39,7 @@ fn restore_refuses_old_and_corrupt_headers_without_panicking() {
     let s = Sim::new(7, RoomConfig::classic_sandbox()).unwrap();
     let good = snapshot::write(&s);
     assert!(snapshot::restore(&good).is_ok());
-    for v in [1u16, 2, 3, 5] {
+    for v in [1u16, 2, 3, 4, 6] {
         let mut b = good.clone();
         b[4..6].copy_from_slice(&v.to_le_bytes());
         assert!(snapshot::restore(&b).is_err(), "format {v} accepted");

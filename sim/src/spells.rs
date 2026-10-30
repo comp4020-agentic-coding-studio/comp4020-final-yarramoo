@@ -14,6 +14,7 @@ pub const WATER_SPELL: u8 = 2;
 pub const ROSE: u8 = 3;
 pub const FIRE_BOLT: u8 = 4;
 pub const BOMB: u8 = 5;
+pub const DIG: u8 = 6;
 
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
@@ -45,7 +46,7 @@ impl Sim {
         self.events.push(Event { kind: EV_CAST_REJECTED, player, a: i32::from(spell), b: reason, c: i32::from(seq) });
     }
 
-    /// A Cast input. Spawns a bolt (or, for Blast, resolves the cone now) at the caster's official position.
+    /// A Cast input. Spawns a bolt (or, for Blast and Dig, resolves now) at the caster's official position.
     pub(crate) fn cast(&mut self, player: u32, spell: u8, angle: u16, seq: u16) {
         let Ok(k) = self.players.binary_search_by_key(&player, |p| p.id) else { return };
         let tick = self.tick;
@@ -65,6 +66,7 @@ impl Sim {
         } else if tick < p.cooldown_until[s] {
             REJECT_COOLDOWN
         } else if spell != BLAST
+            && spell != DIG
             && (self.projectiles.len() >= MAX_PROJECTILES
                 || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER)
         {
@@ -84,6 +86,9 @@ impl Sim {
         if spell == BLAST {
             return self.blast(player, px, py, angle);
         }
+        if spell == DIG {
+            return self.dig_cast(px, py, angle);
+        }
         let (c, sn) = dir(angle);
         let v = SPEED[s];
         self.projectiles.push(Projectile {
@@ -101,7 +106,6 @@ impl Sim {
 
     /// Blast: a cone of `BLAST_RADIUS_CELLS` and 45 degrees either side of the aim, no projectile.
     /// Every other live player whose chest is inside gets `Knock` and the caster is their last hitter.
-    /// It also digs a small disc of terrain ahead of the caster (`Grid::dig`).
     fn blast(&mut self, caster: u32, cx: i32, cy: i32, angle: u16) {
         let (c, sn) = dir(angle);
         let reach = i64::from(BLAST_RADIUS_CELLS * POS_ONE);
@@ -125,11 +129,16 @@ impl Sim {
             let id = t.id;
             self.hit_player(id, caster, c * KNOCK_BLAST / TRIG_ONE, sn * KNOCK_BLAST / TRIG_ONE);
         }
-        // Dig: a disc `BLAST_DIG_REACH` cells along the aim. `cx, cy` are 1/16 cell, so add the offset in
-        // 1/16 cell and shift down to cells (arithmetic shift floors, the same on every platform).
-        let off = BLAST_DIG_REACH * POS_ONE;
-        let (dx, dy) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
-        self.grid.dig(dx, dy, BLAST_DIG_RADIUS);
+    }
+
+    /// Dig: clear a capsule from the chest `DIG_REACH` cells along the aim, radius `DIG_RADIUS` (`Grid::dig`).
+    /// No projectile, no damage, no knockback. `cx, cy` are 1/16 cell; the offset is added in 1/16 cell and
+    /// shifted down to cells (arithmetic shift floors, the same on every platform).
+    fn dig_cast(&mut self, cx: i32, cy: i32, angle: u16) {
+        let (c, sn) = dir(angle);
+        let off = DIG_REACH * POS_ONE;
+        let (bx, by) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
+        self.grid.dig(cx >> POS_SHIFT, cy >> POS_SHIFT, bx, by, DIG_RADIUS);
     }
 
     fn hit_player(&mut self, victim: u32, attacker: u32, vx: i32, vy: i32) {
@@ -579,28 +588,49 @@ mod tests {
         s.grid.mat[y as usize * s.grid.w + x as usize]
     }
 
-    #[test]
-    fn blast_aimed_down_digs_rock_but_not_bedrock() {
-        let mut s = arena(ROCK);
-        cast_down(&mut s, 1);
-        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (EMPTY, EMPTY));
-        assert_eq!(at(&s, FX, 194), BEDROCK);
-        assert_eq!(at(&s, FX + 3, 193), EMPTY);
-        assert_eq!(at(&s, FX + 9, 193), ROCK, "outside the disc");
+    fn dig_down(s: &mut Sim, seq: u16) {
+        assert_eq!(s.push_input(&encode_cast(1, DIG, DOWN, seq)), 0);
+        s.step();
     }
 
     #[test]
-    fn blast_does_not_dig_water() {
+    fn dig_aimed_down_clears_a_capsule_but_not_bedrock() {
+        let mut s = arena(ROCK);
+        dig_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (EMPTY, EMPTY));
+        assert_eq!(at(&s, FX, 194), BEDROCK);
+        assert_eq!(at(&s, FX + 6, 193), EMPTY, "inside the radius");
+        assert_eq!(at(&s, FX + 9, 193), ROCK, "outside the radius");
+    }
+
+    #[test]
+    fn dig_does_not_dig_water() {
         let mut s = arena(WATER);
-        cast_down(&mut s, 1);
+        dig_down(&mut s, 1);
         assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (WATER, WATER));
     }
 
-    /// Casts needed to dig 100 rows of solid rock straight down, standing in the shaft (falling to the bottom
+    #[test]
+    fn blast_no_longer_digs() {
+        let mut s = arena(ROCK);
+        cast_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (ROCK, ROCK));
+    }
+
+    #[test]
+    fn dig_is_unlimited_and_cools_down() {
+        let mut s = arena(ROCK);
+        assert_eq!(s.players[0].charges[DIG as usize], INFINITE);
+        dig_down(&mut s, 1);
+        assert_eq!(s.players[0].charges[DIG as usize], INFINITE);
+        assert_eq!(s.players[0].cooldown_until[DIG as usize], s.tick - 1 + COOLDOWN[DIG as usize]);
+    }
+
+    /// Dig casts needed to dig 100 rows of solid rock straight down, standing in the shaft (falling to the bottom
     /// after each cast). Run with `--ignored --nocapture`; the number is in the panic-free output file.
     #[test]
     #[ignore = "measurement"]
-    fn casts_to_dig_100_rows() {
+    fn dig_casts_to_dig_100_rows() {
         let mut s = arena(ROCK);
         let w = s.grid.w;
         for y in 192..400 {
@@ -611,10 +641,10 @@ mod tests {
         let mut casts = 0u16;
         while s.players[0].y / POS_ONE < 190 + 100 {
             casts += 1;
-            for _ in 0..COOLDOWN[1] {
+            for _ in 0..COOLDOWN[6] {
                 s.step();
             }
-            cast_down(&mut s, casts);
+            dig_down(&mut s, casts);
             let mut y = s.players[0].y / POS_ONE;
             while (FX - 2..=FX + 2).all(|x| at(&s, x, y + 1) == EMPTY) {
                 y += 1;
@@ -622,6 +652,6 @@ mod tests {
             s.players[0].y = y * POS_ONE;
             assert!(casts < 200);
         }
-        std::fs::write("/tmp/casts_to_dig_100_rows.txt", format!("{casts}\n")).unwrap();
+        std::fs::write("/tmp/dig_casts_to_dig_100_rows.txt", format!("{casts}\n")).unwrap();
     }
 }

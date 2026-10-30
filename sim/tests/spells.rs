@@ -100,7 +100,7 @@ fn cast_spawns_a_bolt_pays_a_charge_and_starts_the_cooldown() {
 #[test]
 fn unknown_unimplemented_and_inactive_casts_are_refused() {
     let mut s = arena(1);
-    push(&mut s, encode_cast(1, 6, RIGHT, 1)); // one past the last spell
+    push(&mut s, encode_cast(1, 7, RIGHT, 1)); // one past the last spell
     push(&mut s, encode_cast(1, 200, RIGHT, 2));
     s.step();
     assert_eq!(count(&s, EV_CAST_REJECTED), 2);

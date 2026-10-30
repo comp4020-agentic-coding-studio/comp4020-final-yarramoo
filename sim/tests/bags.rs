@@ -117,7 +117,7 @@ fn pl(s: &Sim, id: u32) -> &Player {
 }
 
 fn set_charges(s: &mut Sim, id: u32, c: [u16; 6]) {
-    s.players.iter_mut().find(|p| p.id == id).unwrap().charges = c;
+    s.players.iter_mut().find(|p| p.id == id).unwrap().charges[..6].copy_from_slice(&c);
 }
 
 /// Kill player `id` with a small explosion on its chest (others are 8+ cells away, outside 1.5 r = 6).
@@ -145,7 +145,7 @@ fn death_drops_exactly_the_finite_charges_and_keeps_push_and_blast() {
     assert_eq!((d.a, d.b, d.c), (0, i32::from(CAUSE_GUNPOWDER), 1));
     // feet cell: x 510, y (839) - 1 = 838
     assert_eq!(s.bags, vec![Bag { x: 510, y: 838, charges: [15, 0, 0, 5], expires_at: t + 5400 }]);
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0, INF]);
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn a_victim_holding_an_infinite_finite_slot_keeps_it() {
     set_charges(&mut s, 1, [INF, INF, INF, 7, 0, 0]);
     kill(&mut s, 1);
     assert_eq!(s.bags[0].charges, [0, 7, 0, 0]);
-    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, 0, 0, 0]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, 0, 0, 0, INF]);
 }
 
 #[test]
@@ -271,14 +271,14 @@ fn the_respawned_victim_takes_their_own_bag_back() {
         s.step();
         evs.extend(s.events.clone());
     }
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0], "respawn does not refill");
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0, INF], "respawn does not refill");
     assert!(evs.iter().all(|e| e.kind != EV_BAG_PICKUP), "no one took it while the victim was dead");
     assert_eq!(s.bags.len(), 1);
     stand(&mut s, 1, 510);
     let taken: Vec<_> = s.events.iter().filter(|e| e.kind == EV_BAG_PICKUP).collect();
     assert_eq!(taken.len(), 1);
     assert_eq!((taken[0].player, taken[0].a, taken[0].b, taken[0].c), (1, 510, 838, 20));
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 15, 0, 0, 5]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 15, 0, 0, 5, INF]);
     assert!(s.bags.is_empty());
 }
 
@@ -306,7 +306,7 @@ fn two_players_on_one_bag_the_lower_id_gets_it() {
     let taken: Vec<_> = s.events.iter().filter(|e| e.kind == EV_BAG_PICKUP).collect();
     assert_eq!(taken.len(), 1);
     assert_eq!((taken[0].player, taken[0].c), (1, 5));
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 4, 0, 0, 1]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 4, 0, 0, 1, INF]);
     assert_eq!(pl(&s, 2).charges, START_CHARGES);
 }
 
@@ -316,7 +316,7 @@ fn pickup_leaves_infinite_slots_and_saturates() {
     set_charges(&mut s, 1, [INF, INF, INF, 65_530, 0, 0]);
     s.bags = vec![bag(510, 838, [5, 100, 0, 2], 99_999)];
     s.step();
-    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, INF - 1, 0, 2]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, INF - 1, 0, 2, INF]);
     let e = s.events.iter().find(|e| e.kind == EV_BAG_PICKUP).unwrap();
     assert_eq!(e.c, 107, "the whole bag is taken");
 }
@@ -434,31 +434,31 @@ fn with_version(snap: &[u8], v: u16) -> Vec<u8> {
 }
 
 #[test]
-fn format_is_four_and_a_game_snapshot_round_trips_with_bags() {
-    assert_eq!(snapshot::FORMAT_VERSION, 4);
+fn format_is_five_and_a_game_snapshot_round_trips_with_bags() {
+    assert_eq!(snapshot::FORMAT_VERSION, 5);
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 15, 0, 0, 5]);
     kill(&mut s, 1);
     let snap = snapshot::write(&s);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 4);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 5);
     let mut r = snapshot::restore(&snap).unwrap();
     assert_eq!(r.bags, s.bags);
     assert_eq!(r.state_hash(), s.state_hash());
 }
 
-/// R0a: format 4 replaced the kind byte with the config, so every older format is refused, sandbox or game
+/// R0a: format 4 replaced the kind byte with the config and format 5 added Dig, so every other format is refused, sandbox or game
 /// (the game is not live; no stored state is lost). Config-header refusals are in config_state.rs.
 #[test]
-fn formats_below_four_are_refused_for_sandbox_and_game() {
+fn other_formats_are_refused_for_sandbox_and_game() {
     let mut sb = Sim::new(9, 0).unwrap();
     push(&mut sb, sim::input::encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let snap = snapshot::write(&sb);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 4);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 5);
     assert!(snapshot::restore(&snap).is_ok());
     let gsnap = snapshot::write(&boxed(&[1]));
     assert!(snapshot::restore(&gsnap).is_ok());
-    for v in [0u16, 1, 2, 3, 5] {
+    for v in [0u16, 1, 2, 3, 4, 6] {
         assert!(snapshot::restore(&with_version(&snap, v)).is_err(), "sandbox v{v}");
         assert!(snapshot::restore(&with_version(&gsnap, v)).is_err(), "game v{v}");
     }

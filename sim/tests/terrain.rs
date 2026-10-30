@@ -5,7 +5,7 @@ use sim::input::{encode_cast, encode_join, encode_pos};
 use sim::materials::{BEDROCK, DIRT, EMPTY, ROCK};
 use sim::sim::Sim;
 
-const BLAST: u8 = 1;
+const DIG: u8 = 6;
 const DOWN: u16 = 16384;
 
 fn solid_box(size: u8) -> RoomConfig {
@@ -52,7 +52,7 @@ fn solid_box_is_dirt_over_rock_with_bedrock_floor_and_walls_at_every_size() {
 
 /// Dig-sanity (not a flood-fill proof, per the brief): a player standing on the surface can Blast a path
 /// from the sky down through Dirt and Rock to the bedrock floor, the same way the existing cave worlds let
-/// Blast carve through Rock and Dirt (`Grid::dig`, `tuning::BLAST_DIG_RADIUS`/`BLAST_DIG_REACH`).
+/// Dig carve through Rock and Dirt (`Grid::dig`, `tuning::DIG_RADIUS`/`DIG_REACH`).
 #[test]
 fn a_player_can_dig_from_the_surface_to_the_floor_in_a_solid_box() {
     for size in 0u8..=2 {
@@ -61,24 +61,24 @@ fn a_player_can_dig_from_the_surface_to_the_floor_in_a_solid_box() {
         s.step();
         let w = s.grid.w;
         let x = s.players[0].x / sim::tuning::POS_ONE;
-        // Walk the player's feet down one dig-reach at a time, casting Blast straight down each time,
-        // until bedrock is within one dig radius: the existing Blast dig (clears Rock/Dirt, spares Bedrock)
+        // Walk the player's feet down one dig-reach at a time, casting Dig straight down each time,
+        // until bedrock is within one dig radius: the Dig spell (clears Rock/Dirt, spares Bedrock)
         // must be able to open a path the whole way, exactly like it does in Caves.
         let mut seq = 0u16;
         let start_y = s.players[0].y / sim::tuning::POS_ONE;
         let floor_y = (s.grid.h - 17) as i32; // one row above the bedrock floor band
         let mut casts = 0;
-        const MAX_CASTS: u32 = 400; // enough for L's floor depth at BLAST_DIG_REACH (6 cells) per cast
+        const MAX_CASTS: u32 = 400; // enough for L's floor depth at DIG_REACH (14 cells) per cast
         while s.players[0].y / sim::tuning::POS_ONE + 2 < floor_y && casts < MAX_CASTS {
             seq += 1;
-            assert_eq!(s.push_input(&encode_cast(1, BLAST, DOWN, seq)), 0);
-            // Blast's cooldown (tuning::COOLDOWN[BLAST] == 90 ticks): wait it out so each loop iteration is
+            assert_eq!(s.push_input(&encode_cast(1, DIG, DOWN, seq)), 0);
+            // Dig's cooldown (tuning::COOLDOWN[DIG]): wait it out so each loop iteration is
             // a real cast, not a rejected one.
-            for _ in 0..=sim::tuning::COOLDOWN[BLAST as usize] {
+            for _ in 0..=sim::tuning::COOLDOWN[DIG as usize] {
                 s.step();
             }
             // No auto-gravity on the player entity in this sim; drop the avatar into the hole it just dug,
-            // the same way the existing `casts_to_dig_100_rows` measurement does.
+            // the same way the existing `dig_casts_to_dig_100_rows` measurement does.
             let mut y = s.players[0].y / sim::tuning::POS_ONE;
             while y + 1 < floor_y && s.grid.mat[(y + 1) as usize * w + x as usize] == EMPTY {
                 y += 1;
