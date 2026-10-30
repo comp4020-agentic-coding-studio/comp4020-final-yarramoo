@@ -2,7 +2,7 @@
 // source so a balance change that forgets the client fails here rather than looking subtly wrong.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { BLAST_DIG_RADIUS, BLAST_DIG_REACH, BOMB_RADIUS, DEATH_TICKS, HEALTH_MAX, SPELLS } from "../../client/spells.ts";
+import { BOMB_RADIUS, DEATH_TICKS, DIG_RADIUS, DIG_REACH, HEALTH_MAX, SPELLS } from "../../client/spells.ts";
 import { quantiseAngle } from "../../client/spells.ts";
 
 const rs = readFileSync(new URL("../../sim/src/tuning.rs", import.meta.url), "utf8");
@@ -34,8 +34,8 @@ describe("client spell table matches tuning.rs", () => {
     expect(DEATH_TICKS).toBe(num("DEATH_TICKS"));
     expect(HEALTH_MAX).toBe(num("HEALTH_MAX"));
     expect(BOMB_RADIUS).toBe(num("BOMB_RADIUS"));
-    expect(BLAST_DIG_RADIUS).toBe(num("BLAST_DIG_RADIUS"));
-    expect(BLAST_DIG_REACH).toBe(num("BLAST_DIG_REACH"));
+    expect(DIG_RADIUS).toBe(num("DIG_RADIUS"));
+    expect(DIG_REACH).toBe(num("DIG_REACH"));
   });
   it("aim angles quantise to u16 with 0 along +x and growing downwards", () => {
     expect(quantiseAngle(1, 0)).toBe(0);

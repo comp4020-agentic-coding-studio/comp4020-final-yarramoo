@@ -7,7 +7,7 @@ import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
-import { BAR, BLAST_DIG_REACH, BLAST_DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
+import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { formatAchievement } from "./toasts.ts";
@@ -574,7 +574,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const labels = document.createElement("div");
   labels.id = "labels";
   stage.append(labels);
-  // Blast dig preview: a faint ring where the dig disc will land (render only; the sim decides what is dug).
+  // Dig preview: a faint capsule outline where the dig will land (render only; the sim decides what is dug).
   const digEl = document.createElement("div");
   digEl.id = "digPreview";
   digEl.hidden = true;
@@ -583,7 +583,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function placeDigPreview() {
     const me = lastPlayers?.list.find((p) => p.me);
     const pt = castHeld && aimAt ? aimAt : hoverAt;
-    if (!me || me.dead || !pt || selectedSpell !== 1 || !castsOnClick()) {
+    if (!me || me.dead || !pt || selectedSpell !== 6 || !castsOnClick()) {
       digEl.hidden = true;
       return;
     }
@@ -596,11 +596,15 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const ox = me.x;
     const oy = me.y - 5; // the chest, where the sim aims from
     const len = Math.hypot(wx - ox, wy - oy) || 1;
-    const cx = ox + ((wx - ox) / len) * BLAST_DIG_REACH;
-    const cy = oy + ((wy - oy) / len) * BLAST_DIG_REACH;
+    // A capsule: the segment from the chest DIG_REACH along the aim, thickened by DIG_RADIUS. Drawn as a rounded
+    // rectangle centred on the segment's midpoint and turned to the aim.
+    const cx = ox + ((wx - ox) / len) * (DIG_REACH / 2);
+    const cy = oy + ((wy - oy) / len) * (DIG_REACH / 2);
     digEl.hidden = false;
-    digEl.style.width = `${2 * BLAST_DIG_RADIUS * sx}px`;
-    digEl.style.height = `${2 * BLAST_DIG_RADIUS * sy}px`;
+    digEl.style.width = `${(DIG_REACH + 2 * DIG_RADIUS) * sx}px`;
+    digEl.style.height = `${2 * DIG_RADIUS * sy}px`;
+    digEl.style.borderRadius = `${DIG_RADIUS * sy}px`;
+    digEl.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(wy - oy, wx - ox)}rad)`;
     digEl.style.left = `${r.left - sr.left + (cx - camera.x) * sx}px`;
     digEl.style.top = `${r.top - sr.top + (cy - camera.y) * sy}px`;
   }

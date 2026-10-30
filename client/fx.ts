@@ -252,6 +252,15 @@ export class Particles {
     }
   }
 
+  /** Dig's dust: grit thrown along the capsule (DIG_REACH 14 cells), slowly settling. */
+  dust(x: number, y: number, angle: number, c: [number, number, number]): void {
+    for (let i = 0; i < 34; i++) {
+      const a = angle + (this.rand() - 0.5) * 0.7;
+      const s = 0.03 + this.rand() * 0.08;
+      this.add({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 220 + this.rand() * 200, size: this.rand() < 0.3 ? 2 : 1, r: c[0], g: c[1], b: c[2], grav: 0.00006 });
+    }
+  }
+
   /** A small flash where a bolt leaves the caster. */
   flash(x: number, y: number, angle: number, c: [number, number, number]): void {
     this.add({ x: x + Math.cos(angle) * 3, y: y + Math.sin(angle) * 3, vx: 0, vy: 0, life: 80, size: 3, r: 1, g: 1, b: 1, grav: 0 });

@@ -21,4 +21,4 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
 };
 
 /** Spell index to display name. */
-export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb"];
+export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig"];

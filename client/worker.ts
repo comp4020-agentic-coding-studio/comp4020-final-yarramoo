@@ -563,7 +563,7 @@ const sfxSelf = (name: SfxName, quiet: boolean) => {
   sfxBudget--;
   send({ type: "sfx", name, vol: 1, pan: 0, mag: 0.5 });
 };
-const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb"];
+const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb", "dig"];
 
 /** Turn the queued sim events, the entities() view and the cast ghosts into particles and rectangles. */
 function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
@@ -580,6 +580,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       const ang = (e.b / 65536) * Math.PI * 2;
       if (c) {
         if (e.a === 1) fx.cone(c.x, c.y, ang, col);
+        else if (e.a === 6) fx.dust(c.x, c.y, ang, col);
         else fx.flash(c.x, c.y, ang, col);
       }
       const ps = poses.get(e.player);
@@ -675,7 +676,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
     g.vy += SPELLS[g.spell].gravity * ticks;
     g.x += g.vx * ticks;
     g.y += g.vy * ticks;
-    const blast = g.spell === 1;
+    const blast = g.spell === 1 || g.spell === 6;
     const size = blast ? 3 : 2;
     rects.push({ x: Math.round(g.x) - 1, y: Math.round(g.y) - 1, w: size, h: size, r: col[0], g: col[1], b: col[2], a: 0.55 });
   }

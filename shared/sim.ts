@@ -36,7 +36,7 @@ export const EV_RESPAWN = 7;
 export const EV_EXPLODE = 8;
 export const EV_DEATH = 9;
 export const EV_BAG_PICKUP = 10;
-/** Cause of a death (`EV_DEATH.b`): a spell id 0..5 is that spell, then these. */
+/** Cause of a death (`EV_DEATH.b`): a spell id 0..NUM_SPELLS is that spell, then these. */
 export const CAUSE_FIRE = 32;
 export const CAUSE_LAVA = 33;
 export const CAUSE_GUNPOWDER = 34;
@@ -67,7 +67,7 @@ export const ENT_PICKUP = 2;
 export const ENT_PROJECTILE = 3;
 /** A dropped bag: `id` is its index in the list, `a` the total charges, x and y the cell centre in 1/16 cell. */
 export const ENT_BAG = 4;
-export const NUM_SPELLS = 6;
+export const NUM_SPELLS = 7;
 export interface EntityView {
   type: number;
   id: number;

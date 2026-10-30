@@ -3,6 +3,7 @@
 // (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
 import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
+import { NUM_SPELLS } from "../shared/sim.ts";
 import { POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
   CHUNK_CELLS,
@@ -1284,6 +1285,9 @@ export class World {
 }
 
 /** Active player ids in a compressed game snapshot, read from its entity section (layout in plan 6.11). */
+/** One player record in a snapshot: 21 fixed bytes, 6 per spell (charges u16, cooldown u32), 8 trailing (sim/src/entities.rs PLAYER_BYTES). */
+const PLAYER_RECORD = 21 + 6 * NUM_SPELLS + 8;
+
 export function activePlayersIn(compressed: Uint8Array): Set<number> {
   const out = new Set<number>();
   try {
@@ -1293,7 +1297,7 @@ export function activePlayersIn(compressed: Uint8Array): Set<number> {
     let o = ENTITY_AT + 4;
     const n = v.getUint32(o, true);
     o += 4;
-    for (let k = 0; k < n; k++, o += 65) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
+    for (let k = 0; k < n; k++, o += PLAYER_RECORD) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
   } catch {
     // an unreadable snapshot would already have failed verification; treat as none active
   }
