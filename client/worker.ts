@@ -26,6 +26,7 @@ import {
   EV_EXPLODE,
   EV_IMPACT,
   EV_KNOCK,
+  EV_PICKUP,
   EV_RESPAWN,
   loadSim,
   simBuildHash,
@@ -34,6 +35,7 @@ import {
   type SimEvent,
 } from "../shared/sim.ts";
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
+import type { SfxName } from "./sfx.ts";
 import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
@@ -133,6 +135,14 @@ let myDeathTick: number | null = null;
 /** Screen shake: whole-cell camera offsets until this time. Render-only. */
 let shakeUntil = 0;
 let shakeMag = 0;
+let shakeDur = 320;
+/** Raise the shake to at least `mag` cells for `ms`; a weaker shake never cuts a stronger one short. */
+function shake(now: number, mag: number, ms: number) {
+  if (now < shakeUntil && mag < shakeMag * ((shakeUntil - now) / shakeDur)) return;
+  shakeUntil = now + ms;
+  shakeMag = mag;
+  shakeDur = ms;
+}
 let explosionsThisFrame = 0;
 let iAmDead = false;
 /** Dev route only: the local single-player sim has an avatar for this player id. */
@@ -467,7 +477,11 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     // A figure that has not moved takes its facing from the official record (others turn without walking).
     if (!isMe && Math.abs(ps.vx) < 0.05) ps.facingRight = e.sub === 1;
     if (isMe) ps.facingRight = avatar!.facing === 1;
-    if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, PLAYER_COLOURS[e.id % PLAYER_COLOURS.length], ps.castCol, now / 16.7);
+    // White flash for the first 120 ms after a knock.
+    const hf = Math.max(0, 1 - (now - ps.hitAt) / 120);
+    const bc = PLAYER_COLOURS[e.id % PLAYER_COLOURS.length];
+    const body: [number, number, number] = hf > 0 ? [bc[0] + (1 - bc[0]) * hf, bc[1] + (1 - bc[1]) * hf, bc[2] + (1 - bc[2]) * hf] : bc;
+    if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, body, ps.castCol, now / 16.7);
     if (isMe && e.health > 0) rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
   }
   for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
@@ -529,12 +543,34 @@ const chestOf = (id: number): { x: number; y: number } | null => {
   return p ? { x: p.x, y: p.y - 5 } : null;
 };
 
+/** Ask the main thread for a sound at cell (x, y): quieter and panned by distance from the camera centre. Silent while replaying. */
+function sfxAt(name: SfxName, x: number, y: number, mag = 0.5, quiet = false) {
+  if (quiet) return;
+  const hw = cam.vw / 2;
+  const dx = (x - (cam.x + hw)) / hw;
+  const dy = (y - (cam.y + cam.vh / 2)) / hw;
+  const d = Math.hypot(dx, dy);
+  const vol = Math.max(0, 1 - d / 2.2);
+  if (vol < 0.03) return;
+  send({ type: "sfx", name, vol: vol * vol, pan: Math.max(-1, Math.min(1, dx * 0.8)), mag });
+}
+/** The same, with no distance falloff, for my own actions. */
+const sfxSelf = (name: SfxName, quiet: boolean) => {
+  if (!quiet) send({ type: "sfx", name, vol: 1, pan: 0, mag: 0.5 });
+};
+const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb"];
+
 /** Turn the queued sim events, the entities() view and the cast ghosts into particles and rectangles. */
 function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
   const evs = pendingEvents;
   pendingEvents = [];
   explosionsThisFrame = 0;
+  // A replaying client (catch-up, or a localSim-less fast-forward) must not play hundreds of old sounds.
+  const quiet = net === "catching-up" || !!ls?.fastForwarding;
+  let sfxThisFrame = 0;
   for (const e of evs) {
+    if (sfxThisFrame > 24) break; // the main thread caps voices too; this just bounds the message rate
+    sfxThisFrame++;
     if (e.kind === EV_CAST) {
       const c = chestOf(e.player);
       const col = SPELLS[e.a]?.colour ?? [1, 1, 1];
@@ -550,32 +586,61 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
         if (e.player !== myId) ps.facingRight = Math.cos(ang) >= 0;
       }
       if (e.player === myId) dropGhost(e.c);
+      if (c) {
+        if (e.player === myId) sfxSelf(SPELL_SFX[e.a] ?? "push", quiet);
+        else sfxAt(SPELL_SFX[e.a] ?? "push", c.x, c.y, 0.5, quiet);
+      }
+      if (e.player === myId && e.a === 1) shake(now, 1, 160);
     } else if (e.kind === EV_CAST_REJECTED) {
-      if (e.player === myId) dropGhost(e.c);
+      if (e.player === myId) {
+        dropGhost(e.c);
+        sfxSelf("reject", quiet);
+      }
     } else if (e.kind === EV_KNOCK) {
       const ps = poses.get(e.player);
-      if (ps) ps.hitUntil = now + 380;
+      if (ps) {
+        ps.hitUntil = now + 380;
+        ps.hitAt = now; // for the white flash
+      }
       const c = chestOf(e.player);
-      if (c) fx.streak(c.x, c.y, e.a, e.b);
+      if (c) {
+        fx.streak(c.x, c.y, e.a, e.b);
+        if (e.player === myId) {
+          sfxSelf("knock", quiet);
+          shake(now, 2, 220);
+        } else sfxAt("knock", c.x, c.y, 0.5, quiet);
+      }
     } else if (e.kind === EV_IMPACT) {
       // Drawn from the event, not the grid: a Fire bolt's fire has already risen by the time we look.
+      sfxAt("impact", e.a, e.b, 0.5, quiet);
       if (e.c === 4) fx.embers(e.a + 0.5, e.b + 0.5);
       else if (e.c !== 5) fx.burst(e.a + 0.5, e.b + 0.5, SPELLS[e.c]?.colour ?? [1, 1, 1], e.c === 2 ? 20 : 14);
     } else if (e.kind === EV_EXPLODE) {
       if (explosionsThisFrame++ < 16) fx.explosion(e.a + 0.5, e.b + 0.5, e.c);
       const inView = e.a >= cam.x - 8 && e.a <= cam.x + cam.vw + 8 && e.b >= cam.y - 8 && e.b <= cam.y + cam.vh + 8;
-      if (inView && e.c >= BOMB_RADIUS) {
-        shakeUntil = now + 320;
-        shakeMag = 2;
-      }
+      sfxAt("explode", e.a, e.b, Math.min(1, e.c / BOMB_RADIUS), quiet);
+      // Shake scales with radius and falls off with distance; under one cell it is not worth doing.
+      const dist = Math.hypot(e.a - (cam.x + cam.vw / 2), e.b - (cam.y + cam.vh / 2)) / cam.vw;
+      const mag = (e.c / BOMB_RADIUS) * 3 * Math.max(0, 1 - dist * 1.5);
+      if (inView && mag >= 1) shake(now, Math.min(4, Math.round(mag)), 200 + 20 * Math.min(10, e.c));
     } else if (e.kind === EV_DEATH) {
       send({ type: "toast", text: formatDeath({ victim: e.player, killer: e.a, cause: e.b, bagDropped: e.c === 1 }, nameOf) });
       const c = chestOf(e.player);
-      if (c) fx.burst(c.x, c.y, [0.9, 0.2, 0.2], 18, 0.04);
+      if (c) {
+        fx.burst(c.x, c.y, [0.9, 0.2, 0.2], 18, 0.04);
+        if (e.player === myId) sfxSelf("death", quiet);
+        else sfxAt("death", c.x, c.y, 0.5, quiet);
+      }
     } else if (e.kind === EV_RESPAWN) {
       fx.respawn(e.a / 16, e.b / 16 - 5);
+      if (e.player === myId) sfxSelf("respawn", quiet);
+      else sfxAt("respawn", e.a / 16, e.b / 16 - 5, 0.5, quiet);
     } else if (e.kind === EV_BAG_PICKUP) {
       fx.pickup(e.a + 0.5, e.b + 0.5);
+      if (e.player === myId) sfxSelf("bag", quiet);
+      else sfxAt("bag", e.a + 0.5, e.b + 0.5, 0.5, quiet);
+    } else if (e.kind === EV_PICKUP) {
+      if (e.player === myId) sfxSelf("pickup", quiet);
     }
   }
   // Real bolts: a body and a trail puff each frame.
@@ -619,7 +684,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
 /** The camera with this frame's shake applied (whole cells, so pixels stay crisp). Render-only. */
 function shakenCam(now: number): Camera {
   if (now >= shakeUntil) return cam;
-  const k = (shakeUntil - now) / 320;
+  const k = (shakeUntil - now) / shakeDur;
   const m = Math.max(1, Math.round(shakeMag * k));
   return { ...cam, x: cam.x + (Math.floor(now / 30) % 2 ? m : -m), y: cam.y + (Math.floor(now / 45) % 2 ? 1 : -1) };
 }

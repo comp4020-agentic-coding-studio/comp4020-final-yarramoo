@@ -135,6 +135,8 @@ export interface PoseState {
   airMs: number;
   castUntil: number;
   hitUntil: number;
+  /** When the last knock landed (ms), for the brief white flash. */
+  hitAt: number;
   /** Colour of the last spell cast, for the hand glow. */
   castCol: [number, number, number];
   facingRight: boolean;
@@ -142,7 +144,7 @@ export interface PoseState {
 }
 
 export function newPoseState(x: number, y: number, facingRight: boolean): PoseState {
-  return { x, y, vx: 0, vy: 0, walkPhase: 0, airMs: 0, castUntil: 0, hitUntil: 0, castCol: WHITE, facingRight, pose: "idle" };
+  return { x, y, vx: 0, vy: 0, walkPhase: 0, airMs: 0, castUntil: 0, hitUntil: 0, hitAt: -1e9, castCol: WHITE, facingRight, pose: "idle" };
 }
 
 /**
