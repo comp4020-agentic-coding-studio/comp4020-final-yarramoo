@@ -43,3 +43,6 @@ export const DEATH_TICKS = 180;
 export const HEALTH_MAX = 100;
 /** Bomb blast radius in cells (tuning.rs BOMB_RADIUS); an explosion this big shakes the screen. */
 export const BOMB_RADIUS = 18;
+/** Blast's dig disc: radius and reach in cells (tuning.rs BLAST_DIG_RADIUS and BLAST_DIG_REACH). Only the aim preview reads these. */
+export const BLAST_DIG_RADIUS = 4;
+export const BLAST_DIG_REACH = 6;

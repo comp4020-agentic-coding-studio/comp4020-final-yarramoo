@@ -7,7 +7,7 @@ import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
-import { BAR, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
+import { BAR, BLAST_DIG_REACH, BLAST_DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { formatAchievement } from "./toasts.ts";
@@ -361,6 +361,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       post("down", e);
     });
     c.addEventListener("pointermove", (e) => {
+      hoverAt = { x: e.clientX, y: e.clientY };
+      placeDigPreview();
       if (castHeld) aimAt = { x: e.clientX, y: e.clientY };
       if (e.pointerType === "touch" && touches.has(e.pointerId)) {
         touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -412,6 +414,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const k = e.key.toLowerCase();
     if (castsOnClick() && k >= "1" && k <= String(BAR.length)) {
       selectedSpell = BAR[Number(k) - 1];
+      placeDigPreview();
       renderSpellBar();
       return;
     }
@@ -571,6 +574,36 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const labels = document.createElement("div");
   labels.id = "labels";
   stage.append(labels);
+  // Blast dig preview: a faint ring where the dig disc will land (render only; the sim decides what is dug).
+  const digEl = document.createElement("div");
+  digEl.id = "digPreview";
+  digEl.hidden = true;
+  stage.append(digEl);
+  let hoverAt: { x: number; y: number } | null = null;
+  function placeDigPreview() {
+    const me = lastPlayers?.list.find((p) => p.me);
+    const pt = castHeld && aimAt ? aimAt : hoverAt;
+    if (!me || me.dead || !pt || selectedSpell !== 1 || !castsOnClick()) {
+      digEl.hidden = true;
+      return;
+    }
+    const r = canvas.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    const sx = r.width / camera.vw;
+    const sy = r.height / camera.vh;
+    const wx = camera.x + ((pt.x - r.left) / r.width) * camera.vw;
+    const wy = camera.y + ((pt.y - r.top) / r.height) * camera.vh;
+    const ox = me.x;
+    const oy = me.y - 5; // the chest, where the sim aims from
+    const len = Math.hypot(wx - ox, wy - oy) || 1;
+    const cx = ox + ((wx - ox) / len) * BLAST_DIG_REACH;
+    const cy = oy + ((wy - oy) / len) * BLAST_DIG_REACH;
+    digEl.hidden = false;
+    digEl.style.width = `${2 * BLAST_DIG_RADIUS * sx}px`;
+    digEl.style.height = `${2 * BLAST_DIG_RADIUS * sy}px`;
+    digEl.style.left = `${r.left - sr.left + (cx - camera.x) * sx}px`;
+    digEl.style.top = `${r.top - sr.top + (cy - camera.y) * sy}px`;
+  }
   const hud = document.createElement("div");
   hud.id = "hud";
   hud.hidden = true;
@@ -648,6 +681,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       (window as unknown as { __view: unknown }).__view = { ...camera, worldW, worldH, worldKind, overview, zoom };
     }
     placeLabels();
+    placeDigPreview();
     socialTick(false);
     hud.hidden = !steersAvatar();
     // In a dual-tools room (Creative), the spell bar only shows while the switch is set to Spells, so it
