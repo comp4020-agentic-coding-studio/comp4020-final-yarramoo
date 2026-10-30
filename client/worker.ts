@@ -543,20 +543,25 @@ const chestOf = (id: number): { x: number; y: number } | null => {
   return p ? { x: p.x, y: p.y - 5 } : null;
 };
 
+/** Sounds still allowed this frame: the main thread caps voices too; this just bounds the message rate. */
+let sfxBudget = 0;
 /** Ask the main thread for a sound at cell (x, y): quieter and panned by distance from the camera centre. Silent while replaying. */
 function sfxAt(name: SfxName, x: number, y: number, mag = 0.5, quiet = false) {
-  if (quiet) return;
+  if (quiet || sfxBudget <= 0) return;
   const hw = cam.vw / 2;
   const dx = (x - (cam.x + hw)) / hw;
   const dy = (y - (cam.y + cam.vh / 2)) / hw;
   const d = Math.hypot(dx, dy);
   const vol = Math.max(0, 1 - d / 2.2);
   if (vol < 0.03) return;
+  sfxBudget--;
   send({ type: "sfx", name, vol: vol * vol, pan: Math.max(-1, Math.min(1, dx * 0.8)), mag });
 }
 /** The same, with no distance falloff, for my own actions. */
 const sfxSelf = (name: SfxName, quiet: boolean) => {
-  if (!quiet) send({ type: "sfx", name, vol: 1, pan: 0, mag: 0.5 });
+  if (quiet || sfxBudget <= 0) return;
+  sfxBudget--;
+  send({ type: "sfx", name, vol: 1, pan: 0, mag: 0.5 });
 };
 const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb"];
 
@@ -567,10 +572,8 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
   explosionsThisFrame = 0;
   // A replaying client (catch-up, or a localSim-less fast-forward) must not play hundreds of old sounds.
   const quiet = net === "catching-up" || !!ls?.fastForwarding;
-  let sfxThisFrame = 0;
+  sfxBudget = 24;
   for (const e of evs) {
-    if (sfxThisFrame > 24) break; // the main thread caps voices too; this just bounds the message rate
-    sfxThisFrame++;
     if (e.kind === EV_CAST) {
       const c = chestOf(e.player);
       const col = SPELLS[e.a]?.colour ?? [1, 1, 1];
