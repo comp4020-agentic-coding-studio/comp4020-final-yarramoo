@@ -1,5 +1,11 @@
 # Enemies: research and design
 
+> **User decisions, 31 Oct (D-157):** the recommendations in section 11 are accepted, **except** that enemies
+> appear only in **Survival** (not PvP caves) and **spawn once**: the generator places them, they never
+> respawn, and players kill them on the way down to the boss. So the `Nest` respawn timers in sections 1 and
+> 4 are dropped for v1, and spawners are a FUTURE.md extension. The boss never respawns.
+
+
 Status: research only, no code changed. Read from `CLAUDE.md` (invariants), `docs/engineering-decisions.md` entry 8, `sim/src/{entities,sim,spells,grid,snapshot,gen,config,tuning}.rs`, `client/worker.ts`, `client/fx.ts`. Line numbers are at commit 847d305.
 
 ## Summary of the recommendation
