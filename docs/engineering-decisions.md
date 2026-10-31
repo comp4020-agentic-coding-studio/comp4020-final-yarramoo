@@ -52,6 +52,7 @@ Later
 26. [The canvas that shrank for a week, and two workers who blamed the browser](#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)
 27. [Six new materials, and the half of the game that didn't know about them](#27-six-new-materials-and-the-half-of-the-game-that-didnt-know-about-them)
 28. [Rigid bodies: falling rock in a lockstep integer sim (researched, not built)](#28-rigid-bodies-falling-rock-in-a-lockstep-integer-sim-researched-not-built)
+29. [Green tests, broken features, and once a wrong alarm: what the browser caught overnight](#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight)
 
 ---
 
@@ -1197,6 +1198,9 @@ guard.
 
 ## 28. Rigid bodies: falling rock in a lockstep integer sim (researched, not built)
 
+> **Update, 1 Nov:** v0 was built overnight (D-165, entry 29). Cut-free islands now crumble to sand. v1 and
+> v2 stay in `FUTURE.md`.
+
 **Context.** On 31 October the user asked what it would take for rock that a player cuts entirely free to
 fall as a solid piece, the way it does in Noita. Noita's talk describes "destructible rigid body physics"
 alongside its falling-sand world (GDC 2019, Purho). Per a developer's summary, it gets there by tracing pixel
@@ -1241,3 +1245,36 @@ The research rates v0 at about 60% of the visible effect for about 10% of the ef
 **Evidence.** [`docs/research/rigid-bodies.md`](research/rigid-bodies.md) (its prior-art section says plainly that it
 rests on search results; the GDC page was checked, and it does not name Box2D);
 [`docs/research/enemies-design.md`](research/enemies-design.md) section 3 for the stepping rule it reuses.
+
+
+## 29. Green tests, broken features, and once a wrong alarm: what the browser caught overnight
+
+**Context.** The overnight run of 31 Oct to 1 Nov built enemies (F4, F5), review fixes and falling rock v0
+with full discipline: one worker at a time, an independent review, the full gate, then a look in a real
+browser before every push. The look caught things the gate could not.
+
+**What happened:**
+
+| Slice | Tests | Browser | What it was |
+|---|---|---|---|
+| F4 enemies | 2 net tests the worker never ran were red | n/a | real format consequences; the session model's gate caught them |
+| F4 slime | green | slime "stuck", then "sliding away" | **a false alarm by the session model**: the dev teleport drops the player about 100 rows below the slime, which was chasing the real position correctly |
+| F4 client | green | "respawning in 0 s" under a one-life banner | the dev route read a different config from the one its sim ran |
+| Falling rock v0 | green, 9 tests | a cut-free block **floated** | per-cell seeding overflowed a 32-seed queue on the stalk's own cells (review F1); the tests only ever cut single cells |
+
+**Two lessons.**
+
+- **A test exercises the case its author imagined.** Falling rock's tests freed islands one cell at a time;
+  the browser freed one with a 30-cell stroke. The review flagged the risk from the code alone; the browser
+  confirmed it, and the fix's first test is the exact browser case, shown red.
+- **The look can be wrong too.** The session model twice called the slime broken from screenshots. It was
+  settled only by measuring: the sim's player position against the camera centre showed the player really
+  was below the slime. D-162 keeps that correction visible. The F5 brief then told its worker to read
+  positions before calling movement broken.
+
+**What changed.** Briefs now ask for real-terrain tests, not just synthetic boxes (F5), and a dev hook that
+places the player at the enemy's height. The verification order holds: gate, then review, then look,
+then **measure before concluding**.
+
+**Evidence.** D-162 (the slime correction), D-165 (falling rock); `docs/art/shots/f4-slime-kills-party-fell.png`,
+`falling-rock-block-floats.png` (before), `falling-rock-crumbles.png` (after); `docs/research/review-falling-rock.md`.
