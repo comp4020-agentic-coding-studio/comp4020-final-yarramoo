@@ -200,3 +200,31 @@ fn sleeping_actually_skips_work() {
     s.step();
     assert!(s.grid.ran_chunks < all / 8, "{} of {} chunks still ran", s.grid.ran_chunks, all);
 }
+
+/// Bounded work: a sandbox packed with Acid over Rock, and one packed with Gas and Fire, each steps in a
+/// small multiple of what a world of Water costs (release build). Each rule reads four neighbours and moves
+/// at most once, so there is no data-dependent blow-up; this pins that.
+#[test]
+fn new_materials_keep_a_tick_within_bounds() {
+    let time = |fill: u8, lit: u8| {
+        let mut s = Sim::new(3, 0).unwrap();
+        s.grid.set_all_active();
+        for y in 100..400usize {
+            for x in 20..490usize {
+                let i = y * s.grid.w + x;
+                let m = if y > 380 { 2 } else if (x + y) % 7 == 0 { lit } else { fill };
+                s.grid.set(i, m, 0);
+            }
+        }
+        let t = std::time::Instant::now();
+        for _ in 0..60 {
+            s.step();
+        }
+        t.elapsed().as_micros() / 60
+    };
+    let water = time(5, 5);
+    let (acid, gas) = (time(16, 16), time(17, 10));
+    let _ = std::fs::write("/tmp/f2-bounds.txt", format!("per tick us: water {water} acid {acid} gas+fire {gas}\n"));
+    let cap = (water * 6).max(30_000);
+    assert!(acid < cap && gas < cap, "acid {acid} us, gas+fire {gas} us per tick (water {water}, cap {cap})");
+}

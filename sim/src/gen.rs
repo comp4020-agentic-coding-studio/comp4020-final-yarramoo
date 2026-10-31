@@ -15,6 +15,13 @@ pub const WALL_COLS: usize = 16;
 pub const SURFACE_Y: i32 = 230;
 pub const SHALLOW_TOP: i32 = 260;
 pub const DEEP_TOP: i32 = 800;
+/// Acid pools keep this many cells (Chebyshev) from every path point.
+const ACID_PATH_MARGIN: i32 = 40;
+/// Gas pockets: rows filled under a roof, and the open height required below it.
+const GAS_POCKET_ROWS: i32 = 6;
+const GAS_MIN_HEIGHT: i32 = 24;
+/// Radius of an ice-lined chamber, cells.
+const ICE_R: i32 = 22;
 
 /// `smoothstep(i / 255)` in Q12 (0..=4096). Checked in, so no platform arithmetic can change it.
 #[rustfmt::skip]
@@ -182,6 +189,11 @@ struct Scale {
     lava_y_span: i32,
     lava_count: i32,
     tree_count: i32,
+    oil_count: i32,
+    acid_count: i32,
+    gas_count: i32,
+    ice_count: i32,
+    coal_count: i32,
     worm_target_y: i32,
     worm_branch_span: i32,
     link_x_span: i32,
@@ -223,6 +235,11 @@ impl Scale {
             lava_y_span: scale_u(h, 520).max(40),
             lava_count: scale_count(w, h, 40, 6),
             tree_count: scale_count(w, h, 28, 4),
+            oil_count: scale_count(w, h, 24, 4),
+            acid_count: scale_count(w, h, 10, 2),
+            gas_count: scale_count(w, h, 14, 3),
+            ice_count: scale_count(w, h, 8, 2),
+            coal_count: scale_count(w, h, 36, 6),
             worm_target_y,
             worm_branch_span: scale_u(h, 450).max(60),
             link_x_span: (w - 348).max(40),
@@ -255,6 +272,11 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     place_gunpowder(g, seed, &sc);
     place_water(g, seed, &mut pool_scratch, &sc);
     place_trees(g, seed, &surf, &sc);
+    place_oil(g, seed, &mut pool_scratch, &sc);
+    place_acid(g, seed, &mut pool_scratch, &sc, &path);
+    place_gas_pockets(g, seed, &sc, &path);
+    place_ice(g, seed, &sc, &path);
+    place_coal(g, seed, &sc);
     repair_traversal(g, seed, &sc);
     pick_spots(g, seed, &sc)
 }
@@ -502,6 +524,193 @@ fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
                 }
             }
             placed += 1;
+        }
+    }
+}
+
+/// The first Empty cell at or below (x, y0) that rests directly on Water: a surface a layered pool can float on.
+fn find_water_surface(g: &Grid, x: i32, y0: i32, max_down: i32) -> Option<i32> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    if x < 0 || x >= w {
+        return None;
+    }
+    let at = |y: i32| g.mat[(y * w + x) as usize];
+    let mut y = y0.clamp(0, h - 2);
+    let lim = y + 60;
+    while at(y) != EMPTY {
+        y += 1;
+        if y >= h - 1 || y > lim {
+            return None;
+        }
+    }
+    let end = (y + max_down).min(h - 2);
+    while y < end && at(y + 1) == EMPTY {
+        y += 1;
+    }
+    (at(y + 1) == WATER).then_some(y)
+}
+
+/// Oil pools in the shallow band: half of the attempts try to float on a Water pool (a layered pool),
+/// the rest rest on a floor. Oil keeps away from Lava (`try_pool`'s `foe`).
+fn place_oil(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
+    let mut placed = 0;
+    for k in 0..2000u32 {
+        if placed == scale.oil_count {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_OIL_X) % scale.water_x_span as u32) as i32;
+        let y = scale.water_y_lo + (rng(seed, 0, k, 0, SALT_GEN_OIL_Y) % scale.water_y_span as u32) as i32;
+        let depth = 3 + (rng(seed, 0, k, 0, SALT_GEN_OIL_D) % 5) as i32;
+        let layered = rng(seed, 0, k, 1, SALT_GEN_OIL_LAYER) & 1 == 0;
+        let yf = if layered { find_water_surface(g, x, y, 120) } else { find_floor(g, x, y, 120) };
+        let Some(yf) = yf else { continue };
+        if yf >= scale.deep_top - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
+            continue;
+        }
+        if try_pool(g, sc, x, yf, (2, depth), 700, OIL, LAVA) {
+            placed += 1;
+        }
+    }
+}
+
+/// Is (x, y) within `r` cells (Chebyshev) of any point of the guaranteed path?
+fn near_path(path: &[(i32, i32)], x: i32, y: i32, r: i32) -> bool {
+    path.iter().any(|&(px, py)| (px - x).abs() <= r && (py - y).abs() <= r)
+}
+
+/// Acid pools in the deep band, rare, and never near the guaranteed path (a pit of acid on the only way
+/// down would be a trap that rewards nothing). Water must not touch them (it would dilute at once).
+fn place_acid(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale, path: &[(i32, i32)]) {
+    let mut placed = 0;
+    for k in 0..3000u32 {
+        if placed == scale.acid_count {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_ACID_X) % scale.water_x_span as u32) as i32;
+        let y = scale.lava_y_lo - 40 + (rng(seed, 0, k, 0, SALT_GEN_ACID_Y) % (scale.lava_y_span + 40) as u32) as i32;
+        let depth = 3 + (rng(seed, 0, k, 0, SALT_GEN_ACID_D) % 6) as i32;
+        let Some(yf) = find_floor(g, x, y, 120) else { continue };
+        if yf < scale.deep_top + 20 || g.mat[yf as usize * g.w + x as usize] != EMPTY || near_path(path, x, yf, ACID_PATH_MARGIN) {
+            continue;
+        }
+        if try_pool(g, sc, x, yf, (2, depth), 500, ACID, WATER) {
+            placed += 1;
+        }
+    }
+}
+
+/// Gas pockets: under the roof of a roomy chamber, fill up to `GAS_POCKET_ROWS` rows beneath the ceiling
+/// with Gas (a few hundred cells), but only where the open height below is at least `GAS_MIN_HEIGHT` so a
+/// pocket never blocks a walkable passage, and never within reach of Lava.
+fn place_gas_pockets(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]) {
+    if path.is_empty() {
+        return;
+    }
+    let (w, h) = (g.w as i32, g.h as i32);
+    let mut placed = 0;
+    for k in 0..400u32 {
+        if placed == scale.gas_count {
+            break;
+        }
+        let (px, py) = path[(rng(seed, 0, k, 0, SALT_GEN_GASP_PICK) % path.len() as u32) as usize];
+        if py < scale.shallow_top + 40 || py > scale.deep_top + 300 {
+            continue;
+        }
+        let r = 14 + (rng(seed, 0, k, 0, SALT_GEN_GASP_R) % 16) as i32;
+        // The ceiling above the path point: the first solid cell going up through the open space.
+        let mut cy = py;
+        while cy > 1 && g.mat[(cy * w + px) as usize] == EMPTY {
+            cy -= 1;
+        }
+        if g.mat[(cy * w + px) as usize] == EMPTY || py - cy > 60 || near_material(g, px, cy, 14, 14, LAVA) {
+            continue;
+        }
+        let mut put = 0;
+        for x in (px - r).max(1)..=(px + r).min(w - 2) {
+            // Open height below this column's ceiling, from the first Empty cell under it.
+            let mut top = cy;
+            while top < h - 2 && top < cy + 8 && g.mat[(top * w + x) as usize] != EMPTY {
+                top += 1;
+            }
+            if g.mat[(top * w + x) as usize] != EMPTY || g.mat[((top - 1) * w + x) as usize] == EMPTY {
+                continue;
+            }
+            let mut open = 0;
+            while top + open < h - 2 && open < GAS_MIN_HEIGHT && g.mat[((top + open) * w + x) as usize] == EMPTY {
+                open += 1;
+            }
+            if open < GAS_MIN_HEIGHT {
+                continue;
+            }
+            for y in top..top + GAS_POCKET_ROWS {
+                let i = (y * w + x) as usize;
+                if g.mat[i] != EMPTY {
+                    break;
+                }
+                g.mat[i] = GAS;
+                put += 1;
+            }
+        }
+        if put >= 60 {
+            placed += 1;
+        }
+    }
+}
+
+/// Ice-lined chambers in the shallow band near the surface: around a few path points, the Rock and Dirt
+/// that borders open space becomes Ice (about two cells in three). It only replaces solids, so it cannot
+/// change what a body can walk through.
+fn place_ice(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let cand: Vec<(i32, i32)> = path.iter().copied().filter(|&(_, y)| y >= scale.shallow_top && y < scale.shallow_top + 260).collect();
+    if cand.is_empty() {
+        return;
+    }
+    for k in 0..scale.ice_count as u32 {
+        let (px, py) = cand[(rng(seed, 0, k, 0, SALT_GEN_ICE_PICK) % cand.len() as u32) as usize];
+        for y in (py - ICE_R).max(1)..=(py + ICE_R).min(h - 2) {
+            for x in (px - ICE_R).max(1)..=(px + ICE_R).min(w - 2) {
+                let i = (y * w + x) as usize;
+                if !matches!(g.mat[i], ROCK | DIRT) || (x - px) * (x - px) + (y - py) * (y - py) > ICE_R * ICE_R {
+                    continue;
+                }
+                let lining = [i - 1, i + 1, i - w as usize, i + w as usize].iter().any(|&j| g.mat[j] == EMPTY);
+                if lining && rng(seed, 0, x as u32, y as u32, SALT_GEN_ICE_CELL) % 3 != 0 {
+                    g.mat[i] = ICE;
+                }
+            }
+        }
+    }
+}
+
+/// Coal seams: thin worm-like veins that replace Rock only, in the shallow and deep bands (Rock only, so
+/// they never open or close space), so digging sometimes hits them.
+fn place_coal(g: &mut Grid, seed: u64, scale: &Scale) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let lo = scale.shallow_top + 20;
+    let hi = scale_u(h, 1400);
+    for k in 0..scale.coal_count as u32 {
+        let mut x = 40 + (rng(seed, 0, k, 0, SALT_GEN_COAL_X) % (w - 80) as u32) as i32;
+        let mut y = lo + (rng(seed, 0, k, 0, SALT_GEN_COAL_Y) % (hi - lo).max(1) as u32) as i32;
+        let len = 50 + (rng(seed, 0, k, 1, SALT_GEN_COAL_LEN) % 80) as i32;
+        let mut dir = (rng(seed, 0, k, 2, SALT_GEN_COAL_DIR) % 8) as i32;
+        for st in 0..len as u32 {
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1)] {
+                let (cx, cy) = (x + dx, y + dy);
+                if cx > 0 && cy > 0 && cx < w - 1 && cy < h - 1 {
+                    let i = (cy * w + cx) as usize;
+                    if g.mat[i] == ROCK {
+                        g.mat[i] = COAL;
+                    }
+                }
+            }
+            // Eight headings, turning by at most one step now and then.
+            if rng(seed, 0, k, 10 + st, SALT_GEN_COAL_DIR) % 3 == 0 {
+                dir = (dir + 7 + (rng(seed, 0, k, 10 + st, SALT_GEN_COAL_LEN) % 3) as i32) % 8;
+            }
+            let (sx, sy) = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)][dir as usize];
+            x = (x + sx).clamp(1, w - 2);
+            y = (y + sy).clamp(lo, hi);
         }
     }
 }
@@ -999,7 +1208,7 @@ fn repair_traversal(g: &mut Grid, seed: u64, sc: &Scale) {
         // A tunnel through a pool's floor leaves liquid hanging; drain it, bottom-up so a column cascades.
         let w = g.w;
         for i in (0..g.mat.len() - w).rev() {
-            if (g.mat[i] == WATER || g.mat[i] == LAVA) && g.mat[i + w] == EMPTY {
+            if matches!(g.mat[i], WATER | LAVA | OIL | ACID) && g.mat[i + w] == EMPTY {
                 g.mat[i] = EMPTY;
             }
         }
@@ -1092,7 +1301,7 @@ mod tests {
             let s = Sim::new(seed, 1).unwrap();
             let g = &s.grid;
             // Pools and piles may plug a passage, so reach through any non-solid material.
-            let open = |m: u8| matches!(m, EMPTY | WATER | LAVA | SAND | GUNPOWDER);
+            let open = |m: u8| matches!(m, EMPTY | WATER | LAVA | SAND | GUNPOWDER | OIL | ACID | GAS);
             let mut seen = vec![0u8; g.mat.len()];
             let mut stack = vec![(g.w / 2) as u32];
             seen[g.w / 2] = 1;
@@ -1274,6 +1483,63 @@ mod tests {
             out += &format!("size {size}: best {} ms, open {}% avg, pickups/seed shallow {} deep {}\n", best / 1000, open / 4, sh / 4, dp / 4);
         }
         std::fs::write("/tmp/f1-gen.txt", out).unwrap();
+    }
+
+    /// Measurement: counts of each new material per seed at L, and gen time per size. `--ignored`; writes /tmp/f2-gen.txt.
+    #[test]
+    #[ignore = "measurement"]
+    fn measure_f2_counts() {
+        use crate::config::RoomConfig;
+        let mut out = String::new();
+        for size in 0u8..=2 {
+            let cfg = RoomConfig { size, ..RoomConfig::caves_pvp() };
+            let mut best = u128::MAX;
+            for seed in 1..=8u64 {
+                let t = std::time::Instant::now();
+                let s = Sim::new(seed, cfg).unwrap();
+                best = best.min(t.elapsed().as_micros());
+                let n = |m: u8| s.grid.mat.iter().filter(|&&c| c == m).count();
+                let open = s.grid.mat.iter().filter(|&&m| m == EMPTY).count() * 100 / s.grid.mat.len();
+                out += &format!("size {size} seed {seed}: oil {} acid {} gas {} ice {} coal {} open {open}%\n", n(OIL), n(ACID), n(GAS), n(ICE), n(COAL));
+            }
+            out += &format!("size {size}: best gen {} ms\n", best / 1000);
+        }
+        std::fs::write("/tmp/f2-gen.txt", out).unwrap();
+    }
+
+    /// Acid never sits within `ACID_PATH_MARGIN` of the worm path, and every new material the generator places
+    /// is one `paintable` can represent. Shown red by letting `place_acid` ignore the path.
+    #[test]
+    fn acid_stays_off_the_path_and_gen_materials_are_paintable() {
+        use crate::config::RoomConfig;
+        for seed in 1..=3u64 {
+            let s = Sim::new(seed, RoomConfig::caves_pvp()).unwrap();
+            assert!(s.grid.mat.iter().all(|&m| m == BEDROCK || paintable(m)));
+            let acid: usize = s.grid.mat.iter().filter(|&&m| m == ACID).count();
+            assert!(acid > 0, "seed {seed}: no acid");
+        }
+        // Direct: a path point inside the pool's reach rejects the pool.
+        let mut g = Grid::new(400, 300);
+        for i in 0..g.mat.len() {
+            g.mat[i] = ROCK;
+        }
+        for y in 100..140 {
+            for x in 50..100 {
+                g.mat[y * 400 + x] = EMPTY;
+            }
+        }
+        let mut sc = Scale::new(2048, 1536);
+        sc.acid_count = 3;
+        sc.lava_y_lo = 100;
+        sc.lava_y_span = 30;
+        sc.water_x_span = 60;
+        sc.deep_top = 0;
+        let mut ps = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
+        let path: Vec<(i32, i32)> = (0..50).step_by(8).map(|k| (50 + k, 120)).collect();
+        place_acid(&mut g, 1, &mut ps, &sc, &path);
+        assert_eq!(g.mat.iter().filter(|&&m| m == ACID).count(), 0, "acid must keep off the path");
+        place_acid(&mut g, 1, &mut ps, &sc, &[]);
+        assert!(g.mat.iter().filter(|&&m| m == ACID).count() > 0, "with no path the same call places acid");
     }
 
     /// `carve_chambers` opens big ellipses centred on worm-path points, inside the walls and bands, Rock and Dirt
