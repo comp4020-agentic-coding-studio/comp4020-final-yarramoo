@@ -984,8 +984,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     (window as unknown as Record<string, unknown>).__devGoto = (spell: number) => {
       if (devAvatar) send({ type: "devgoto", spell });
     };
-    (window as unknown as Record<string, unknown>).__devGotoEnemy = () => {
-      if (devAvatar) send({ type: "devgoto", spell: -1 });
+    (window as unknown as Record<string, unknown>).__devGotoEnemy = (kind?: number) => {
+      if (devAvatar) send({ type: "devgoto", spell: kind === undefined ? -1 : -2 - kind });
     };
     (window as unknown as Record<string, unknown>).__devMe = () => lastPlayers?.list.find((p) => p.me) ?? null;
   }

@@ -41,7 +41,7 @@ import {
 } from "../shared/sim.ts";
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
 import type { SfxName } from "./sfx.ts";
-import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushSlime, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
+import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
@@ -155,7 +155,11 @@ let oneLife = false;
 /** The round banner has been posted once (from state or from the event). */
 let roundShown = false;
 /** Last seen y of each enemy and when it was hit (ms), for the squash/stretch and the white flash. Render-only. */
-const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number }>();
+const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number; kind: number }>();
+/** Last time (ms) a worm rumble played, and the max hp of each enemy kind (render-only table mirroring tuning.rs). */
+let lastRumble = 0;
+const enemyBoltSeen = new Set<string>();
+const ENEMY_MAX_HP = [20, 30, 60, 90];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
 let lastFxAt = 0;
@@ -534,13 +538,18 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     const ex = e.x / 16;
     const ey = e.y / 16;
     let es = enemySeen.get(e.id);
-    if (!es) enemySeen.set(e.id, (es = { x: ex, y: ey, vy: 0, hitAt: -1e9 }));
+    if (!es) enemySeen.set(e.id, (es = { x: ex, y: ey, vy: 0, hitAt: -1e9, kind: e.sub }));
     es.x = ex;
     es.vy = ey - es.y;
     es.y = ey;
     if (ex < cam.x - 8 || ex > cam.x + cam.vw + 8 || ey < cam.y - 8 || ey > cam.y + cam.vh + 8) continue;
     const air = (e.health & 2) === 0 ? "ground" : es.vy < 0 ? "rising" : "falling";
-    pushSlime(rects, ex, ey, air, now - es.hitAt < 120, e.a / 20);
+    pushEnemy(rects, e.sub, ex, ey, air, now - es.hitAt < 120, e.a / (ENEMY_MAX_HP[e.sub] ?? 20), ENEMY_MAX_HP[e.sub] ?? 20, (e.health & 1) === 1, now);
+    // A worm tunnelling near the camera rumbles, at most twice a second.
+    if (e.sub === 3 && (e.health & 1) === 1 && now - lastRumble > 500) {
+      lastRumble = now;
+      sfxAt("rumble", ex, ey, 0.5, net === "catching-up" || !!ls?.fastForwarding);
+    }
   }
   for (const id of enemySeen.keys()) if (!liveEnemies.has(id)) enemySeen.delete(id);
   // The round banner comes from state (a client that caught up or reconnected never saw the one-shot event).
@@ -688,12 +697,14 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       const es = enemySeen.get(e.a);
       if (es) {
         es.hitAt = now;
-        fx.burst(es.x, es.y - 2, [0.4, 0.9, 0.4], 8, 0.04);
-        sfxAt("squelch", es.x, es.y, 0.4, quiet);
+        const col: [number, number, number] = es.kind === 1 ? [1, 0.5, 0.15] : es.kind === 2 ? [0.6, 0.85, 0.2] : es.kind === 3 ? [0.85, 0.5, 0.5] : [0.4, 0.9, 0.4];
+        fx.burst(es.x, es.y - 2, col, 8, 0.04);
+        sfxAt(es.kind === 2 ? "hiss" : "squelch", es.x, es.y, 0.4, quiet);
       }
     } else if (e.kind === EV_ENEMY_DEATH) {
-      fx.burst(e.a / 16, e.b / 16 - 2, [0.3, 0.85, 0.3], 22, 0.06);
-      sfxAt("splat", e.a / 16, e.b / 16, 0.6, quiet);
+      const dcol: [number, number, number] = e.c === 1 ? [1, 0.5, 0.15] : e.c === 2 ? [0.6, 0.85, 0.2] : e.c === 3 ? [0.85, 0.5, 0.5] : [0.3, 0.85, 0.3];
+      fx.burst(e.a / 16, e.b / 16 - 2, dcol, 22, 0.06);
+      sfxAt(e.c === 1 ? "screech" : e.c === 3 ? "crunch" : "splat", e.a / 16, e.b / 16, 0.6, quiet);
     } else if (e.kind === EV_ROUND_END) {
       if (!quiet && !roundShown) {
         roundShown = true;
@@ -714,6 +725,11 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
     const x = q.x / 16;
     const y = q.y / 16;
     if (q.id === myId) dropGhost(q.a);
+    // An enemy-owned bolt has the owner's high bit set (never equal to a player id); a fresh one crackles.
+    if (q.id >= 0x80000000 && q.a === 0 && !enemyBoltSeen.has(`${q.id}:${Math.round(q.x / 4096)}`) && enemyBoltSeen.size < 64) {
+      enemyBoltSeen.add(`${q.id}:${Math.round(q.x / 4096)}`);
+      sfxAt("crackle", q.x / 16, q.y / 16, 0.4, net === "catching-up" || !!ls?.fastForwarding);
+    }
     if (q.sub === 11) {
       // Black Hole: a dark core with particles falling in from a ring.
       rects.push({ x: Math.round(x) - 2, y: Math.round(y) - 2, w: 5, h: 5, r: 0.05, g: 0, b: 0.1, a: 1 });
@@ -958,10 +974,11 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       // this spell. The avatar then reports it through the normal Pos path, as tools/inputgen-m5.ts does (D-114).
       if (import.meta.env.DEV && localSim && avatar) {
         // spell -1: the nearest enemy instead (dev only, `__devGotoEnemy`).
-        const list = localSim.entities().filter((e) => (m.spell < 0 ? e.type === ENT_ENEMY : e.type === ENT_PICKUP && e.sub === m.spell && e.active));
+        // spell <= -2: the nearest enemy of kind (-2 - spell), standing at its height (an imp hovers in open air).
+        const list = localSim.entities().filter((e) => (m.spell < 0 ? e.type === ENT_ENEMY && (m.spell === -1 || e.sub === -2 - m.spell) : e.type === ENT_PICKUP && e.sub === m.spell && e.active));
         const me = localSim.entities().find((e) => e.type === ENT_PLAYER && e.id === myId);
         list.sort((a, b) => Math.abs(a.x - (me?.x ?? 0)) + Math.abs(a.y - (me?.y ?? 0)) - (Math.abs(b.x - (me?.x ?? 0)) + Math.abs(b.y - (me?.y ?? 0))));
-        if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell < 0 ? 12 : 0), list[0].y / 16);
+        if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell < 0 ? 12 : 0), list[0].y / 16 - (m.spell === -3 ? 4 : 0));
       }
       break;
     case "pointer":

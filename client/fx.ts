@@ -56,6 +56,46 @@ export function pushSlime(rects: Rect[], px: number, py: number, air: "rising" |
   }
 }
 
+// F5 enemy sprites. Imp (7 wide, 5 tall): r body, o flame, y flame tip, w wing, e eye. Acid slime (7 x 4): darker green with
+// bright acid drips. Worm (7 x 5): segmented pink head, p flesh, d ring shadow, t tooth, e eye.
+const IMP_A = [".o.y.o.", "wrrrrrw", "wrerere", ".rrrrr.", "..r.r.."];
+const IMP_B = ["..oyo..", ".wrrrw.", "wrerere", ".rrrrr.", "..r.r.."];
+const IMP_COL: Record<string, [number, number, number]> = { r: [0.9, 0.3, 0.12], o: [1, 0.55, 0.1], y: [1, 0.9, 0.35], w: [0.6, 0.15, 0.1], e: [1, 1, 0.7] };
+const ACID_IDLE = [".ggggg.", "glllggg", "ggegegg", "dddddd.", ".a..a.."];
+const ACID_SQUASH = ["ggggggg", "ggegegg", "dddddda"];
+const ACID_COL: Record<string, [number, number, number]> = { g: [0.35, 0.55, 0.1], l: [0.6, 0.8, 0.2], d: [0.18, 0.3, 0.06], e: [0.95, 0.95, 0.2], a: [0.7, 1, 0.2] };
+const WORM = [".ppppp.", "pppppdp", "pepepdp", "pttpppp", ".ddppd."];
+const WORM_COL: Record<string, [number, number, number]> = { p: [0.85, 0.5, 0.5], d: [0.55, 0.3, 0.32], t: [1, 1, 0.9], e: [0.1, 0.05, 0.05] };
+const HIT_COL: Record<string, [number, number, number]> = Object.fromEntries("rowyegldatp".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
+
+/** An enemy of `kind` (0 slime, 1 imp, 2 acid slime, 3 worm) standing with its feet centre at (px, py). `awake` is the
+ * view's hunting bit: a dormant worm is not drawn at all (it is inside the rock), an awake one shows its head. */
+export function pushEnemy(rects: Rect[], kind: number, px: number, py: number, air: "rising" | "falling" | "ground", hit: boolean, hpFrac: number, maxHp: number, awake: boolean, now: number): void {
+  if (kind === 0) return pushSlime(rects, px, py, air, hit, hpFrac);
+  if (kind === 3 && !awake) return;
+  const x0 = Math.round(px) - 3;
+  let rows: string[];
+  let pal: Record<string, [number, number, number]>;
+  if (kind === 1) {
+    rows = Math.floor(now / 140) % 2 === 0 ? IMP_A : IMP_B;
+    pal = IMP_COL;
+  } else if (kind === 2) {
+    rows = air === "ground" ? ACID_IDLE : ACID_SQUASH;
+    pal = ACID_COL;
+  } else {
+    rows = WORM;
+    pal = WORM_COL;
+  }
+  const y0 = Math.round(py) - rows.length;
+  pushGrid(rects, rows, hit ? HIT_COL : pal, x0, y0);
+  if (hpFrac < 1) {
+    const by = y0 - 3;
+    rects.push({ x: x0, y: by, w: 7, h: 1, r: 0.15, g: 0.05, b: 0.05 });
+    rects.push({ x: x0, y: by, w: Math.max(1, Math.round(7 * hpFrac)), h: 1, r: 0.9, g: 0.25, b: 0.2 });
+  }
+  void maxHp;
+}
+
 /** A bag resting on the cell (cx, cy): bobs by a cell now and then and glints. `now` is ms, cosmetic only. */
 export function pushBag(rects: Rect[], cx: number, cy: number, now: number): void {
   const bob = Math.sin(now / 350 + cx * 0.7) > 0.4 ? 1 : 0;

@@ -78,3 +78,14 @@
   see below). Node D1/D6 asserts an enemy-owned `EV_IMPACT` (owner high bit) and a contact knock on player 2; browser D2 runs it on
   Chromium, Firefox and WebKit against Node.
 - Red first: with both players moved 300/90 cells away the Node test failed ("expected false to be true"). Gate: 49 tests green.
+
+### 5. Client
+- `fx.ts` `pushEnemy` (imp with a two-frame flame flicker, acid slime with drips, worm head shown only when awake, hit flash,
+  the F4 hp bar for all), `sfx.ts` (`crackle`, `screech`, `hiss`, `rumble`, `crunch`), `toasts.ts` (cause 40 + kind wording),
+  `worker.ts` (per-kind hurt/death colours and sounds, enemy bolts crackle when first seen, worm rumble rate-limited to 2/s
+  and only near the camera through `sfxAt`'s distance gate; `ENEMY_MAX_HP` is a render-only table mirroring `tuning.rs`),
+  `room.ts` (`__devGotoEnemy(kind)`; an imp (kind 1) puts the player 4 cells above its feet, i.e. at its height).
+- `chestOf`, `dropGhost` and the ghost code: enemy bolts have `q.id >= 0x80000000`, which never equals `myId` (the sim refuses
+  such player ids), so no ghost is dropped and `chestOf` finds no player; the EV_CAST path is not used for enemy bolts at all.
+- Test: `tests/net/toasts.test.ts` per-kind wording; red first (with toasts.ts reverted: "Received: Ana was slain by a slime").
+- Gate: cargo test, clippy, typecheck, test:determinism (49) and `pnpm test:net` (312 passed) all exit 0.
