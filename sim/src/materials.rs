@@ -20,10 +20,11 @@ pub const ACID: u8 = 16;
 pub const GAS: u8 = 17;
 pub const ICE: u8 = 18;
 pub const GLASS: u8 = 19;
+pub const COAL: u8 = 20;
 
 /// Materials that `Paint` may place: everything except Bedrock, the world boundary.
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=GLASS)
+    matches!(m, EMPTY | ROCK..=COAL)
 }
 
 pub fn is_gas(m: u8) -> bool {

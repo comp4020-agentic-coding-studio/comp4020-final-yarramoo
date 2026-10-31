@@ -23,7 +23,7 @@ precision highp int;
 precision highp usampler2D;
 uniform usampler2D uMat;
 uniform usampler2D uAux;
-uniform vec3 uPal[16];
+uniform vec3 uPal[32];
 uniform float uTime;
 uniform vec2 uWorld;
 uniform vec2 uCam;
@@ -58,6 +58,12 @@ void main() {
   if (m == 14u) {
     float w = 0.5 + 0.5 * sin(uTime * 2.0 + float(c.x) * 0.35 + float(c.y) * 0.21 + h * 3.0);
     outColor = vec4(mix(vec3(0.62, 0.1, 0.02), vec3(1.0, 0.62, 0.12), w * (0.6 + 0.4 * h)), 1.0);
+    return;
+  }
+  if (m == 17u) {
+    // Gas: faint, slowly shimmering, so a pocket reads as a haze against the rock.
+    float sh = 0.5 + 0.5 * sin(uTime * 1.2 + float(c.x) * 0.3 + float(c.y) * 0.17 + h * 4.0);
+    outColor = vec4(mix(bg, col, 0.28 + 0.14 * sh), 1.0);
     return;
   }
   if (m == 11u || m == 12u) {
@@ -194,7 +200,7 @@ export class Renderer {
     this.uCam = gl.getUniformLocation(prog, "uCam");
     this.uView = gl.getUniformLocation(prog, "uView");
     this.uBands = gl.getUniformLocation(prog, "uBands");
-    const pal = new Float32Array(48);
+    const pal = new Float32Array(96);
     paletteTable().forEach((c, i) => {
       pal[i * 3] = ((c >> 16) & 255) / 255;
       pal[i * 3 + 1] = ((c >> 8) & 255) / 255;

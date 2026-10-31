@@ -222,6 +222,7 @@ impl Grid {
         if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA | ACID)
             || (m == STEM && self.aux[i] != 0)
             || (m == GUNPOWDER && self.aux[i] == 1)
+            || (m == COAL && self.aux[i] != 0)
         {
             self.vol_seen = true;
         }
@@ -234,6 +235,7 @@ impl Grid {
             ACID => self.update_acid(x, y, seed, tick),
             GAS => self.update_marsh_gas(x, y, seed, tick),
             ICE => self.update_ice(x, y, seed, tick),
+            COAL => self.update_coal(x, y, seed, tick),
             FIRE => self.update_fire(x, y, seed, tick),
             SMOKE => self.update_gas(x, y, seed, tick, SMOKE),
             STEAM => self.update_gas(x, y, seed, tick, STEAM),
@@ -474,6 +476,50 @@ impl Grid {
         }
     }
 
+    /// Coal: a static solid (it does not fall). `aux` 0 is unlit; a lit cell counts `COAL_BURN` ticks down to
+    /// nothing, glowing as Coal, and on the way sheds Fire into an empty neighbour (1 in 6, up first) and
+    /// sometimes Smoke. It is lit by Fire or Lava next to it (`light_coal`). Four neighbour reads per tick.
+    fn update_coal(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        let a = self.aux[i];
+        if a == 0 {
+            return;
+        }
+        if a == 1 {
+            self.set(i, EMPTY, 0);
+            return;
+        }
+        self.aux[i] = a - 1;
+        self.touch(i);
+        // A lit cell passes the fire to a coal neighbour now and then (a seam burns along its length).
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            if let Some((nx, ny)) = self.off(x, y, dx, dy) {
+                if self.at(nx, ny) == COAL && rng(seed, tick, nx as u32, ny as u32, SALT_COAL_IGNITE) % 24 == 0 {
+                    self.light_coal(ny * self.w + nx);
+                }
+            }
+        }
+        let r = rng(seed, tick, x as u32, y as u32, SALT_COAL_EMIT);
+        if r % 6 == 0 {
+            for (dx, dy) in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
+                if let Some((nx, ny)) = self.off(x, y, dx, dy) {
+                    if self.at(nx, ny) == EMPTY {
+                        let smoky = rng(seed, tick, x as u32, y as u32, SALT_COAL_SMOKE) % 3 == 0;
+                        self.set(ny * self.w + nx, if smoky { SMOKE } else { FIRE }, 0);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Light the Coal at flat index `n`, if it is unlit.
+    fn light_coal(&mut self, n: usize) {
+        if self.aux[n] == 0 {
+            self.set(n, COAL, COAL_BURN);
+        }
+    }
+
     fn dissolvable(m: u8) -> bool {
         matches!(m, ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER)
     }
@@ -493,6 +539,8 @@ impl Grid {
                 let n = ny * self.w + nx;
                 if is_flammable(m) && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_IGNITE) % 8 == 0 {
                     self.set(n, FIRE, 0);
+                } else if m == COAL && rng(seed, tick, nx as u32, ny as u32, SALT_COAL_IGNITE) % 16 == 0 {
+                    self.light_coal(n);
                 } else if m == ICE && rng(seed, tick, nx as u32, ny as u32, SALT_ICE_MELT) % 2 == 0 {
                     self.set(n, WATER, 0);
                 } else if m == SAND && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_GLASS) % 10 == 0 {
@@ -521,6 +569,9 @@ impl Grid {
         for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
             if let Some((nx, ny)) = self.off(x, y, dx, dy) {
                 let m = self.at(nx, ny);
+                if m == COAL && rng(seed, tick, nx as u32, ny as u32, SALT_COAL_IGNITE) % 8 == 0 {
+                    self.light_coal(ny * self.w + nx);
+                }
                 if m == ICE && rng(seed, tick, nx as u32, ny as u32, SALT_ICE_MELT) % 3 == 0 {
                     self.set(ny * self.w + nx, WATER, 0);
                 }
@@ -552,7 +603,7 @@ impl Grid {
         self.aux[i] = a - 1;
         self.touch(i);
         // Fire touching fuel lingers on it instead of drifting off, so it can spread.
-        if self.find_neighbour(x, y, is_flammable).is_some() {
+        if self.find_neighbour(x, y, |m| is_flammable(m) || m == COAL).is_some() {
             return;
         }
         let r = rng(seed, tick, x as u32, y as u32, SALT_FIRE_RISE);
@@ -792,7 +843,7 @@ impl Grid {
                 }
                 let i = y as usize * self.w + x as usize;
                 match self.mat[i] {
-                    ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER | ICE | GLASS => self.set(i, EMPTY, 0),
+                    ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER | ICE | GLASS | COAL => self.set(i, EMPTY, 0),
                     GUNPOWDER if self.aux[i] != 1 => self.set(i, GUNPOWDER, 1),
                     _ => {}
                 }
@@ -835,6 +886,8 @@ const GERMINATE_AT: u8 = 60;
 const ACID_STRENGTH: u8 = 12;
 /// Waters one fresh Ice cell can freeze over its life.
 const ICE_COLD: u8 = 3;
+/// Ticks a lit Coal cell burns: about four times a Wood cell's fire (30..=90 ticks, mean 60).
+const COAL_BURN: u8 = 240;
 /// Lifetime of the fire a burning Gas cell becomes: short, so a pocket flashes through.
 const FLASH_LIFE: u8 = 6;
 
@@ -1120,6 +1173,36 @@ mod tests {
         g.set(60 * 64 + 21, ICE, 0);
         g.dig(20, 60, 21, 60, 1);
         assert_eq!((g.at(20, 60), g.at(21, 60)), (EMPTY, EMPTY));
+    }
+
+    #[test]
+    fn coal_burns_long_and_gives_off_smoke() {
+        // One lit coal cell burns far longer than a wood cell does, and sheds fire and smoke.
+        let burn = |m: u8| {
+            let mut g = boxed(64, 64);
+            for x in 20..25 {
+                g.set(62 * 64 + x, m, 0);
+            }
+            for y in 0..62 {
+                g.set(y * 64 + 19, BEDROCK, 0);
+                g.set(y * 64 + 25, BEDROCK, 0);
+            }
+            g.set(61 * 64 + 20, FIRE, 0);
+            let (mut gone, mut saw_smoke) = (None, false);
+            for t in 0..2000 {
+                g.step_cells(6, t);
+                saw_smoke |= count(&g, SMOKE) > 0;
+                if gone.is_none() && count(&g, m) == 0 {
+                    gone = Some(t);
+                }
+            }
+            (gone, saw_smoke)
+        };
+        let (coal, smoke) = burn(COAL);
+        let (wood, _) = burn(WOOD);
+        let (coal, wood) = (coal.expect("coal should burn out"), wood.expect("wood should burn out"));
+        assert!(smoke, "burning coal gives off smoke");
+        assert!(coal > 2 * wood, "coal burned {coal} ticks, wood {wood}");
     }
 
     #[test]
@@ -1421,10 +1504,10 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=GLASS).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=COAL).filter(|&m| m != BEDROCK) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(GLASS + 1));
+        assert!(!paintable(BEDROCK) && !paintable(COAL + 1));
     }
 }
 

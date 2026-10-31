@@ -27,12 +27,15 @@ export const MATERIALS: MaterialInfo[] = [
   { id: 17, name: MATERIAL_NAMES[17], color: 0xb4c85a },
   { id: 18, name: MATERIAL_NAMES[18], color: 0xa8e4f0 },
   { id: 19, name: MATERIAL_NAMES[19], color: 0xb4c4d4 },
+  { id: 20, name: MATERIAL_NAMES[20], color: 0x1a1d28 },
   { id: 0, name: MATERIAL_NAMES[0], color: 0x0b0e14 },
 ];
 
-/** Colour for every id 0..15 (unused ids are magenta so a bug is visible). */
+/** Colour for every id 0..31 (unused ids are magenta so a bug is visible). Matches `uPal[32]` in render.ts. */
+export const PALETTE_SIZE = 32;
+
 export function paletteTable(): number[] {
-  const t = new Array<number>(16).fill(0xff00ff);
+  const t = new Array<number>(PALETTE_SIZE).fill(0xff00ff);
   t[1] = 0x2b2d33; // Bedrock: not paintable, so not in MATERIALS
   for (const m of MATERIALS) t[m.id] = m.color;
   return t;

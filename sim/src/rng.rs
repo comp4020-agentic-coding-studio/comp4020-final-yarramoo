@@ -46,6 +46,9 @@ pub const SALT_MGAS_DIR: u32 = 206;
 pub const SALT_ICE_FREEZE: u32 = 207;
 pub const SALT_ICE_MELT: u32 = 208;
 pub const SALT_LAVA_GLASS: u32 = 209;
+pub const SALT_COAL_IGNITE: u32 = 210;
+pub const SALT_COAL_EMIT: u32 = 211;
+pub const SALT_COAL_SMOKE: u32 = 212;
 
 pub const SALT_GEN_SURF_A: u32 = 100;
 pub const SALT_GEN_SURF_B: u32 = 101;
