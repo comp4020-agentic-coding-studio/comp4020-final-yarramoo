@@ -494,3 +494,13 @@ translation-only `Body` entity. v2: rotation.
 - **Source:** the user, 31 Oct; research in `docs/research/rigid-bodies.md`; engineering-decisions entry 28.
 - **Why:** it's the Noita moment of cutting a chunk free and watching it fall. v0 is cheap (about half a day,
   no snapshot change); rotation (v2) is 5+ days of high-risk work in fixed point.
+
+## Teleport (skipped from F3)
+
+A deep-pickup bolt that moves the caster to the last body-sized open spot along its path.
+
+- **Source:** the F3 brief (`docs/briefs/fun3-spells.md`), skipped by the worker for lack of budget
+  (`docs/research/f3-worker-report.md`).
+- **Why:** an escape and traversal spell. The open question is the server's Pos validation:
+  `maxPosJump` (D-067, D-078) would reject the jump unless the sim's teleport is visible to the server, or
+  the client opens a new baseline the way a respawn does. Settle that before building it.
