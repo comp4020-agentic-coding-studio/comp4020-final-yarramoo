@@ -158,7 +158,8 @@ let roundShown = false;
 const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number; kind: number }>();
 /** Last time (ms) a worm rumble played, and the max hp of each enemy kind (render-only table mirroring tuning.rs). */
 let lastRumble = 0;
-const enemyBoltSeen = new Set<string>();
+/** Enemy owners with a bolt in flight last frame, so each new bolt crackles once (pruned every frame). */
+let enemyBoltSeen = new Set<number>();
 const ENEMY_MAX_HP = [20, 30, 60, 90];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
@@ -719,16 +720,18 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
     }
   }
   // Real bolts: a body and a trail puff each frame.
+  const enemyBoltNow = new Set<number>();
   for (const q of ents) {
     if (q.type !== ENT_PROJECTILE) continue;
     const col = SPELLS[q.sub]?.colour ?? [1, 1, 1];
     const x = q.x / 16;
     const y = q.y / 16;
     if (q.id === myId) dropGhost(q.a);
-    // An enemy-owned bolt has the owner's high bit set (never equal to a player id); a fresh one crackles.
-    if (q.id >= 0x80000000 && q.a === 0 && !enemyBoltSeen.has(`${q.id}:${Math.round(q.x / 4096)}`) && enemyBoltSeen.size < 64) {
-      enemyBoltSeen.add(`${q.id}:${Math.round(q.x / 4096)}`);
-      sfxAt("crackle", q.x / 16, q.y / 16, 0.4, net === "catching-up" || !!ls?.fastForwarding);
+    // An enemy-owned bolt has the owner's high bit set (never equal to a player id). An imp has at most one bolt in
+    // flight (90-tick cooldown), so a bolt from an owner with none last frame is a new cast: it crackles once.
+    if (q.id >= 0x80000000 && q.a === 0) {
+      if (!enemyBoltSeen.has(q.id)) sfxAt("crackle", q.x / 16, q.y / 16, 0.4, net === "catching-up" || !!ls?.fastForwarding);
+      enemyBoltNow.add(q.id);
     }
     if (q.sub === 11) {
       // Black Hole: a dark core with particles falling in from a ring.
@@ -745,6 +748,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       pushBolt(rects, x, y, col, q.sub === 4, now);
     }
   }
+  enemyBoltSeen = enemyBoltNow;
   // Ghosts: the same flight, predicted from the avatar's position at click time, drawn at once.
   const ticks = dt / (1000 / 60);
   for (let i = ghosts.length - 1; i >= 0; i--) {
