@@ -62,6 +62,71 @@ fn d7_sandbox_sleep_is_invisible() {
     same(0, 11, 1700, 20, &sandbox_script());
 }
 
+/// F2: every new material, with sleeping chunks next to them. Oil on water, acid on rock and next to a
+/// sleeping sand pile, a gas pocket lit by fire, ice by lava and by water, sand by lava, and a coal fuse,
+/// all straddling chunk edges (x = 128, 256) and disturbed after a quiet spell.
+fn materials_script() -> Script {
+    vec![
+        // Rock shelf and basin across the x=256 edge, water, then oil poured on it later.
+        (1, paint(2, 230, 300, 290, 300, 2)),
+        (2, paint(5, 240, 290, 280, 294, 4)),
+        (300, paint(15, 255, 250, 262, 250, 5)),
+        // Acid dropped on a rock shelf next to a settled sand pile (a sleeping chunk).
+        (1, paint(4, 100, 200, 120, 200, 5)),
+        (1, paint(2, 90, 240, 150, 240, 3)),
+        (400, paint(16, 125, 200, 131, 200, 4)),
+        // A gas pocket under a rock roof, lit later by fire.
+        (1, paint(2, 300, 360, 380, 360, 2)),
+        (1, paint(2, 300, 360, 300, 400, 2)),
+        (1, paint(2, 380, 360, 380, 400, 2)),
+        (2, paint(17, 310, 365, 370, 380, 6)),
+        (600, paint(10, 340, 395, 342, 395, 1)),
+        // Ice beside water and beside lava, across the x=128 edge.
+        (1, paint(2, 100, 440, 160, 440, 2)),
+        (2, paint(18, 120, 435, 136, 435, 3)),
+        (3, paint(5, 138, 430, 150, 432, 3)),
+        (800, paint(14, 126, 420, 126, 424, 3)),
+        // Sand then lava: glass.
+        (1, paint(2, 400, 470, 470, 470, 2)),
+        (2, paint(4, 420, 460, 440, 465, 3)),
+        (900, paint(14, 430, 440, 434, 442, 3)),
+        // A coal fuse lit by fire after a quiet spell.
+        (1, paint(20, 20, 300, 120, 300, 2)),
+        (1100, paint(10, 20, 296, 22, 296, 1)),
+        // Digging-by-erase into settled ice and glass.
+        (1500, paint(0, 100, 430, 160, 445, 6)),
+    ]
+}
+
+#[test]
+fn d7_new_materials_sleep_is_invisible() {
+    same(0, 13, 2200, 20, &materials_script());
+}
+
+/// A quiet basin whose only activity is ice freezing the water beside it by chance: if the ice did not keep
+/// its chunk awake, the sleeping run would stop freezing and diverge from the awake one.
+#[test]
+fn d7_ice_by_water_keeps_its_chunk_awake() {
+    // A one-cell-wide channel: walls at x = 69 and 71, ice on the floor, water above it. The ice has
+    // exactly one water neighbour, so a freeze is a lone 1-in-20 roll per tick with nothing else moving.
+    let script: Script = vec![
+        (1, paint(2, 69, 250, 69, 300, 0)),
+        (1, paint(2, 71, 250, 71, 300, 0)),
+        (1, paint(2, 70, 300, 70, 300, 0)),
+        (2, paint(18, 70, 299, 70, 299, 0)),
+        (500, paint(5, 70, 290, 70, 298, 0)),
+    ];
+    same(0, 21, 3000, 100, &script);
+}
+
+#[test]
+fn d7_new_materials_hash_every_tick() {
+    let s = materials_script();
+    let a = run(0, 4, true, 700, 1, &s);
+    let b = run(0, 4, false, 700, 1, &s);
+    assert_eq!(a, b);
+}
+
 #[test]
 fn d7_sandbox_hash_every_tick() {
     // Reading the hash every tick must not perturb sleeping either.
