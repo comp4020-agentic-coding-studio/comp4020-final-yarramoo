@@ -474,3 +474,14 @@ impact sounds by the material hit (sand hiss, water plop, rock clack), read from
 
 - **Source:** the juice worker's report, 31 Oct.
 - **Why:** the shake is now on knocks, Blast casts and explosions, which is a lot for some players.
+
+## Enemy spawners (an extension to one-shot enemies)
+
+Nests that respawn enemies on timers, or waves that spawn near players, on top of the one-shot,
+generator-placed enemies Survival gets first.
+
+- **Source:** the user, 31 Oct ("we may also add in spawners later, but let's treat that as an
+  extension"), and `docs/research/enemies-design.md` section 4.
+- **Why:** respawning would let enemies work in Deathmatch or a co-op endless mode. Wave spawning near
+  players would make a wave mode possible. Both need a respawn timer in hashed state, plus a rule that
+  never spawns in view.
