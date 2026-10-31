@@ -46,3 +46,12 @@
   slime test passes by nature (nothing happens either way).
 - Gate green.
 
+### 6. The co-op knock gate (D-158)
+- `spells.rs`: `hit_player` returns early for another player's victim when `!damage_from_players()` (covers Push and
+  Blast, the two callers); `explode_at` skips another player's explosion entirely in such rooms (no credit, damage
+  or `EV_KNOCK`, so Bomb is covered; the caster's own knock is unchanged); the Black Hole pull skips non-owners.
+  Enemies are still hurt and moved by all of them.
+- Red first: with the three gates neutralised, 2 of the 4 new tests fail (Push/Blast/Bomb on another player; Black
+  Hole pull). The other two (own bomb knock, Push on a slime) are non-regression tests and pass either way.
+- Gate green (the stash-style revert was restored before the gate; `grep` confirms the gate text is present).
+

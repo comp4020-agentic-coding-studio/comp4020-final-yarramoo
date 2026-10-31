@@ -196,3 +196,104 @@ fn a_far_frozen_slime_in_lava_takes_no_damage() {
     }
     assert_eq!(s.enemies[0].hp, 20);
 }
+
+// ---- the co-op gate (D-158, commit 6) ---------------------------------------------------------------------
+
+fn two_players(cfg: RoomConfig) -> Sim {
+    let mut s = Sim::new(5, cfg).unwrap();
+    s.enemies.clear();
+    let w = s.grid.w;
+    for y in 100..320 {
+        for x in 300..700 {
+            s.grid.mat[y * w + x] = if y < 200 { EMPTY } else { ROCK };
+        }
+    }
+    for c in 0..s.grid.chunk_count() {
+        s.grid.mark_chunk(c);
+    }
+    s.push_input(&encode_join(1));
+    s.push_input(&encode_join(2));
+    s.step();
+    for p in s.players.iter_mut() {
+        p.x = (if p.id == 1 { 500 } else { 520 }) * PX;
+        p.y = 201 * PX;
+        p.charges = [INFINITE; NUM_SPELLS];
+    }
+    s
+}
+
+fn knocks_on(s: &Sim, id: u32) -> usize {
+    s.events.iter().filter(|e| e.kind == EV_KNOCK && e.player == id).count()
+}
+
+#[test]
+fn in_a_damage_one_room_push_blast_and_bomb_do_not_move_or_hurt_another_player() {
+    let coop = RoomConfig { size: 1, ..RoomConfig::survival() };
+    assert_eq!(coop.damage, 1);
+    // Push: the bolt reaches player 2, which gets no knock, no hp loss and no last-hitter
+    let mut s = two_players(coop);
+    assert_eq!(s.push_input(&encode_cast(1, 0, RIGHT, 1)), 0);
+    let mut n = 0;
+    for _ in 0..10 {
+        s.step();
+        n += knocks_on(&s, 2);
+    }
+    assert_eq!(n, 0, "Push knock");
+    assert_eq!((s.players[1].health, s.players[1].last_hit_by), (HEALTH_MAX, 0));
+    // Blast
+    let mut s = two_players(coop);
+    cast(&mut s, BLAST_ID, 1);
+    assert_eq!(knocks_on(&s, 2), 0, "Blast knock");
+    // Bomb at the other player's feet
+    let mut s = two_players(coop);
+    s.projectiles.push(Projectile { owner: 1, spell: BOMB_ID, cast_seq: 1, x: 520 * 256, y: 196 * 256, vx: 0, vy: 0, age: BOMB_FUSE });
+    let mut n = 0;
+    for _ in 0..3 {
+        s.step();
+        n += knocks_on(&s, 2);
+    }
+    assert_eq!(n, 0, "Bomb knock on another player");
+    assert_eq!(s.players[1].health, HEALTH_MAX);
+    // the same Push in full PvP still knocks (the gate is only for rooms without player damage)
+    let mut s = two_players(RoomConfig { size: 1, ..RoomConfig::caves_pvp() });
+    assert_eq!(s.push_input(&encode_cast(1, 0, RIGHT, 1)), 0);
+    let mut n = 0;
+    for _ in 0..10 {
+        s.step();
+        n += knocks_on(&s, 2);
+    }
+    assert!(n > 0, "PvP Push still knocks");
+}
+
+#[test]
+fn a_bomb_still_knocks_its_own_caster_in_a_co_op_room() {
+    let coop = RoomConfig { size: 1, ..RoomConfig::survival() };
+    let mut s = two_players(coop);
+    s.projectiles.push(Projectile { owner: 1, spell: BOMB_ID, cast_seq: 1, x: 500 * 256, y: 196 * 256, vx: 0, vy: 0, age: BOMB_FUSE });
+    s.step();
+    assert!(knocks_on(&s, 1) > 0, "own explosion knock is unchanged");
+}
+
+#[test]
+fn a_black_hole_pulls_only_its_caster_in_a_co_op_room_and_everyone_in_pvp() {
+    for (cfg, other_pulled) in [(RoomConfig { size: 1, ..RoomConfig::survival() }, false), (RoomConfig { size: 1, ..RoomConfig::caves_pvp() }, true)] {
+        let mut s = two_players(cfg);
+        s.projectiles.push(Projectile { owner: 1, spell: 11, cast_seq: 1, x: 510 * 256, y: 196 * 256, vx: 0, vy: 0, age: 1 });
+        s.step();
+        assert!(knocks_on(&s, 1) > 0, "the caster is pulled");
+        assert_eq!(knocks_on(&s, 2) > 0, other_pulled);
+    }
+}
+
+#[test]
+fn push_on_a_slime_still_works_in_a_co_op_room() {
+    let mut s = two_players(RoomConfig { size: 1, ..RoomConfig::survival() });
+    s.enemies = vec![slime(0, 530)];
+    s.players[1].x = 320 * PX;
+    assert_eq!(s.push_input(&encode_cast(1, 0, RIGHT, 1)), 0);
+    for _ in 0..8 {
+        s.step();
+    }
+    assert_eq!(s.enemies[0].hp, 20 - PUSH_ENEMY_DAMAGE);
+    assert!(s.enemies[0].x > 530 * PX);
+}

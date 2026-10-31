@@ -213,6 +213,10 @@ impl Sim {
     }
 
     fn hit_player(&mut self, victim: u32, attacker: u32, vx: i32, vy: i32) {
+        // D-158 co-op gate: with no player-on-player damage, one player's spell never moves another.
+        if victim != attacker && !self.cfg.damage_from_players() {
+            return;
+        }
         let tick = self.tick;
         if let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) {
             self.players[k].last_hit_by = attacker;
@@ -339,7 +343,8 @@ impl Sim {
         let range = i64::from(BH_PULL_RANGE * POS_ONE);
         for i in 0..self.players.len() {
             let t = &self.players[i];
-            if !t.alive(tick) {
+            // D-158 co-op gate: the pull moves only the caster's own avatar when players cannot hurt each other.
+            if !t.alive(tick) || (t.id != q.owner && !self.cfg.damage_from_players()) {
                 continue;
             }
             let (dx, dy) = (i64::from(cx * POS_ONE + POS_ONE / 2 - t.x), i64::from(cy * POS_ONE + POS_ONE / 2 - (t.y - CHEST * POS_ONE)));
@@ -629,6 +634,10 @@ impl Sim {
                 continue;
             }
             let id = t.id;
+            // D-158 co-op gate: another player's explosion neither credits, damages nor knocks this player.
+            if owner != 0 && id != owner && !self.cfg.damage_from_players() {
+                continue;
+            }
             if owner != 0 && id != owner {
                 self.players[i].last_hit_by = owner;
                 self.players[i].last_hit_tick = tick;
