@@ -72,6 +72,7 @@ impl Sim {
             REJECT_COOLDOWN
         } else if spell != BLAST
             && spell != DIG
+            && spell != WALL
             && (self.projectiles.len() >= MAX_PROJECTILES
                 || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER)
         {
@@ -93,6 +94,9 @@ impl Sim {
         }
         if spell == DIG {
             return self.dig_cast(px, py, angle);
+        }
+        if spell == WALL {
+            return self.wall_cast(px, py, angle);
         }
         let (c, sn) = dir(angle);
         let v = SPEED[s];
@@ -144,6 +148,43 @@ impl Sim {
         let off = DIG_REACH * POS_ONE;
         let (bx, by) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
         self.grid.dig(cx >> POS_SHIFT, cy >> POS_SHIFT, bx, by, DIG_RADIUS);
+    }
+
+    /// Wall: a rock slab `WALL_THICK` x `WALL_LEN` cells, perpendicular to the aim, centred `WALL_REACH` cells along
+    /// the aim from the chest. Only Empty, gas or liquid cells become Rock (never Bedrock or other solids), and
+    /// never a cell inside an alive player's hitbox. At most `WALL_THICK * WALL_LEN` (36) cells are written.
+    /// `cx, cy` are 1/16 cell.
+    fn wall_cast(&mut self, cx: i32, cy: i32, angle: u16) {
+        let (c, sn) = dir(angle);
+        let (pc, ps) = (-sn, c); // the aim turned a quarter turn
+        let one = TRIG_ONE;
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let tick = self.tick;
+        let boxes: Vec<Box5> = self.players.iter().filter(|p| p.alive(tick)).map(|p| {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            (p.id, x0, y0, x1, y1)
+        }).collect();
+        // Centre in 1/16 cell.
+        let (mx, my) = (cx + c * (WALL_REACH * POS_ONE) / one, cy + sn * (WALL_REACH * POS_ONE) / one);
+        for a in 0..WALL_LEN {
+            for b in 0..WALL_THICK {
+                let (u, v) = (a - WALL_LEN / 2, b - WALL_THICK / 2);
+                // Offsets in 1/16 cell; the final shift floors, the same on every platform.
+                let x = (mx + (pc * u + c * v) * POS_ONE / one + POS_ONE / 2) >> POS_SHIFT;
+                let y = (my + (ps * u + sn * v) * POS_ONE / one + POS_ONE / 2) >> POS_SHIFT;
+                if x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                if boxes.iter().any(|&(_, x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                let m = self.grid.mat[i];
+                if m == EMPTY || is_gas(m) || is_liquid(m) {
+                    self.grid.set(i, ROCK, 0);
+                }
+            }
+        }
     }
 
     fn hit_player(&mut self, victim: u32, attacker: u32, vx: i32, vy: i32) {
@@ -259,6 +300,9 @@ impl Sim {
                 }
             }
             WATER_SPELL => self.burst_water(at),
+            ACID_FLASK => self.burst(at, ACID, ACID_BURST_CELLS, false),
+            OIL_FLASK => self.burst(at, OIL, OIL_BURST_CELLS, false),
+            LAVA_FLASK => self.burst(at, LAVA, LAVA_BURST_CELLS, true),
             ROSE => self.burst_seeds(at),
             FIRE_BOLT => {
                 self.ignite(at);
@@ -310,10 +354,17 @@ impl Sim {
     /// first (the cells below are usually the floor the bolt hit). Never overwrites anything: a burst into a
     /// full cave does little, by design. At most 13 x 13 cells are looked at.
     fn burst_water(&mut self, at: (i32, i32)) {
+        self.burst(at, WATER, WATER_BURST_CELLS, false);
+    }
+
+    /// The shared flask burst: fill up to `cap` Empty cells of the `WATER_BURST_R2` disc with `mat`. `down` fills
+    /// the lowest rows first (Lava's "sea"); otherwise the impact row and the rows above come first. `cap` is
+    /// clamped to the largest cap here, and at most 13 x 13 cells are looked at.
+    fn burst(&mut self, at: (i32, i32), mat: u8, cap: usize, down: bool) {
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
-        let mut left = WATER_BURST_CELLS;
+        let mut left = cap.min(OIL_BURST_CELLS);
         for k in 0..13i32 {
-            let dy = if k <= 6 { -k } else { k - 6 };
+            let dy = if down { 6 - k } else if k <= 6 { -k } else { k - 6 };
             for dx in -6..=6i32 {
                 let (x, y) = (at.0 + dx, at.1 + dy);
                 if left == 0 || dx * dx + dy * dy > WATER_BURST_R2 || x < 0 || y < 0 || x >= w || y >= h {
@@ -321,7 +372,7 @@ impl Sim {
                 }
                 let i = (y * w + x) as usize;
                 if self.grid.mat[i] == EMPTY {
-                    self.grid.set(i, WATER, 0);
+                    self.grid.set(i, mat, 0);
                     left -= 1;
                 }
             }

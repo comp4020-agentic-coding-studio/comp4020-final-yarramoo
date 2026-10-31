@@ -31,6 +31,10 @@ pub fn is_gas(m: u8) -> bool {
     matches!(m, FIRE | SMOKE | STEAM | GAS)
 }
 
+pub fn is_liquid(m: u8) -> bool {
+    matches!(m, WATER | LAVA | OIL | ACID)
+}
+
 /// Fill-empty paint mode may write over this cell: Empty itself, or a gas (Fire/Smoke/Steam/Gas), which the
 /// plan's own wording ("paint sand without erasing rock") treats as not really "there" — never a solid,
 /// liquid or Bedrock (plan-game-modes.md "Sandspiel-style brushes").

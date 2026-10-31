@@ -5,6 +5,7 @@ use sim::input::{encode_cast, encode_join, encode_pos};
 use sim::materials::*;
 use sim::sim::Sim;
 use sim::snapshot;
+use sim::spells::{ACID_FLASK, LAVA_FLASK, OIL_FLASK, WALL};
 use sim::tuning::*;
 
 const PX: i32 = POS_ONE;
@@ -100,7 +101,7 @@ fn cast_spawns_a_bolt_pays_a_charge_and_starts_the_cooldown() {
 #[test]
 fn unknown_unimplemented_and_inactive_casts_are_refused() {
     let mut s = arena(1);
-    push(&mut s, encode_cast(1, 7, RIGHT, 1)); // one past the last spell
+    push(&mut s, encode_cast(1, NUM_SPELLS as u8, RIGHT, 1)); // one past the last spell
     push(&mut s, encode_cast(1, 200, RIGHT, 2));
     s.step();
     assert_eq!(count(&s, EV_CAST_REJECTED), 2);
@@ -398,4 +399,117 @@ fn views_carry_bolts_and_spell_state() {
     assert_eq!(u16::from_le_bytes([pv[0], pv[1]]), INFINITE);
     let left = u16::from_le_bytes([pv[2 * NUM_SPELLS], pv[2 * NUM_SPELLS + 1]]);
     assert!(left > 0 && u32::from(left) <= COOLDOWN[0]);
+}
+
+/// Cast flask `spell` straight down in the arena, return (cells of `mat` on the grid afterwards, rock cells lost).
+fn flask_down(spell: u8, mat: u8) -> (usize, usize) {
+    let mut s = arena(1);
+    s.players[0].charges[spell as usize] = 3;
+    let rock0 = s.grid.mat.iter().filter(|&&m| m == ROCK).count();
+    let m0 = s.grid.mat.iter().filter(|&&m| m == mat).count();
+    push(&mut s, encode_cast(1, spell, DOWN, 1));
+    s.step();
+    run_until(&mut s, 80, |s| s.projectiles.is_empty());
+    let n = s.grid.mat.iter().filter(|&&m| m == mat).count();
+    (n - m0, rock0 - s.grid.mat.iter().filter(|&&m| m == ROCK).count())
+}
+
+#[test]
+fn acid_flask_fills_about_fifty_cells_with_acid_capped() {
+    let (n, _) = flask_down(ACID_FLASK, ACID);
+    assert!(n > 40 && n <= ACID_BURST_CELLS, "acid cells {n}");
+}
+
+#[test]
+fn oil_flask_fills_seventy_cells_with_oil_capped() {
+    let (n, lost) = flask_down(OIL_FLASK, OIL);
+    assert!(n > 50 && n <= OIL_BURST_CELLS && lost == 0, "oil cells {n}");
+}
+
+#[test]
+fn lava_flask_fills_sixty_cells_below_and_around_the_impact() {
+    let mut s = arena(1);
+    s.players[0].charges[LAVA_FLASK as usize] = 3;
+    let before: Vec<bool> = s.grid.mat.iter().map(|&m| m == LAVA).collect();
+    push(&mut s, encode_cast(1, LAVA_FLASK, RIGHT, 1));
+    s.step();
+    let mut at = None;
+    // Stop on the impact tick itself: lava flows afterwards, so the disc check needs the fresh burst.
+    for _ in 0..80 {
+        if let Some(e) = s.events.iter().find(|e| e.kind == EV_IMPACT) {
+            at = Some((e.a, e.b));
+            break;
+        }
+        s.step();
+    }
+    let (ix, iy) = at.expect("impact");
+    let lava: Vec<usize> = (0..s.grid.mat.len()).filter(|&i| s.grid.mat[i] == LAVA && !before[i]).collect();
+    assert!(lava.len() > 40 && lava.len() <= LAVA_BURST_CELLS, "lava cells {}", lava.len());
+    let w = s.grid.w as i32;
+    // The sea sits at or below the impact row's neighbourhood: nothing starts more than 6 cells above it.
+    assert!(lava.iter().all(|&i| {
+        let (dx, dy) = (i as i32 % w - ix, i as i32 / w - iy);
+        dx.abs() <= 14 && dy.abs() <= 8 // the burst disc plus one tick of flow
+    }));
+}
+
+#[test]
+fn flasks_are_not_created_by_a_refused_cast() {
+    let mut s = arena(1);
+    push(&mut s, encode_cast(1, ACID_FLASK, DOWN, 1)); // no charges
+    s.step();
+    assert!(s.projectiles.is_empty());
+}
+
+#[test]
+fn wall_places_a_rock_slab_perpendicular_to_the_aim() {
+    let mut s = arena(1);
+    s.players[0].charges[WALL as usize] = 3;
+    let rock0 = s.grid.mat.iter().filter(|&&m| m == ROCK).count();
+    push(&mut s, encode_cast(1, WALL, RIGHT, 1));
+    s.step();
+    let n = s.grid.mat.iter().filter(|&&m| m == ROCK).count() - rock0;
+    assert_eq!(n, (WALL_THICK * WALL_LEN) as usize);
+    // chest is (1000, 185); the slab is centred WALL_REACH to the right, 12 tall, 3 wide
+    let w = s.grid.w;
+    for y in 179..191 {
+        assert_eq!(s.grid.mat[y * w + 1010], ROCK, "row {y}");
+    }
+    assert_eq!(s.grid.mat[178 * w + 1010], EMPTY);
+    assert_eq!(s.grid.mat[191 * w + 1010], EMPTY);
+}
+
+#[test]
+fn wall_never_overwrites_bedrock_other_solids_or_a_player() {
+    let mut s = arena(2);
+    s.players[0].charges[WALL as usize] = 3;
+    let w = s.grid.w;
+    // bedrock, dirt and a player's hitbox sit in the slab's footprint
+    s.grid.mat[178 * w + 1010] = BEDROCK;
+    s.grid.mat[179 * w + 1010] = DIRT;
+    carved(&mut s);
+    place(&mut s, 2, 1010, 190);
+    push(&mut s, encode_cast(1, WALL, RIGHT, 1));
+    s.step();
+    assert_eq!(s.grid.mat[178 * w + 1010], BEDROCK);
+    assert_eq!(s.grid.mat[179 * w + 1010], DIRT);
+    let b = s.players[1].hitbox_cells();
+    for y in b.1..=b.3 {
+        for x in b.0..=b.2 {
+            assert_ne!(s.grid.mat[y as usize * w + x as usize], ROCK, "player cell {x},{y}");
+        }
+    }
+}
+
+#[test]
+fn wall_replaces_liquid_and_is_free_of_projectile_limits() {
+    let mut s = arena(1);
+    s.players[0].charges[WALL as usize] = 3;
+    let w = s.grid.w;
+    s.grid.mat[185 * w + 1010] = WATER;
+    carved(&mut s);
+    push(&mut s, encode_cast(1, WALL, RIGHT, 1));
+    s.step();
+    assert_eq!(s.grid.mat[185 * w + 1010], ROCK);
+    assert!(s.projectiles.is_empty());
 }

@@ -46,7 +46,7 @@ pub const PROJ_MAX_SPEED: i32 = 8 * PROJ_ONE;
 pub const MAX_SUBSTEPS: i32 = 8;
 
 /// Spells the sim implements; a disabled spell's cast is refused.
-pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true, false, false, false, false, false];
+pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true, true, true, true, true, false];
 /// Ticks between casts of the same spell.
 pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18, 25, 20, 45, 60, 120];
 /// Launch speed, 1/256 cell per tick (Push 5 cells a tick; Water and Rose are lobbed slower).
