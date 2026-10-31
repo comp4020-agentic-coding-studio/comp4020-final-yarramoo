@@ -13,7 +13,7 @@ use crate::spells::{isqrt, FIRE_BOLT};
 use crate::tuning::*;
 
 /// An alive, active player as the AI sees it: `(id, x, y)` in 1/16 cell.
-type Target = (u32, i32, i32);
+pub type Target = (u32, i32, i32);
 
 impl Sim {
     /// True when an enemy at feet (`x`, `y`) with a `w` x `h` body overlaps a solid cell or the world edge.
@@ -110,6 +110,63 @@ impl Sim {
         e.vy += (wy - i32::from(e.vy)).signum() as i16;
     }
 
+    /// The Deep Mage (F6): a flier like the imp. Hovers, drifts toward the nearest player (closing beyond
+    /// `BOSS_CLOSE_CELLS`, bobbing otherwise), is leashed to the arena ellipse, and fires a Fire bolt at the nearest
+    /// player in line of sight every `BOSS_FIRE_TICKS` ticks (stateless cadence: `(tick + id) % period == 0`).
+    /// Velocity eases 1 per tick toward the wanted one, like the imp. Contact shove is the shared `enemy_contact`.
+    fn boss_ai(&mut self, e: &mut Enemy, st: EnemyStats, targets: &[Target]) {
+        let tick = self.tick;
+        let mid = st.h * POS_ONE / 2;
+        let mut best: Option<(i64, i32, i32)> = None;
+        for &(_, px, py) in targets {
+            let (dx, dy) = (px - e.x, py - CHEST * POS_ONE - (e.y - mid));
+            let d2 = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+            if best.is_none_or(|(b, _, _)| d2 < b) {
+                best = Some((d2, dx, dy));
+            }
+        }
+        let bob = if (tick / 32).is_multiple_of(2) { 1 } else { -1 };
+        let speed = BOSS_SPEED;
+        let (mut wx, mut wy) = (0, bob);
+        e.state &= !1;
+        if let Some((d2, dx, dy)) = best.filter(|&(d2, _, _)| d2 <= i64::from(BOSS_AGGRO_CELLS * POS_ONE).pow(2)) {
+            e.state |= 1;
+            let dist = i64::from(isqrt(d2 as u64));
+            if dist > i64::from(BOSS_CLOSE_CELLS * POS_ONE) {
+                if dx.abs() * 2 > dy.abs() {
+                    wx = dx.signum() * speed;
+                }
+                if dy.abs() * 2 > dx.abs() {
+                    wy = dy.signum() * speed;
+                }
+            }
+            if dx != 0 {
+                e.facing = u8::from(dx > 0);
+            }
+            if tick.wrapping_add(u32::from(e.id)).is_multiple_of(BOSS_FIRE_TICKS) && dist <= i64::from(BOSS_FIRE_RANGE * POS_ONE) {
+                let from = (e.x, e.y - mid);
+                let to = (from.0 + dx, from.1 + dy);
+                if self.line_clear((from.0 >> POS_SHIFT, from.1 >> POS_SHIFT), (to.0 >> POS_SHIFT, to.1 >> POS_SHIFT)) {
+                    let cells = (dist >> POS_SHIFT) as i32;
+                    let lift = cells * cells / 1568 * POS_ONE;
+                    self.enemy_fire((e.kind, e.id), FIRE_BOLT, from, (dx, dy - lift));
+                }
+            }
+        }
+        // The leash: toward the arena centre when the next step would leave the ellipse (grown by a negative margin).
+        if let Some(a) = self.arena {
+            let (nx, ny) = ((e.x + i32::from(e.vx) * 4) >> POS_SHIFT, (e.y - mid + i32::from(e.vy) * 4) >> POS_SHIFT);
+            if !a.contains(nx, ny, -BOSS_LEASH_MARGIN) {
+                wx = (a.cx * POS_ONE - e.x).signum() * speed;
+                wy = ((a.cy * POS_ONE) - (e.y - mid)).signum() * speed;
+                e.vx = (i32::from(e.vx) + wx.signum() * 2).clamp(-ENEMY_MAX_SPEED, ENEMY_MAX_SPEED) as i16;
+                e.vy = (i32::from(e.vy) + wy.signum() * 2).clamp(-ENEMY_MAX_SPEED, ENEMY_MAX_SPEED) as i16;
+            }
+        }
+        e.vx += (wx - i32::from(e.vx)).signum() as i16;
+        e.vy += (wy - i32::from(e.vy)).signum() as i16;
+    }
+
     /// The worm. It is meant to be inside rock, so it has no body collision, no gravity and no embedded rescue.
     /// Dormant (state bit 0 clear): it only wakes when an alive player is within `WORM_WAKE_CELLS`. Awake: it moves
     /// toward the nearest player within `WORM_HUNT_CELLS` at `WORM_SPEED_ROCK` per axis while its centre cell is solid
@@ -166,19 +223,23 @@ impl Sim {
     /// player, at most `MAX_ENEMIES_STEPPED` of them. Reads only `players` and `enemies`.
     pub fn stepping_set(&self, targets: &[Target]) -> Vec<usize> {
         let (hw, hh) = (ENEMY_ACTIVE_W / 2 * POS_ONE, ENEMY_ACTIVE_H / 2 * POS_ONE);
-        let mut out = Vec::new();
+        let in_range = |e: &Enemy| targets.iter().any(|&(_, px, py)| (e.x - px).abs() <= hw && (e.y - py).abs() <= hh);
+        // The boss steps first whenever it is in range (at most one exists), then the lowest ids fill the rest, so a
+        // crowd of 24 others can never starve it. The result is in index (= id) order.
+        let mut out: Vec<usize> = self.enemies.iter().enumerate().filter(|(_, e)| e.kind == ENEMY_BOSS && in_range(e)).map(|(i, _)| i).take(1).collect();
         for (i, e) in self.enemies.iter().enumerate() {
             if out.len() >= MAX_ENEMIES_STEPPED {
                 break;
             }
-            if targets.iter().any(|&(_, px, py)| (e.x - px).abs() <= hw && (e.y - py).abs() <= hh) {
+            if e.kind != ENEMY_BOSS && in_range(e) {
                 out.push(i);
             }
         }
+        out.sort_unstable();
         out
     }
 
-    pub(crate) fn alive_targets(&self) -> Vec<Target> {
+    pub fn alive_targets(&self) -> Vec<Target> {
         let tick = self.tick;
         self.players.iter().filter(|p| p.alive(tick)).map(|p| (p.id, p.x, p.y)).collect()
     }
@@ -222,6 +283,25 @@ impl Sim {
         if e.kind == ENEMY_IMP {
             self.imp_ai(&mut e, st, targets);
             self.integrate(&mut e, st, false);
+            self.enemies[i] = e;
+            return;
+        }
+        if e.kind == ENEMY_BOSS {
+            self.boss_ai(&mut e, st, targets);
+            let phase = e.state & 0b1100;
+            let (ox, oy) = (e.x, e.y);
+            self.integrate(&mut e, st, false);
+            // The hard leash: a move whose centre ends outside the ellipse is undone (knockback can be 8 cells a tick).
+            if let Some(a) = self.arena {
+                if !a.contains(e.x >> POS_SHIFT, (e.y - st.h * POS_ONE / 2) >> POS_SHIFT, 0) {
+                    e.x = ox;
+                    e.y = oy;
+                    e.vx = 0;
+                    e.vy = 0;
+                }
+            }
+            e.state = (e.state & 0b11) | phase;
+            self.enemy_contact(&mut e, st);
             self.enemies[i] = e;
             return;
         }

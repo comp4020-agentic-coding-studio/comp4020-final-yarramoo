@@ -306,3 +306,35 @@ pub const ARENA_KEEP_OUT: i32 = 16;
 pub const SUPPLY_ALCOVE_W: i32 = 28;
 pub const SUPPLY_ALCOVE_H: i32 = 8;
 pub const SUPPLY_PILE: [u8; 6] = [4, 4, 5, 4, 5, 10];
+
+/// Boss movement and attacks (F6). Attack cadences are stateless: an attack fires on the ticks where
+/// `(tick + id) % period == offset` (and, for aimed ones, the line is clear), so the boss needs no timers.
+/// Speed is in 1/16 cell per tick (phase 3 multiplies by 3/2); it closes in beyond `BOSS_CLOSE_CELLS`.
+pub const BOSS_SPEED: i32 = 2;
+pub const BOSS_AGGRO_CELLS: i32 = 200;
+pub const BOSS_CLOSE_CELLS: i32 = 14;
+pub const BOSS_FIRE_RANGE: i32 = 120;
+/// Single Fire bolt in phases 1 and 2 every `BOSS_FIRE_TICKS`; a 3-bolt fan in phase 3 every `BOSS_FAN_TICKS`; the
+/// fan's side bolts are the aim plus/minus the perpendicular times 1/`BOSS_FAN_SLOPE`.
+pub const BOSS_FIRE_TICKS: u32 = 60;
+pub const BOSS_FAN_TICKS: u32 = 90;
+pub const BOSS_FAN_SLOPE: i32 = 4;
+/// Phase 2+: a Bomb lob every `BOSS_BOMB_TICKS` (offset 30 into the period).
+pub const BOSS_BOMB_TICKS: u32 = 120;
+/// Phase 2+: every `BOSS_SUMMON_TICKS` (offset 150) up to `BOSS_SUMMON_PER_CAST` imps appear in the arena, at most
+/// `BOSS_SUMMONS_ALIVE` alive at once and `BOSS_SUMMONS_TOTAL` in a whole fight. Each tries `BOSS_SUMMON_TRIES` cells.
+pub const BOSS_SUMMON_TICKS: u32 = 300;
+pub const BOSS_SUMMON_PER_CAST: usize = 2;
+pub const BOSS_SUMMONS_ALIVE: usize = 4;
+pub const BOSS_SUMMONS_TOTAL: u32 = 40;
+pub const BOSS_SUMMON_TRIES: u32 = 8;
+/// Phase 3: a lava arc of `BOSS_RING_CELLS` cells on the floor every `BOSS_RING_TICKS` (offset 60).
+pub const BOSS_RING_CELLS: i32 = 24;
+pub const BOSS_RING_TICKS: u32 = 240;
+/// Phase thresholds in thirds of the boss's hp: above 2/3 is phase 1, above 1/3 phase 2, else 3.
+/// The leash keeps the box's centre this many cells inside the ellipse.
+pub const BOSS_LEASH_MARGIN: i32 = 8;
+/// Ids stay below this (decode refuses more), so a summon's id never wraps u16.
+pub const MAX_ENEMY_ID: u32 = 4096;
+/// The boss starts with its feet this many cells above the arena floor.
+pub const BOSS_HOVER: i32 = 8;

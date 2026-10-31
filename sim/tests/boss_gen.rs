@@ -131,7 +131,7 @@ fn normal_enemies_and_the_supply_pile_stay_out_of_the_arena() {
             let s = survival(size, seed);
             let a = s.arena.unwrap();
             let m = sim::tuning::ARENA_KEEP_OUT;
-            for e in &s.enemies {
+            for e in s.enemies.iter().filter(|e| e.kind != sim::tuning::ENEMY_BOSS) {
                 let (cx, cy) = (e.x >> 4, e.y >> 4);
                 assert!(!a.contains(cx, cy - 2, m), "size {size} seed {seed}: enemy {} inside the arena", e.id);
             }

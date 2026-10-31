@@ -106,11 +106,19 @@ impl Sim {
                 // F4 (D-157): the generator places the slimes once; they join the cached base like pickups.
                 let enemies: Vec<Enemy> = if cfg.has_enemies() {
                     let at: Vec<(u16, u16)> = pickups.iter().map(|p| (p.x, p.y)).collect();
-                    crate::gen::enemy_spots(&grid, seed, &at, arena.as_ref())
+                    let mut v: Vec<Enemy> = crate::gen::enemy_spots(&grid, seed, &at, arena.as_ref())
                         .iter()
                         .enumerate()
                         .map(|(i, &(x, y, kind))| Enemy::new(i as u16, kind, i32::from(x) * POS_ONE + POS_ONE / 2, (i32::from(y) + 1) * POS_ONE))
-                        .collect()
+                        .collect();
+                    // F6: exactly one boss per Survival world, at the arena centre, hovering `BOSS_HOVER` cells above the floor.
+                    // It gets the highest placed id (so ids stay sorted); `stepping_set` steps it first, so id order never starves it.
+                    if let Some(a) = &arena {
+                        let mut boss = Enemy::new(v.len() as u16, ENEMY_BOSS, a.cx * POS_ONE + POS_ONE / 2, (a.floor_y - BOSS_HOVER) * POS_ONE);
+                        boss.state = 1 << 2;
+                        v.push(boss);
+                    }
+                    v
                 } else {
                     Vec::new()
                 };

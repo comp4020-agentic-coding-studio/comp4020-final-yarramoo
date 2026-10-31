@@ -146,3 +146,5 @@ mod tests {
 pub const SALT_GEN_ARENA: u32 = 250;
 pub const SALT_GEN_ARENA_SIDE: u32 = 251;
 pub const SALT_GEN_ARENA_PILLAR: u32 = 252;
+pub const SALT_BOSS_SUMMON: u32 = 253;
+pub const SALT_BOSS_RING: u32 = 254;

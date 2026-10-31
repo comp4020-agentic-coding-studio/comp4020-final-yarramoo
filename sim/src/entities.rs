@@ -172,7 +172,8 @@ pub struct Enemy {
     pub vy: i16,
     pub hp: u16,
     pub facing: u8,
-    /// Bit 0: hunting a player. Bit 1: airborne (render hint, set every stepped tick).
+    /// Bit 0: hunting a player. Bit 1: airborne (render hint, set every stepped tick). Boss only: bits 2..3 hold the
+    /// phase (1..=3); its `hop_until` counts the imps it has summoned (the next summon's id is `id + 1 + that`).
     pub state: u8,
     /// Contact damage is available when `tick >= cooldown_until`.
     pub cooldown_until: u32,
@@ -411,11 +412,17 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         e.hp = r.u16().ok_or(())?;
         e.facing = r.u8().ok_or(())?;
         e.state = r.u8().ok_or(())?;
-        if e.facing > 1 || e.state > 3 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
+        let boss = kind == ENEMY_BOSS;
+        let state_ok = if boss { (1..=3).contains(&(e.state >> 2)) && e.state < 16 } else { e.state <= 3 };
+        if e.facing > 1 || !state_ok || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
             return Err(());
         }
         e.cooldown_until = r.u32().ok_or(())?;
         e.hop_until = r.u32().ok_or(())?;
+        // The boss's summon counter is bounded, so a summon's id (`id + 1 + counter`) stays far inside u16.
+        if boss && (e.hop_until > BOSS_SUMMONS_TOTAL || u32::from(id) + 1 + e.hop_until >= MAX_ENEMY_ID) {
+            return Err(());
+        }
         e.last_hit_by = r.u32().ok_or(())?;
         e.last_hit_tick = r.u32().ok_or(())?;
         if e.x < 0 || e.y < 0 || (e.x >> POS_SHIFT) as usize >= w || (e.y >> POS_SHIFT) as usize > h {
@@ -457,6 +464,8 @@ pub const EV_ENEMY_HURT: u8 = 11;
 pub const EV_ENEMY_DEATH: u8 = 12;
 /// A one-life round ended: a = 1 win, 0 loss. Fires once (`round_over`).
 pub const EV_ROUND_END: u8 = 13;
+/// The boss entered a new phase: a = enemy id, b = phase (2 or 3).
+pub const EV_ENEMY_PHASE: u8 = 14;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;

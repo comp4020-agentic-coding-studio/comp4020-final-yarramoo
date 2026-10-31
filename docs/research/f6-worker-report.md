@@ -14,3 +14,15 @@
   `connect_and_prune` then filled: tests were red with "0 open cells", "arena unreachable" for size L seeds 1 and 4).
 - Tests `sim/tests/boss_gen.rs` (5). Red first: the three arena tests failed on the first (sealed-pocket) version; the unchanged
   test is a recorded-hash guard that passes by nature.
+
+### 2. Boss kind
+- `ENEMY_BOSS` 4, `NUM_ENEMY_KINDS` 5, hp 1200, box 11x14, contact 20, immune Fire and Lava. One boss per Survival world, at the arena
+  centre (8 cells above the floor), given the highest placed id.
+- Stepping priority: `stepping_set` steps the boss first when in range, then lowest ids, then sorts (flag below).
+- `boss_ai`: imp-style flier (eases velocity 1 per tick), closes beyond 14 cells, Fire bolt every 60 ticks via `(tick + id) % 60`, LOS reuses
+  `line_clear`. Leash: a soft push toward the centre near the rim plus a hard undo of any move that ends with the centre outside the ellipse.
+- State: boss phase lives in `state` bits 2..3 (1..3, hashed, snapshotted, decode-checked); `hop_until` is reused as the boss's summon counter
+  (decode-checked <= 40). No format bump: the layout is unchanged.
+- Tests `sim/tests/boss.rs` (6). Red first: the leash test failed on the first version ("left the arena at tick 3") and the fire test failed
+  while the test player stood behind a pillar (fixed in the test setup: the player floats above the pillars). A snapshot hostile test covers phase 0/4, counter, hp, kind.
+- Gate green.
