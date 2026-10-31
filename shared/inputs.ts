@@ -41,7 +41,7 @@ export function encodeCast(player: number, spell: number, angle: number, castSeq
   return b;
 }
 
-/** Bit 7 of the Paint input's `mat` byte: "fill empty only" (ids 0-14 use only the low 4 bits). Matches
+/** Bit 7 of the Paint input's `mat` byte: "fill empty only" (ids 0-20 sit below it, in the low 7 bits). Matches
  * `sim/src/input.rs`'s `FILL_EMPTY_BIT`. */
 export const FILL_EMPTY_BIT = 0x80;
 

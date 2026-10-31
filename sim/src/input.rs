@@ -6,13 +6,13 @@ pub enum Input {
     Leave { player: u32 },
     Pos { player: u32, life: u16, x: i32, y: i32, facing: u8 },
     Cast { player: u32, spell: u8, angle: u16, cast_seq: u16 },
-    // `mat`'s bit 7 is extracted into `fill_empty` at decode (material ids are 0-14, 4 bits); `mat` itself
+    // `mat`'s bit 7 is extracted into `fill_empty` at decode (material ids are 0-20, below bit 7); `mat` itself
     // is already masked down to the plain material id, so nothing downstream needs to know about the flag
     // bit at all (R4, plan-game-modes.md "Paint modes").
     Paint { player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, radius: u8, fill_empty: bool },
 }
 
-/// The fill-empty flag bit within the Paint input's `mat` byte (bit 7; ids 0-14 use only the low 4 bits).
+/// The fill-empty flag bit within the Paint input's `mat` byte (bit 7; ids 0-20 sit below it, in the low 7 bits).
 pub const FILL_EMPTY_BIT: u8 = 0x80;
 
 struct R<'a>(&'a [u8], usize);
