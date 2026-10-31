@@ -27,11 +27,27 @@ async function boot(): Promise<RunningServer> {
 const GAME = 1;
 const BOMB = 5;
 
-/** A deep Bomb pickup, in cells (pickups are a pure function of the seed, D-052). */
+/**
+ * A deep Bomb pickup with open ground to its right, in cells (pickups are a pure function of the seed, D-052).
+ * Bo stands 12 cells to the right and Ana bombs along +x, so the gap must be clear. F3's pickup table moved the
+ * first Bomb spot against a rock wall, where Bo stood inside the rock and Ana's bomb burst beside her own feet,
+ * so whether her own fire death or Bo's death resolved first was a race.
+ */
 function bombPickup(): { x: number; y: number } {
   const sim = loadSim(wasmBytes);
   sim.init(20261014n, 1);
-  const p = sim.entities().filter((e) => e.type === ENT_PICKUP && e.sub === BOMB).sort((a, b) => a.id - b.id)[0];
+  const mv = sim.matView();
+  const W = sim.width();
+  const open = (x: number, y: number) => {
+    for (let dx = 1; dx <= 20; dx++) for (let dy = 1; dy <= 10; dy++) if (mv[(y - dy) * W + x + dx] !== 0) return false;
+    return true;
+  };
+  const p = sim
+    .entities()
+    .filter((e) => e.type === ENT_PICKUP && e.sub === BOMB)
+    .sort((a, b) => a.id - b.id)
+    .find((e) => open(Math.floor(e.x / 16), Math.floor(e.y / 16)));
+  if (!p) throw new Error("no Bomb pickup with open ground to its right on this seed");
   return { x: p.x / 16, y: p.y / 16 };
 }
 const deaths = (c: TestClient) => {
@@ -82,9 +98,7 @@ describe("two real clients, one kills the other", () => {
     expect(s.db!.achievementsOf(ana.id)).toContain("first_blood");
     expect(b.achievements.map((x) => x.id)).not.toContain("first_blood");
     // Both clients claimed the same death; it counted once.
-    // F3: the new pickup table moved the first Bomb spot, and Ana now burns in her own blast's fire a moment
-    // later (cause 32, a separate death). The once-only check is about Bo's death.
-    expect(ev.filter((e) => e.victim === `Bo#${bo.id}`)).toHaveLength(1);
+    expect(ev).toHaveLength(1);
     a.close();
     b.close();
   }, 60000);
