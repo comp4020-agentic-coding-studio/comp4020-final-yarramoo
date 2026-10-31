@@ -8,7 +8,7 @@ export const MUTE_KEY = "sand.muted";
 /** Sound names the worker may ask for. */
 export type SfxName =
   | "push" | "blast" | "water" | "rose" | "fire" | "bomb" | "dig" | "flask" | "wall" | "hole"
-  | "reject" | "impact" | "explode" | "knock" | "death" | "respawn" | "pickup" | "bag";
+  | "reject" | "impact" | "explode" | "knock" | "death" | "respawn" | "pickup" | "bag" | "squelch" | "splat";
 
 /** At most this many voices sound at once; extra ones are dropped (16 explosions in a frame must not clip). */
 const MAX_VOICES = 10;
@@ -130,6 +130,8 @@ export function play(name: SfxName, vol: number, pan: number, mag = 0.5) {
     case "knock": tone(o, "sawtooth", 200, 70, 0.15, 0.4); noise(o, 0.1, 0.4, 900, 300, 1); dur = 0.2; break;
     case "death": tone(o, "sawtooth", 330, 55, 0.7, 0.4); noise(o, 0.5, 0.3, 800, 100, 0.8, "lowpass"); dur = 0.75; break;
     case "respawn": tone(o, "sine", 330, 330, 0.18, 0.3); tone(o, "sine", 495, 495, 0.18, 0.3, 0.1); tone(o, "sine", 660, 660, 0.3, 0.3, 0.2); dur = 0.55; break;
+    case "squelch": tone(o, "sine", 260, 120, 0.12, 0.4); noise(o, 0.08, 0.25, 700, 250, 1); dur = 0.18; break;
+    case "splat": tone(o, "sine", 200, 50, 0.3, 0.45); noise(o, 0.25, 0.4, 1200, 200, 0.9, "lowpass"); dur = 0.35; break;
     case "pickup": tone(o, "triangle", 660, 1320, 0.14, 0.35); dur = 0.2; break;
     case "bag": tone(o, "triangle", 520, 520, 0.09, 0.35); tone(o, "triangle", 780, 780, 0.09, 0.35, 0.07); tone(o, "triangle", 1040, 1040, 0.16, 0.35, 0.14); dur = 0.35; break;
   }

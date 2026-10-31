@@ -74,6 +74,9 @@
     canvas.dim { filter: brightness(.45) saturate(.7); }
     #death { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); pointer-events: none; font-size: 22px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; text-align: center; max-width: 90%; }
     #death[hidden] { display: none; }
+    #roundBanner { position: absolute; left: 50%; top: 35%; transform: translate(-50%, -50%); text-align: center; background: rgba(0,0,0,0.78); padding: 18px 28px; border-radius: 10px; color: #fff; z-index: 5; }
+    #roundBanner h2 { margin: 0 0 12px; font-size: 26px; }
+    #roundBanner p { margin: 8px 0 0; color: #f88; font-size: 13px; }
     #toasts { position: absolute; left: 8px; top: 34px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: calc(100% - 120px); }
     #toasts div { font-size: 12px; line-height: 1.2; padding: 3px 7px; border-radius: 4px; background: rgba(11,14,20,.78); color: #fff; align-self: flex-start; overflow-wrap: anywhere; transition: opacity .6s; }
     #toasts div.ach { background: rgba(60,45,8,.88); border: 1px solid #f0b429; color: #ffe29a; }

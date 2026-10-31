@@ -3,7 +3,7 @@ import { chromium, firefox, webkit } from "playwright";
 import type { BrowserType } from "playwright";
 import type { Server } from "node:http";
 import { compare } from "./compare.ts";
-import { canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, wasmPath } from "./helpers.ts";
+import { canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, survivalScript, wasmPath } from "./helpers.ts";
 import { m5Missing } from "./m5-coverage.ts";
 import { run } from "./run.ts";
 import type { RunResult } from "./run.ts";
@@ -93,6 +93,16 @@ describe("cross-engine", () => {
     it(`D2 with M5: ${name} matches Node`, async () => {
       const out = await inBrowser(type, wasmPath, false, m5.path);
       expect(compare(m5Node, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // F4: D2 on a Survival world with slimes: hops, hits, kills and one-life rules are identical in every engine.
+  const surv = survivalScript();
+  const survNode = run(readWasm(wasmPath), surv.script);
+  for (const [name, type] of engines) {
+    it(`D2 with slimes: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, surv.path);
+      expect(compare(survNode, out.result, ["node", name])).toBeNull();
     });
   }
 

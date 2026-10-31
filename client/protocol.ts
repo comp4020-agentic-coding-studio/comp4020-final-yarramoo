@@ -13,7 +13,7 @@ export type ToWorker =
       width: number;
       height: number;
       /** Dev: run a local single-player sim of this world kind instead of connecting (no networking). */
-      local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean };
+      local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean; /** Dev: `survival` starts the local sim from the SURVIVAL preset (enemies on). */ cfg?: string };
       /** Which server world/room to join: 0 sandbox, 1 game, or any real room id from GET /api/rooms/:code (R3). */
       worldId: number;
       /** The player token, 64 hex characters, or "" (spectators and the sandbox send none). */
@@ -86,6 +86,8 @@ export type FromWorker =
   | { type: "sfx"; name: SfxName; vol: number; pan: number; mag: number }
   /** A line for the death feed, already formatted from a plain-name death event. */
   | { type: "toast"; text: string }
+  /** A one-life round ended (`EV_ROUND_END`): `win` false is a loss. Shown as a banner; render-only. */
+  | { type: "round"; win: boolean }
   /** The server says this player earned an achievement (by id; the main thread looks the text up). */
   | { type: "achievement"; id: string }
   | { type: "error"; error: string };

@@ -36,6 +36,26 @@ function pushGrid(rects: Rect[], rows: string[], pal: Record<string, [number, nu
   }
 }
 
+// A slime (7 wide, 4 tall): g body, l light, d dark, e eye. Squashed (landing) is wider and shorter, stretched (hop) taller.
+const SLIME_IDLE = [".ggggg.", "glllggg", "ggegegg", "ddddddd"];
+const SLIME_SQUASH = ["ggggggg", "ggegegg", "ddddddd"];
+const SLIME_STRETCH = ["..ggg..", ".glggg.", ".gegeg.", ".ggggg.", "ddddddd"];
+const SLIME_COL: Record<string, [number, number, number]> = { g: [0.3, 0.8, 0.32], l: [0.6, 0.95, 0.55], d: [0.14, 0.45, 0.2], e: [0.05, 0.1, 0.05] };
+const SLIME_HIT: Record<string, [number, number, number]> = { g: [1, 1, 1], l: [1, 1, 1], d: [0.85, 0.85, 0.85], e: [0.3, 0.3, 0.3] };
+
+/** A slime standing with its feet centre at (px, py) cells. `air` is "rising" | "falling" | "ground" from the view's
+ * vertical motion (render-only); `hit` flashes it white; `hpFrac` below 1 shows a small bar over it. */
+export function pushSlime(rects: Rect[], px: number, py: number, air: "rising" | "falling" | "ground", hit: boolean, hpFrac: number): void {
+  const rows = air === "rising" ? SLIME_STRETCH : air === "ground" && hpFrac > 0 ? SLIME_IDLE : SLIME_SQUASH;
+  pushGrid(rects, rows, hit ? SLIME_HIT : SLIME_COL, Math.round(px) - 3, Math.round(py) - rows.length);
+  if (hpFrac < 1) {
+    const x0 = Math.round(px) - 3;
+    const y0 = Math.round(py) - rows.length - 3;
+    rects.push({ x: x0, y: y0, w: 7, h: 1, r: 0.15, g: 0.05, b: 0.05 });
+    rects.push({ x: x0, y: y0, w: Math.max(1, Math.round(7 * hpFrac)), h: 1, r: 0.9, g: 0.25, b: 0.2 });
+  }
+}
+
 /** A bag resting on the cell (cx, cy): bobs by a cell now and then and glints. `now` is ms, cosmetic only. */
 export function pushBag(rects: Rect[], cx: number, cy: number, now: number): void {
   const bob = Math.sin(now / 350 + cx * 0.7) > 0.4 ? 1 : 0;

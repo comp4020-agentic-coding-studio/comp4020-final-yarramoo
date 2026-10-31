@@ -13,9 +13,10 @@ import {
   encodePing,
   encodeSnapshotUpload,
 } from "../shared/protocol.ts";
-import { decodeConfig } from "../shared/room.ts";
+import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
 import {
   ENT_BAG,
+  ENT_ENEMY,
   ENT_PICKUP,
   ENT_PLAYER,
   ENT_PROJECTILE,
@@ -23,6 +24,9 @@ import {
   EV_BAG_PICKUP,
   EV_CAST_REJECTED,
   EV_DEATH,
+  EV_ENEMY_DEATH,
+  EV_ENEMY_HURT,
+  EV_ROUND_END,
   EV_EXPLODE,
   EV_IMPACT,
   EV_KNOCK,
@@ -36,7 +40,7 @@ import {
 } from "../shared/sim.ts";
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
 import type { SfxName } from "./sfx.ts";
-import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
+import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushSlime, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
@@ -145,6 +149,10 @@ function shake(now: number, mag: number, ms: number) {
 }
 let explosionsThisFrame = 0;
 let iAmDead = false;
+/** The room has one life (`death` 1): a dead player spectates a living teammate. Render-only (camera). */
+let oneLife = false;
+/** Last seen y of each enemy and when it was hit (ms), for the squash/stretch and the white flash. Render-only. */
+const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number }>();
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
 let lastFxAt = 0;
@@ -301,6 +309,7 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   // `kind` here is just "has avatars" (0/1), kept for main.ts's existing worldKind !== 0 render checks; the
   // real per-mode decisions (casting, damage, brushes...) read `cfg` itself, decoded below.
   const rc = decodeConfig(cfg);
+  oneLife = rc?.death === 1;
   const kind = rc?.avatars === 1 ? 1 : 0;
   send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc });
   renderer?.setWorld(sim.width(), sim.height());
@@ -449,6 +458,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   const list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean }[] = [];
   const seen = new Set<number>();
   let firstOther: EntityView | null = null;
+  let firstAlive: EntityView | null = null;
   for (const e of ents) {
     if (e.type !== ENT_PLAYER || !e.active) continue;
     const isMe = e.id === myId && avatar !== null && avatarReady;
@@ -460,6 +470,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     } else {
       seen.add(e.id);
       if (!firstOther && e.id !== myId) firstOther = e;
+      if (!firstAlive && e.id !== myId && e.health > 0) firstAlive = e;
       const s = shown.get(e.id);
       if (!s || Math.abs(s.x - px) + Math.abs(s.y - py) > 80) shown.set(e.id, { x: px, y: py });
       else {
@@ -511,11 +522,31 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     pushBag(rects, cx, cy, now);
   }
 
+  // Enemies: a slime sprite per ENT_ENEMY, hp bar when hurt. Render-only (invariants 1 and 9).
+  const liveEnemies = new Set<number>();
+  for (const e of ents) {
+    if (e.type !== ENT_ENEMY) continue;
+    liveEnemies.add(e.id);
+    const ex = e.x / 16;
+    const ey = e.y / 16;
+    let es = enemySeen.get(e.id);
+    if (!es) enemySeen.set(e.id, (es = { x: ex, y: ey, vy: 0, hitAt: -1e9 }));
+    es.x = ex;
+    es.vy = ey - es.y;
+    es.y = ey;
+    if (ex < cam.x - 8 || ex > cam.x + cam.vw + 8 || ey < cam.y - 8 || ey > cam.y + cam.vh + 8) continue;
+    const air = (e.health & 2) === 0 ? "ground" : es.vy < 0 ? "rising" : "falling";
+    pushSlime(rects, ex, ey, air, now - es.hitAt < 120, e.a / 20);
+  }
+  for (const id of enemySeen.keys()) if (!liveEnemies.has(id)) enemySeen.delete(id);
+
   spellFx(ents, dt, now, rects);
 
   // Camera: the avatar, or for a spectator the first other player; the main thread pans freely otherwise.
   let following = false;
-  const target = avatar && avatarReady ? { x: avatar.x, y: avatar.y } : spectate && firstOther ? (followId !== null ? shown.get(followId) : undefined) ?? shown.get((firstOther as EntityView).id) ?? null : null;
+  // One life: when I am dead the camera follows a living teammate (camera only, never an input).
+  const deadFollow = oneLife && dead && !spectate && firstAlive ? (shown.get((firstAlive as EntityView).id) ?? null) : null;
+  const target = deadFollow ?? (avatar && avatarReady ? { x: avatar.x, y: avatar.y } : spectate && firstOther ? (followId !== null ? shown.get(followId) : undefined) ?? shown.get((firstOther as EntityView).id) ?? null : null);
   if (followCam && target && cam.vw < w) {
     const tx = Math.max(0, Math.min(w - cam.vw, target.x - cam.vw / 2));
     const ty = Math.max(0, Math.min(h - cam.vh, target.y - BOX_H / 2 - cam.vh / 2));
@@ -643,6 +674,18 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       fx.respawn(e.a / 16, e.b / 16 - 5);
       if (e.player === myId) sfxSelf("respawn", quiet);
       else sfxAt("respawn", e.a / 16, e.b / 16 - 5, 0.5, quiet);
+    } else if (e.kind === EV_ENEMY_HURT) {
+      const es = enemySeen.get(e.a);
+      if (es) {
+        es.hitAt = now;
+        fx.burst(es.x, es.y - 2, [0.4, 0.9, 0.4], 8, 0.04);
+        sfxAt("squelch", es.x, es.y, 0.4, quiet);
+      }
+    } else if (e.kind === EV_ENEMY_DEATH) {
+      fx.burst(e.a / 16, e.b / 16 - 2, [0.3, 0.85, 0.3], 22, 0.06);
+      sfxAt("splat", e.a / 16, e.b / 16, 0.6, quiet);
+    } else if (e.kind === EV_ROUND_END) {
+      if (!quiet) send({ type: "round", win: e.a === 1 });
     } else if (e.kind === EV_BAG_PICKUP) {
       fx.pickup(e.a + 0.5, e.b + 0.5);
       if (e.player === myId) sfxSelf("bag", quiet);
@@ -866,7 +909,8 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
   }
   if (m.local) {
     const sim = loadSim(wasmBytes);
-    sim.init(BigInt(m.local.seed), m.local.kind);
+    sim.init(BigInt(m.local.seed), m.local.cfg === "survival" ? encodeConfig(SURVIVAL) : m.local.kind);
+    oneLife = m.local.cfg === "survival";
     localSim = sim;
     if (sim.width() > 512 && m.local.avatar) {
       // Dev route only: one local player so damage, death and bags can be seen without a second client.
@@ -900,10 +944,11 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       // Dev route only (stripped from production builds): put the local controller on the nearest deep pickup of
       // this spell. The avatar then reports it through the normal Pos path, as tools/inputgen-m5.ts does (D-114).
       if (import.meta.env.DEV && localSim && avatar) {
-        const list = localSim.entities().filter((e) => e.type === ENT_PICKUP && e.sub === m.spell && e.active);
+        // spell -1: the nearest enemy instead (dev only, `__devGotoEnemy`).
+        const list = localSim.entities().filter((e) => (m.spell < 0 ? e.type === ENT_ENEMY : e.type === ENT_PICKUP && e.sub === m.spell && e.active));
         const me = localSim.entities().find((e) => e.type === ENT_PLAYER && e.id === myId);
         list.sort((a, b) => Math.abs(a.x - (me?.x ?? 0)) + Math.abs(a.y - (me?.y ?? 0)) - (Math.abs(b.x - (me?.x ?? 0)) + Math.abs(b.y - (me?.y ?? 0))));
-        if (list[0]) avatar.teleport(list[0].x / 16, list[0].y / 16);
+        if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell < 0 ? 12 : 0), list[0].y / 16);
       }
       break;
     case "pointer":

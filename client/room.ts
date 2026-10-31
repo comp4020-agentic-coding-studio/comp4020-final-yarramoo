@@ -11,7 +11,7 @@ import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { formatAchievement } from "./toasts.ts";
-import { CLASSIC_SANDBOX, CAVES_PVP, decodeConfig, type RoomConfig } from "../shared/room.ts";
+import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -542,6 +542,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       case "toast":
         addToast(m.text);
         break;
+      case "round":
+        showRoundBanner(m.win);
+        break;
       case "achievement": {
         const text = formatAchievement(m.id);
         if (text) addToast(text, true);
@@ -708,10 +711,43 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const dead = steersAvatar() && !!m.me?.dead;
     deathEl.hidden = !dead;
     canvas.classList.toggle("dim", dead);
-    if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
+    if (dead && cfg.death === 1) deathEl.textContent = "You died. Spectating";
+    else if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
     placeBags(m);
     (window as unknown as { __players: unknown }).__players = m.list;
     (window as unknown as { __spells: unknown }).__spells = { selected: selectedSpell, ...m.spells };
+  }
+
+  /** One-life round over (D-160): a banner with a button that makes a fresh Survival room and goes there. */
+  function showRoundBanner(win: boolean): void {
+    if (document.getElementById("roundBanner")) return;
+    const el = document.createElement("div");
+    el.id = "roundBanner";
+    const h = document.createElement("h2");
+    h.textContent = win ? "Victory" : "The party fell";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn";
+    btn.textContent = "New room";
+    const err = document.createElement("p");
+    err.hidden = true;
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      const b64 = btoa(String.fromCharCode(...encodeConfig(SURVIVAL)));
+      fetch("/api/rooms", { method: "POST", body: JSON.stringify({ name: "Survival", mode: "survival", config: b64, visibility: "public" }) })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(r.status === 429 ? "Too many rooms today." : "Could not create a room.");
+          const j = (await r.json()) as { code: string };
+          location.href = `/r/${j.code}`;
+        })
+        .catch((e) => {
+          btn.disabled = false;
+          err.hidden = false;
+          err.textContent = String(e.message ?? e);
+        });
+    });
+    el.append(h, btn, err);
+    stage.append(el);
   }
 
   /** Green at full health through yellow to red at none. */
@@ -864,7 +900,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const serverParam = new URLSearchParams(location.search).get("server");
   const httpBase = serverParam ? `${location.protocol}//${serverParam}` : "";
   const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${serverParam ?? location.host}/ws`;
-  const local = localKind !== null ? { kind: localKind, seed: params.get("seed") ?? "1", avatar: devAvatar } : undefined;
+  const local = localKind !== null ? { kind: localKind, seed: params.get("seed") ?? "1", avatar: devAvatar, cfg: params.get("cfg") ?? undefined } : undefined;
 
   /** Ask the server for a token for this display name (plan 8, 9.1). Resolves to the token and the cleaned name. */
   async function register(name: string): Promise<{ token: string; name: string }> {
@@ -944,6 +980,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     // Dev route only: walk the local avatar onto the nearest pickup (any spell in the pickup tables) to see those visuals.
     (window as unknown as Record<string, unknown>).__devGoto = (spell: number) => {
       if (devAvatar) send({ type: "devgoto", spell });
+    };
+    (window as unknown as Record<string, unknown>).__devGotoEnemy = () => {
+      if (devAvatar) send({ type: "devgoto", spell: -1 });
     };
     (window as unknown as Record<string, unknown>).__devMe = () => lastPlayers?.list.find((p) => p.me) ?? null;
   }

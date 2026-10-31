@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compare } from "./compare.ts";
 import { m5Missing } from "./m5-coverage.ts";
-import { castScript, m5Script, readWasm, sharedScript, wasmPath } from "./helpers.ts";
+import { castScript, m5Script, survivalScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 
 const wasm = readWasm(wasmPath);
@@ -76,5 +76,17 @@ describe("Node determinism", () => {
     const d = compare(a, b);
     expect(d?.tick).toBe(a.hashes[7][0]);
     expect(d?.chunks).toEqual([3]);
+  });
+
+  // F4: a Survival world with slimes, hit and hitting back. D1 (two instances) and D6 (batching) agree, and the
+  // script really hurt and killed slimes (so the enemy code ran, not just generation).
+  const surv = survivalScript().script;
+  it("D1/D6 with slimes: instances and batchings agree, and slimes were hurt", () => {
+    const a = run(readWasm(wasmPath), surv, {}, { collectEvents: true });
+    const b = run(readWasm(wasmPath), surv);
+    const seven = run(readWasm(wasmPath), surv, {}, { batching: { kind: "batch", k: 7 } });
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    expect(compare(a, seven, ["each", "k=7"])).toBeNull();
+    expect(a.events!.filter((e) => e.kind === 11).length).toBeGreaterThanOrEqual(3);
   });
 });
