@@ -61,10 +61,28 @@ fn an_acid_slime_walks_to_a_player_slower_than_a_slime_and_hits_for_fifteen() {
         }
         panic!("kind {kind} never reached the player");
     };
-    let (ta, da) = reach(ENEMY_ACID_SLIME);
-    let (ts, _) = reach(ENEMY_SLIME);
+    let (_, da) = reach(ENEMY_ACID_SLIME);
     assert_eq!(da, 15);
-    assert!(ta > ts, "acid slime arrives at {ta}, slime at {ts}");
+    // Slower: one arrival time is hop-jitter noise (review-f5), so compare the ground each kind covers toward
+    // the player in a fixed window, summed over eight start columns. Shown red with ACID_SLIME_HOP_VX = SLIME_HOP_VX
+    // and ACID_SLIME_HOP_EXTRA = 0.
+    let covered = |kind: u8| -> i32 {
+        (0..8)
+            .map(|k| {
+                let mut s = arena(560);
+                let x0 = (440 + k * 5) * PX;
+                s.enemies = vec![Enemy::new(0, kind, x0, 200 * PX)];
+                for _ in 0..240 {
+                    s.step();
+                    s.players[0].health = HEALTH_MAX;
+                }
+                s.enemies.first().map_or(0, |e| e.x - x0)
+            })
+            .sum()
+    };
+    let (acid_dx, slime_dx) = (covered(ENEMY_ACID_SLIME), covered(ENEMY_SLIME));
+    assert!(acid_dx > 0 && slime_dx > 0, "both must advance: acid {acid_dx}, slime {slime_dx}");
+    assert!(acid_dx * 4 < slime_dx * 3, "acid slime covered {acid_dx}, slime {slime_dx}: not clearly slower");
 }
 
 #[test]
