@@ -280,8 +280,8 @@ pub const WORM_BURIED_CELLS: i32 = 6;
 
 // ---- falling rock v0 -------------------------------------------------------------------------------------
 
-/// Seeds queued per tick (extras dropped), cells in a free island (a fill reaching this is anchored), and total
+/// Removed solid cells recorded per tick (seeds derived from them; extras dropped), cells in a free island (a fill reaching this is anchored), and total
 /// flood cell visits per tick (seeds past it are dropped, not carried: carrying would be hidden state).
-pub const MAX_ISLAND_SEEDS: usize = 32;
+pub const MAX_ISLAND_REMOVED: usize = 8192;
 pub const ISLAND_MAX: usize = 400;
 pub const ISLAND_WORK_MAX: usize = 4000;

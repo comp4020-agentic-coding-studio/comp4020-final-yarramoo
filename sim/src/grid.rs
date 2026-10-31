@@ -3,7 +3,7 @@
 
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{DIG_RADIUS, DIG_REACH, ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_SEEDS};
+use crate::tuning::{DIG_RADIUS, DIG_REACH, ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_REMOVED};
 
 /// Materials that form rigid islands for falling rock v0 (Bedrock anchors them instead).
 pub fn is_structural(m: u8) -> bool {
@@ -65,7 +65,7 @@ pub struct Grid {
     pub explosions: Vec<(u32, u32)>,
     /// Scratch, not state (falling rock v0): solid cells whose neighbour was just removed, drained by
     /// `crumble_islands` at the end of every tick. Never hashed or snapshotted; empty between ticks.
-    pub island_seeds: Vec<u32>,
+    pub island_removed: Vec<u32>,
     island_stamp: Vec<u32>,
     island_tick: u32,
     island_cells: Vec<u32>,
@@ -101,7 +101,7 @@ impl Grid {
             ran_chunks: 0,
             pending: Vec::new(),
             explosions: Vec::new(),
-            island_seeds: Vec::new(),
+            island_removed: Vec::new(),
             island_stamp: vec![0; w * h],
             island_tick: 0,
             island_cells: Vec::new(),
@@ -186,19 +186,11 @@ impl Grid {
         self.touch(i);
     }
 
-    /// Queue the structural 4-neighbours of a removed solid cell as island seeds (bounded; extras dropped).
+    /// Record a removed structural cell (bounded; extras dropped). Seeds are derived later, in
+    /// `crumble_islands`, from neighbours that are still solid, so a bulk removal cannot overflow a seed queue.
     fn seed_neighbours(&mut self, i: usize) {
-        let (x, y) = (i % self.w, i / self.w);
-        for (dx, dy) in [(0isize, -1isize), (-1, 0), (1, 0), (0, 1)] {
-            if self.island_seeds.len() >= MAX_ISLAND_SEEDS {
-                return;
-            }
-            if let Some((nx, ny)) = self.off(x, y, dx, dy) {
-                let j = ny * self.w + nx;
-                if is_structural(self.mat[j]) {
-                    self.island_seeds.push(j as u32);
-                }
-            }
+        if self.island_removed.len() < MAX_ISLAND_REMOVED {
+            self.island_removed.push(i as u32);
         }
     }
 
@@ -208,7 +200,7 @@ impl Grid {
     /// dropped, so the queue is always empty on return (no hidden state). Reads neither `awake` nor `active`.
     pub fn crumble_islands(&mut self) {
         self.island_visits = 0;
-        if self.island_seeds.is_empty() {
+        if self.island_removed.is_empty() {
             return;
         }
         self.island_tick = self.island_tick.wrapping_add(1);
@@ -217,12 +209,17 @@ impl Grid {
             self.island_tick = 1;
         }
         let stamp = self.island_tick;
-        let seeds = core::mem::take(&mut self.island_seeds);
-        for &s in &seeds {
-            let s = s as usize;
+        let removed = core::mem::take(&mut self.island_removed);
+        let w = self.w;
+        'seeds: for &r in &removed {
+          let r = r as usize;
+          let (rx, ry) = (r % w, r / w);
+          for (dx, dy) in [(0isize, -1isize), (-1, 0), (1, 0), (0, 1)] {
+            let Some((nx, ny)) = self.off(rx, ry, dx, dy) else { continue };
+            let s = ny * w + nx;
             let used = self.island_visits as usize;
             if used >= ISLAND_WORK_MAX {
-                break;
+                break 'seeds;
             }
             if self.island_stamp[s] == stamp || !is_structural(self.mat[s]) {
                 continue;
@@ -244,12 +241,13 @@ impl Grid {
                 let (x, y) = (c % self.w, c / self.w);
                 if x == 0 || y == 0 || x + 1 == self.w || y + 1 == self.h {
                     anchored = true;
-                    continue;
+                    break;
                 }
                 for j in [c - self.w, c - 1, c + 1, c + self.w] {
                     let m = self.mat[j];
                     if m == BEDROCK {
                         anchored = true;
+                        break;
                     } else if is_structural(m) && self.island_stamp[j] != stamp {
                         self.island_stamp[j] = stamp;
                         self.island_stack.push(j as u32);
@@ -269,9 +267,10 @@ impl Grid {
                 self.touch(c);
             }
             self.island_cells = cells;
+          }
         }
-        self.island_seeds = seeds;
-        self.island_seeds.clear();
+        self.island_removed = removed;
+        self.island_removed.clear();
     }
 
     fn swap(&mut self, a: usize, b: usize) {

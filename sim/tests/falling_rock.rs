@@ -3,7 +3,7 @@ use sim::grid::Grid;
 use sim::input::{encode_join, encode_pos};
 use sim::materials::*;
 use sim::sim::Sim;
-use sim::tuning::{ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_SEEDS};
+use sim::tuning::{ISLAND_MAX, ISLAND_WORK_MAX};
 
 const N: usize = 256;
 
@@ -45,7 +45,7 @@ fn freed_block_crumbles_and_falls() {
     assert_eq!(count(&g, 100, 100, 105, 105, SAND), 25);
     assert_eq!(count(&g, 102, 105, 103, 110, SAND), 5);
     assert_eq!(count(&g, 102, 111, 103, 120, ROCK), 9);
-    assert!(g.island_seeds.is_empty());
+    assert!(g.island_removed.is_empty());
     for t in 0..200 {
         g.step_cells(1, t);
     }
@@ -114,15 +114,15 @@ fn flood_work_is_bounded_per_tick() {
                 g.mat[y * 512 + x] = ROCK;
             }
         }
-        // Cut a corner cell: two seeds per island, so 16 islands fill the seed queue and ask for ~6000 visits.
+        // Cut a corner cell: 30 islands ask for ~11000 visits in one tick.
         g.set(y0 * 512 + x0, EMPTY, 0);
     }
-    assert_eq!(g.island_seeds.len(), MAX_ISLAND_SEEDS, "seed queue is capped");
+    assert_eq!(g.island_removed.len(), 30);
     g.crumble_islands();
     assert!(g.island_visits as usize <= ISLAND_WORK_MAX, "visits {}", g.island_visits);
     assert!(g.island_visits as usize >= ISLAND_WORK_MAX - ISLAND_MAX, "the budget should bite: {}", g.island_visits);
-    assert!(g.island_crumbled >= 1 && (g.island_crumbled as usize) < 16, "{}", g.island_crumbled);
-    assert!(g.island_seeds.is_empty());
+    assert!(g.island_crumbled >= 1 && (g.island_crumbled as usize) < 30, "{}", g.island_crumbled);
+    assert!(g.island_removed.is_empty());
 }
 
 fn crumbled_sim(sleep: bool) -> Vec<u64> {
@@ -149,7 +149,7 @@ fn crumbled_sim(sleep: bool) -> Vec<u64> {
             s.grid.set(158 * w + 766, EMPTY, 0);
         }
         s.step();
-        assert!(s.grid.island_seeds.is_empty(), "seed queue must be empty at the end of every tick");
+        assert!(s.grid.island_removed.is_empty(), "seed queue must be empty at the end of every tick");
         if t % 20 == 0 {
             out.push(s.state_hash());
         }
@@ -188,7 +188,84 @@ fn generated_world_is_stable_for_600_ticks() {
     s.push_input(&encode_pos(1, 0, 780 * 16, 300 * 16, 0));
     for _ in 0..600 {
         s.step();
-        assert!(s.grid.island_seeds.is_empty());
+        assert!(s.grid.island_removed.is_empty());
     }
     assert_eq!(s.grid.island_crumbled, 0, "the fresh world must not collapse");
+}
+
+/// Review F1: a block hung from a long stalk, the whole stalk erased in one stroke, must fall.
+fn stalk_world(stalk: usize) -> Grid {
+    let mut g = Grid::new(N, N);
+    fill(&mut g, 0, 200, N, 210, ROCK);
+    fill(&mut g, 100, 50, 121, 65, ROCK); // 21 x 15 block
+    fill(&mut g, 110, 65, 111, 65 + stalk, ROCK);
+    fill(&mut g, 110, 65 + stalk, 111, 200, ROCK); // stalk reaches the floor
+    g
+}
+
+#[test]
+fn block_on_a_long_stalk_falls_when_the_whole_stalk_is_erased() {
+    let mut g = stalk_world(30);
+    // One Paint stroke erases the stalk's whole length (Empty paint through `set`).
+    for y in (65..200).rev() {
+        g.set(y * N + 110, EMPTY, 0);
+    }
+    g.crumble_islands();
+    assert_eq!(count(&g, 100, 50, 121, 65, ROCK), 0, "block must crumble");
+    assert_eq!(count(&g, 100, 50, 121, 65, SAND), 21 * 15);
+}
+
+#[test]
+fn large_dig_that_frees_a_slab_crumbles_it() {
+    let mut g = Grid::new(N, N);
+    fill(&mut g, 0, 200, N, 210, ROCK);
+    fill(&mut g, 90, 100, 130, 200, ROCK);
+    fill(&mut g, 100, 50, 121, 65, ROCK);
+    fill(&mut g, 110, 65, 111, 100, ROCK);
+    // Free a 14 x 8 slab (around 112 cells) by erasing a ring of 100+ cells around it.
+    for y in 100..140 {
+        for x in 90..130 {
+            let slab = (100..114).contains(&x) && (110..118).contains(&y);
+            let ring = (98..116).contains(&x) && (108..120).contains(&y);
+            if ring && !slab {
+                g.set(y * N + x, EMPTY, 0);
+            }
+        }
+    }
+    g.crumble_islands();
+    assert_eq!(count(&g, 100, 110, 114, 118, ROCK), 0);
+    assert_eq!(count(&g, 100, 110, 114, 118, SAND), 14 * 8);
+}
+
+#[test]
+fn anchored_fill_stops_at_the_first_anchor() {
+    let mut g = bridged();
+    fill(&mut g, 90, 119, 115, 120, BEDROCK); // bedrock right under the column
+    g.set(110 * N + 102, EMPTY, 0); // cut: the lower column piece touches bedrock after a few cells
+    g.set(100 * N + 100, EMPTY, 0); // and a second cut in the block
+    g.crumble_islands();
+    assert!(g.island_visits < 40, "visits {}", g.island_visits);
+}
+
+#[test]
+fn generated_worlds_are_stable_across_seeds_and_sizes() {
+    use sim::config::RoomConfig;
+    let mut bad = Vec::new();
+    for seed in 1..=8u64 {
+        for size in 0..=1u8 {
+            let mut cfg = RoomConfig::survival();
+            cfg.size = size;
+            let mut s = Sim::new(seed, cfg).unwrap();
+            s.push_input(&encode_join(1));
+            s.step();
+            let (px, py) = (s.players[0].x, s.players[0].y);
+            for _ in 0..300 {
+                s.step();
+            }
+            if s.grid.island_crumbled != 0 {
+                bad.push((seed, size, s.grid.island_crumbled, px, py));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "crumbled on their own: {bad:?}");
 }
