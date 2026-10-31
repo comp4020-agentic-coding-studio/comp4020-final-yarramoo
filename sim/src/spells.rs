@@ -24,6 +24,9 @@ pub const BLACK_HOLE: u8 = 11;
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
 
+/// High bit of a `Box5` id: the box is an enemy's, and the low bits are its id (player ids stay below it).
+pub const ENEMY_BOX: u32 = 0x8000_0000;
+
 /// Floor square root, integer Newton. No floats (invariant 3).
 pub fn isqrt(n: u64) -> u32 {
     if n < 2 {
@@ -140,6 +143,26 @@ impl Sim {
             let id = t.id;
             self.hit_player(id, caster, c * KNOCK_BLAST / TRIG_ONE, sn * KNOCK_BLAST / TRIG_ONE);
         }
+        // Enemies in the same cone, by id: damage, knockback and the caster as last hitter.
+        for i in 0..self.enemies.len() {
+            let t = &self.enemies[i];
+            if t.hp == 0 {
+                continue;
+            }
+            let (dx, dy) = (i64::from(t.x - cx), i64::from(t.y - (ENEMY_STATS[usize::from(t.kind)].h * POS_ONE / 2) - cy));
+            let d2 = dx * dx + dy * dy;
+            if d2 > reach * reach {
+                continue;
+            }
+            let dot = dx * i64::from(c) + dy * i64::from(sn);
+            let one = i64::from(TRIG_ONE);
+            if d2 > 0 && (dot <= 0 || 2 * dot * dot < d2 * one * one) {
+                continue;
+            }
+            self.damage_enemy(i, BLAST_ENEMY_DAMAGE, caster);
+            self.knock_enemy(i, c * KNOCK_BLAST / TRIG_ONE, sn * KNOCK_BLAST / TRIG_ONE);
+        }
+        self.reap_enemies();
     }
 
     /// Dig: clear a capsule from the chest `DIG_REACH` cells along the aim, radius `DIG_RADIUS` (`Grid::dig`).
@@ -213,6 +236,13 @@ impl Sim {
                 (p.id, x0, y0, x1, y1)
             })
             .collect();
+        // Enemy boxes follow the player boxes (so a player is hit first when both overlap a cell); their ids carry
+        // `ENEMY_BOX` so `impact` can tell them apart. Only enemies with hp left can be hit.
+        let mut boxes = boxes;
+        boxes.extend(self.enemies.iter().filter(|e| e.hp > 0).map(|e| {
+            let (x0, y0, x1, y1) = e.hitbox_cells();
+            (ENEMY_BOX | u32::from(e.id), x0, y0, x1, y1)
+        }));
         let mut qs = core::mem::take(&mut self.projectiles);
         let mut gone = Vec::with_capacity(qs.len());
         let mut bombs = 0u32;
@@ -225,6 +255,7 @@ impl Sim {
             !gone[i - 1]
         });
         self.projectiles = qs;
+        self.reap_enemies();
     }
 
     /// One tick of one bolt: gravity, then at most `MAX_SUBSTEPS` integer sub-steps of at most one cell.
@@ -338,7 +369,15 @@ impl Sim {
         match q.spell {
             PUSH => {
                 if let Some(v) = hit {
-                    self.hit_player(v, q.owner, q.vx * KNOCK_PUSH / SPEED[PUSH as usize], q.vy * KNOCK_PUSH / SPEED[PUSH as usize]);
+                    let (kx, ky) = (q.vx * KNOCK_PUSH / SPEED[PUSH as usize], q.vy * KNOCK_PUSH / SPEED[PUSH as usize]);
+                    if v & ENEMY_BOX != 0 {
+                        if let Some(i) = self.enemy_index((v & !ENEMY_BOX) as u16) {
+                            self.damage_enemy(i, PUSH_ENEMY_DAMAGE, q.owner);
+                            self.knock_enemy(i, kx, ky);
+                        }
+                    } else {
+                        self.hit_player(v, q.owner, kx, ky);
+                    }
                 }
             }
             WATER_SPELL => self.burst_water(at),
@@ -349,7 +388,13 @@ impl Sim {
             FIRE_BOLT => {
                 self.ignite(at);
                 if let Some(v) = hit {
-                    self.fire_bolt_hit(v, q.owner);
+                    if v & ENEMY_BOX != 0 {
+                        if let Some(i) = self.enemy_index((v & !ENEMY_BOX) as u16) {
+                            self.damage_enemy(i, u16::from(FIRE_BOLT_DAMAGE), q.owner);
+                        }
+                    } else {
+                        self.fire_bolt_hit(v, q.owner);
+                    }
                 }
             }
             BOMB => {
@@ -595,6 +640,27 @@ impl Sim {
             let (vx, vy) = if dist == 0 { (0, -mag) } else { (mag * dx / dist, mag * dy / dist) };
             self.events.push(Event { kind: EV_KNOCK, player: id, a: vx as i32, b: vy as i32, c: owner as i32 });
         }
+        // Enemies, in id order: the same falloff to their centre, credited to the owner (0 for gunpowder).
+        for i in 0..self.enemies.len() {
+            let t = &self.enemies[i];
+            if t.hp == 0 {
+                continue;
+            }
+            let mid = ENEMY_STATS[usize::from(t.kind)].h * POS_ONE / 2;
+            let (dx, dy) = (i64::from(t.x - cx * POS_ONE - POS_ONE / 2), i64::from(t.y - mid - cy * POS_ONE - POS_ONE / 2));
+            let dist = isqrt((dx * dx + dy * dy) as u64) as i64;
+            let d = (dist >> POS_SHIFT) as i32;
+            if d >= kr {
+                continue;
+            }
+            if d < r {
+                self.damage_enemy(i, (EXPLOSION_DAMAGE_MAX * (r - d) / r) as u16, owner);
+            }
+            let mag = i64::from(KNOCK_EXPLOSION * (kr - d) / kr);
+            let (vx, vy) = if dist == 0 { (0, -mag) } else { (mag * dx / dist, mag * dy / dist) };
+            self.knock_enemy(i, vx as i32, vy as i32);
+        }
+        self.reap_enemies();
     }
 
     /// Lava and fire contact for every active, alive player, in id order. Lava costs 1 HP on even ticks,

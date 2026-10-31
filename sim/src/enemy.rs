@@ -182,4 +182,99 @@ impl Sim {
         }
         self.enemies[i] = e;
     }
+
+    // ---- damage (F4 commit 5) ----------------------------------------------------------------------------
+
+    /// Index of the enemy with this id, if it still exists.
+    pub(crate) fn enemy_index(&self, id: u16) -> Option<usize> {
+        self.enemies.binary_search_by_key(&id, |e| e.id).ok()
+    }
+
+    /// Take `amount` hp from the enemy at `idx`, crediting `attacker` (0 for the world, which keeps the previous
+    /// credit). The enemy is only marked (hp 0); `reap_enemies` removes it and emits the death, so indices stay
+    /// valid while one source loops over several enemies. An enemy already at 0 takes nothing.
+    pub(crate) fn damage_enemy(&mut self, idx: usize, amount: u16, attacker: u32) {
+        let tick = self.tick;
+        let e = &mut self.enemies[idx];
+        if e.hp == 0 || amount == 0 {
+            return;
+        }
+        if attacker != 0 {
+            e.last_hit_by = attacker;
+            e.last_hit_tick = tick;
+        }
+        let dealt = amount.min(e.hp);
+        e.hp -= dealt;
+        let ev = Event { kind: EV_ENEMY_HURT, player: attacker, a: i32::from(e.id), b: i32::from(dealt), c: i32::from(e.hp) };
+        self.events.push(ev);
+    }
+
+    /// Knock an enemy: the impulse (1/16 cell per tick) is scaled down and lifted, then clamped. It moves the
+    /// enemy's state velocity, which `step_enemy` integrates (players are moved by their own client instead).
+    pub(crate) fn knock_enemy(&mut self, idx: usize, vx: i32, vy: i32) {
+        let e = &mut self.enemies[idx];
+        let (vx, vy) = (vx / ENEMY_KNOCK_DIV, vy / ENEMY_KNOCK_DIV);
+        e.vx = vx.clamp(-ENEMY_MAX_SPEED, ENEMY_MAX_SPEED) as i16;
+        e.vy = vy.min(-ENEMY_KNOCK_LIFT).clamp(-ENEMY_MAX_SPEED, ENEMY_MAX_SPEED) as i16;
+    }
+
+    /// Remove every enemy at 0 hp, in id order, emitting `EV_ENEMY_DEATH` with the credited killer (the last
+    /// hitter within `KILL_CREDIT_TICKS`, else 0).
+    pub(crate) fn reap_enemies(&mut self) {
+        if !self.enemies.iter().any(|e| e.hp == 0) {
+            return;
+        }
+        let tick = self.tick;
+        let mut dead = Vec::new();
+        self.enemies.retain(|e| {
+            if e.hp != 0 {
+                return true;
+            }
+            let credited = e.last_hit_by != 0 && tick.wrapping_sub(e.last_hit_tick) <= KILL_CREDIT_TICKS;
+            dead.push(Event { kind: EV_ENEMY_DEATH, player: if credited { e.last_hit_by } else { 0 }, a: e.x, b: e.y, c: i32::from(e.kind) });
+            false
+        });
+        self.events.extend(dead);
+    }
+
+    /// Lava, fire and acid contact for the enemies that step this tick, in id order, at the player cadence:
+    /// lava 1 hp on even ticks, fire when `(tick + id) % 6 == 0`, acid when `tick % 4 == 0`; lava wins over both,
+    /// fire over acid; a per-kind immunity mask skips a hazard. Reads only the enemy's own hitbox (inside the
+    /// stepping rectangle), so chunk sleeping cannot change it.
+    pub(crate) fn enemy_hazard_scan(&mut self) {
+        if self.enemies.is_empty() || self.round_over != 0 {
+            return;
+        }
+        let targets = self.alive_targets();
+        let tick = self.tick;
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        for i in self.stepping_set(&targets) {
+            let e = &self.enemies[i];
+            let immune = ENEMY_STATS[usize::from(e.kind)].immune;
+            let (x0, y0, x1, y1) = e.hitbox_cells();
+            let (mut lava, mut fire, mut acid) = (false, false, false);
+            for y in y0.max(0)..=y1.min(h - 1) {
+                for x in x0.max(0)..=x1.min(w - 1) {
+                    match self.grid.mat[(y * w + x) as usize] {
+                        LAVA => lava = immune & IMMUNE_LAVA == 0 || lava,
+                        FIRE => fire = immune & IMMUNE_FIRE == 0 || fire,
+                        ACID => acid = immune & IMMUNE_ACID == 0 || acid,
+                        _ => {}
+                    }
+                }
+            }
+            let id = u32::from(e.id);
+            let hit = if lava {
+                tick.is_multiple_of(2)
+            } else if fire {
+                tick.wrapping_add(id).is_multiple_of(6)
+            } else {
+                acid && tick.is_multiple_of(4)
+            };
+            if hit {
+                self.damage_enemy(i, 1, 0);
+            }
+        }
+        self.reap_enemies();
+    }
 }

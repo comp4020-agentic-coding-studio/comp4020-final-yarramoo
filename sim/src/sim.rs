@@ -161,7 +161,7 @@ impl Sim {
     /// 3. `refresh_active`
     /// 4. `grid.step_cells`
     /// 5. grid explosions -> `explode_at` (damage, knockback, `EV_EXPLODE`)
-    /// 6. hazard scan (lava, fire contact)
+    /// 6. hazard scan (lava, fire contact), then the same for enemies
     ///
     /// Damage and death happen inside 5 and 6.
     pub fn step(&mut self) -> u32 {
@@ -180,6 +180,7 @@ impl Sim {
             }
             self.grid.explosions = centres;
             self.hazard_scan();
+            self.enemy_hazard_scan();
         }
         #[cfg(feature = "canary")]
         {

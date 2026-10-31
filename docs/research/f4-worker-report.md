@@ -36,3 +36,13 @@
 - Work count (`Sim.enemy_work`, cells examined by collision tests): 48 slimes, 24 stepped: worst 3600 cells/tick, mean 2966 cells/tick
 - Gate: cargo test, clippy, typecheck, test:determinism green.
 
+### 5. Enemies take damage
+- `enemy.rs`: `damage_enemy` (marks hp, emits `EV_ENEMY_HURT`), `knock_enemy` (impulse / 4, lifted by at least 8),
+  `reap_enemies` (removal in id order, `EV_ENEMY_DEATH` with credit inside `KILL_CREDIT_TICKS`), `enemy_hazard_scan`
+  (lava/fire/acid at the player cadence, per-kind immunity mask, only for the stepping set). `spells.rs`: enemy boxes
+  join `step_projectile`'s box list with ids tagged `ENEMY_BOX` (high bit), `impact` handles Push and Fire bolt hits
+  on them, `blast` and `explode_at` get an enemy loop. Players are matched first in the box list.
+- Red first: with spells.rs reverted and the hazard scan call removed, 5 of the 6 new tests failed; the far frozen
+  slime test passes by nature (nothing happens either way).
+- Gate green.
+

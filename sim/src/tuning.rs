@@ -194,3 +194,10 @@ pub const ENEMY_RESCUE_CELLS: i32 = 64;
 /// A contact hit knocks the player this much (1/16 cell per tick), away from the enemy and up.
 pub const CONTACT_KNOCK_X: i32 = 40;
 pub const CONTACT_KNOCK_Y: i32 = -24;
+/// Damage a player's spells do to enemies (players take none from Push or Blast). Fire bolt and the explosions
+/// reuse their player numbers. Knockback on an enemy is the player's impulse divided by `ENEMY_KNOCK_DIV`, and
+/// lifts it at least `ENEMY_KNOCK_LIFT` (1/16 cell per tick) so a grounded slime actually leaves the floor.
+pub const PUSH_ENEMY_DAMAGE: u16 = 5;
+pub const BLAST_ENEMY_DAMAGE: u16 = 8;
+pub const ENEMY_KNOCK_DIV: i32 = 4;
+pub const ENEMY_KNOCK_LIFT: i32 = 8;
