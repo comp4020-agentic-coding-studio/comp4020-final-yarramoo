@@ -109,7 +109,10 @@ impl Sim {
                         e.facing = u8::from(dx > 0);
                     }
                     e.vx = if dx > 0 { SLIME_HOP_VX } else if dx < 0 { -SLIME_HOP_VX } else { 0 } as i16;
-                    e.vy = -SLIME_JUMP_VY as i16;
+                    // A target well above (more than 4 cells) gets a taller hop; the direction is recomputed from the
+                    // target on every grounded tick, and landing zeroes vx above, so a hop never slides on.
+                    let above = targets.iter().any(|&(_, px, py)| e.y - py > 4 * POS_ONE && (px - e.x).abs() < 24 * POS_ONE);
+                    e.vy = -(if above { SLIME_JUMP_VY + SLIME_JUMP_UP_BONUS } else { SLIME_JUMP_VY }) as i16;
                     e.hop_until = tick.wrapping_add(SLIME_HOP_BASE + rng(self.seed, tick, id, 0, SALT_ENEMY_HOP) % SLIME_HOP_JITTER);
                     e.state |= 1;
                 } else {

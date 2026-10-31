@@ -304,3 +304,192 @@ fn a_slime_climbs_a_45_degree_slope_and_reaches_a_player_at_the_top() {
         assert!(hit_at.is_some(), "rise {rise}: the slime never reached the player; it is at x={} y={}", s.enemies[0].x / PX, s.enemies[0].y / PX);
     }
 }
+
+// ---- real generated terrain -------------------------------------------------------------------------------
+
+/// Every placement of the player on a floor 2..=20 rows above a real seed-1 slime and 6..=20 columns to either
+/// side, for the first 12 slimes: the slime must reach contact within 300 ticks and end closer than it began,
+/// for every placement whose ground is connected to the slime by a walkable slope (checked by a flood fill over
+/// 4-row-high cells with steps of up to 4 rows, about a hop).
+#[test]
+fn a_slime_reaches_a_player_on_every_connected_real_ledge() {
+    let base = Sim::new(1, RoomConfig::survival()).unwrap();
+    let (w, h) = (base.grid.w as i32, base.grid.h as i32);
+    let solid = |x: i32, y: i32| blocks_enemy(base.grid.mat[(y * w + x) as usize]);
+    let (mut checked, mut failures) = (0, vec![]);
+    for idx in 0..base.enemies.len().min(12) {
+        let e = base.enemies[idx].clone();
+        let (ex, ey) = (e.x >> 4, (e.y >> 4) - 1);
+        // walkable ground cells reachable from the slime: a cell is standable with solid below and 4 free rows
+        let standable = |x: i32, y: i32| x > 3 && x < w - 4 && y > 12 && y < h - 2 && solid(x, y + 1) && (y - 3..=y).all(|r| !solid(x, r));
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stack = vec![(ex, ey)];
+        while let Some((x, y)) = stack.pop() {
+            if !seen.insert((x, y)) || seen.len() > 6000 {
+                continue;
+            }
+            for dx in [-1, 1] {
+                for dy in -4..=4 {
+                    if standable(x + dx, y + dy) && (x + dx - ex).abs() <= 40 {
+                        stack.push((x + dx, y + dy));
+                    }
+                }
+            }
+        }
+        for dir in [-1i32, 1] {
+            for d in 4..=30 {
+                let c = ex + dir * d;
+                let Some(&(_, fy)) = seen.iter().filter(|&&(x, y)| x == c && ey - y >= 0 && ey - y <= 30).next() else { continue };
+                if !(c - 2..=c + 2).all(|x| (fy - 9..=fy).all(|q| !solid(x, q))) {
+                    continue;
+                }
+                let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
+                s.push_input(&encode_join(1));
+                s.step();
+                s.players[0].x = c * PX + PX / 2;
+                s.players[0].y = (fy + 1) * PX;
+                for (i, o) in s.enemies.iter_mut().enumerate() {
+                    if i != idx {
+                        o.x = 0;
+                    }
+                }
+                let d0 = (s.enemies[idx].x - s.players[0].x).abs() + (s.enemies[idx].y - s.players[0].y).abs();
+                let mut hit = None;
+                for t in 0..300 {
+                    s.step();
+                    if s.players[0].health < HEALTH_MAX {
+                        hit = Some(t);
+                        break;
+                    }
+                }
+                checked += 1;
+                let d1 = (s.enemies[idx].x - s.players[0].x).abs() + (s.enemies[idx].y - s.players[0].y).abs();
+                if hit.is_none() && d1 >= d0 {
+                    failures.push(format!("slime {idx} dir {dir} d {d}: contact {hit:?}, dist {d0} -> {d1}"));
+                }
+            }
+        }
+    }
+    let _ = std::fs::write("/tmp/f4-ledges.txt", format!("checked {checked}, failures {}\n{}\n", failures.len(), failures.join("\n")));
+    assert!(checked >= 8, "only {checked} placements: the test checks too little");
+    assert!(failures.is_empty(), "{checked} checked; {}", failures.join("; "));
+}
+
+
+/// The dev route's case on seed 1: the slime nearest the spawn (a rough rock pit at 513,323), player 1 12 cells to its
+/// left standing on the nearest floor at or above the slime's feet (scanning up, then down), as `__devGotoEnemy` plus
+/// the avatar settling gives. The slime must reach contact within 300 ticks and end nearer, not slide off downhill.
+#[test]
+fn a_slime_reaches_a_player_beside_the_seed_1_rock_pit() {
+    let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
+    s.push_input(&encode_join(1));
+    s.step();
+    let (w, h) = (s.grid.w as i32, s.grid.h as i32);
+    let (sx, sy) = (s.players[0].x, s.players[0].y);
+    let idx = (0..s.enemies.len()).min_by_key(|&i| (s.enemies[i].x - sx).abs() + (s.enemies[i].y - sy).abs()).unwrap();
+    let e = s.enemies[idx].clone();
+    let (ex, ey) = (e.x >> 4, e.y >> 4);
+    let mut trace = String::new();
+    let mut placed = 0;
+    for dx in [-12i32, 12] {
+        let cx = ex + dx;
+        // nearest standable floor (5x10 free body, solid below) within 25 rows above or below the slime's feet
+        let Some(fy) = (0..=25).flat_map(|d| [ey - d, ey + d]).find(|&r| {
+            r > 10 && r < h - 2 && (cx - 2..=cx + 2).all(|x| (r - 9..=r).all(|q| s.grid.mat[(q * w + x) as usize] == EMPTY)) && blocks_enemy(s.grid.mat[((r + 1) * w + cx) as usize])
+        }) else { continue };
+        let mut t = Sim::new(1, RoomConfig::survival()).unwrap();
+        t.push_input(&encode_join(1));
+        t.step();
+        t.players[0].x = cx * PX + PX / 2;
+        t.players[0].y = (fy + 1) * PX;
+        for (i, o) in t.enemies.iter_mut().enumerate() {
+            if i != idx {
+                o.x = 0;
+            }
+        }
+        let d0 = (t.enemies[idx].x - t.players[0].x).abs() + (t.enemies[idx].y - t.players[0].y).abs();
+        let mut hit = None;
+        for k in 0..300 {
+            t.step();
+            if k % 30 == 0 {
+                trace.push_str(&format!("({},{}) ", t.enemies[idx].x / PX, t.enemies[idx].y / PX));
+            }
+            if t.players[0].health < HEALTH_MAX {
+                hit = Some(k);
+                break;
+            }
+        }
+        let d1 = (t.enemies[idx].x - t.players[0].x).abs() + (t.enemies[idx].y - t.players[0].y).abs();
+        trace.push_str(&format!("| side {dx}: player ({cx},{fy}) contact {hit:?} d {d0}->{d1}\n"));
+        placed += 1;
+        assert!(hit.is_some() || d1 < d0, "side {dx}: no contact and not closer; {trace}");
+    }
+    let _ = std::fs::write("/tmp/f4-pit.txt", &trace);
+    assert!(placed >= 1);
+}
+
+
+/// Slimes drift while idle, so the dev route finds the slime wherever idle hops put it. Let the nearest seed-1 slime
+/// idle for a while (player still at the spawn, far outside its 120-cell hunting range), then put the player 12
+/// cells to either side of where it ended up, on the nearest floor, and require contact in 300 ticks or progress
+/// toward the player. Several idle durations, so the slime ends on different bits of real rock.
+#[test]
+fn a_slime_that_drifted_while_idle_still_reaches_a_player_beside_it() {
+    let mut report = String::new();
+    let mut failures = vec![];
+    for idle in [0u32, 200, 400, 700, 1000, 1500, 2200, 3000] {
+        let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
+        s.push_input(&encode_join(1));
+        s.step();
+        let (w, h) = (s.grid.w as i32, s.grid.h as i32);
+        let (sx, sy) = (s.players[0].x, s.players[0].y);
+        let idx = (0..s.enemies.len()).min_by_key(|&i| (s.enemies[i].x - sx).abs() + (s.enemies[i].y - sy).abs()).unwrap();
+        for (i, o) in s.enemies.iter_mut().enumerate() {
+            if i != idx {
+                o.x = 0;
+            }
+        }
+        // keep the player where it is while the slime idles: it must be inside the stepping rectangle, so park the
+        // player 150 cells from the slime (outside the hunting range, inside the 224-cell rectangle)
+        let e0 = s.enemies[idx].clone();
+        s.players[0].x = e0.x + 150 * PX;
+        s.players[0].y = e0.y;
+        for _ in 0..idle {
+            s.step();
+            s.players[0].health = HEALTH_MAX;
+        }
+        let e = s.enemies[idx].clone();
+        let (ex, ey) = (e.x >> 4, e.y >> 4);
+        for dx in [-12i32, 12] {
+            let cx = ex + dx;
+            let Some(fy) = (0..=25).flat_map(|d| [ey - d, ey + d]).find(|&r| {
+                r > 10 && r < h - 2 && cx > 3 && cx < w - 4 && (cx - 2..=cx + 2).all(|x| (r - 9..=r).all(|q| s.grid.mat[(q * w + x) as usize] == EMPTY)) && blocks_enemy(s.grid.mat[((r + 1) * w + cx) as usize])
+            }) else { continue };
+            let mut t = Sim::new(1, RoomConfig::survival()).unwrap();
+            t.push_input(&encode_join(1));
+            t.step();
+            t.enemies = s.enemies.clone();
+            t.grid.mat.copy_from_slice(&s.grid.mat);
+            t.tick = s.tick;
+            t.players[0].x = cx * PX + PX / 2;
+            t.players[0].y = (fy + 1) * PX;
+            t.players[0].health = HEALTH_MAX;
+            let d0 = (t.enemies[idx].x - t.players[0].x).abs() + (t.enemies[idx].y - t.players[0].y).abs();
+            let mut hit = None;
+            for k in 0..300 {
+                t.step();
+                if t.players[0].health < HEALTH_MAX {
+                    hit = Some(k);
+                    break;
+                }
+            }
+            let d1 = (t.enemies[idx].x - t.players[0].x).abs() + (t.enemies[idx].y - t.players[0].y).abs();
+            report.push_str(&format!("idle {idle} side {dx}: slime ({ex},{ey}) player ({cx},{fy}) contact {hit:?} d {d0}->{d1}\n"));
+            if hit.is_none() {
+                failures.push(format!("idle {idle} side {dx}: slime at ({ex},{ey}), d {d0}->{d1}"));
+            }
+        }
+    }
+    let _ = std::fs::write("/tmp/f4-drift.txt", &report);
+    assert!(failures.is_empty(), "{}", failures.join("; "));
+}

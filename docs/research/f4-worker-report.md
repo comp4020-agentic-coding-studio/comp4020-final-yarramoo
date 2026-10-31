@@ -149,3 +149,18 @@ The brief's "about 25 at L" holds; M and S are small. Flag: M may want a higher 
 - **8 Stubbed tests:** a control assertion that the same slime moves when the player is in range sits next to the frozen
   case; the D7 test now asserts at least one chunk was asleep during the sleeping-on run. I did not run a canary mutation
   of `stepping_set` against `awake`.
+
+## Slime movement pass (after the fix pass)
+- **Could not reproduce the downhill slide headlessly, so no red-first for it.** New tests on real seed-1 terrain
+  (`a_slime_reaches_a_player_beside_the_seed_1_rock_pit` contact at tick 14 on the right side;
+  `a_slime_that_drifted_while_idle_still_reaches_a_player_beside_it`, 10 placements, contact between tick 14 and 93;
+  `a_slime_reaches_a_player_on_every_connected_real_ledge`, 28+ placements) all PASS on the previous code (hop 8)
+  too: with the player on the nearest standable floor the slime reaches contact. My attempt to put the player where
+  `__devGotoEnemy` does (12 cells left, settled by a downward scan) lands the player on a ledge ~110 rows below,
+  which the slime cannot walk to, so that case is not a slope. The browser slide is therefore unverified by me.
+- **Changes made anyway** (pure tuning plus one rule): `SLIME_HOP_VX` back to 5; a hop toward a target more than 4
+  cells above and within 24 cells sideways gets `SLIME_JUMP_UP_BONUS` (3) extra jump impulse. Direction was already
+  recomputed from the target on every grounded tick, vx is already zeroed on landing, and the step-up already runs
+  in every phase of a move, including the landing tick.
+- Suggest re-checking in the browser; if it still slides, a dev trace of (x, y, vx, vy, grounded) per tick from
+  `__devGotoEnemy` would pin it.

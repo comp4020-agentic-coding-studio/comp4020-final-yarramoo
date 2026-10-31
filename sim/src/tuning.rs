@@ -179,7 +179,9 @@ pub const ENEMY_SPAWN_ROWS: i32 = 60;
 pub const SLIME_GRAVITY: i32 = 1;
 pub const SLIME_FALL_MAX: i32 = 48;
 pub const SLIME_JUMP_VY: i32 = 12;
-pub const SLIME_HOP_VX: i32 = 8;
+pub const SLIME_HOP_VX: i32 = 5;
+/// Extra jump impulse when a target is more than 4 cells above and within 24 cells sideways.
+pub const SLIME_JUMP_UP_BONUS: i32 = 3;
 /// Cells a blocked slime tries stepping up (1..=this) before giving up on the move.
 pub const SLIME_STEP_UP_CELLS: i32 = 3;
 pub const SLIME_IDLE_JUMP_VY: i32 = 8;
