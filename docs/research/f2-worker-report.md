@@ -9,7 +9,7 @@ All six materials landed (Oil, Acid, Gas, Ice, Glass, Coal). Nothing skipped, ex
 4. ddd91ad Ice (18) and Glass (19). Fire melts ice (1 in 3), Lava (1 in 2); Lava turns adjacent Sand to Glass (1 in 10). Tests for fire melt, lava melt, capped slow freeze, sand to glass plus dig; each mutation shown red.
 5. eb21940 Coal (20). Static solid; lit coal burns 240 ticks and sheds Fire/Smoke. Also: palette grew to 32 entries (`uPal[32]`, `PALETTE_SIZE`) and a gas shimmer shader branch landed in this commit by accident of timing (edited while the gate ran).
 6. 5724512 Sleep coverage: `d7_new_materials_sleep_is_invisible`, `..._hash_every_tick`, `d7_ice_by_water_keeps_its_chunk_awake` (shown red with Ice's `vol_seen` removed). The broad scene did NOT catch that removal, so the targeted channel scene was added.
-7. (next) Gen: oil pools (half layered on water), acid pools (deep band, 40 cells off the path), gas pockets, ice-lined chambers, coal seams. Tests `acid_stays_off_the_path_and_gen_materials_are_paintable` (red with the path check removed), `new_materials_keep_a_tick_within_bounds`.
+7. 97203a8 Gen: oil pools (half layered on water), acid pools (deep band, 40 cells off the path), gas pockets, ice-lined chambers, coal seams. Tests `acid_stays_off_the_path_and_gen_materials_are_paintable` (red with the path check removed), `new_materials_keep_a_tick_within_bounds`.
 
 Sandbox palette: new materials are in `MATERIALS` (client/materials.ts), names in shared/names.ts.
 
@@ -29,7 +29,7 @@ Oil 773-3103, Acid 549-1602, Gas 1368-2052, Ice 111-244, Coal 3783-5861. At S (s
 
 ## Could not verify
 - No browser run: no gen-preview or /sandbox screenshots (`docs/art/shots/f2-*`), out of tool budget. Gas shimmer shader and colours are unseen.
-- `pnpm test:net` not run.
+- `pnpm test:net` after commit 7: 307 of 308 passed. The one failure, tests/net/game.test.ts "M4b ... third joins late with bolts in flight" ("snapshots tried before one had bolts in flight: expected 10 to be less than 10"), passed on two re-runs (alone with -t M4b, and the whole game.test.ts file, 24/24). Intermittent, so by CLAUDE.md it is a defect until shown otherwise: I did not find the cause. It is a snapshot-timing retry loop (10 attempts) and the sim does not run in the server there, but I did not prove my changes are unrelated.
 - Colours chosen from the brief, not looked at; Ice vs Water contrast unchecked.
 - Determinism suite (Node, Chromium, Firefox, WebKit) passed for commits 1-6 via `pnpm test:determinism`; for the gen commit see the gate result in the final reply.
 
