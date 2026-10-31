@@ -353,11 +353,19 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         return Err(());
     }
     let mut projectiles = Vec::with_capacity(n);
+    let mut enemy_bolts = 0usize;
     for _ in 0..n {
         let owner = r.u32().ok_or(())?;
         let spell = r.u8().ok_or(())?;
         if usize::from(spell) >= NUM_SPELLS {
             return Err(());
+        }
+        // An enemy-owned bolt names a real kind, leaves the reserved bits clear, and there are few of them.
+        if owner & ENEMY_OWNER != 0 {
+            enemy_bolts += 1;
+            if owner & 0x7f00_0000 != 0 || usize::from(((owner >> 16) & 0xff) as u8) >= NUM_ENEMY_KINDS || enemy_bolts > MAX_ENEMY_PROJECTILES {
+                return Err(());
+            }
         }
         projectiles.push(Projectile {
             owner,

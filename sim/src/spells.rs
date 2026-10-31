@@ -41,6 +41,16 @@ pub fn isqrt(n: u64) -> u32 {
     x as u32
 }
 
+/// The `owner` of a bolt an enemy of `kind` and `id` fires (see `ENEMY_OWNER`).
+pub fn enemy_owner(kind: u8, id: u16) -> u32 {
+    ENEMY_OWNER | (u32::from(kind) << 16) | u32::from(id)
+}
+
+/// The enemy kind in an enemy-owned bolt's `owner`.
+pub fn enemy_owner_kind(owner: u32) -> u8 {
+    ((owner >> 16) & 0xff) as u8
+}
+
 impl Player {
     /// Alive means able to act and be hit. Nothing can kill a player before M5, but the rule is already
     /// the one M5 needs (plan 6.8): health above zero and the respawn timer elapsed.
@@ -116,6 +126,32 @@ impl Sim {
             vy: sn * v / TRIG_ONE,
             age: 0,
         });
+    }
+
+    /// An enemy fires `spell` from (`fx`, `fy`) (1/16 cell) along (`dx`, `dy`) (any scale, not both zero). Refused
+    /// (false) at `MAX_ENEMY_PROJECTILES` enemy bolts or `MAX_PROJECTILES` in all. Integer normalisation: the
+    /// direction is scaled to `SPEED[spell]` with `isqrt`.
+    pub fn enemy_fire(&mut self, enemy: (u8, u16), spell: u8, from: (i32, i32), d: (i32, i32)) -> bool {
+        let s = usize::from(spell);
+        if s >= NUM_SPELLS || self.projectiles.len() >= MAX_PROJECTILES || (d.0 == 0 && d.1 == 0) {
+            return false;
+        }
+        if self.projectiles.iter().filter(|q| q.owner & ENEMY_OWNER != 0).count() >= MAX_ENEMY_PROJECTILES {
+            return false;
+        }
+        let len = i64::from(isqrt((i64::from(d.0) * i64::from(d.0) + i64::from(d.1) * i64::from(d.1)) as u64)).max(1);
+        let v = i64::from(SPEED[s]);
+        self.projectiles.push(Projectile {
+            owner: enemy_owner(enemy.0, enemy.1),
+            spell,
+            cast_seq: 0,
+            x: from.0 << (PROJ_SHIFT - POS_SHIFT),
+            y: from.1 << (PROJ_SHIFT - POS_SHIFT),
+            vx: (i64::from(d.0) * v / len) as i32,
+            vy: (i64::from(d.1) * v / len) as i32,
+            age: 0,
+        });
+        true
     }
 
     /// Blast: a cone of `BLAST_RADIUS_CELLS` and 45 degrees either side of the aim, no projectile.
@@ -300,6 +336,10 @@ impl Sim {
                 if (id == q.owner && q.age <= OWNER_GRACE) || cx < bx0 || cx > bx1 || cy < by0 || cy > by1 {
                     continue;
                 }
+                // An enemy's bolt never hits an enemy (the shooter included).
+                if id & ENEMY_BOX != 0 && q.owner & ENEMY_OWNER != 0 {
+                    continue;
+                }
                 // A corpse hit earlier this tick (not yet reaped) does not stop a bolt.
                 if id & ENEMY_BOX != 0 && self.enemy_index((id & !ENEMY_BOX) as u16).is_none_or(|i| self.enemies[i].hp == 0) {
                     continue;
@@ -375,9 +415,10 @@ impl Sim {
 
     fn impact(&mut self, q: &Projectile, at: (i32, i32), hit: Option<u32>) {
         self.events.push(Event { kind: EV_IMPACT, player: q.owner, a: at.0, b: at.1, c: i32::from(q.spell) });
+        let enemy_owned = q.owner & ENEMY_OWNER != 0;
         match q.spell {
             PUSH => {
-                if let Some(v) = hit {
+                if let (Some(v), false) = (hit, enemy_owned) {
                     let (kx, ky) = (q.vx * KNOCK_PUSH / SPEED[PUSH as usize], q.vy * KNOCK_PUSH / SPEED[PUSH as usize]);
                     if v & ENEMY_BOX != 0 {
                         if let Some(i) = self.enemy_index((v & !ENEMY_BOX) as u16) {
@@ -396,7 +437,9 @@ impl Sim {
             ROSE => self.burst_seeds(at),
             FIRE_BOLT => {
                 self.ignite(at);
-                if let Some(v) = hit {
+                if let (Some(v), true) = (hit, enemy_owned) {
+                    self.enemy_bolt_hit(v, q.owner);
+                } else if let Some(v) = hit {
                     if v & ENEMY_BOX != 0 {
                         if let Some(i) = self.enemy_index((v & !ENEMY_BOX) as u16) {
                             self.damage_enemy(i, u16::from(FIRE_BOLT_DAMAGE), q.owner);
@@ -431,6 +474,14 @@ impl Sim {
                     self.grid.set(i, FIRE, 0);
                 }
             }
+        }
+    }
+
+    /// An enemy's Fire bolt that struck player `victim`: `FIRE_BOLT_DAMAGE` with the enemy cause (40 + kind, so
+    /// `damage_from_env()` gates it like contact). No last-hitter credit: an enemy is never a killer a player earns.
+    fn enemy_bolt_hit(&mut self, victim: u32, owner: u32) {
+        if let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) {
+            self.apply_damage(k, FIRE_BOLT_DAMAGE, CAUSE_ENEMY_BASE + enemy_owner_kind(owner));
         }
     }
 
@@ -633,6 +684,9 @@ impl Sim {
         if r <= 0 {
             return;
         }
+        // An enemy-owned blast hurts players with the enemy cause and credits nobody; it never hurts enemies.
+        let enemy_owned = owner & ENEMY_OWNER != 0;
+        let cause = if enemy_owned { CAUSE_ENEMY_BASE + enemy_owner_kind(owner) } else { cause };
         for i in 0..self.players.len() {
             let t = &self.players[i];
             if !t.alive(tick) {
@@ -647,10 +701,10 @@ impl Sim {
             }
             let id = t.id;
             // D-158 co-op gate: another player's explosion neither credits, damages nor knocks this player.
-            if owner != 0 && id != owner && !self.cfg.damage_from_players() {
+            if owner != 0 && id != owner && !enemy_owned && !self.cfg.damage_from_players() {
                 continue;
             }
-            if owner != 0 && id != owner {
+            if owner != 0 && id != owner && !enemy_owned {
                 self.players[i].last_hit_by = owner;
                 self.players[i].last_hit_tick = tick;
             }
@@ -659,7 +713,10 @@ impl Sim {
             }
             let mag = i64::from(KNOCK_EXPLOSION * (kr - d) / kr);
             let (vx, vy) = if dist == 0 { (0, -mag) } else { (mag * dx / dist, mag * dy / dist) };
-            self.events.push(Event { kind: EV_KNOCK, player: id, a: vx as i32, b: vy as i32, c: owner as i32 });
+            self.events.push(Event { kind: EV_KNOCK, player: id, a: vx as i32, b: vy as i32, c: if enemy_owned { 0 } else { owner as i32 } });
+        }
+        if enemy_owned {
+            return;
         }
         // Enemies, in id order: the same falloff to their centre, credited to the owner (0 for gunpowder).
         for i in 0..self.enemies.len() {

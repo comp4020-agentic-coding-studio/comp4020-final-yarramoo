@@ -44,6 +44,11 @@ pub const OWNER_GRACE: u16 = 10;
 /// Fastest a bolt may fall or fly on one axis, so the DDA stays within `MAX_SUBSTEPS`.
 pub const PROJ_MAX_SPEED: i32 = 8 * PROJ_ONE;
 pub const MAX_SUBSTEPS: i32 = 8;
+/// F5 enemy-owned projectiles: `owner` has this high bit set, then the enemy kind in bits 16..24 and its id in bits
+/// 0..16. Player ids stay below it (`Sim::join` refuses an id with the bit set), so an enemy owner never equals a
+/// player id. At most `MAX_ENEMY_PROJECTILES` enemy bolts fly at once (they never count toward a player's cap).
+pub const ENEMY_OWNER: u32 = 0x8000_0000;
+pub const MAX_ENEMY_PROJECTILES: usize = 16;
 
 /// Spells the sim implements; a disabled spell's cast is refused.
 pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true, true, true, true, true, true];

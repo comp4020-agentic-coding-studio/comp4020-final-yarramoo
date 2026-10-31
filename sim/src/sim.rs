@@ -278,7 +278,8 @@ impl Sim {
     }
 
     fn join(&mut self, id: u32) {
-        if id == 0 {
+        // An id with the enemy-owner bit could be mistaken for an enemy bolt's owner: refused.
+        if id == 0 || id & ENEMY_OWNER != 0 {
             return;
         }
         let k = match self.player_index(id) {
