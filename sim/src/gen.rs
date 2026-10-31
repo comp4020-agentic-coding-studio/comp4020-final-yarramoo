@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
@@ -299,6 +299,7 @@ pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16
     let (y_lo, y_hi) = (sc.shallow_top + 20, (sc.deep_top - 40).max(sc.shallow_top + 60));
     floor_spots(g, seed, pickups, &mut all, ENEMY_SLIME, want, (y_lo, y_hi), (SALT_GEN_ENEMY_X, SALT_GEN_ENEMY_Y));
     imp_spots(g, seed, &sc, pickups, &mut all);
+    worm_spots(g, seed, &sc, pickups, &mut all);
     let want = scale_count(w, h, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.deep_top + 20, (sc.repair_depth - 20).max(sc.deep_top + 60));
     floor_spots(g, seed, pickups, &mut all, ENEMY_ACID_SLIME, want, (y_lo, y_hi), (SALT_GEN_ACID_SLIME_X, SALT_GEN_ACID_SLIME_Y));
@@ -337,6 +338,36 @@ fn floor_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, 
             continue;
         }
         all.push((x as u16, yf as u16, kind));
+        placed += 1;
+    }
+}
+
+/// Burrower worms (F5): buried in solid Rock in the lower half of the deep band, with `WORM_BURIED_CELLS` cells of Rock
+/// in every direction around the centre (so every cell near it, and any open cell, is a few cells away), off the pickups
+/// and apart from every other enemy. `(x, y)` is the bottom row of the 5x4 body, so the centre is two rows above.
+fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let want = scale_count(w, h, ENEMY_WORMS_L, ENEMY_WORMS_MIN) as usize;
+    let (y_lo, y_hi) = ((sc.deep_top + sc.repair_depth) / 2, sc.repair_depth);
+    let r = WORM_BURIED_CELLS;
+    let mut placed = 0usize;
+    for k in 0..12000u32 {
+        if placed >= want {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_WORM_X) % (w - 80) as u32) as i32;
+        let cy = y_lo + (rng(seed, 0, k, 0, SALT_GEN_WORM_Y) % (y_hi - y_lo).max(1) as u32) as i32;
+        if cy + r >= h - 8 || (cy - r..=cy + r).any(|y| (x - r..=x + r).any(|xx| g.mat[(y * w + xx) as usize] != ROCK)) {
+            continue;
+        }
+        let y = cy + 2;
+        if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 8 && (i32::from(py) - y).abs() < 8) {
+            continue;
+        }
+        if all.iter().any(|&(ox, oy, _)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - y).abs() < 20) {
+            continue;
+        }
+        all.push((x as u16, y as u16, ENEMY_WORM));
         placed += 1;
     }
 }

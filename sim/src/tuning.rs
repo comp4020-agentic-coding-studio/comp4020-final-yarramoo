@@ -148,9 +148,11 @@ pub const PICKUP_TABLE: [&[(u8, u32)]; 2] = [
 pub const ENEMY_SLIME: u8 = 0;
 pub const ENEMY_IMP: u8 = 1;
 pub const ENEMY_ACID_SLIME: u8 = 2;
-pub const NUM_ENEMY_KINDS: usize = 3;
+pub const ENEMY_WORM: u8 = 3;
+pub const NUM_ENEMY_KINDS: usize = 4;
 /// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
-pub const MAX_ENEMIES: usize = 48;
+/// F5 raised this from 48: at size L the generator places 25 slimes + 8 imps + 10 acid slimes + 8 worms = 51.
+pub const MAX_ENEMIES: usize = 64;
 pub const MAX_ENEMIES_STEPPED: usize = 24;
 /// An enemy steps only inside this rectangle (cells) around an active, alive player; it is strictly inside the
 /// chunk-activity rectangle (`ACTIVE_W` x `ACTIVE_H`). It is computed from `players`, never from `grid.awake`.
@@ -180,6 +182,8 @@ pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
     EnemyStats { hp: 30, w: 5, h: 4, contact_damage: 0, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: WEAK_WATER },
     // Acid slime: a slower, tougher walker; immune to acid (fire hurts it at the normal rate).
     EnemyStats { hp: 60, w: 5, h: 4, contact_damage: 15, contact_cooldown: 40, immune: IMMUNE_ACID, weak: 0 },
+    // Burrower worm: tunnels through rock; no immunities (lava and fire hurt it at the shared rate).
+    EnemyStats { hp: 90, w: 5, h: 4, contact_damage: 20, contact_cooldown: 40, immune: 0, weak: 0 },
 ];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
@@ -255,3 +259,21 @@ pub const ACID_TRAIL_EVERY: u32 = 20;
 pub const ACID_TRAIL_PER_TICK: u32 = 1;
 /// A dying acid slime bursts into at most this many ACID cells (Empty cells of the disc around it only).
 pub const ACID_DEATH_CELLS: usize = 12;
+
+// ---- burrower worm (F5) ---------------------------------------------------------------------------------
+
+/// Worms placed at size L (scaled by area, at least `ENEMY_WORMS_MIN`), buried in deep rock.
+pub const ENEMY_WORMS_L: i32 = 8;
+pub const ENEMY_WORMS_MIN: i32 = 3;
+/// A worm is dormant (state bit 0 clear) until an alive player is within this many cells, then hunts for good.
+pub const WORM_WAKE_CELLS: i32 = 40;
+/// It tunnels toward the nearest player within this many cells. Speeds are 1/16 cell per tick per axis: slower in
+/// rock (the centre cell is solid) than in open space.
+pub const WORM_HUNT_CELLS: i32 = 120;
+pub const WORM_SPEED_ROCK: i32 = 2;
+pub const WORM_SPEED_OPEN: i32 = 4;
+/// Each stepped tick an awake worm digs the disc of this radius around its centre (`Grid::dig`: at most
+/// `(2 * WORM_DIG_RADIUS + 1)^2` = 49 cells looked at, bedrock and liquids stay).
+pub const WORM_DIG_RADIUS: i32 = 3;
+/// Placement: the worm's centre has this many cells of solid Rock in every direction (a (2n+1) square).
+pub const WORM_BURIED_CELLS: i32 = 6;

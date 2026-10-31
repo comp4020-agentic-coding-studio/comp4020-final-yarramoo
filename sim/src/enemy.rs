@@ -110,6 +110,58 @@ impl Sim {
         e.vy += (wy - i32::from(e.vy)).signum() as i16;
     }
 
+    /// The worm. It is meant to be inside rock, so it has no body collision, no gravity and no embedded rescue.
+    /// Dormant (state bit 0 clear): it only wakes when an alive player is within `WORM_WAKE_CELLS`. Awake: it moves
+    /// toward the nearest player within `WORM_HUNT_CELLS` at `WORM_SPEED_ROCK` per axis while its centre cell is solid
+    /// and `WORM_SPEED_OPEN` otherwise (an axis moves when the offset on it is more than half the other), never
+    /// into Bedrock or within 4 cells of the world edge, and digs the radius-3 disc around its centre every tick
+    /// (`Grid::dig`: at most 49 cells, solids and plants only; liquids stay, so a pool it reaches simply flows in).
+    fn worm_ai(&mut self, e: &mut Enemy, st: EnemyStats, targets: &[Target]) {
+        let mid = st.h * POS_ONE / 2;
+        let mut best: Option<(i64, i32, i32)> = None;
+        for &(_, px, py) in targets {
+            let (dx, dy) = (px - e.x, py - CHEST * POS_ONE - (e.y - mid));
+            let d2 = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+            if best.is_none_or(|(b, _, _)| d2 < b) {
+                best = Some((d2, dx, dy));
+            }
+        }
+        if e.state & 1 == 0 {
+            let wake = i64::from(WORM_WAKE_CELLS * POS_ONE);
+            if best.is_some_and(|(d2, _, _)| d2 <= wake * wake) {
+                e.state |= 1;
+            }
+            return;
+        }
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let hunt = i64::from(WORM_HUNT_CELLS * POS_ONE);
+        let (cx, cy) = (e.x >> POS_SHIFT, (e.y - mid) >> POS_SHIFT);
+        if let Some((_, dx, dy)) = best.filter(|&(d2, _, _)| d2 <= hunt * hunt) {
+            let in_rock = cx >= 0 && cy >= 0 && cx < w && cy < h && blocks_enemy(self.grid.mat[(cy * w + cx) as usize]);
+            let speed = if in_rock { WORM_SPEED_ROCK } else { WORM_SPEED_OPEN };
+            let mx = if dx.abs() * 2 > dy.abs() { dx.signum() * speed } else { 0 };
+            let my = if dy.abs() * 2 > dx.abs() { dy.signum() * speed } else { 0 };
+            if dx != 0 {
+                e.facing = u8::from(dx > 0);
+            }
+            for (ax, ay) in [(mx, 0), (0, my)] {
+                if ax == 0 && ay == 0 {
+                    continue;
+                }
+                let (nx, ny) = (e.x + ax, e.y + ay);
+                let (ncx, ncy) = (nx >> POS_SHIFT, (ny - mid) >> POS_SHIFT);
+                if ncx < 4 || ncy < 4 || ncx >= w - 4 || ncy >= h - 4 || self.grid.mat[(ncy * w + ncx) as usize] == BEDROCK {
+                    continue;
+                }
+                e.x = nx;
+                e.y = ny;
+            }
+        }
+        let (cx, cy) = (e.x >> POS_SHIFT, (e.y - mid) >> POS_SHIFT);
+        self.grid.dig(cx, cy, cx, cy, WORM_DIG_RADIUS);
+        self.enemy_work += ((2 * WORM_DIG_RADIUS + 1) * (2 * WORM_DIG_RADIUS + 1)) as u32;
+    }
+
     /// The enemies that step this tick: indices in id order, inside the rectangle around some alive active
     /// player, at most `MAX_ENEMIES_STEPPED` of them. Reads only `players` and `enemies`.
     pub fn stepping_set(&self, targets: &[Target]) -> Vec<usize> {
@@ -149,6 +201,12 @@ impl Sim {
         let tick = self.tick;
         let mut e = self.enemies[i].clone();
         let st = ENEMY_STATS[usize::from(e.kind)];
+        if e.kind == ENEMY_WORM {
+            self.worm_ai(&mut e, st, targets);
+            self.enemy_contact(&mut e, st);
+            self.enemies[i] = e;
+            return;
+        }
         // Embedded rescue (a dig or a paint closed rock around it): up to the first free spot above.
         if self.enemy_blocked(e.x, e.y, st.w, st.h) {
             for up in 1..=ENEMY_RESCUE_CELLS {
