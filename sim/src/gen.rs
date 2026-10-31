@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
@@ -291,7 +291,7 @@ pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, V
 /// (x, y) of the Empty floor cell, in placement order, which is the enemy id order. Kept off the surface spawn
 /// area (`ENEMY_SPAWN_CLEAR` columns either side of the world centre, within `ENEMY_SPAWN_ROWS` rows of the
 /// shallow top), off pickups, out of liquids (the whole 5x4 body must be Empty), and apart from each other.
-pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16)> {
+pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16, u8)> {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
     let want = scale_count(w, h, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN) as usize;
@@ -323,7 +323,37 @@ pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16
         }
         out.push((x as u16, yf as u16));
     }
-    out
+    let mut all: Vec<(u16, u16, u8)> = out.iter().map(|&(x, y)| (x, y, ENEMY_SLIME)).collect();
+    imp_spots(g, seed, &sc, pickups, &mut all);
+    all
+}
+
+/// Fire imps (F5): open air in the lower shallow band and the top of the deep band, inside a 13 x 13 pocket of Empty
+/// cells (so it never spawns in liquid, gas or against a wall), off the pickups and the spawn column, and apart from
+/// every other enemy. `(x, y)` is the feet cell; the 5x4 body stands above it.
+fn imp_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let want = scale_count(w, h, ENEMY_IMPS_L, ENEMY_IMPS_MIN) as usize;
+    let (y_lo, y_hi) = ((sc.shallow_top + sc.deep_top) / 2, sc.deep_top + 100);
+    let mut placed = 0usize;
+    for k in 0..6000u32 {
+        if placed >= want {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_IMP_X) % (w - 80) as u32) as i32;
+        let y = y_lo + (rng(seed, 0, k, 0, SALT_GEN_IMP_Y) % (y_hi - y_lo).max(1) as u32) as i32;
+        if y + 7 >= h || (0..13).any(|i| (0..13).any(|j| g.mat[((y - 6 + j) * w + x - 6 + i) as usize] != EMPTY)) {
+            continue;
+        }
+        if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 12 && (i32::from(py) - y).abs() < 12) {
+            continue;
+        }
+        if all.iter().any(|&(ox, oy, _)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - y).abs() < 20) {
+            continue;
+        }
+        all.push((x as u16, y as u16, ENEMY_IMP));
+        placed += 1;
+    }
 }
 
 /// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.

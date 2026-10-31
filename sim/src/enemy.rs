@@ -9,6 +9,7 @@ use crate::entities::*;
 use crate::materials::*;
 use crate::rng::{rng, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
 use crate::sim::Sim;
+use crate::spells::{isqrt, FIRE_BOLT};
 use crate::tuning::*;
 
 /// An alive, active player as the AI sees it: `(id, x, y)` in 1/16 cell.
@@ -33,6 +34,80 @@ impl Sim {
             }
         }
         false
+    }
+
+    /// True when no solid cell lies on the straight line of cells from `a` to `b` (both in cells), walked at one
+    /// cell per step for at most `LOS_MAX_STEPS` steps (a longer line counts as blocked). The first solid cell stops it.
+    /// Integer division truncates toward zero, the same on every platform. Adds the steps to `enemy_work`.
+    pub fn line_clear(&mut self, a: (i32, i32), b: (i32, i32)) -> bool {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let n = dx.abs().max(dy.abs());
+        if n > LOS_MAX_STEPS {
+            return false;
+        }
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        for k in 1..n {
+            let (x, y) = (a.0 + dx * k / n, a.1 + dy * k / n);
+            if x < 0 || y < 0 || x >= w || y >= h || blocks_enemy(self.grid.mat[(y * w + x) as usize]) {
+                return false;
+            }
+        }
+        self.enemy_work += n.max(0) as u32;
+        true
+    }
+
+    /// The imp: a flier (no gravity). Hunts the nearest player within `IMP_AGGRO_CELLS`: closes in beyond
+    /// `IMP_FAR_CELLS`, backs off inside `IMP_NEAR_CELLS`, otherwise bobs; velocity changes by 1 per tick toward the
+    /// wanted one, so knockback decays instead of vanishing. Fires a Fire bolt every `IMP_FIRE_TICKS` at a target
+    /// within `IMP_FIRE_RANGE` with a clear line, the line tested only when `(tick + id) % IMP_LOS_EVERY == 0`
+    /// (one walk of at most `LOS_MAX_STEPS` cells per imp per 15 ticks). The aim is raised to cancel the bolt's drop.
+    fn imp_ai(&mut self, e: &mut Enemy, st: EnemyStats, targets: &[Target]) {
+        let tick = self.tick;
+        let mut best: Option<(i64, i32, i32)> = None;
+        for &(_, px, py) in targets {
+            let (dx, dy) = (px - e.x, py - CHEST * POS_ONE - (e.y - st.h * POS_ONE / 2));
+            let d2 = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+            if best.is_none_or(|(b, _, _)| d2 < b) {
+                best = Some((d2, dx, dy));
+            }
+        }
+        let bob = if (tick / 32).is_multiple_of(2) { 1 } else { -1 };
+        let aggro = i64::from(IMP_AGGRO_CELLS * POS_ONE);
+        let (mut wx, mut wy) = (0, bob);
+        e.state &= !1;
+        if let Some((d2, dx, dy)) = best.filter(|&(d2, _, _)| d2 <= aggro * aggro) {
+            e.state |= 1;
+            let dist = i64::from(isqrt(d2 as u64));
+            let sx = dx.signum() * IMP_SPEED;
+            let sy = dy.signum() * IMP_SPEED;
+            // Toward the target on each axis that is more than half the other, away when inside the near band.
+            let sign = if dist > i64::from(IMP_FAR_CELLS * POS_ONE) { 1 } else if dist < i64::from(IMP_NEAR_CELLS * POS_ONE) { -1 } else { 0 };
+            if sign != 0 {
+                if dx.abs() * 2 > dy.abs() {
+                    wx = sign * sx;
+                }
+                if dy.abs() * 2 > dx.abs() {
+                    wy = sign * sy;
+                }
+            }
+            if dx != 0 {
+                e.facing = u8::from(dx > 0);
+            }
+            if tick >= e.cooldown_until && tick.wrapping_add(u32::from(e.id)).is_multiple_of(IMP_LOS_EVERY) && dist <= i64::from(IMP_FIRE_RANGE * POS_ONE) {
+                let from = (e.x, e.y - st.h * POS_ONE / 2);
+                let to = (from.0 + dx, from.1 + dy);
+                if self.line_clear((from.0 >> POS_SHIFT, from.1 >> POS_SHIFT), (to.0 >> POS_SHIFT, to.1 >> POS_SHIFT)) {
+                    let cells = (dist >> POS_SHIFT) as i32;
+                    // Drop of the bolt over the flight, in cells: d^2 / 1568 (g 4/256 per tick^2, speed 3.5 cells per tick).
+                    let lift = cells * cells / 1568 * POS_ONE;
+                    if self.enemy_fire((e.kind, e.id), FIRE_BOLT, from, (dx, dy - lift)) {
+                        e.cooldown_until = tick.wrapping_add(IMP_FIRE_TICKS);
+                    }
+                }
+            }
+        }
+        e.vx += (wx - i32::from(e.vx)).signum() as i16;
+        e.vy += (wy - i32::from(e.vy)).signum() as i16;
     }
 
     /// The enemies that step this tick: indices in id order, inside the rectangle around some alive active
@@ -85,6 +160,12 @@ impl Sim {
             }
         }
         // Nearest alive player by squared distance; the first (lowest id) wins a tie.
+        if e.kind == ENEMY_IMP {
+            self.imp_ai(&mut e, st, targets);
+            self.integrate(&mut e, st, false);
+            self.enemies[i] = e;
+            return;
+        }
         let mut best: Option<(i64, i32)> = None;
         for &(_, px, py) in targets {
             let (dx, dy) = (i64::from(px - e.x), i64::from(py - e.y));
@@ -131,6 +212,14 @@ impl Sim {
         } else {
             e.vy = (i32::from(e.vy) + SLIME_GRAVITY).min(SLIME_FALL_MAX) as i16;
         }
+        self.integrate(&mut e, st, true);
+        self.enemy_contact(&mut e, st);
+        self.enemies[i] = e;
+    }
+
+    /// Move `e` by its velocity: x then y, a cell at a time, then single units to the wall. `step_up` lets a
+    /// blocked walker climb a ledge (fliers do not).
+    fn integrate(&mut self, e: &mut Enemy, st: EnemyStats, step_up: bool) {
         // Move: x then y, a cell at a time, then single units to the wall.
         let (mut x, mut y) = (e.x, e.y);
         let mut vx = i32::from(e.vx).clamp(-ENEMY_MAX_SPEED, ENEMY_MAX_SPEED);
@@ -142,7 +231,7 @@ impl Sim {
                 // Step-up: a blocked move is retried 1, 2 or 3 cells higher (a ledge or a 45-degree slope), while
                 // not rising. The loop is bounded (3 tests); gravity then settles the slime onto the new ground.
                 {
-                    if let Some(k) = (1..=SLIME_STEP_UP_CELLS).find(|&k| !self.enemy_blocked(x + d, y - k * POS_ONE, st.w, st.h)) {
+                    if let Some(k) = (1..=if step_up { SLIME_STEP_UP_CELLS } else { 0 }).find(|&k| !self.enemy_blocked(x + d, y - k * POS_ONE, st.w, st.h)) {
                         y -= k * POS_ONE;
                         x += d;
                         rx -= d;
@@ -178,6 +267,14 @@ impl Sim {
         e.vy = vy as i16;
         let airborne = !self.enemy_blocked(x, y + 1, st.w, st.h);
         e.state = (e.state & 1) | (u8::from(airborne) << 1);
+    }
+
+    /// Contact damage, in player-id order. An enemy with `contact_damage` 0 (the imp) never touches.
+    fn enemy_contact(&mut self, e: &mut Enemy, st: EnemyStats) {
+        let tick = self.tick;
+        if st.contact_damage == 0 {
+            return;
+        }
         // Contact damage, in player-id order.
         let (x0, y0, x1, y1) = e.hitbox_cells();
         for k in 0..self.players.len() {
@@ -195,7 +292,6 @@ impl Sim {
             let kx = if pdx < 0 { -CONTACT_KNOCK_X } else { CONTACT_KNOCK_X };
             self.events.push(Event { kind: EV_KNOCK, player: pid, a: kx, b: CONTACT_KNOCK_Y, c: 0 });
         }
-        self.enemies[i] = e;
     }
 
     // ---- damage (F4 commit 5) ----------------------------------------------------------------------------
@@ -268,15 +364,16 @@ impl Sim {
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
         for i in self.stepping_set(&targets) {
             let e = &self.enemies[i];
-            let immune = ENEMY_STATS[usize::from(e.kind)].immune;
+            let (immune, weak) = (ENEMY_STATS[usize::from(e.kind)].immune, ENEMY_STATS[usize::from(e.kind)].weak);
             let (x0, y0, x1, y1) = e.hitbox_cells();
-            let (mut lava, mut fire, mut acid) = (false, false, false);
+            let (mut lava, mut fire, mut acid, mut water) = (false, false, false, false);
             for y in y0.max(0)..=y1.min(h - 1) {
                 for x in x0.max(0)..=x1.min(w - 1) {
                     match self.grid.mat[(y * w + x) as usize] {
                         LAVA => lava = immune & IMMUNE_LAVA == 0 || lava,
                         FIRE => fire = immune & IMMUNE_FIRE == 0 || fire,
                         ACID => acid = immune & IMMUNE_ACID == 0 || acid,
+                        WATER => water = weak & WEAK_WATER != 0 || water,
                         _ => {}
                     }
                 }
@@ -286,8 +383,10 @@ impl Sim {
                 tick.is_multiple_of(2)
             } else if fire {
                 tick.wrapping_add(id).is_multiple_of(6)
+            } else if acid {
+                tick.is_multiple_of(4)
             } else {
-                acid && tick.is_multiple_of(4)
+                water && tick.wrapping_add(id).is_multiple_of(IMP_WATER_EVERY)
             };
             if hit {
                 self.damage_enemy(i, 1, 0);

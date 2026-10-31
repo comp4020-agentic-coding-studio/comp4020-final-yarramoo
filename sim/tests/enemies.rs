@@ -154,7 +154,7 @@ fn slimes_stand_on_floors_out_of_liquid_and_clear_of_the_spawn_and_pickups() {
         for seed in 1..=4u64 {
             let s = world(size, 1, seed);
             let (w, h) = (s.grid.w as i32, s.grid.h as i32);
-            for (i, e) in s.enemies.iter().enumerate() {
+            for (i, e) in s.enemies.iter().enumerate().filter(|(_, e)| e.kind == ENEMY_SLIME) {
                 assert_eq!(usize::from(e.id), i, "ids follow placement order");
                 let (x0, y0, x1, y1) = e.hitbox_cells();
                 for y in y0..=y1 {
@@ -170,7 +170,7 @@ fn slimes_stand_on_floors_out_of_liquid_and_clear_of_the_spawn_and_pickups() {
                 for p in &s.pickups {
                     assert!(!((i32::from(p.x) - cx).abs() < 8 && (i32::from(p.y) - y1).abs() < 8), "slime {i} on a pickup");
                 }
-                for o in &s.enemies[..i] {
+                for o in s.enemies[..i].iter().filter(|o| o.kind == ENEMY_SLIME) {
                     assert!(((o.x - e.x).abs() >> 4) >= 20 || ((o.y - e.y).abs() >> 4) >= 20, "slimes {} and {i} overlap", o.id);
                 }
             }
@@ -190,7 +190,7 @@ fn slime_counts_per_size() {
         }
         .max(8);
         for seed in 1..=3u64 {
-            let n = world(size, 1, seed).enemies.len();
+            let n = world(size, 1, seed).enemies.iter().filter(|e| e.kind == ENEMY_SLIME).count();
             lines.push_str(&format!("size {size} seed {seed}: {n} (target {want})\n"));
             assert!(n <= want && n * 10 >= want * 5, "size {size} seed {seed}: {n} slimes, target {want}");
             assert!(n <= MAX_ENEMIES);

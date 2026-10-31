@@ -104,7 +104,7 @@ impl Sim {
                     crate::gen::enemy_spots(&grid, seed, &at)
                         .iter()
                         .enumerate()
-                        .map(|(i, &(x, y))| Enemy::new(i as u16, ENEMY_SLIME, i32::from(x) * POS_ONE + POS_ONE / 2, (i32::from(y) + 1) * POS_ONE))
+                        .map(|(i, &(x, y, kind))| Enemy::new(i as u16, kind, i32::from(x) * POS_ONE + POS_ONE / 2, (i32::from(y) + 1) * POS_ONE))
                         .collect()
                 } else {
                     Vec::new()

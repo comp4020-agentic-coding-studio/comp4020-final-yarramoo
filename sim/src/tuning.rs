@@ -146,7 +146,8 @@ pub const PICKUP_TABLE: [&[(u8, u32)]; 2] = [
 
 /// Enemy kinds: 0 Slime. Later slices append (ids stay stable).
 pub const ENEMY_SLIME: u8 = 0;
-pub const NUM_ENEMY_KINDS: usize = 1;
+pub const ENEMY_IMP: u8 = 1;
+pub const NUM_ENEMY_KINDS: usize = 2;
 /// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
 pub const MAX_ENEMIES: usize = 48;
 pub const MAX_ENEMIES_STEPPED: usize = 24;
@@ -158,6 +159,8 @@ pub const ENEMY_ACTIVE_H: i32 = 256;
 pub const IMMUNE_FIRE: u8 = 1;
 pub const IMMUNE_LAVA: u8 = 2;
 pub const IMMUNE_ACID: u8 = 4;
+/// Weakness bits: the hazard hurts this kind (`enemy_hazard_scan`), on top of the shared lava, fire and acid rules.
+pub const WEAK_WATER: u8 = 1;
 
 /// Per-kind stats: hp, hitbox width and height (cells), contact damage, contact cooldown (ticks), immunity mask.
 #[derive(Clone, Copy, Debug)]
@@ -168,8 +171,13 @@ pub struct EnemyStats {
     pub contact_damage: u8,
     pub contact_cooldown: u32,
     pub immune: u8,
+    pub weak: u8,
 }
-pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [EnemyStats { hp: 20, w: 5, h: 4, contact_damage: 8, contact_cooldown: 40, immune: 0 }];
+pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
+    EnemyStats { hp: 20, w: 5, h: 4, contact_damage: 8, contact_cooldown: 40, immune: 0, weak: 0 },
+    // Fire imp: flies, fires bolts (no contact damage); immune to fire and lava, hurt by water.
+    EnemyStats { hp: 30, w: 5, h: 4, contact_damage: 0, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: WEAK_WATER },
+];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
 /// Slimes the generator places at size L (scaled by area, at least `ENEMY_SLIMES_MIN`), and the no-slime zone
@@ -210,3 +218,22 @@ pub const PUSH_ENEMY_DAMAGE: u16 = 5;
 pub const BLAST_ENEMY_DAMAGE: u16 = 8;
 pub const ENEMY_KNOCK_DIV: i32 = 4;
 pub const ENEMY_KNOCK_LIFT: i32 = 8;
+
+// ---- fire imp (F5) --------------------------------------------------------------------------------------
+
+/// Imps placed at size L (scaled by area, at least `ENEMY_IMPS_MIN`).
+pub const ENEMY_IMPS_L: i32 = 8;
+pub const ENEMY_IMPS_MIN: i32 = 3;
+/// Flier speed (1/16 cell per tick), the distance (cells) it hunts from, and the band it keeps from its target.
+pub const IMP_SPEED: i32 = 3;
+pub const IMP_AGGRO_CELLS: i32 = 160;
+pub const IMP_NEAR_CELLS: i32 = 40;
+pub const IMP_FAR_CELLS: i32 = 60;
+/// A Fire bolt every this many ticks, at targets within `IMP_FIRE_RANGE` cells with a clear line. The line is only
+/// tested when `(tick + id) % IMP_LOS_EVERY == 0`, and walks at most `LOS_MAX_STEPS` cells.
+pub const IMP_FIRE_TICKS: u32 = 90;
+pub const IMP_FIRE_RANGE: i32 = 120;
+pub const IMP_LOS_EVERY: u32 = 15;
+pub const LOS_MAX_STEPS: i32 = 120;
+/// Hp an imp loses to water: 1 every this many ticks.
+pub const IMP_WATER_EVERY: u32 = 4;

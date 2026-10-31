@@ -19,3 +19,18 @@
 - Red first: with `enemy_owned` forced false and the enemy-box skip off, 2 of 6 failed (hurts-with-cause, never-hurts-enemy);
   the other four are guards that pass by nature (cap, id scheme, snapshot, damage 0).
 - Gate: cargo test, clippy, typecheck, test:determinism green (exit 0).
+
+### 2. Fire imp
+- `enemy.rs`: `imp_ai` (flier, no gravity: velocity eases 1/tick toward a wanted one; closes beyond 60 cells, backs off inside
+  40, bobs), `line_clear` (integer DDA, at most 120 steps, first solid cell stops it, run only when `(tick + id) % 15 == 0`),
+  Fire bolt every 90 ticks via `enemy_fire`, aim lifted to cancel the bolt's drop. `step_enemy`'s movement and contact
+  code was extracted unchanged into `integrate(step_up)` and `enemy_contact` so the imp reuses it (contact 0 for the imp).
+  Water weakness: `weak` bit in `ENEMY_STATS`, 1 hp every 4 ticks in `enemy_hazard_scan`; immune Fire and Lava.
+- Gen: `imp_spots` (13x13 Empty pocket, lower shallow plus deep top, off pickups, apart from others); `enemy_spots` now
+  returns `(x, y, kind)`. Ids are placement order, slimes first, so slime ids are unchanged.
+- Counts (`/tmp/f5-counts.txt`, seeds 1-3): S 3 imps (slimes 7/8/5), M 3 imps (slimes 8), L 8 imps (slimes 25). Totals <= 33.
+- Tests (`sim/tests/enemy_imp.rs`, 11): distance band, flies over a pit, fires and hurts, 90-tick cadence, LOS blocked and
+  clear, immune/water, placement, counts, seed 1 real terrain, D7, D5. F4's two slime placement tests now filter on kind
+  (they asserted every enemy is a slime; not weakened).
+- Red first: with `imp_ai` returning at once and water damage off, 7 of 11 failed; LOS, D7, placement, counts pass by nature
+  (LOS tests the function directly; D7 compares two identical frozen runs under the stub).
