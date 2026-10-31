@@ -602,12 +602,14 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       }
     } else if (e.kind === EV_KNOCK) {
       const ps = poses.get(e.player);
+      // A Black Hole pulls with a knock every tick for up to 150 ticks; flash, shake and sound at most every 250 ms.
+      const fresh = !ps || now - ps.hitAt >= 250;
       if (ps) {
         ps.hitUntil = now + 380;
-        ps.hitAt = now; // for the white flash
+        if (fresh) ps.hitAt = now; // for the white flash
       }
       const c = chestOf(e.player);
-      if (c) {
+      if (c && fresh) {
         fx.streak(c.x, c.y, e.a, e.b);
         if (e.player === myId) {
           sfxSelf("knock", quiet);
