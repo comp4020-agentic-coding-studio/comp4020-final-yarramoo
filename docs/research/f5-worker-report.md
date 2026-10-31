@@ -89,3 +89,68 @@
   such player ids), so no ghost is dropped and `chestOf` finds no player; the EV_CAST path is not used for enemy bolts at all.
 - Test: `tests/net/toasts.test.ts` per-kind wording; red first (with toasts.ts reverted: "Received: Ana was slain by a slime").
 - Gate: cargo test, clippy, typecheck, test:determinism (49) and `pnpm test:net` (312 passed) all exit 0.
+
+### 6. Screenshots and this report
+- `docs/art/shots/f5-imp-2.png`: two imps over seed-1 survival terrain, each trailing a Fire bolt toward the player, who stood at
+  the imp's height in open air via `__devGotoEnemy(1)`; I looked at it and the bolts and sprites are visible.
+- `docs/art/shots/f5-imp.png`: an earlier session where the same dev goto ended with "You was burned by an imp" in the death
+  feed and "The party fell" with New room (the toast wording and round banner both work). Note the toast reads "You was": it is
+  the existing `formatDeath` handling of the local player's name, not changed here.
+- **Not captured: acid slime and worm screenshots** (ran out of tool-call budget). The acid slime and worm sprites, the worm's
+  rumble and the acid hiss have only been typechecked and exercised through the sim tests.
+- Vite was started by PID and killed by PID (81829, 81848, 81903).
+
+## Counts per kind per size (seeds 1-3, from `/tmp/f5-*-counts.txt`)
+| size | slimes | imps | acid slimes | worms | total |
+|---|---|---|---|---|---|
+| S | 7/8/5 | 3 | 3 | 3 | 14-17 |
+| M | 8 | 3 | 3 | 3 | 17 |
+| L | 25 | 8 | 10 | 8 | 51 |
+
+## Work-count maxima
+- Slime-only worst case (F4): 3600 cells/tick with 24 stepped.
+- 24 awake worms: exactly 1176 cells/tick (24 x 49).
+- Imp line of sight: at most 120 steps per imp per 15 ticks (tests assert the length limit, not a measured maximum).
+- Acid trail: at most 1 cell per tick (asserted with 6 slimes). Death burst: at most 12 cells.
+- I did not run a combined worst case of all four kinds at once (the stepping cap of 24 bounds it).
+
+## Not verified
+- Acid slime and worm in a browser (see above). Imp and worm sounds were never listened to.
+- No cross-check that a worm can never breach into a region that breaks `traversable_to_every_band`: the worm only removes
+  Rock/Dirt/etc. (`Grid::dig`), so it only adds open space, and it cannot dig bedrock; placement asserts pickups are clear at spawn
+  only, a tunnelling worm can pass through a pickup cell (pickups are entities, not cells, so nothing is destroyed).
+- The acid-slime "slower" test passes red too (see commit 3), so it is weak.
+- The slime-only D2 script from F4 still passes unchanged, but the two F4 placement tests were filtered by kind.
+
+## Architectural decisions for review
+- **Enemy-owner id scheme.** `owner = 0x8000_0000 | kind << 16 | enemy id`. Alternatives: a separate `enemy_owner` field on
+  `Projectile` (a format change to the projectile record and the view), or ids from a counter. Chosen because the design
+  (section 11, item 4) said so and it costs no format bump. `Sim::join` refuses ids with the bit set, and `decode` rejects unknown kinds and
+  reserved bits. Cost for the boss slice: the boss's own bolts fit (kind 4 needs `NUM_ENEMY_KINDS` 5 and more kind bits are free:
+  kind has 8 bits); but the 16-bit id caps enemies at 65535, fine.
+- **Enemy bolt cap.** 16 in flight in total (`MAX_ENEMY_PROJECTILES`), refused silently at the cap, plus the global 256. They do not
+  count toward a player's 12. Alternative: per-enemy cap. Chosen as simplest and bounded; a boss volley of 3 bolts every 90 ticks fits.
+  Cost: with many imps firing, extra shots are dropped, not queued (the imp does not start its cooldown when refused, so it retries on its next LOS tick).
+- **Line of sight cost and cadence.** One straight-line walk of at most 120 cells, per imp, only when `(tick + id) % 15 == 0` and the
+  imp is off cooldown and within range. Worst case 24 imps x 120 / 15 = 192 steps per tick average. A truncating-division line, not
+  an exact Bresenham, and diagonal corner-cutting is allowed (a bolt then stops on the corner). Cost later: the boss will want
+  a precise aim; reuse `line_clear`.
+- **Flier collision.** The imp uses the walker's `integrate` (box against grid, x then y, wall slide) with step-up off and no gravity;
+  velocity eases 1 per tick toward the wanted one. Alternative: no collision (ghosts through rock). Chosen to match the brief. Cost:
+  an imp can get stuck against a wall with no steering around it (it only pushes toward the target); acceptable for caves with open pockets.
+- **Worm digging.** `Grid::dig` radius 3 at its centre every stepped tick (49 cells), no body collision (it lives in rock) and no gravity.
+  Liquids and fire are not removed, so a worm passes through a pool without draining it, and open liquid beside a new tunnel flows
+  in (flooding is fine and untested beyond the pool test). It cannot dig Bedrock or within 4 cells of the world edge. Dormant until 40 cells, then it hunts for good
+  within 120 cells (it stops, still digging in place, when no player is within 120). Alternative: dig only a path ahead. Cost: a stationary awake
+  worm re-digs the same disc each tick (no-ops after the first), and a worm that is frozen outside the stepping rectangle stays where it is.
+- **`MAX_ENEMIES` 48 -> 64.** Needed: L places 51. The stepping cap of 24 is unchanged, so per-tick work is the same; only state size grows
+  (35 bytes each, 64 x 35 = 2240 bytes). Test `full MAX_ENEMIES is accepted` still uses the constant.
+- **Kind-specific code in `step_enemy`.** The imp and worm branch off before the slime path, sharing `integrate` and `enemy_contact`. The
+  boss should do the same rather than extend the slime path.
+- **`ENEMY_MAX_HP` mirrored in the client** (`worker.ts`), render-only; a test pinning it to `tuning.rs` was not written (cost: drift).
+
+## FUTURE.md ideas (suggested only)
+- Imps steer around walls (a wall-following or probe step) instead of pushing straight at the target.
+- A worm that leaves a visible rumble tell (screen shake or particles at the rock face) before it breaks out.
+- A test that pins client `ENEMY_MAX_HP` to the sim's `ENEMY_STATS` through the shared TS names file.
+- Worm tunnels refilled by loose rock settling (a slow "collapse") so a descent is not one open highway.
