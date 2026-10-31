@@ -262,3 +262,44 @@ fn new_materials_keep_a_tick_within_bounds() {
     }
     let _ = std::fs::write("/tmp/f2-work.txt", report);
 }
+
+/// F3: a Black Hole boring through a region that has been asleep. Game world, so players exist; a Black Hole
+/// is cast into the rock beside the spawn after a quiet spell, with sleeping on and off.
+#[test]
+fn d7_black_hole_boring_through_a_sleeping_region_is_invisible() {
+    use sim::input::{encode_cast, encode_join, encode_pos};
+    use sim::materials::ROCK;
+    use sim::tuning::POS_ONE;
+    let run = |sleep: bool| -> Vec<u64> {
+        let mut s = Sim::new(5, 1).unwrap();
+        s.grid.sleep_enabled = sleep;
+        let w = s.grid.w;
+        for y in 100..200 {
+            for x in 900..1300 {
+                s.grid.mat[y * w + x] = if y >= 192 || x >= 1030 { ROCK } else { 0 };
+            }
+        }
+        for c in 0..s.grid.chunk_count() {
+            s.grid.mark_chunk(c);
+        }
+        assert_eq!(s.push_input(&encode_join(1)), 0);
+        s.step();
+        s.players[0].charges[11] = 5;
+        let life = s.players[0].life;
+        assert_eq!(s.push_input(&encode_pos(1, life, 1000 * POS_ONE, 190 * POS_ONE, 0)), 0);
+        let mut out = Vec::new();
+        for t in 1..=400u32 {
+            if t == 150 {
+                assert_eq!(s.push_input(&encode_cast(1, 11, 0, 1)), 0);
+            }
+            s.step();
+            if t % 10 == 0 {
+                out.push(s.state_hash());
+            }
+        }
+        out
+    };
+    let (a, b) = (run(true), run(false));
+    assert_eq!(a, b, "sleeping changed a Black Hole's result");
+    assert!(a.windows(2).any(|w| w[0] != w[1]));
+}

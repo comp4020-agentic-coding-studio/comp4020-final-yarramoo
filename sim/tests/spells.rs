@@ -5,7 +5,7 @@ use sim::input::{encode_cast, encode_join, encode_pos};
 use sim::materials::*;
 use sim::sim::Sim;
 use sim::snapshot;
-use sim::spells::{ACID_FLASK, LAVA_FLASK, OIL_FLASK, WALL};
+use sim::spells::{ACID_FLASK, BLACK_HOLE, LAVA_FLASK, OIL_FLASK, WALL};
 use sim::tuning::*;
 
 const PX: i32 = POS_ONE;
@@ -513,3 +513,135 @@ fn wall_replaces_liquid_and_is_free_of_projectile_limits() {
     assert_eq!(s.grid.mat[185 * w + 1010], ROCK);
     assert!(s.projectiles.is_empty());
 }
+
+/// A solid rock mass to the right of the arena, so a Black Hole cast right has something to bore.
+fn rock_mass(s: &mut Sim) {
+    let w = s.grid.w;
+    for y in 100..200 {
+        for x in 1030..1150 {
+            s.grid.mat[y * w + x] = ROCK;
+        }
+    }
+    carved(s);
+}
+
+#[test]
+fn black_hole_bores_a_tunnel_through_rock_and_expires() {
+    let mut s = arena(1);
+    rock_mass(&mut s);
+    s.players[0].charges[BLACK_HOLE as usize] = 3;
+    let rock0 = s.grid.mat.iter().filter(|&&m| m == ROCK).count();
+    push(&mut s, encode_cast(1, BLACK_HOLE, RIGHT, 1));
+    s.step();
+    assert_eq!(s.projectiles.len(), 1);
+    run_until(&mut s, 200, |s| s.projectiles.is_empty());
+    let lost = rock0 - s.grid.mat.iter().filter(|&&m| m == ROCK).count();
+    // a radius-3 tunnel (about 7 rows) through the mass, 1.5 cells a tick: well over 200 cells
+    assert!(lost > 200, "bored {lost} rock cells");
+    let w = s.grid.w;
+    assert_eq!(s.grid.mat[185 * w + 1060], EMPTY, "the tunnel runs along the aim");
+    assert_eq!(s.grid.mat[100 * w + 1060], ROCK, "and is only about seven cells wide");
+    assert!(s.tick < 400, "it expired");
+}
+
+#[test]
+fn black_hole_never_digs_bedrock_or_liquid() {
+    let mut s = arena(1);
+    let w = s.grid.w;
+    for y in 170..200 {
+        for x in 1030..1150 {
+            s.grid.mat[y * w + x] = if y % 2 == 0 { BEDROCK } else { WATER };
+        }
+    }
+    carved(&mut s);
+    s.players[0].charges[BLACK_HOLE as usize] = 1;
+    push(&mut s, encode_cast(1, BLACK_HOLE, RIGHT, 1));
+    s.step();
+    run_until(&mut s, 200, |s| s.projectiles.is_empty());
+    assert!((1030..1150).all(|x| (170..200).step_by(2).all(|y| s.grid.mat[y * w + x] == BEDROCK)));
+}
+
+#[test]
+fn black_hole_pulls_players_within_twenty_cells_toward_it() {
+    let mut s = arena(2);
+    s.players[0].charges[BLACK_HOLE as usize] = 1;
+    // player 2 stands 12 cells in front of the caster, off the line; player 1 casts right
+    place(&mut s, 2, 1040, 190);
+    push(&mut s, encode_cast(1, BLACK_HOLE, RIGHT, 1));
+    s.step();
+    let mut pulled = 0;
+    for _ in 0..40 {
+        s.step();
+        pulled += s.events.iter().filter(|e| e.kind == EV_KNOCK && e.player == 2).count();
+    }
+    assert!(pulled > 0, "player 2 felt the pull");
+    // a pull never credits a hitter
+    assert_eq!(s.players[1].last_hit_by, 0);
+    // a far player is not pulled: caster-side player 1 at 1000 is within range of a hole at 1002..1060 early on,
+    // so check range directly with a lone hole far from player 2
+    let mut t = arena(2);
+    t.players[0].charges[BLACK_HOLE as usize] = 1;
+    place(&mut t, 2, 1100, 190);
+    push(&mut t, encode_cast(1, BLACK_HOLE, LEFT, 1));
+    t.step();
+    let mut far = 0;
+    for _ in 0..30 {
+        t.step();
+        far += t.events.iter().filter(|e| e.kind == EV_KNOCK && e.player == 2).count();
+    }
+    assert_eq!(far, 0, "a hole flying away from a player 100+ cells off never pulls them");
+}
+
+#[test]
+fn black_holes_are_capped_per_player() {
+    let mut s = arena(1);
+    s.players[0].charges[BLACK_HOLE as usize] = 10;
+    for k in 0..4u16 {
+        push(&mut s, encode_cast(1, BLACK_HOLE, RIGHT, k));
+        s.step();
+        // clear the cooldown so only the cap can refuse
+        s.players[0].cooldown_until[BLACK_HOLE as usize] = 0;
+    }
+    assert_eq!(s.projectiles.iter().filter(|q| q.spell == BLACK_HOLE).count(), MAX_BLACK_HOLES_PER_PLAYER);
+    assert_eq!(s.players[0].charges[BLACK_HOLE as usize], 10 - MAX_BLACK_HOLES_PER_PLAYER as u16);
+}
+
+#[test]
+fn snapshot_round_trip_with_a_black_hole_in_flight() {
+    let mut s = arena(1);
+    rock_mass(&mut s);
+    s.players[0].charges[BLACK_HOLE as usize] = 3;
+    push(&mut s, encode_cast(1, BLACK_HOLE, RIGHT, 1));
+    for _ in 0..12 {
+        s.step();
+    }
+    assert!(s.projectiles.iter().any(|q| q.spell == BLACK_HOLE));
+    let mut r = snapshot::restore(&snapshot::write(&s)).unwrap();
+    assert_eq!(r.state_hash(), s.state_hash());
+    for _ in 0..60 {
+        s.step();
+        r.step();
+        assert_eq!(r.state_hash(), s.state_hash());
+    }
+}
+
+/// Bounded work: every spell cast at its caps in one tick writes a bounded number of cells.
+#[test]
+fn every_spell_cast_at_its_caps_writes_a_bounded_number_of_cells() {
+    let mut s = arena(1);
+    rock_mass(&mut s);
+    for k in 2..NUM_SPELLS {
+        s.players[0].charges[k] = 50;
+    }
+    let before = s.grid.mat.clone();
+    for (n, spell) in [DIG_ID, WALL, BLACK_HOLE, BLACK_HOLE, ACID_FLASK, OIL_FLASK, LAVA_FLASK].into_iter().enumerate() {
+        push(&mut s, encode_cast(1, spell, RIGHT, n as u16));
+        s.players[0].cooldown_until[usize::from(spell)] = 0;
+        s.step();
+    }
+    let changed = |s: &Sim| s.grid.mat.iter().zip(&before).filter(|(a, b)| a != b).count();
+    let after_cast = changed(&s);
+    // Dig (15 x 29) + Wall (36), one Black Hole step at most (7 x 7 per hole, 2 holes, a few ticks of flight)
+    assert!(after_cast < 15 * 29 + 36 + 2 * 49 * 8, "cells written by the casts: {after_cast}");
+}
+const DIG_ID: u8 = 6;

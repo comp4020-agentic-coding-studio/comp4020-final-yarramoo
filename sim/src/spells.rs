@@ -74,7 +74,9 @@ impl Sim {
             && spell != DIG
             && spell != WALL
             && (self.projectiles.len() >= MAX_PROJECTILES
-                || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER)
+                || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER
+                || (spell == BLACK_HOLE
+                    && self.projectiles.iter().filter(|q| q.owner == player && q.spell == BLACK_HOLE).count() >= MAX_BLACK_HOLES_PER_PLAYER))
         {
             REJECT_FULL
         } else {
@@ -232,6 +234,9 @@ impl Sim {
     fn step_projectile(&mut self, q: &mut Projectile, boxes: &[Box5], bombs: &mut u32) -> bool {
         q.age += 1;
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        if q.spell == BLACK_HOLE {
+            return self.step_black_hole(q);
+        }
         if q.spell == BOMB && q.age >= BOMB_FUSE {
             // The fuse comes before the age-out, so a bomb never vanishes silently.
             if *bombs >= MAX_BOMB_EXPLOSIONS_PER_TICK {
@@ -278,6 +283,43 @@ impl Sim {
         }
         q.x = x0 + q.vx;
         q.y = y0 + q.vy;
+        true
+    }
+
+    /// One tick of a Black Hole: it flies straight through terrain (no gravity, no impact), clears the disc of
+    /// radius `BH_RADIUS` of solids where it is (`Grid::dig` with a zero-length segment: at most 7 x 7 cells, and
+    /// the radius is clamped there), and pulls every alive player within `BH_PULL_RANGE` cells one step toward
+    /// it with an `EV_KNOCK` of `BH_PULL` (no last-hitter credit: it is a pull, not a hit). It ends at
+    /// `BH_LIFETIME` ticks or when it leaves the world. Work: one dig plus a loop over the players.
+    /// Sleep invisibility: `Grid::set` wakes the chunks it changes, as for every other spell's writes.
+    fn step_black_hole(&mut self, q: &mut Projectile) -> bool {
+        if q.age > BH_LIFETIME {
+            self.events.push(Event { kind: EV_IMPACT, player: q.owner, a: q.x >> PROJ_SHIFT, b: q.y >> PROJ_SHIFT, c: i32::from(q.spell) });
+            return false;
+        }
+        q.x += q.vx;
+        q.y += q.vy;
+        let (cx, cy) = (q.x >> PROJ_SHIFT, q.y >> PROJ_SHIFT);
+        if cx < 0 || cy < 0 || cx >= self.grid.w as i32 || cy >= self.grid.h as i32 {
+            return false;
+        }
+        self.grid.dig(cx, cy, cx, cy, BH_RADIUS);
+        let tick = self.tick;
+        let range = i64::from(BH_PULL_RANGE * POS_ONE);
+        for i in 0..self.players.len() {
+            let t = &self.players[i];
+            if !t.alive(tick) {
+                continue;
+            }
+            let (dx, dy) = (i64::from(cx * POS_ONE + POS_ONE / 2 - t.x), i64::from(cy * POS_ONE + POS_ONE / 2 - (t.y - CHEST * POS_ONE)));
+            let d2 = dx * dx + dy * dy;
+            if d2 > range * range || d2 == 0 {
+                continue;
+            }
+            let dist = i64::from(isqrt(d2 as u64));
+            let (vx, vy) = (i64::from(BH_PULL) * dx / dist, i64::from(BH_PULL) * dy / dist);
+            self.events.push(Event { kind: EV_KNOCK, player: t.id, a: vx as i32, b: vy as i32, c: 0 });
+        }
         true
     }
 
