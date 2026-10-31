@@ -187,6 +187,7 @@ impl Sim {
             self.enemy_hazard_scan();
             self.check_round_end();
         }
+        self.grid.crumble_islands();
         #[cfg(feature = "canary")]
         {
             // Test D10: the only host import. Must make the build fail the zero-imports check.

@@ -234,6 +234,9 @@ fn a_generated_acid_slime_on_seed_1_reaches_a_player_beside_it() {
     }
     for x in ex..=ex + 14 {
         s.grid.mat[((ey + 1) * w + x) as usize] = ROCK;
+        // Falling rock v0: a loose rock row with nothing under it is a free island and would crumble; seat it on
+        // bedrock so the floor stays a floor (the test is about the slime reaching the player, not the floor).
+        s.grid.mat[((ey + 2) * w + x) as usize] = BEDROCK;
     }
     for c in 0..s.grid.chunk_count() {
         s.grid.mark_chunk(c);

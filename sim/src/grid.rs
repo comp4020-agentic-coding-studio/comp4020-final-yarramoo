@@ -3,7 +3,12 @@
 
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{DIG_RADIUS, DIG_REACH};
+use crate::tuning::{DIG_RADIUS, DIG_REACH, ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_SEEDS};
+
+/// Materials that form rigid islands for falling rock v0 (Bedrock anchors them instead).
+pub fn is_structural(m: u8) -> bool {
+    matches!(m, ROCK | DIRT | WOOD | ICE | GLASS | COAL)
+}
 
 pub const CHUNK: usize = 64;
 /// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
@@ -58,6 +63,17 @@ pub struct Grid {
     /// `step_cells`, in queue order, for the damage pass. Cleared at the start of each `step_cells`,
     /// never hashed or snapshotted, and never fed back into the grid.
     pub explosions: Vec<(u32, u32)>,
+    /// Scratch, not state (falling rock v0): solid cells whose neighbour was just removed, drained by
+    /// `crumble_islands` at the end of every tick. Never hashed or snapshotted; empty between ticks.
+    pub island_seeds: Vec<u32>,
+    island_stamp: Vec<u32>,
+    island_tick: u32,
+    island_cells: Vec<u32>,
+    island_stack: Vec<u32>,
+    /// Telemetry only: flood cell visits in the last `crumble_islands`.
+    pub island_visits: u32,
+    /// Telemetry only: islands crumbled since construction (never hashed).
+    pub island_crumbled: u32,
 }
 
 /// Explosions resolved per tick. Bounds the per-tick cost of a chain (D-022).
@@ -85,6 +101,13 @@ impl Grid {
             ran_chunks: 0,
             pending: Vec::new(),
             explosions: Vec::new(),
+            island_seeds: Vec::new(),
+            island_stamp: vec![0; w * h],
+            island_tick: 0,
+            island_cells: Vec::new(),
+            island_stack: Vec::new(),
+            island_visits: 0,
+            island_crumbled: 0,
         }
     }
 
@@ -155,9 +178,100 @@ impl Grid {
     }
 
     pub fn set(&mut self, i: usize, m: u8, a: u8) {
+        if is_structural(self.mat[i]) && !is_structural(m) {
+            self.seed_neighbours(i);
+        }
         self.mat[i] = m;
         self.aux[i] = a;
         self.touch(i);
+    }
+
+    /// Queue the structural 4-neighbours of a removed solid cell as island seeds (bounded; extras dropped).
+    fn seed_neighbours(&mut self, i: usize) {
+        let (x, y) = (i % self.w, i / self.w);
+        for (dx, dy) in [(0isize, -1isize), (-1, 0), (1, 0), (0, 1)] {
+            if self.island_seeds.len() >= MAX_ISLAND_SEEDS {
+                return;
+            }
+            if let Some((nx, ny)) = self.off(x, y, dx, dy) {
+                let j = ny * self.w + nx;
+                if is_structural(self.mat[j]) {
+                    self.island_seeds.push(j as u32);
+                }
+            }
+        }
+    }
+
+    /// Falling rock v0: for each queued seed flood the 4-connected structural cells. A fill that reaches
+    /// `ISLAND_MAX` cells (or the remaining `ISLAND_WORK_MAX` budget), touches Bedrock or the world edge is
+    /// anchored and left alone; any other island crumbles to Sand (Ice to Water). Seeds beyond the budget are
+    /// dropped, so the queue is always empty on return (no hidden state). Reads neither `awake` nor `active`.
+    pub fn crumble_islands(&mut self) {
+        self.island_visits = 0;
+        if self.island_seeds.is_empty() {
+            return;
+        }
+        self.island_tick = self.island_tick.wrapping_add(1);
+        if self.island_tick == 0 {
+            self.island_stamp.fill(0);
+            self.island_tick = 1;
+        }
+        let stamp = self.island_tick;
+        let seeds = core::mem::take(&mut self.island_seeds);
+        for &s in &seeds {
+            let s = s as usize;
+            let used = self.island_visits as usize;
+            if used >= ISLAND_WORK_MAX {
+                break;
+            }
+            if self.island_stamp[s] == stamp || !is_structural(self.mat[s]) {
+                continue;
+            }
+            let limit = ISLAND_MAX.min(ISLAND_WORK_MAX - used);
+            self.island_cells.clear();
+            self.island_stack.clear();
+            self.island_stamp[s] = stamp;
+            self.island_stack.push(s as u32);
+            let mut anchored = false;
+            while let Some(c) = self.island_stack.pop() {
+                let c = c as usize;
+                self.island_visits += 1;
+                self.island_cells.push(c as u32);
+                if self.island_cells.len() >= limit {
+                    anchored = true;
+                    break;
+                }
+                let (x, y) = (c % self.w, c / self.w);
+                if x == 0 || y == 0 || x + 1 == self.w || y + 1 == self.h {
+                    anchored = true;
+                    continue;
+                }
+                for j in [c - self.w, c - 1, c + 1, c + self.w] {
+                    let m = self.mat[j];
+                    if m == BEDROCK {
+                        anchored = true;
+                    } else if is_structural(m) && self.island_stamp[j] != stamp {
+                        self.island_stamp[j] = stamp;
+                        self.island_stack.push(j as u32);
+                    }
+                }
+            }
+            if anchored {
+                continue;
+            }
+            self.island_crumbled += 1;
+            let cells = core::mem::take(&mut self.island_cells);
+            for &c in &cells {
+                let c = c as usize;
+                // Direct write, not `set`: the island's own cells must not seed further floods.
+                self.mat[c] = if self.mat[c] == ICE { WATER } else { SAND };
+                self.aux[c] = 0;
+                self.touch(c);
+            }
+            self.island_cells = cells;
+        }
+        self.island_seeds = seeds;
+        self.island_seeds.clear();
     }
 
     fn swap(&mut self, a: usize, b: usize) {
