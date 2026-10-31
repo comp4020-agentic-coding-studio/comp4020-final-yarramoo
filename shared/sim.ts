@@ -76,6 +76,8 @@ export const ENT_PROJECTILE = 3;
 export const ENT_BAG = 4;
 /** An enemy: `id`, `sub` = kind, x and y in 1/16 cell (feet centre / feet line), `a` = hp, `health` = state | facing << 7. */
 export const ENT_ENEMY = 5;
+/** The one-life round state (round 1 rooms only): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started. */
+export const ENT_ROUND = 6;
 export const NUM_SPELLS = 12;
 export interface EntityView {
   type: number;

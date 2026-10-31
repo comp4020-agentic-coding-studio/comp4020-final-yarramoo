@@ -8,6 +8,10 @@ const nameOf = (id: number) => names[id];
 const d = (victim: number, killer: number, cause: number, bag = false) => formatDeath({ victim, killer, cause, bagDropped: bag }, nameOf);
 
 describe("formatDeath", () => {
+  it("a slime death names the slime", () => {
+    expect(d(1, 0, 40)).toBe("Ana was slain by a slime");
+  });
+
   it("spell kills with a killer", () => {
     expect(d(2, 1, 5)).toBe("Ana blew up Bo (Bomb)");
     expect(d(2, 1, 4)).toBe("Ana torched Bo (Fire bolt)");

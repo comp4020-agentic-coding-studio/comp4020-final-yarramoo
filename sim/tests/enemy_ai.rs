@@ -44,6 +44,12 @@ fn an_enemy_inside_the_rectangle_steps_and_one_outside_is_frozen() {
     // inside: 100 cells right of the player (rectangle half-width 224); outside: 230 cells right.
     s.enemies = vec![slime(0, 600, 150), slime(1, 500 + ENEMY_ACTIVE_W / 2 + 6, 150)];
     let before = s.enemies.clone();
+    // Control: with the player far away the same slime is frozen, so the movement below is the stepping rule's doing.
+    let mut far = arena(&[(1, 500)]);
+    far.players[0].x = 100 * PX;
+    far.enemies = before.clone();
+    far.step();
+    assert_eq!(far.enemies[0], before[0], "control: no player in range, no movement");
     s.step();
     assert_ne!(s.enemies[0], before[0], "the near slime fell");
     assert_eq!(s.enemies[1], before[1], "the far slime is frozen by rule");
@@ -223,8 +229,24 @@ fn d7_run(sleep: bool) -> Vec<(u32, u64)> {
     out
 }
 
+/// Most chunks asleep at once while the slimes of the D7 scenario move (sleeping on).
+fn d7_asleep_chunks() -> usize {
+    let mut s = arena(&[(1, 500)]);
+    s.enemies = vec![slime(0, 540, 200), slime(1, 500 + 224 + 4, 200), slime(2, 500 + 224, 200), slime(3, 480, 200)];
+    let mut most = 0;
+    for _ in 0..900 {
+        s.step();
+        s.players[0].health = HEALTH_MAX;
+        most = most.max(s.grid.awake.iter().filter(|&&a| !a).count());
+    }
+    most
+}
+
 #[test]
 fn d7_sleeping_is_invisible_with_slimes_near_outside_and_straddling() {
+    // The comparison must exercise sleep: with sleeping on, some chunk is actually asleep during the run.
+    let asleep = d7_asleep_chunks();
+    assert!(asleep > 0, "no chunk ever slept, so D7 compared two identical runs");
     let a = d7_run(true);
     let b = d7_run(false);
     assert_eq!(a, b);

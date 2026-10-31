@@ -31,7 +31,7 @@ describe("server's snapshot entity parser matches the sim", () => {
   // The entity section is players, pickups, projectiles, bags, each behind a u32 count (sim/src/entities.rs). The
   // server reads only the player section, which must stay first; this pins where the bag section begins, using a
   // real sim that has a dead player and a bag, so a reordering shows up here and not in production.
-  it("sections are ordered players, pickups, projectiles, bags, enemies, round_over, with the bag a dead player dropped", () => {
+  it("sections are ordered players, pickups, projectiles, bags, enemies, round bytes, with the bag a dead player dropped", () => {
     const sim = loadSim(wasmBytes);
     sim.init(5n, 1);
     sim.pushInput(encodeJoin(3));
@@ -73,10 +73,10 @@ describe("server's snapshot entity parser matches the sim", () => {
     const nb = e.getUint32(o, true);
     const bagAt = o + 4;
     o += 4 + nb * BAG;
-    // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then a one-byte round_over close the block.
+    // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then three round bytes (over, started, result) close the block.
     const ENEMY = 35;
     const ne = e.getUint32(o, true);
-    o += 4 + ne * ENEMY + 1;
+    o += 4 + ne * ENEMY + 3;
     expect([np, nj, nb, ne]).toEqual([1, 0, 1, 0]); // a non-Survival world has no enemies
     expect(nk).toBeGreaterThan(0);
     expect(o).toBe(elen);

@@ -205,7 +205,7 @@ impl Sim {
     /// Take `amount` hp from the enemy at `idx`, crediting `attacker` (0 for the world, which keeps the previous
     /// credit). The enemy is only marked (hp 0); `reap_enemies` removes it and emits the death, so indices stay
     /// valid while one source loops over several enemies. An enemy already at 0 takes nothing.
-    pub(crate) fn damage_enemy(&mut self, idx: usize, amount: u16, attacker: u32) {
+    pub fn damage_enemy(&mut self, idx: usize, amount: u16, attacker: u32) {
         let tick = self.tick;
         let e = &mut self.enemies[idx];
         if e.hp == 0 || amount == 0 {
@@ -232,11 +232,14 @@ impl Sim {
 
     /// Remove every enemy at 0 hp, in id order, emitting `EV_ENEMY_DEATH` with the credited killer (the last
     /// hitter within `KILL_CREDIT_TICKS`, else 0).
-    pub(crate) fn reap_enemies(&mut self) {
+    pub fn reap_enemies(&mut self) {
         if !self.enemies.iter().any(|e| e.hp == 0) {
             return;
         }
         let tick = self.tick;
+        if self.cfg.round == 1 {
+            self.round_started = 1;
+        }
         let mut dead = Vec::new();
         self.enemies.retain(|e| {
             if e.hp != 0 {

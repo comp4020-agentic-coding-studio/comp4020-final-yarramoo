@@ -43,6 +43,8 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
     text = k ? `${k} blew up ${v} (gunpowder)` : `${v} was blasted by gunpowder`;
   } else if (d.cause === CAUSE_ACID) {
     text = k ? `${k} dissolved ${v} in acid` : `${v} dissolved in acid`;
+  } else if (d.cause >= 40 && d.cause < 48) {
+    text = `${v} was slain by a slime`;
   } else {
     text = `${v} died`;
   }

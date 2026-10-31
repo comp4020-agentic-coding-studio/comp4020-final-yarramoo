@@ -6,8 +6,8 @@ use crate::sim::Sim;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
-/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes. Restore refuses any other version (the game is not live, so no stored state is lost).
-pub const FORMAT_VERSION: u16 = 7;
+/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_started, round_result`. Restore refuses any other version (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 8;
 const CFG_AT: usize = 4 + 2 + 32 + 8;
 const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
@@ -83,7 +83,13 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
             return Err(());
         }
     } else {
-        (s.players, s.projectiles, s.bags, s.enemies, s.round_over) = crate::entities::decode(&b[o..eend], &mut s.pickups, w, h)?;
+        let round;
+        (s.players, s.projectiles, s.bags, s.enemies, round) = crate::entities::decode(&b[o..eend], &mut s.pickups, w, h)?;
+        // Enemies only exist in rooms that have them; a snapshot that says otherwise is hostile.
+        if !s.enemies.is_empty() && !cfg.has_enemies() {
+            return Err(());
+        }
+        [s.round_over, s.round_started, s.round_result] = round;
     }
     o = eend;
     let n = u32_at(o) as usize;

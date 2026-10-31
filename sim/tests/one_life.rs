@@ -127,3 +127,100 @@ fn the_ended_round_stops_the_enemies_and_survives_a_snapshot() {
     let r = sim::snapshot::restore(&snap).unwrap();
     assert_eq!(r.round_over, 1);
 }
+
+// ---- fix pass: S3, S2 (D-161), S4, S1 -------------------------------------------------------------------
+
+use sim::input::encode_leave;
+
+#[test]
+fn a_living_player_who_disconnects_keeps_the_round_alive() {
+    let mut s = room(&[1, 2]);
+    kill(&mut s, 0);
+    s.push_input(&encode_leave(2));
+    for _ in 0..30 {
+        s.step();
+    }
+    assert_eq!(s.round_over, 0, "dead A, alive B who left: no loss");
+    // B dying later (after rejoining) ends it; and everyone dead ends it even if some left
+    s.push_input(&encode_join(2));
+    s.step();
+    kill(&mut s, 1);
+    s.step();
+    assert_eq!((s.round_over, s.round_result), (1, 0));
+}
+
+#[test]
+fn a_late_joiner_spectates_once_the_round_has_started_or_ended() {
+    // before anything happens: alive
+    let mut s = room(&[1]);
+    s.push_input(&encode_join(2));
+    s.step();
+    assert!(s.players[1].health > 0, "a friend joining early is alive");
+    assert_eq!(s.round_started, 0);
+    // after the first player death: dead
+    kill(&mut s, 0);
+    s.step();
+    assert_eq!(s.round_started, 1);
+    s.push_input(&encode_join(3));
+    s.step();
+    let p3 = s.players.iter().find(|p| p.id == 3).unwrap();
+    assert_eq!((p3.health, p3.dead_until), (0, u32::MAX), "a joiner after a death spectates");
+    // after the first enemy kill: dead
+    let mut s = room(&[1]);
+    s.enemies = vec![Enemy::new(0, ENEMY_SLIME, s.players[0].x + 5 * PX, s.players[0].y)];
+    s.enemies[0].hp = 1;
+    s.damage_enemy(0, 1, 1);
+    s.reap_enemies();
+    assert_eq!(s.round_started, 1);
+    s.push_input(&encode_join(4));
+    s.step();
+    assert_eq!(s.players.iter().find(|p| p.id == 4).unwrap().health, 0);
+    // after round_over: dead; and an existing id rejoining is unchanged
+    let mut s = room(&[1]);
+    kill(&mut s, 0);
+    s.step();
+    assert_eq!(s.round_over, 1);
+    s.push_input(&encode_join(5));
+    s.step();
+    assert_eq!(s.players.iter().find(|p| p.id == 5).unwrap().health, 0);
+    // a Deathmatch room is unaffected
+    let mut d = Sim::new(5, RoomConfig { size: 0, ..RoomConfig::caves_pvp() }).unwrap();
+    d.push_input(&encode_join(1));
+    d.step();
+    d.apply_damage(0, 100, CAUSE_LAVA);
+    d.push_input(&encode_join(2));
+    d.step();
+    assert!(d.players[1].health > 0);
+}
+
+#[test]
+fn the_round_state_is_in_the_view_the_snapshot_and_the_hash() {
+    let mut s = room(&[1]);
+    kill(&mut s, 0);
+    s.step();
+    let mut out = vec![0u8; 100 * ENTITY_BYTES];
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, [s.round_over, s.round_started, s.round_result], true, s.tick, &mut out, 100);
+    let o = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
+    assert_eq!((o[0], o[5], o[6], u16::from_le_bytes([o[15], o[16]]), o[17]), (ENT_ROUND, 1, 0, 1, 1));
+    let h = s.state_hash();
+    let r = sim::snapshot::restore(&sim::snapshot::write(&s)).unwrap();
+    assert_eq!((r.round_over, r.round_started, r.round_result), (1, 1, 0));
+    let mut r2 = sim::snapshot::restore(&sim::snapshot::write(&s)).unwrap();
+    r2.round_started = 0;
+    assert_ne!(r2.state_hash(), h);
+}
+
+#[test]
+fn a_teammates_fire_bolt_earns_no_credit_for_a_later_lava_death_in_co_op() {
+    let mut s = room(&[1, 2]);
+    s.players[0].x = 100 * PX;
+    // a projectile landing on player 2 is simulated through the helper path: call the public cast route
+    s.players[1].last_hit_by = 0;
+    let before = s.players[1].last_hit_by;
+    s.projectiles.push(Projectile { owner: 1, spell: 4, cast_seq: 1, x: s.players[1].x * 16, y: (s.players[1].y - 5 * PX) * 16, vx: 0, vy: 0, age: 20 });
+    for _ in 0..3 {
+        s.step();
+    }
+    assert_eq!(s.players[1].last_hit_by, before, "no last-hitter credit from a teammate's bolt");
+    assert_eq!(s.players[1].health, HEALTH_MAX);
+}

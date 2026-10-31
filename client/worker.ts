@@ -17,6 +17,7 @@ import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
 import {
   ENT_BAG,
   ENT_ENEMY,
+  ENT_ROUND,
   ENT_PICKUP,
   ENT_PLAYER,
   ENT_PROJECTILE,
@@ -151,6 +152,8 @@ let explosionsThisFrame = 0;
 let iAmDead = false;
 /** The room has one life (`death` 1): a dead player spectates a living teammate. Render-only (camera). */
 let oneLife = false;
+/** The round banner has been posted once (from state or from the event). */
+let roundShown = false;
 /** Last seen y of each enemy and when it was hit (ms), for the squash/stretch and the white flash. Render-only. */
 const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number }>();
 /** Dev route only: the local single-player sim has an avatar for this player id. */
@@ -290,6 +293,7 @@ function countPresence(inputs: { kind: number }[]) {
 function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBase: number) {
   const sim: Sim = loadSim(wasmBytes);
   sim.init(seed, cfg);
+  roundShown = false;
   names.clear();
   shown.clear();
   avatar = null;
@@ -539,6 +543,12 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     pushSlime(rects, ex, ey, air, now - es.hitAt < 120, e.a / 20);
   }
   for (const id of enemySeen.keys()) if (!liveEnemies.has(id)) enemySeen.delete(id);
+  // The round banner comes from state (a client that caught up or reconnected never saw the one-shot event).
+  const round = ents.find((e) => e.type === ENT_ROUND);
+  if (round && round.a === 1 && !roundShown && net === "live") {
+    roundShown = true;
+    send({ type: "round", win: round.sub === 1 });
+  }
 
   spellFx(ents, dt, now, rects);
 
@@ -685,7 +695,10 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       fx.burst(e.a / 16, e.b / 16 - 2, [0.3, 0.85, 0.3], 22, 0.06);
       sfxAt("splat", e.a / 16, e.b / 16, 0.6, quiet);
     } else if (e.kind === EV_ROUND_END) {
-      if (!quiet) send({ type: "round", win: e.a === 1 });
+      if (!quiet && !roundShown) {
+        roundShown = true;
+        send({ type: "round", win: e.a === 1 });
+      }
     } else if (e.kind === EV_BAG_PICKUP) {
       fx.pickup(e.a + 0.5, e.b + 0.5);
       if (e.player === myId) sfxSelf("bag", quiet);

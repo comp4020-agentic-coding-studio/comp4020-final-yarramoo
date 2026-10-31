@@ -300,6 +300,10 @@ impl Sim {
                 if (id == q.owner && q.age <= OWNER_GRACE) || cx < bx0 || cx > bx1 || cy < by0 || cy > by1 {
                     continue;
                 }
+                // A corpse hit earlier this tick (not yet reaped) does not stop a bolt.
+                if id & ENEMY_BOX != 0 && self.enemy_index((id & !ENEMY_BOX) as u16).is_none_or(|i| self.enemies[i].hp == 0) {
+                    continue;
+                }
                 if q.spell == BOMB && !self.bomb_may_explode(q, vy0, bombs) {
                     return true;
                 }
@@ -435,6 +439,10 @@ impl Sim {
     fn fire_bolt_hit(&mut self, victim: u32, owner: u32) {
         let tick = self.tick;
         let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) else { return };
+        // D-158: a teammate's bolt neither credits nor damages in a room without player damage.
+        if victim != owner && !self.cfg.damage_from_players() {
+            return;
+        }
         if victim != owner {
             self.players[k].last_hit_by = owner;
             self.players[k].last_hit_tick = tick;
@@ -520,6 +528,9 @@ impl Sim {
         p.dead_until = if self.cfg.death == 1 { u32::MAX } else { tick.wrapping_add(self.cfg.respawn_ticks()) };
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
+        if self.cfg.round == 1 {
+            self.round_started = 1;
+        }
         let (id, px, py) = (p.id, p.x, p.y);
         // The victim's finite charges (spells 2..=5) leave with the death; Push and Blast stay.
         let mut taken = [0u16; BAG_SPELLS];

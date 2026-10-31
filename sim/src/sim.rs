@@ -44,6 +44,10 @@ pub struct Sim {
     pub enemy_work: u32,
     /// 1 once the one-life round has ended (`EV_ROUND_END` fired). State: hashed and snapshotted.
     pub round_over: u8,
+    /// 1 once the first enemy kill or the first player death has happened in a one-life round (D-161). State.
+    pub round_started: u8,
+    /// 1 if the round ended in a win, 0 for a loss (meaningful once `round_over` is 1). State.
+    pub round_result: u8,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
     /// Cache of the generated world, so `restore` need not regenerate it. Not state.
@@ -63,7 +67,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, enemy_work: 0, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, enemy_work: 0, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -199,19 +203,20 @@ impl Sim {
     }
 
     /// D-160: a one-life round (`round` 1) is lost when at least one player is active and every active player is
-    /// dead. Fires `EV_ROUND_END { a: 0 }` exactly once (`round_over` is hashed), after which enemies stop. A
+    /// dead (see below). Fires `EV_ROUND_END { a: 0 }` exactly once (`round_over` is hashed), after which enemies stop. A
     /// player who leaves does not by itself end the round (a reconnect must find it running); the win comes with
     /// the boss slice: `round_won` below is the hook, always false until then.
     fn check_round_end(&mut self) {
         if self.cfg.round != 1 || self.round_over != 0 {
             return;
         }
-        let tick = self.tick;
-        let any_active = self.players.iter().any(|p| p.active);
-        let any_alive = self.players.iter().any(|p| p.alive(tick));
-        let (won, lost) = (self.round_won(), any_active && !any_alive);
+        // Lost: everyone who ever joined is dead (`health == 0`, whatever `active` says). A living player who
+        // disconnected still counts as alive, so a dropped connection never ends the round (D-160).
+        let lost = !self.players.is_empty() && self.players.iter().all(|p| p.health == 0);
+        let won = self.round_won();
         if won || lost {
             self.round_over = 1;
+            self.round_result = u8::from(won);
             self.events.push(Event { kind: EV_ROUND_END, player: 0, a: i32::from(won), b: 0, c: 0 });
         }
     }
@@ -289,6 +294,12 @@ impl Sim {
                     // already use (D-109's bag rules), rather than inventing a second "unlimited"
                     // concept. Every charge check and decrement already special-cases INFINITE.
                     p.charges = [INFINITE; NUM_SPELLS];
+                }
+                // D-161: in a one-life round, a player whose first Join comes after the round started (first enemy
+                // kill or first player death) or ended joins already dead and spectates.
+                if self.cfg.round == 1 && (self.round_started != 0 || self.round_over != 0) {
+                    p.health = 0;
+                    p.dead_until = u32::MAX;
                 }
                 self.players.insert(at, p);
                 at
@@ -402,7 +413,7 @@ impl Sim {
         if !self.cfg.has_players() {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, self.round_over)
+        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, [self.round_over, self.round_started, self.round_result])
     }
 
     pub fn state_hash(&mut self) -> u64 {

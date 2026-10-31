@@ -125,3 +125,27 @@ The brief's "about 25 at L" holds; M and S are small. Flag: M may want a higher 
 - Slime idle hop and hop cooldown tuning by playtest; a "bounce off walls" step-up so slimes climb one-cell ledges.
 - A round-end claim message (and `round.end` log) once the boss slice defines the win condition.
 - Spectator camera cycling (click to follow a chosen teammate) for one-life rooms.
+
+## Fix pass (coordinator message after HEAD 34861cb)
+- **1 Slope (0790228):** `step_enemy` step-up (blocked move retried 1..=3 cells higher, bounded 3 tests), `SLIME_HOP_VX`
+  3 -> 8. Grounded still means any solid cell under the body: kept on purpose, because requiring wider support would leave
+  a corner-resting slime unable to hop; the step-up is what gets it off a corner. Test
+  `a_slime_climbs_a_45_degree_slope_and_reaches_a_player_at_the_top` (rise 1 and 2 per column) was red first ("never
+  reached the player", stuck at x=519) and is green.
+- **2 S1:** `fire_bolt_hit` returns early for another player when `!damage_from_players()`. Red first: the test
+  `a_teammates_fire_bolt_earns_no_credit...` failed with the gate removed. Other `last_hit_by` writers checked:
+  `hit_player` and `explode_at` already gated; `damage_enemy` is enemy-only.
+- **3 S3:** loss = `players` non-empty and every player `health == 0` (ignores `active`). Red first with the old rule.
+- **4 S2 (D-161):** hashed `round_started` (set on the first player death or first enemy reap in a round-1 room); `join`
+  of a NEW id when started or over spawns it dead (`dead_until = u32::MAX`). Test covers early-alive, after a death,
+  after an enemy kill, after round_over, plus Deathmatch unaffected. Red first (gate disabled).
+- **5 S4:** `round_result` hashed; view record `ENT_ROUND` (6) with over/started/result (round-1 rooms only); the client
+  posts the banner from state once (`roundShown`, reset on `beginReplay`) as well as from the event. FORMAT_VERSION 8, entity
+  tail is now 3 bytes. Not exercised in a browser.
+- **6 S5:** skipped as instructed (server hiding ended rooms needs the claim plumbing).
+- **7 Nits:** N1 projectiles skip enemy boxes with hp 0 or gone (no dedicated test; covered by the existing damage tests
+  staying green); N3 `restore` refuses enemies in a room whose config has enemies off (test red with the check disabled);
+  N4 "was slain by a slime" in `client/toasts.ts` (net test added); N5 versions 7 and 9 added to the refused lists. N2 skipped.
+- **8 Stubbed tests:** a control assertion that the same slime moves when the player is in range sits next to the frozen
+  case; the D7 test now asserts at least one chunk was asleep during the sleeping-on run. I did not run a canary mutation
+  of `stepping_set` against `awake`.
