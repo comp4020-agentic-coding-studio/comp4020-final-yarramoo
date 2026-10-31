@@ -412,8 +412,16 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return;
     const k = e.key.toLowerCase();
-    if (castsOnClick() && k >= "1" && k <= String(BAR.length)) {
+    if (castsOnClick() && k >= "1" && k <= String(Math.min(9, BAR.length))) {
       selectedSpell = BAR[Number(k) - 1];
+      placeDigPreview();
+      renderSpellBar();
+      return;
+    }
+    // Q and E step back and forth through the whole bar (the wheel and -/= are zoom, and only nine digits fit).
+    if (castsOnClick() && (k === "q" || k === "e") && !e.ctrlKey && !e.metaKey) {
+      const at = Math.max(0, BAR.indexOf(selectedSpell));
+      selectedSpell = BAR[(at + (k === "e" ? 1 : BAR.length - 1)) % BAR.length];
       placeDigPreview();
       renderSpellBar();
       return;
@@ -648,7 +656,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     sw.style.background = SPELLS[spell].colour.map((v) => Math.round(v * 255)).reduce((a, v, j) => a + v.toString(16).padStart(2, "0"), "#");
     const key = document.createElement("span");
     key.className = "key";
-    key.textContent = String(i + 1);
+    key.textContent = i < 9 ? String(i + 1) : "";
     const nm = document.createElement("span");
     nm.className = "nm";
     nm.textContent = SPELLS[spell].name;
@@ -933,7 +941,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     send({ type: "pointer", kind: "up", x, y, mat, radius: r, fillEmpty: false });
   };
   if (import.meta.env.DEV) {
-    // Dev route only: walk the local avatar onto the nearest pickup (4 = Fire bolt, 5 = Bomb) to see those visuals.
+    // Dev route only: walk the local avatar onto the nearest pickup (any spell in the pickup tables) to see those visuals.
     (window as unknown as Record<string, unknown>).__devGoto = (spell: number) => {
       if (devAvatar) send({ type: "devgoto", spell });
     };

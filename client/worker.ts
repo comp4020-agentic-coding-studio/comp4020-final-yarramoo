@@ -563,7 +563,7 @@ const sfxSelf = (name: SfxName, quiet: boolean) => {
   sfxBudget--;
   send({ type: "sfx", name, vol: 1, pan: 0, mag: 0.5 });
 };
-const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb", "dig"];
+const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb", "dig", "flask", "flask", "wall", "flask", "hole"];
 
 /** Turn the queued sim events, the entities() view and the cast ghosts into particles and rectangles. */
 function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
@@ -580,7 +580,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       const ang = (e.b / 65536) * Math.PI * 2;
       if (c) {
         if (e.a === 1) fx.cone(c.x, c.y, ang, col);
-        else if (e.a === 6) fx.dust(c.x, c.y, ang, col);
+        else if (e.a === 6 || e.a === 9) fx.dust(c.x, c.y, ang, col);
         else fx.flash(c.x, c.y, ang, col);
       }
       const ps = poses.get(e.player);
@@ -618,6 +618,8 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       // Drawn from the event, not the grid: a Fire bolt's fire has already risen by the time we look.
       sfxAt("impact", e.a, e.b, 0.5, quiet);
       if (e.c === 4) fx.embers(e.a + 0.5, e.b + 0.5);
+      else if (e.c === 7 || e.c === 8 || e.c === 10) fx.burst(e.a + 0.5, e.b + 0.5, SPELLS[e.c].colour, 28, 0.07);
+      else if (e.c === 11) fx.burst(e.a + 0.5, e.b + 0.5, SPELLS[e.c].colour, 24, 0.09);
       else if (e.c !== 5) fx.burst(e.a + 0.5, e.b + 0.5, SPELLS[e.c]?.colour ?? [1, 1, 1], e.c === 2 ? 20 : 14);
     } else if (e.kind === EV_EXPLODE) {
       if (explosionsThisFrame++ < 16) fx.explosion(e.a + 0.5, e.b + 0.5, e.c);
@@ -654,7 +656,12 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
     const x = q.x / 16;
     const y = q.y / 16;
     if (q.id === myId) dropGhost(q.a);
-    if (q.sub === 5) {
+    if (q.sub === 11) {
+      // Black Hole: a dark core with particles falling in from a ring.
+      rects.push({ x: Math.round(x) - 2, y: Math.round(y) - 2, w: 5, h: 5, r: 0.05, g: 0, b: 0.1, a: 1 });
+      rects.push({ x: Math.round(x) - 3, y: Math.round(y) - 3, w: 7, h: 7, r: col[0], g: col[1], b: col[2], a: 0.35 });
+      fx.swirlIn(x, y, col);
+    } else if (q.sub === 5) {
       // A lobbed bomb: round body and a fuse that spits sparks.
       pushBomb(rects, x, y, now);
       fx.fuseSpark(x, y - 2);
@@ -676,7 +683,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
     g.vy += SPELLS[g.spell].gravity * ticks;
     g.x += g.vx * ticks;
     g.y += g.vy * ticks;
-    const blast = g.spell === 1 || g.spell === 6;
+    const blast = g.spell === 1 || g.spell === 6 || g.spell === 9;
     const size = blast ? 3 : 2;
     rects.push({ x: Math.round(g.x) - 1, y: Math.round(g.y) - 1, w: size, h: size, r: col[0], g: col[1], b: col[2], a: 0.55 });
   }
@@ -723,7 +730,8 @@ function onCast(spell: number, angle: number) {
   // The ghost only when the HUD says the cast will go through (cosmetic; the input was sent regardless).
   const v = (localSim ?? ls?.sim)?.playerView(myId);
   const ready = !v || (v.charges[spell] > 0 && v.cooldown[spell] === 0);
-  if (ready && SPELLS[spell].enabled) {
+  // Wall is instant (no flight): no ghost. Black Hole has no gravity, so the straight-line ghost is right.
+  if (ready && SPELLS[spell].enabled && spell !== 9) {
     const sp = SPELLS[spell];
     ghosts.push({ seq, spell, x: avatar.x, y: avatar.y - 5, vx: Math.cos(rad) * sp.speed, vy: Math.sin(rad) * sp.speed, bornMs: now });
   }

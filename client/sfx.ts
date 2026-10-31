@@ -7,7 +7,7 @@ export const MUTE_KEY = "sand.muted";
 
 /** Sound names the worker may ask for. */
 export type SfxName =
-  | "push" | "blast" | "water" | "rose" | "fire" | "bomb" | "dig"
+  | "push" | "blast" | "water" | "rose" | "fire" | "bomb" | "dig" | "flask" | "wall" | "hole"
   | "reject" | "impact" | "explode" | "knock" | "death" | "respawn" | "pickup" | "bag";
 
 /** At most this many voices sound at once; extra ones are dropped (16 explosions in a frame must not clip). */
@@ -110,6 +110,9 @@ export function play(name: SfxName, vol: number, pan: number, mag = 0.5) {
     case "push": noise(o, 0.25, 0.5, 400, 2200, 1.2); dur = 0.3; break;
     case "blast": tone(o, "sine", 150, 40, 0.3, 0.9); noise(o, 0.22, 0.6, 1800, 300, 0.8); dur = 0.35; break;
     case "dig": noise(o, 0.2, 0.7, 700, 250, 1.5, "lowpass"); noise(o, 0.12, 0.5, 2500, 900, 3, "bandpass", 0.03); tone(o, "square", 90, 55, 0.12, 0.25); dur = 0.3; break;
+    case "flask": noise(o, 0.1, 0.6, 5000, 3000, 2, "highpass"); noise(o, 0.35, 0.35, 3500, 1500, 1.5, "bandpass", 0.08); tone(o, "sine", 700, 1100, 0.12, 0.2, 0.05); dur = 0.5; break;
+    case "wall": tone(o, "square", 80, 45, 0.18, 0.35); noise(o, 0.15, 0.6, 600, 200, 1.5, "lowpass"); dur = 0.3; break;
+    case "hole": tone(o, "sine", 70, 45, 0.5, 0.45); noise(o, 0.5, 0.25, 300, 120, 1, "lowpass"); dur = 0.6; break;
     case "water": noise(o, 0.3, 0.5, 900, 3000, 2, "bandpass"); tone(o, "sine", 500, 900, 0.12, 0.25); dur = 0.35; break;
     case "rose": tone(o, "sine", 880, 880, 0.35, 0.35); tone(o, "sine", 1320, 1320, 0.35, 0.25, 0.06); tone(o, "sine", 1760, 1760, 0.4, 0.15, 0.12); dur = 0.55; break;
     case "fire": noise(o, 0.35, 0.45, 3000, 800, 0.7, "highpass"); for (let i = 0; i < 4; i++) noise(o, 0.03, 0.5, 4000, 3000, 1, "bandpass", i * 0.07 + Math.random() * 0.03); dur = 0.45; break;

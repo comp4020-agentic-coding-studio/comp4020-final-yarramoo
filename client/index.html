@@ -61,9 +61,9 @@
     #hud .bar.hp { margin-bottom: 0; }
     #hud span + .bar + span { display: block; margin-top: 6px; }
     #hud .bar i { display: block; height: 100%; width: 100%; background: #6ea8ff; }
-    #spells { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; }
+    #spells { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: calc(100% - 16px); pointer-events: none; }
     #spells[hidden], #hud[hidden] { display: none; }
-    #spells .slot { position: relative; width: 62px; height: 46px; border: 2px solid var(--line); border-radius: 6px; background: rgba(15,19,27,.82); overflow: hidden; font-size: 11px; padding: 3px 5px; }
+    #spells .slot { position: relative; width: 58px; height: 46px; border: 2px solid var(--line); border-radius: 6px; background: rgba(15,19,27,.82); overflow: hidden; font-size: 11px; padding: 3px 5px; }
     #spells .slot.sel { border-color: var(--accent); background: rgba(23,32,47,.9); }
     #spells .slot.empty { opacity: .45; }
     #spells .key { position: absolute; right: 4px; top: 2px; color: var(--dim); }

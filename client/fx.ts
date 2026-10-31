@@ -252,6 +252,16 @@ export class Particles {
     }
   }
 
+  /** Black Hole: a few specks on a ring around (x, y), drawn into the centre. */
+  swirlIn(x: number, y: number, c: [number, number, number]): void {
+    for (let i = 0; i < 3; i++) {
+      const a = this.rand() * Math.PI * 2;
+      const r = 6 + this.rand() * 6;
+      const life = 260;
+      this.add({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: (-Math.cos(a) * r) / life - Math.sin(a) * 0.01, vy: (-Math.sin(a) * r) / life + Math.cos(a) * 0.01, life, size: 1, r: c[0], g: c[1], b: c[2], grav: 0 });
+    }
+  }
+
   /** Dig's dust: grit thrown along the capsule (DIG_REACH 14 cells), slowly settling. */
   dust(x: number, y: number, angle: number, c: [number, number, number]): void {
     for (let i = 0; i < 34; i++) {

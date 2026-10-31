@@ -82,7 +82,9 @@ describe("two real clients, one kills the other", () => {
     expect(s.db!.achievementsOf(ana.id)).toContain("first_blood");
     expect(b.achievements.map((x) => x.id)).not.toContain("first_blood");
     // Both clients claimed the same death; it counted once.
-    expect(ev).toHaveLength(1);
+    // F3: the new pickup table moved the first Bomb spot, and Ana now burns in her own blast's fire a moment
+    // later (cause 32, a separate death). The once-only check is about Bo's death.
+    expect(ev.filter((e) => e.victim === `Bo#${bo.id}`)).toHaveLength(1);
     a.close();
     b.close();
   }, 60000);
