@@ -256,6 +256,11 @@ impl Scale {
 
 /// Generate a game world into an all-Empty grid.
 pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
+    generate_with_path(g, seed).0
+}
+
+/// `generate`, also returning the guaranteed worm path (tests measure placements against it).
+pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, Vec<(i32, i32)>) {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
     let surf = surface_heights(seed, w, h, sc.surface_y);
@@ -278,7 +283,7 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     place_ice(g, seed, &sc, &path);
     place_coal(g, seed, &sc);
     repair_traversal(g, seed, &sc);
-    pick_spots(g, seed, &sc)
+    (pick_spots(g, seed, &sc), path)
 }
 
 /// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.
@@ -445,7 +450,7 @@ struct PoolScratch {
 
 /// Try a pool of up to `max_depth` rows resting on the floor at (x, yf): the deepest level whose basin
 /// stays under `cap` cells. `foe` is a liquid that must not touch it.
-fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i32), cap: usize, mat: u8, foe: u8) -> bool {
+fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i32), cap: usize, mat: u8, foe: u8, keep_off: &[(i32, i32)]) -> bool {
     let w = g.w;
     // Deepest first; a basin that overflows `cap` at one level may fit at a shallower one.
     for d in (depths.0..=depths.1).rev() {
@@ -471,6 +476,11 @@ fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i
         if touches {
             return false;
         }
+        // Keep the whole pool (not just its seed cell) `ACID_PATH_MARGIN` clear of `keep_off`; a shallower
+        // level is a smaller region, so try that next.
+        if !keep_off.is_empty() && sc.region.iter().any(|&c| near_path(keep_off, c as i32 % w as i32, c as i32 / w as i32, ACID_PATH_MARGIN)) {
+            continue;
+        }
         for &c in &sc.region {
             g.mat[c as usize] = mat;
         }
@@ -492,7 +502,7 @@ fn place_water(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
         if yf >= scale.deep_top - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
             continue;
         }
-        if try_pool(g, sc, x, yf, (3, depth), 900, WATER, LAVA) {
+        if try_pool(g, sc, x, yf, (3, depth), 900, WATER, LAVA, &[]) {
             placed += 1;
         }
     }
@@ -512,7 +522,7 @@ fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
         if yf < scale.deep_top + 30 || g.mat[(yf * w + x) as usize] != EMPTY {
             continue;
         }
-        if try_pool(g, sc, x, yf, (4, depth), 1800, LAVA, WATER) {
+        if try_pool(g, sc, x, yf, (4, depth), 1800, LAVA, WATER, &[]) {
             // A 2-cell Rock lining under the pool, so it cannot meet other liquids from below.
             for &c in &sc.region {
                 let i = c as usize;
@@ -567,7 +577,7 @@ fn place_oil(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
         if yf >= scale.deep_top - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
             continue;
         }
-        if try_pool(g, sc, x, yf, (2, depth), 700, OIL, LAVA) {
+        if try_pool(g, sc, x, yf, (2, depth), 700, OIL, LAVA, &[]) {
             placed += 1;
         }
     }
@@ -593,7 +603,7 @@ fn place_acid(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale, path
         if yf < scale.deep_top + 20 || g.mat[yf as usize * g.w + x as usize] != EMPTY || near_path(path, x, yf, ACID_PATH_MARGIN) {
             continue;
         }
-        if try_pool(g, sc, x, yf, (2, depth), 500, ACID, WATER) {
+        if try_pool(g, sc, x, yf, (2, depth), 500, ACID, WATER, path) {
             placed += 1;
         }
     }
@@ -601,7 +611,8 @@ fn place_acid(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale, path
 
 /// Gas pockets: under the roof of a roomy chamber, fill up to `GAS_POCKET_ROWS` rows beneath the ceiling
 /// with Gas (a few hundred cells), but only where the open height below is at least `GAS_MIN_HEIGHT` so a
-/// pocket never blocks a walkable passage, and never within reach of Lava.
+/// pocket never blocks a walkable passage, and never within reach of Lava (the check covers the pocket's whole
+/// extent, `r + 4` columns either side and the rows from above the ceiling to below the pocket).
 fn place_gas_pockets(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]) {
     if path.is_empty() {
         return;
@@ -622,7 +633,7 @@ fn place_gas_pockets(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]
         while cy > 1 && g.mat[(cy * w + px) as usize] == EMPTY {
             cy -= 1;
         }
-        if g.mat[(cy * w + px) as usize] == EMPTY || py - cy > 60 || near_material(g, px, cy, 14, 14, LAVA) {
+        if g.mat[(cy * w + px) as usize] == EMPTY || py - cy > 60 || near_material(g, px, cy + GAS_POCKET_ROWS + 4, r + 4, GAS_POCKET_ROWS + 14, LAVA) {
             continue;
         }
         let mut put = 0;
@@ -1540,6 +1551,91 @@ mod tests {
         assert_eq!(g.mat.iter().filter(|&&m| m == ACID).count(), 0, "acid must keep off the path");
         place_acid(&mut g, 1, &mut ps, &sc, &[]);
         assert!(g.mat.iter().filter(|&&m| m == ACID).count() > 0, "with no path the same call places acid");
+    }
+
+    /// On real worlds, no Acid cell is within `ACID_PATH_MARGIN` (Chebyshev) of the worm path, measured here
+    /// with a separate distance check rather than the generator's `near_path`. Cells the repair pass cleared
+    /// are gone, so this checks what is left. Shown red with the whole-pool check removed.
+    #[test]
+    fn acid_pools_keep_the_whole_pool_off_the_path() {
+        use crate::config::RoomConfig;
+        let mut total = 0;
+        for size in 0u8..=2 {
+            let (w, h) = RoomConfig { size, ..RoomConfig::caves_pvp() }.dims();
+            for seed in 1..=8u64 {
+                let mut g = Grid::new(w as usize, h as usize);
+                let (_, path) = generate_with_path(&mut g, seed);
+                for (i, &m) in g.mat.iter().enumerate() {
+                    if m != ACID {
+                        continue;
+                    }
+                    total += 1;
+                    let (x, y) = ((i % g.w) as i32, (i / g.w) as i32);
+                    let d = path.iter().map(|&(px, py)| (px - x).abs().max((py - y).abs())).min().unwrap();
+                    assert!(d > ACID_PATH_MARGIN, "size {size} seed {seed}: acid at ({x},{y}) is {d} from the path");
+                }
+            }
+        }
+        assert!(total > 0, "no acid at all, the test checks nothing");
+    }
+
+    /// No generated Gas cell is within `GAS_LAVA_TEST_MARGIN` cells (Chebyshev) of Lava, on every size and seeds
+    /// 1-8. Lava ignites Gas, so a pocket touching lava would flash before anyone arrives.
+    #[test]
+    fn gas_pockets_keep_clear_of_lava() {
+        use crate::config::RoomConfig;
+        const GAS_LAVA_TEST_MARGIN: i32 = 3;
+        let mut gas_total = 0;
+        for size in 0u8..=2 {
+            let (w, h) = RoomConfig { size, ..RoomConfig::caves_pvp() }.dims();
+            for seed in 1..=8u64 {
+                let mut g = Grid::new(w as usize, h as usize);
+                generate(&mut g, seed);
+                for (i, &m) in g.mat.iter().enumerate() {
+                    if m != GAS {
+                        continue;
+                    }
+                    gas_total += 1;
+                    let (x, y) = ((i % g.w) as i32, (i / g.w) as i32);
+                    assert!(!near_material(&g, x, y, GAS_LAVA_TEST_MARGIN, GAS_LAVA_TEST_MARGIN, LAVA), "size {size} seed {seed}: gas at ({x},{y}) within {GAS_LAVA_TEST_MARGIN} of lava");
+                }
+            }
+        }
+        assert!(gas_total > 0, "no gas generated, the test checks nothing");
+    }
+
+    /// A pocket's whole extent is checked against Lava, not one point: lava just outside the old 14-cell box but
+    /// inside the pocket (radius 14-29) must stop the pocket. Red with the old single-point check.
+    #[test]
+    fn gas_pocket_rejected_when_its_edge_touches_lava() {
+        let build = |lava: bool| {
+            let mut g = Grid::new(400, 300);
+            for i in 0..g.mat.len() {
+                g.mat[i] = ROCK;
+            }
+            for y in 100..200 {
+                for x in 50..350 {
+                    g.mat[y * 400 + x] = EMPTY;
+                }
+            }
+            if lava {
+                for y in 100..115 {
+                    g.mat[y * 400 + 216] = LAVA; // 16 cells right of the path point, outside the old 14-cell box
+                }
+            }
+            g
+        };
+        let mut sc = Scale::new(2048, 1536);
+        sc.shallow_top = 0;
+        sc.deep_top = 1000;
+        sc.gas_count = 1;
+        let path = [(200, 130)];
+        let mut g = build(false);
+        place_gas_pockets(&mut g, 1, &sc, &path);
+        assert!(g.mat.iter().filter(|&&m| m == GAS).count() >= 60, "control: a pocket is placed without lava");
+        let mut g = build(true);
+        place_gas_pockets(&mut g, 1, &sc, &path);
+        assert_eq!(g.mat.iter().filter(|&&m| m == GAS).count(), 0, "no pocket may reach the lava");
     }
 
     /// `carve_chambers` opens big ellipses centred on worm-path points, inside the walls and bands, Rock and Dirt
