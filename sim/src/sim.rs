@@ -235,9 +235,12 @@ impl Sim {
         }
     }
 
-    /// Hook for the boss slice: the boss's death wins the round (D-158). No boss exists yet.
+    /// D-158: the boss's death wins the round. `reap_enemies` sets bit 1 of the hashed `round_started` byte when a boss
+    /// dies (no new field, no format bump; bit 0 stays the D-161 first-kill flag). A restored snapshot,
+    /// including one taken after the win, therefore says the same thing. A win and the last player's death on the same
+    /// tick count as a win: `check_round_end` lets `won` take precedence over `lost`.
     fn round_won(&self) -> bool {
-        false
+        self.round_started & ROUND_BOSS_KILLED != 0
     }
 
     /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks that intersect the 576 x 320

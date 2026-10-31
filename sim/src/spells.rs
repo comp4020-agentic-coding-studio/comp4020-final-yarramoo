@@ -580,7 +580,7 @@ impl Sim {
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
         if self.cfg.round == 1 {
-            self.round_started = 1;
+            self.round_started |= 1;
         }
         let (id, px, py) = (p.id, p.x, p.y);
         // The victim's finite charges (spells 2..=5) leave with the death; Push and Blast stay.

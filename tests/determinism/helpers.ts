@@ -8,7 +8,7 @@ import type { Script } from "../../tools/inputgen.ts";
 import { generateM5 } from "../../tools/inputgen-m5.ts";
 import { encodeCast, encodeJoin, encodePos, hex } from "../../shared/inputs.ts";
 import { SURVIVAL, encodeConfig } from "../../shared/room.ts";
-import { ENT_ENEMY, loadSim } from "../../shared/sim.ts";
+import { ENT_ENEMY, ENT_PICKUP, loadSim } from "../../shared/sim.ts";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const wasmPath = resolve(root, "sim/target/wasm32-unknown-unknown/release/sim.wasm");
@@ -104,6 +104,55 @@ export function tiersScript(): { script: Script; path: string } {
     at(t, encodePos(2, 0, worm.x + 20 * 16, worm.y - 2 * 16, 0));
   }
   const script: Script = { seed: "20261031", config: "survival", ticks: 600, inputs } as unknown as Script;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(script));
+  return { script, path };
+}
+
+/**
+ * F6 script: the boss fight. Six players float beside the boss and cast Fire bolts and Bombs at it for 2400 ticks.
+ * Positions are read from the sim after init: the boss is the enemy of kind 4. The pickups are not used: the sim gives a
+ * joining player no charges, so the script also needs them; see the first Pos inputs over the supply pile below.
+ */
+export function bossScript(): { script: Script; path: string } {
+  const path = resolve(root, "tests/determinism/.cache/script-survival-boss.json");
+  const sim = loadSim(readWasm(wasmPath));
+  sim.init(20261031n, encodeConfig(SURVIVAL));
+  const ents = sim.entities();
+  const boss = ents.find((e) => e.type === ENT_ENEMY && e.sub === 4);
+  if (!boss) throw new Error("survival world has no boss");
+  const inputs: Record<string, string[]> = {};
+  const at = (t: number, b: Uint8Array) => (inputs[String(t)] ??= []).push(hex(b));
+  // Six players stand in a row 16..26 cells to the boss's right (inside the arena, in open air at its height) and all
+  // cast Fire bolts straight at it every 15 ticks, one Bomb in eight; between them they outlast its bolts long enough
+  // to take it through every phase. The boss starts at the arena centre, so the aim is read from the sim.
+  const N = 6;
+  let seq = 0;
+  for (let k = 0; k < N; k++) at(1, encodeJoin(k + 1));
+  // Collect: player 1 takes the whole supply pile outside the arena (the last six pickups: 30 Fire bolt and 10 Bomb charges).
+  const loot = ents.filter((e) => e.type === ENT_PICKUP).sort((a, b) => a.id - b.id).slice(-6);
+  let t0 = 3;
+  loot.forEach((p, i) => {
+    for (let s2 = 0; s2 < 2; s2++) at(t0 + s2 * 3, encodePos(1, 0, p.x, p.y + 16, 1));
+    t0 += 6;
+  });
+  const start = t0 + 6;
+  for (let t = start; t < 2400 + start; t += 3) {
+    for (let k = 0; k < N; k++) {
+      const px = boss.x + (12 + k) * 16;
+      const py = boss.y;
+      at(t, encodePos(k + 1, 0, px, py, 0));
+      if ((t - start) % 15 === 0) {
+        const dx = boss.x - px;
+        const dy = boss.y - 7 * 16 - (py - 5 * 16);
+        const angle = Math.round(((Math.atan2(dy, dx) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
+        // Player 1 spends the pile (a Bomb every eighth cast); everyone else pushes (infinite charges) and every fifth a Blast.
+        const spell = k === 0 ? ((t - start) / 15 % 8 === 7 ? 5 : 4) : ((t - start) / 15 % 5 === 4 ? 1 : 0);
+        at(t, encodeCast(k + 1, spell, angle, seq++ & 0xffff));
+      }
+    }
+  }
+  const script: Script = { seed: "20261031", config: "survival", ticks: 2400 + start, inputs } as unknown as Script;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(script));
   return { script, path };

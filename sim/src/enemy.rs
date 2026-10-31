@@ -571,15 +571,19 @@ impl Sim {
         }
         let tick = self.tick;
         if self.cfg.round == 1 {
-            self.round_started = 1;
+            self.round_started |= 1;
         }
         let mut dead = Vec::new();
         let mut bursts = Vec::new();
+        let mut boss_died = false;
         self.enemies.retain(|e| {
             if e.hp != 0 {
                 return true;
             }
             let credited = e.last_hit_by != 0 && tick.wrapping_sub(e.last_hit_tick) <= KILL_CREDIT_TICKS;
+            if e.kind == ENEMY_BOSS {
+                boss_died = true;
+            }
             if e.kind == ENEMY_ACID_SLIME {
                 bursts.push((e.x >> POS_SHIFT, (e.y >> POS_SHIFT) - 2));
             }
@@ -587,6 +591,9 @@ impl Sim {
             false
         });
         self.events.extend(dead);
+        if boss_died {
+            self.round_started |= ROUND_BOSS_KILLED;
+        }
         // An acid slime bursts into at most `ACID_DEATH_CELLS` ACID cells (Empty cells only), in id order.
         for at in bursts {
             self.burst(at, ACID, ACID_DEATH_CELLS, false);

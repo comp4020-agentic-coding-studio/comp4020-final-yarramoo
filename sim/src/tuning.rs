@@ -338,3 +338,5 @@ pub const BOSS_LEASH_MARGIN: i32 = 8;
 pub const MAX_ENEMY_ID: u32 = 4096;
 /// The boss starts with its feet this many cells above the arena floor.
 pub const BOSS_HOVER: i32 = 8;
+/// Bit 1 of `round_started`: the boss has died (the Survival win). Bit 0 is the D-161 first-kill flag.
+pub const ROUND_BOSS_KILLED: u8 = 2;

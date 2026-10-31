@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compare } from "./compare.ts";
 import { m5Missing } from "./m5-coverage.ts";
-import { castScript, m5Script, survivalScript, tiersScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
+import { bossScript, castScript, m5Script, survivalScript, tiersScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 
 const wasm = readWasm(wasmPath);
@@ -101,5 +101,16 @@ describe("Node determinism", () => {
     expect(compare(a, seven, ["each", "k=7"])).toBeNull();
     expect(a.events!.some((e) => e.kind === 6 && e.player >= 0x80000000)).toBe(true);
     expect(a.events!.some((e) => e.kind === 5 && e.player === 2 && e.b === -24)).toBe(true);
+  });
+
+  // F6: the boss fight. D1/D6 agree, the boss took damage. It does NOT reach phase 2 here: the party dies first (gap disclosed in the F6 report).
+  const bossRun = bossScript().script;
+  it("D1/D6 with the boss: agree, and the boss is hurt by real casts (phase 1 only, see the F6 report)", () => {
+    const a = run(readWasm(wasmPath), bossRun, {}, { collectEvents: true });
+    const b = run(readWasm(wasmPath), bossRun);
+    const seven = run(readWasm(wasmPath), bossRun, {}, { batching: { kind: "batch", k: 7 } });
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    expect(compare(a, seven, ["each", "k=7"])).toBeNull();
+    expect(a.events!.filter((e) => e.kind === 11).length).toBeGreaterThanOrEqual(5);
   });
 });

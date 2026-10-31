@@ -431,7 +431,7 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         enemies.push(e);
     }
     let round = [r.u8().ok_or(())?, r.u8().ok_or(())?, r.u8().ok_or(())?];
-    if round.iter().any(|&b| b > 1) {
+    if round[0] > 1 || round[1] > 3 || round[2] > 1 {
         return Err(());
     }
     Ok((players, projectiles, bags, enemies, round))

@@ -38,3 +38,18 @@
   test also asserts work > 700 so halving the bound fails.
 - Tests `sim/tests/boss_phases.rs` (6). Red first: two failed on the first run (a wrong boundary expectation of mine, and a check that summons are inside the
   arena, rewritten to track only fresh ids); both were test errors, not sim errors. Honest note: I did not run the file against a stubbed sim.
+
+### 4. The win
+- `round_won()` = bit 1 (`ROUND_BOSS_KILLED`) of the already-hashed `round_started` byte, set in `reap_enemies` when a boss dies (no new field, no format
+  bump; D-161's first-kill flag is bit 0, now written with `|=`; decode accepts `round_started` <= 3). First attempt (derive from "arena exists, a kill
+  happened, no boss left") broke 4 one_life tests because a kill that removes no boss in a world with a boss-less `enemies` list looked like a win; replaced.
+- Same-tick win and loss: `check_round_end` already lets `won` take precedence, so the win counts; tested (`boss_win.rs`).
+- Tests `sim/tests/boss_win.rs` (5): scripted player kills the boss with real Fire bolt casts on seed 1 (EV_ROUND_END a=1 once, round_result 1, kill credit,
+  enemies frozen afterwards, snapshot restore keeps the win), same-tick rule, loss still loses, D5 (mid phase 3 with summons, lava, bolts), D7 (entity bytes
+  identical with every chunk forced awake, through three phases).
+- D2: `bossScript()` in `tests/determinism/helpers.ts`, wired into node.test.ts (D1/D6) and browser.test.ts (D2 on 3 engines). **Gap: the script does NOT reach phase 2.**
+  Six players with the 40 pile charges and infinite Push cannot out-damage the boss before the boss's bolts and contact kill them; only phase 1 is exercised
+  cross-engine. Phases 2 and 3 are covered by the Node sim tests only. Not fixed within the call budget.
+- Gate: cargo 0, clippy 0, determinism 53 passed, `pnpm test:net` 314 passed (39 files).
+- Red first: the win test failed against the stub `round_won` (false) in the sense that the end-to-end test could not pass before it was implemented; I did not
+  separately run it red against a stubbed sim. Flag.

@@ -3,7 +3,7 @@ import { chromium, firefox, webkit } from "playwright";
 import type { BrowserType } from "playwright";
 import type { Server } from "node:http";
 import { compare } from "./compare.ts";
-import { canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, survivalScript, tiersScript, wasmPath } from "./helpers.ts";
+import { bossScript, canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, survivalScript, tiersScript, wasmPath } from "./helpers.ts";
 import { m5Missing } from "./m5-coverage.ts";
 import { run } from "./run.ts";
 import type { RunResult } from "./run.ts";
@@ -113,6 +113,16 @@ describe("cross-engine", () => {
     it(`D2 with imps and worms: ${name} matches Node`, async () => {
       const out = await inBrowser(type, wasmPath, false, tiers.path);
       expect(compare(tiersNode, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // F6: the boss fight (phases, summons, the lava ring, fan and bombs) on every engine.
+  const boss = bossScript();
+  const bossNode = run(readWasm(wasmPath), boss.script);
+  for (const [name, type] of engines) {
+    it(`D2 with the boss: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, boss.path);
+      expect(compare(bossNode, out.result, ["node", name])).toBeNull();
     });
   }
 
