@@ -124,7 +124,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   // wasm where Paint works). The networked path is untouched and stays on the sandbox.
   const params = new URLSearchParams(location.search);
   const worldId = target.worldId;
-  const cfg = target.cfg;
+  // Dev route ?cfg=survival: the local sim runs the Survival preset (worker.ts), so the page must read the same
+  // config, or a one-life death showed the old "respawning in 0 s" under the round banner.
+  const cfg = import.meta.env.DEV && params.get("world") === "game" && params.get("cfg") === "survival" ? SURVIVAL : target.cfg;
   /** Is this an avatar-capable room (Deathmatch, Survival, Creative-with-avatars, or the old fixed game world)?
    * R3: the only sound test of "is this the avatar world" is the room's own config, never the id — a real
    * room's id is never 1. (`worldId === 1` survives only as a numeric join target below, never as a check.) */
@@ -709,7 +711,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     bars[1].style.width = `${Math.round(hp * 100)}%`;
     bars[1].style.background = healthColour(hp);
     const dead = steersAvatar() && !!m.me?.dead;
-    deathEl.hidden = !dead;
+    // Once the round is over its banner says it all; the death notice would sit under it.
+    deathEl.hidden = !dead || !!document.getElementById("roundBanner");
     canvas.classList.toggle("dim", dead);
     if (dead && cfg.death === 1) deathEl.textContent = "You died. Spectating";
     else if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
