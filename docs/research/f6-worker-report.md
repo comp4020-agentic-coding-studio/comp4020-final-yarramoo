@@ -53,3 +53,30 @@
 - Gate: cargo 0, clippy 0, determinism 53 passed, `pnpm test:net` 314 passed (39 files).
 - Red first: the win test failed against the stub `round_won` (false) in the sense that the end-to-end test could not pass before it was implemented; I did not
   separately run it red against a stubbed sim. Flag.
+
+## Unfinished (call budget reached)
+- **Checklist 5 (balance), 6 (client) and 7 (screenshots) were not done.** `BOSS_HP` is still the design's 1200 and the supply pile is the 6 pickups
+  (4x Fire bolt = 40, 2x Bomb... actually `SUPPLY_PILE` = Fire bolt x3, Bomb x2, Lava Flask x1) chosen without measurement. The report has no balance arithmetic.
+  Evidence only: in the D2 script six players with the whole pile did not get the boss below 2/3 hp before dying, so 1200 hp is probably too high for the
+  supply as it stands. Unverified: that one well-supplied player can win (the sim test wins with infinite Fire bolts).
+- Client: no sprite, HUD bar, sounds, toast, banner check or `__devGotoEnemy(4)` / `__devBossHp`. Nothing was opened in a browser. `EV_ENEMY_PHASE` (14) and kind 4
+  are unknown to `client/` and `shared/names.ts`; the entities view already carries the boss as `ENT_ENEMY` sub 4.
+- Net tests pass (314) with the sim as it is; a format version was NOT bumped (layout unchanged, see decisions).
+
+## Counts and arena
+- Arena radii: S 40x24, M 56x32, L 70x40. L seed 1: 51 normal enemies + boss; with 4 summons alive 56 of 64.
+- Work maximum: 1226 cells per tick (boss phase 3, 4 summons).
+
+## Architectural decisions for review
+- Arena only in Survival: `generate_world(.., with_arena)`; other worlds proven byte-identical by recorded hashes. Cost: Deathmatch worlds get no arena.
+- Boss stepping priority: stepped first when in range, then lowest ids (alternative: lowest id). Cost: one extra scan per tick.
+- Summon ids: boss id + 1 + counter, counter stored in the boss's `hop_until` (reuse of a field, not a new one). Alternative: a world counter in state (needs a format bump).
+- `round_won`: bit 1 of `round_started` (hashed, reversible). Alternative: a new hashed byte. The lobby slice must clear it on reset like the rest of `round_started`.
+- Same-tick win and loss: win counts (existing precedence in `check_round_end`).
+- No snapshot format bump: boss phase in `state` bits 2..3, summon counter in `hop_until`, decode checks both.
+- Leash: soft push near the rim plus a hard undo of any move ending outside the ellipse (the boss may pin against the rim).
+- `__devBossHp`: not built.
+
+## FUTURE.md suggestions
+- A real `boss_phase`/`summons` field pair instead of reusing `state` bits and `hop_until`, at the next format bump.
+- Give the supply pile more charges the more players the room starts with.
