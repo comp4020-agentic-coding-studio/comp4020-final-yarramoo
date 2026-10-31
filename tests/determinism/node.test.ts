@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compare } from "./compare.ts";
 import { m5Missing } from "./m5-coverage.ts";
-import { castScript, m5Script, survivalScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
+import { castScript, m5Script, survivalScript, tiersScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 
 const wasm = readWasm(wasmPath);
@@ -88,5 +88,18 @@ describe("Node determinism", () => {
     expect(compare(a, b, ["run1", "run2"])).toBeNull();
     expect(compare(a, seven, ["each", "k=7"])).toBeNull();
     expect(a.events!.filter((e) => e.kind === 11).length).toBeGreaterThanOrEqual(3);
+  });
+
+  // F5: an imp fires at a player and a worm tunnels to another. D1/D6 agree, an enemy-owned bolt (owner high bit)
+  // impacted, and the worm reached its player (a contact knock, which needs the tunnel: the player is inside rock).
+  const tiers = tiersScript().script;
+  it("D1/D6 with imps and worms: agree, an imp bolt flew and a worm dug to its player", () => {
+    const a = run(readWasm(wasmPath), tiers, {}, { collectEvents: true });
+    const b = run(readWasm(wasmPath), tiers);
+    const seven = run(readWasm(wasmPath), tiers, {}, { batching: { kind: "batch", k: 7 } });
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    expect(compare(a, seven, ["each", "k=7"])).toBeNull();
+    expect(a.events!.some((e) => e.kind === 6 && e.player >= 0x80000000)).toBe(true);
+    expect(a.events!.some((e) => e.kind === 5 && e.player === 2 && e.b === -24)).toBe(true);
   });
 });

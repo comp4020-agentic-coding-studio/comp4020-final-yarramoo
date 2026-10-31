@@ -71,3 +71,10 @@
   by nature (bedrock stop, lava, work, placement, D7 compare two identical runs under the stub). My first three setups put the player
   beyond the 40-cell wake or 120-cell hunt distance; those were fixed in the tests, not the sim.
 - Gate green (exit 0).
+
+### 4b. D2/D1/D6 script for the tiers (separate commit)
+- `tiersScript()` in `tests/determinism/helpers.ts`: player 1 stands 3 cells from an imp, player 2 stands 90 cells from a buried
+  worm (inside the 120-cell hunt range, outside the 40-cell wake, so the worm only tunnels once a player is in 40 cells;
+  see below). Node D1/D6 asserts an enemy-owned `EV_IMPACT` (owner high bit) and a contact knock on player 2; browser D2 runs it on
+  Chromium, Firefox and WebKit against Node.
+- Red first: with both players moved 300/90 cells away the Node test failed ("expected false to be true"). Gate: 49 tests green.

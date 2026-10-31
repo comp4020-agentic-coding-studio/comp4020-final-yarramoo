@@ -83,6 +83,32 @@ export function survivalScript(): { script: Script; path: string } {
   return { script, path };
 }
 
+/**
+ * F5 script: Survival tiers. Player 1 stands in an imp's open pocket (the imp fires Fire bolts at it), player 2 stands
+ * 20 cells from a buried worm (the worm wakes, tunnels to it and hits it). Positions are read from the sim after init.
+ */
+export function tiersScript(): { script: Script; path: string } {
+  const path = resolve(root, "tests/determinism/.cache/script-survival-tiers.json");
+  const sim = loadSim(readWasm(wasmPath));
+  sim.init(20261031n, encodeConfig(SURVIVAL));
+  const enemies = sim.entities().filter((e) => e.type === ENT_ENEMY).sort((a, b) => a.id - b.id);
+  const imp = enemies.find((e) => e.sub === 1);
+  const worm = enemies.find((e) => e.sub === 3);
+  if (!imp || !worm) throw new Error("survival world has no imp or no worm");
+  const inputs: Record<string, string[]> = {};
+  const at = (t: number, b: Uint8Array) => (inputs[String(t)] ??= []).push(hex(b));
+  at(1, encodeJoin(1));
+  at(1, encodeJoin(2));
+  for (let t = 5; t < 600; t += 3) {
+    at(t, encodePos(1, 0, imp.x + 3 * 16, imp.y + 16, 0));
+    at(t, encodePos(2, 0, worm.x + 20 * 16, worm.y - 2 * 16, 0));
+  }
+  const script: Script = { seed: "20261031", config: "survival", ticks: 600, inputs } as unknown as Script;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(script));
+  return { script, path };
+}
+
 /** M5 script: three bots collect Bomb and Fire bolt pickups, hit and kill each other, respawn and take a bag. Needs the built wasm. */
 export function m5Script(): { script: Script; path: string } {
   const path = resolve(root, "tests/determinism/.cache/script-game-m5.json");
