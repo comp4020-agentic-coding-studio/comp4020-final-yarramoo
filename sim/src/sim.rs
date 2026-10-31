@@ -1,7 +1,7 @@
 //! The simulation instance: grid + tick + queued inputs.
 
 use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX, TERRAIN_SOLID_BOX};
-use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
+use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_ROUND_END, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
@@ -181,6 +181,7 @@ impl Sim {
             self.grid.explosions = centres;
             self.hazard_scan();
             self.enemy_hazard_scan();
+            self.check_round_end();
         }
         #[cfg(feature = "canary")]
         {
@@ -195,6 +196,29 @@ impl Sim {
         }
         self.tick = self.tick.wrapping_add(1);
         self.tick
+    }
+
+    /// D-160: a one-life round (`round` 1) is lost when at least one player is active and every active player is
+    /// dead. Fires `EV_ROUND_END { a: 0 }` exactly once (`round_over` is hashed), after which enemies stop. A
+    /// player who leaves does not by itself end the round (a reconnect must find it running); the win comes with
+    /// the boss slice: `round_won` below is the hook, always false until then.
+    fn check_round_end(&mut self) {
+        if self.cfg.round != 1 || self.round_over != 0 {
+            return;
+        }
+        let tick = self.tick;
+        let any_active = self.players.iter().any(|p| p.active);
+        let any_alive = self.players.iter().any(|p| p.alive(tick));
+        let (won, lost) = (self.round_won(), any_active && !any_alive);
+        if won || lost {
+            self.round_over = 1;
+            self.events.push(Event { kind: EV_ROUND_END, player: 0, a: i32::from(won), b: 0, c: 0 });
+        }
+    }
+
+    /// Hook for the boss slice: the boss's death wins the round (D-158). No boss exists yet.
+    fn round_won(&self) -> bool {
+        false
     }
 
     /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks that intersect the 576 x 320

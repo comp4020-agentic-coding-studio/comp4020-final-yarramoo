@@ -501,7 +501,7 @@ impl Sim {
     /// are environment-caused (hazard contact, gunpowder's own chain reaction, owner 0), gated by
     /// `damage_from_env()`. Terrain effects (ignite, carve, knockback, bursts) are never gated: a Creative
     /// Blast still carves and knocks back, it just never takes health.
-    pub(crate) fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
+    pub fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
         let player_caused = usize::from(cause) < NUM_SPELLS;
         let allowed = if player_caused { self.cfg.damage_from_players() } else { self.cfg.damage_from_env() };
         if !allowed {
@@ -516,7 +516,8 @@ impl Sim {
         if p.health > 0 {
             return;
         }
-        p.dead_until = tick.wrapping_add(self.cfg.respawn_ticks());
+        // D-160: with one life (`death` 1) a dead player never respawns: the deadline is never reached.
+        p.dead_until = if self.cfg.death == 1 { u32::MAX } else { tick.wrapping_add(self.cfg.respawn_ticks()) };
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
         let (id, px, py) = (p.id, p.x, p.y);

@@ -55,3 +55,16 @@
   Hole pull). The other two (own bomb knock, Push on a slime) are non-regression tests and pass either way.
 - Gate green (the stash-style revert was restored before the gate; `grep` confirms the gate text is present).
 
+### 7. One life and `EV_ROUND_END` loss (sim only; server `round.end` NOT built)
+- `spells.rs`: with `death == 1`, `dead_until = u32::MAX` on death (every reader goes through `alive()` or
+  `health == 0 && tick >= dead_until`, so nothing else changed; `apply_damage` is now `pub` for tests).
+  `sim.rs`: `check_round_end` after the hazard scans, `round_over` in hashed state, `round_won()` hook returning
+  false (boss slice), enemies stop stepping once `round_over != 0`. Loss means at least one player is active and no
+  active player is alive; a lone Leave does not end the round. Solo works.
+- Red first: with `check_round_end` removed and `u32::MAX` disabled, all 5 new tests failed.
+- **Server `round.end` and the room-ended flag were left out.** The claim path is built around `ResolvedDeath` and
+  a fixed-length CLAIM frame (`shared/protocol.ts`, `onClaim`, `tryResolveClaim`); a round-end claim needs a new
+  wire message, a client sender, a tally and a rooms-table flag. That is the brief's "too big, stop at sim plus
+  client banner" case, so I did not half-build it. The client banner is item 8.
+- Gate green.
+
