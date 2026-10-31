@@ -6,8 +6,8 @@ use crate::sim::Sim;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
-/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell. Restore refuses any other version (the game is not live, so no stored state is lost).
-pub const FORMAT_VERSION: u16 = 6;
+/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes. Restore refuses any other version (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 7;
 const CFG_AT: usize = 4 + 2 + 32 + 8;
 const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
@@ -83,7 +83,7 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
             return Err(());
         }
     } else {
-        (s.players, s.projectiles, s.bags) = crate::entities::decode(&b[o..eend], &mut s.pickups, w, h)?;
+        (s.players, s.projectiles, s.bags, s.enemies, s.round_over) = crate::entities::decode(&b[o..eend], &mut s.pickups, w, h)?;
     }
     o = eend;
     let n = u32_at(o) as usize;

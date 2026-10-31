@@ -8,6 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
+use crate::tuning::{ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
@@ -284,6 +285,45 @@ pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, V
     place_coal(g, seed, &sc);
     repair_traversal(g, seed, &sc);
     (pick_spots(g, seed, &sc), path)
+}
+
+/// Slimes: the shallow band's floors, at most `want` of them (F4, D-157: placed once, never respawned). Returns cells
+/// (x, y) of the Empty floor cell, in placement order, which is the enemy id order. Kept off the surface spawn
+/// area (`ENEMY_SPAWN_CLEAR` columns either side of the world centre, within `ENEMY_SPAWN_ROWS` rows of the
+/// shallow top), off pickups, out of liquids (the whole 5x4 body must be Empty), and apart from each other.
+pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16)> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let sc = Scale::new(w, h);
+    let want = scale_count(w, h, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN) as usize;
+    let (y_lo, y_hi) = (sc.shallow_top + 20, (sc.deep_top - 40).max(sc.shallow_top + 60));
+    let mut out: Vec<(u16, u16)> = Vec::new();
+    for k in 0..6000u32 {
+        if out.len() >= want {
+            break;
+        }
+        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_ENEMY_X) % (w - 80) as u32) as i32;
+        let y = y_lo + (rng(seed, 0, k, 0, SALT_GEN_ENEMY_Y) % (y_hi - y_lo) as u32) as i32;
+        if (x - w / 2).abs() <= ENEMY_SPAWN_CLEAR && y < sc.shallow_top + ENEMY_SPAWN_ROWS {
+            continue;
+        }
+        let Some(yf) = find_floor(g, x, y, 100) else { continue };
+        if yf < y_lo || yf > y_hi {
+            continue;
+        }
+        // The 5x4 body is Empty (so no liquid, gas or plant), and the floor is not sand (it would shift).
+        let body = (x - 2..=x + 2).all(|bx| (yf - 3..=yf).all(|by| g.mat[(by * w + bx) as usize] == EMPTY));
+        if !body || g.mat[((yf + 1) * w + x) as usize] == SAND {
+            continue;
+        }
+        if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 8 && (i32::from(py) - yf).abs() < 8) {
+            continue;
+        }
+        if out.iter().any(|&(ox, oy)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - yf).abs() < 20) {
+            continue;
+        }
+        out.push((x as u16, yf as u16));
+    }
+    out
 }
 
 /// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.

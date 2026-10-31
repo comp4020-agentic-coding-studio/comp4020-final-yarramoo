@@ -159,15 +159,72 @@ impl Bag {
     }
 }
 
+/// A generator-placed enemy (F4). State: hashed and snapshotted, sorted by id (ids come from the generator in
+/// placement order, so no id counter exists). `x`, `y`: 1/16 cell, feet centre and feet line, like a player.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Enemy {
+    pub id: u16,
+    pub kind: u8,
+    pub x: i32,
+    pub y: i32,
+    /// 1/16 cell per tick.
+    pub vx: i16,
+    pub vy: i16,
+    pub hp: u16,
+    pub facing: u8,
+    /// 0 idle, 1 chase (render hint and AI mode).
+    pub state: u8,
+    /// Contact damage is available when `tick >= cooldown_until`.
+    pub cooldown_until: u32,
+    /// The next hop is allowed when `tick >= hop_until`.
+    pub hop_until: u32,
+    pub last_hit_by: u32,
+    pub last_hit_tick: u32,
+}
+
+pub const ENEMY_BYTES: usize = 2 + 1 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 4 + 4 + 4 + 4;
+
+impl Enemy {
+    pub fn new(id: u16, kind: u8, x: i32, y: i32) -> Enemy {
+        Enemy { id, kind, x, y, vx: 0, vy: 0, hp: ENEMY_STATS[usize::from(kind)].hp, facing: 0, state: 0, cooldown_until: 0, hop_until: 0, last_hit_by: 0, last_hit_tick: 0 }
+    }
+
+    /// Cells overlapped by the hitbox: (x0, y0, x1, y1), inclusive. Width is odd-centred like the player's.
+    pub fn hitbox_cells(&self) -> (i32, i32, i32, i32) {
+        let st = &ENEMY_STATS[usize::from(self.kind)];
+        let half = st.w * POS_ONE / 2;
+        ((self.x - half) >> POS_SHIFT, (self.y - st.h * POS_ONE) >> POS_SHIFT, (self.x + half - 1) >> POS_SHIFT, (self.y - 1) >> POS_SHIFT)
+    }
+
+    fn write(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.id.to_le_bytes());
+        v.push(self.kind);
+        v.extend_from_slice(&self.x.to_le_bytes());
+        v.extend_from_slice(&self.y.to_le_bytes());
+        v.extend_from_slice(&self.vx.to_le_bytes());
+        v.extend_from_slice(&self.vy.to_le_bytes());
+        v.extend_from_slice(&self.hp.to_le_bytes());
+        v.push(self.facing);
+        v.push(self.state);
+        v.extend_from_slice(&self.cooldown_until.to_le_bytes());
+        v.extend_from_slice(&self.hop_until.to_le_bytes());
+        v.extend_from_slice(&self.last_hit_by.to_le_bytes());
+        v.extend_from_slice(&self.last_hit_tick.to_le_bytes());
+    }
+}
+
 /// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
-/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order)`. Players stay first:
+/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order), n_enemies u32, enemies (by id),
+/// round_over u8`. Players stay first:
 /// the server reads the player section at a fixed offset (`activePlayersIn`).
-pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag]) -> Vec<u8> {
+pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round_over: u8) -> Vec<u8> {
     let mut v = Vec::with_capacity(
         16 + players.len() * PLAYER_BYTES
             + pickups.len() * PICKUP_BYTES
             + projectiles.len() * PROJECTILE_BYTES
-            + bags.len() * BAG_BYTES,
+            + bags.len() * BAG_BYTES
+            + 5
+            + enemies.len() * ENEMY_BYTES,
     );
     v.extend_from_slice(&(players.len() as u32).to_le_bytes());
     for p in players {
@@ -185,6 +242,11 @@ pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile]
     for b in bags {
         b.write(&mut v);
     }
+    v.extend_from_slice(&(enemies.len() as u32).to_le_bytes());
+    for e in enemies {
+        e.write(&mut v);
+    }
+    v.push(round_over);
     v
 }
 
@@ -214,7 +276,7 @@ impl R<'_> {
 /// Decode entity bytes against the freshly generated `pickups` (their identity must match; only
 /// `respawn_at` and `charges` are taken from the bytes). Hostile input fails cleanly, never panics.
 /// `w`, `h` are the world's size in cells: a bag outside it is refused.
-pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>);
+pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>, Vec<Enemy>, u8);
 
 pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<Decoded, ()> {
     let mut r = R(b, 0);
@@ -238,7 +300,16 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         return Err(());
     }
     let nb = u32::from_le_bytes(b[bag_at as usize..bag_at as usize + 4].try_into().map_err(|_| ())?) as usize;
-    if nb > MAX_BAGS || bag_at + 4 + (nb as u64) * (BAG_BYTES as u64) != b.len() as u64 {
+    if nb > MAX_BAGS {
+        return Err(());
+    }
+    // The enemy count follows the bags; it then fixes the exact total length (enemies, then the round_over byte).
+    let en_at = bag_at + 4 + (nb as u64) * (BAG_BYTES as u64);
+    if (b.len() as u64) < en_at + 4 {
+        return Err(());
+    }
+    let ne = u32::from_le_bytes(b[en_at as usize..en_at as usize + 4].try_into().map_err(|_| ())?) as usize;
+    if ne > MAX_ENEMIES || en_at + 4 + (ne as u64) * (ENEMY_BYTES as u64) + 1 != b.len() as u64 {
         return Err(());
     }
     let mut players: Vec<Player> = Vec::with_capacity(np);
@@ -314,7 +385,41 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         }
         bags.push(Bag { x, y, charges, expires_at: r.u32().ok_or(())? });
     }
-    Ok((players, projectiles, bags))
+    if r.u32().ok_or(())? as usize != ne {
+        return Err(());
+    }
+    let mut enemies: Vec<Enemy> = Vec::with_capacity(ne);
+    for _ in 0..ne {
+        let id = r.u16().ok_or(())?;
+        let kind = r.u8().ok_or(())?;
+        if usize::from(kind) >= NUM_ENEMY_KINDS || enemies.last().is_some_and(|e| e.id >= id) {
+            return Err(());
+        }
+        let mut e = Enemy::new(id, kind, 0, 0);
+        e.x = r.i32().ok_or(())?;
+        e.y = r.i32().ok_or(())?;
+        e.vx = r.u16().ok_or(())? as i16;
+        e.vy = r.u16().ok_or(())? as i16;
+        e.hp = r.u16().ok_or(())?;
+        e.facing = r.u8().ok_or(())?;
+        e.state = r.u8().ok_or(())?;
+        if e.facing > 1 || e.state > 1 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
+            return Err(());
+        }
+        e.cooldown_until = r.u32().ok_or(())?;
+        e.hop_until = r.u32().ok_or(())?;
+        e.last_hit_by = r.u32().ok_or(())?;
+        e.last_hit_tick = r.u32().ok_or(())?;
+        if e.x < 0 || e.y < 0 || (e.x >> POS_SHIFT) as usize >= w || (e.y >> POS_SHIFT) as usize > h {
+            return Err(());
+        }
+        enemies.push(e);
+    }
+    let round_over = r.u8().ok_or(())?;
+    if round_over > 1 {
+        return Err(());
+    }
+    Ok((players, projectiles, bags, enemies, round_over))
 }
 
 // ---- render-only views (plan 6.11; invariant 9: nothing read from these may become an input) ----------
@@ -338,6 +443,12 @@ pub const EV_EXPLODE: u8 = 8;
 pub const EV_DEATH: u8 = 9;
 /// A bag was taken: `player` = taker, a, b = the bag's cell x, y, c = total charges taken.
 pub const EV_BAG_PICKUP: u8 = 10;
+/// An enemy took damage: `player` = attacker (0 if none), a = enemy id, b = damage, c = hp left.
+pub const EV_ENEMY_HURT: u8 = 11;
+/// An enemy died: `player` = killer (0 if none), a, b = x, y (1/16 cell), c = kind.
+pub const EV_ENEMY_DEATH: u8 = 12;
+/// A one-life round ended: a = 1 win, 0 loss. Fires once (`round_over`).
+pub const EV_ROUND_END: u8 = 13;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;
@@ -371,11 +482,14 @@ pub const ENT_PICKUP: u8 = 2;
 pub const ENT_PROJECTILE: u8 = 3;
 /// A dropped bag: `id` = index, `active` = 1, x, y = the cell centre in 1/16 cell, `a` = total charges (capped to u16).
 pub const ENT_BAG: u8 = 4;
+/// An enemy: `id`, `active` = 1, `sub` = kind, x, y in 1/16 cell, `a` = hp, `health` byte = `state | facing << 7`.
+pub const ENT_ENEMY: u8 = 5;
 /// Entity record: `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`.
 pub const ENTITY_BYTES: usize = 18;
 
+#[allow(clippy::too_many_arguments)] // one slice per entity list, as `encode`
 /// Entity views for the renderer, players then pickups, written into `out` (at most `max` records).
-pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], tick: u32, out: &mut [u8], max: usize) -> usize {
+pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], tick: u32, out: &mut [u8], max: usize) -> usize {
     let mut n = 0;
     let mut put = |t: u8, id: u32, active: bool, sub: u8, x: i32, y: i32, a: u16, health: u8| {
         if n >= max || (n + 1) * ENTITY_BYTES > out.len() {
@@ -413,6 +527,9 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
     }
     for (i, b) in bags.iter().enumerate() {
         put(ENT_BAG, i as u32, true, 0, i32::from(b.x) * POS_ONE + POS_ONE / 2, i32::from(b.y) * POS_ONE + POS_ONE / 2, b.total(), 0);
+    }
+    for e in enemies {
+        put(ENT_ENEMY, u32::from(e.id), true, e.kind, e.x, e.y, e.hp, e.state | (e.facing << 7));
     }
     n
 }

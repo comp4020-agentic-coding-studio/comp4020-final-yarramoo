@@ -11,3 +11,18 @@
   (`presets encode to the shared vectors`, `good vectors round-trip`). Green after.
 - Gate: cargo test, clippy, typecheck, test:determinism all green.
 
+### 2+3. Enemy state, snapshot format 7, entities view, and generator placement (one commit; flagged)
+- Items 2 and 3 landed as ONE commit: `sim.rs` builds the enemy list from `gen::enemy_spots`, so splitting after
+  the fact would have meant a red intermediate state. Flagged as a deviation from the checklist.
+- State: `Enemy` in `entities.rs` (35 bytes), `Sim.enemies`, `Sim.round_over`, `Base.enemies`; entity bytes append
+  `n_enemies u32, enemies, round_over u8`; `FORMAT_VERSION` 7; `ENT_ENEMY` view record; `EV_ENEMY_HURT/DEATH`,
+  `EV_ROUND_END` ids 11-13 (sim and `shared/sim.ts`). Enemies come from `Sim::new` and the cached base.
+- Gen: `gen::enemy_spots` (shallow band floors, off the surface spawn zone, off pickups, whole 5x4 body Empty).
+- Re-pointed expectations (all about the version/section bump, none weakened): `bags.rs` format 6 -> 7 (and the
+  refused-version list now holds 6 instead of 7), `config_state.rs` same, `bags.rs`/`spells.rs` hostile-section
+  offsets move by the 5-byte empty enemy section.
+- Slime counts (seeds 1-3, from `/tmp/f4-slime-counts.txt`): S 7/8/5 (target 8), M 8/8/8 (target 8), L 25/25/25.
+  S falls short of its floor on some seeds because the shallow band is small; the test allows 50%..100% of target.
+- New tests (`sim/tests/enemies.rs`): byte layout and snapshot round trip, hostile bytes, view record, empty
+  section, enemies-only-when-on, floor/liquid/spawn/pickup placement, counts per size, cached base.
+

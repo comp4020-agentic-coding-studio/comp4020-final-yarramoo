@@ -1,7 +1,7 @@
 //! The simulation instance: grid + tick + queued inputs.
 
 use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX, TERRAIN_SOLID_BOX};
-use crate::entities::{self, Bag, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
+use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
@@ -21,6 +21,7 @@ pub struct Base {
     pub mat: Vec<u8>,
     pub aux: Vec<u8>,
     pub pickups: Vec<Pickup>,
+    pub enemies: Vec<Enemy>,
 }
 
 pub struct Sim {
@@ -37,6 +38,10 @@ pub struct Sim {
     pub projectiles: Vec<Projectile>,
     /// Dropped bags, in spawn order (game worlds only; the sandbox has none). State: hashed and snapshotted.
     pub bags: Vec<Bag>,
+    /// Enemies, sorted by id (Survival only). State: hashed and snapshotted. Placed by the generator, never spawned later.
+    pub enemies: Vec<Enemy>,
+    /// 1 once the one-life round has ended (`EV_ROUND_END` fired). State: hashed and snapshotted.
+    pub round_over: u8,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
     /// Cache of the generated world, so `restore` need not regenerate it. Not state.
@@ -56,13 +61,13 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
                     grid.mat.copy_from_slice(&b.mat);
                     grid.aux.copy_from_slice(&b.aux);
-                    return Some(make(grid, b.pickups.clone(), None));
+                    return Some(make(grid, b.pickups.clone(), b.enemies.clone(), None));
                 }
                 let spots = crate::gen::generate(&mut grid, seed);
                 let pickups: Vec<Pickup> = spots
@@ -87,8 +92,19 @@ impl Sim {
                         Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
                     })
                     .collect();
-                let base = Base { seed, cfg: bytes, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone() };
-                Some(make(grid, pickups, Some(base)))
+                // F4 (D-157): the generator places the slimes once; they join the cached base like pickups.
+                let enemies: Vec<Enemy> = if cfg.has_enemies() {
+                    let at: Vec<(u16, u16)> = pickups.iter().map(|p| (p.x, p.y)).collect();
+                    crate::gen::enemy_spots(&grid, seed, &at)
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &(x, y))| Enemy::new(i as u16, ENEMY_SLIME, i32::from(x) * POS_ONE + POS_ONE / 2, (i32::from(y) + 1) * POS_ONE))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let base = Base { seed, cfg: bytes, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone(), enemies: enemies.clone() };
+                Some(make(grid, pickups, enemies, Some(base)))
             }
             TERRAIN_EMPTY_BOX => {
                 // The classic canvas: bedrock floor and side walls, at every size (R1).
@@ -99,7 +115,7 @@ impl Sim {
                         }
                     }
                 }
-                Some(make(grid, Vec::new(), None))
+                Some(make(grid, Vec::new(), Vec::new(), None))
             }
             TERRAIN_SOLID_BOX => {
                 // Dirt over Rock, for digging and carving (plan-game-modes "Config fields"): a shallow Dirt
@@ -120,7 +136,7 @@ impl Sim {
                         grid.mat[y * w + x] = m;
                     }
                 }
-                Some(make(grid, Vec::new(), None))
+                Some(make(grid, Vec::new(), Vec::new(), None))
             }
             _ => None,
         }
@@ -358,7 +374,7 @@ impl Sim {
         if !self.cfg.has_players() {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags)
+        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, self.round_over)
     }
 
     pub fn state_hash(&mut self) -> u64 {

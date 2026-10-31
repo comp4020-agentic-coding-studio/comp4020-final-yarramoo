@@ -46,6 +46,11 @@ pub const SALT_MGAS_DIR: u32 = 206;
 pub const SALT_ICE_FREEZE: u32 = 207;
 pub const SALT_ICE_MELT: u32 = 208;
 pub const SALT_LAVA_GLASS: u32 = 209;
+/// F4 enemies: placement and the slime's AI draws (one salt per use).
+pub const SALT_GEN_ENEMY_X: u32 = 240;
+pub const SALT_GEN_ENEMY_Y: u32 = 241;
+pub const SALT_ENEMY_HOP: u32 = 242;
+pub const SALT_ENEMY_IDLE: u32 = 243;
 pub const SALT_COAL_IGNITE: u32 = 210;
 pub const SALT_COAL_EMIT: u32 = 211;
 pub const SALT_COAL_SMOKE: u32 = 212;

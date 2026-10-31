@@ -36,6 +36,12 @@ export const EV_RESPAWN = 7;
 export const EV_EXPLODE = 8;
 export const EV_DEATH = 9;
 export const EV_BAG_PICKUP = 10;
+/** EnemyHurt: `player` = attacker (0 none), a = enemy id, b = damage, c = hp left. */
+export const EV_ENEMY_HURT = 11;
+/** EnemyDeath: `player` = killer (0 none), a, b = x, y in 1/16 cell, c = kind. */
+export const EV_ENEMY_DEATH = 12;
+/** RoundEnd: a = 1 win, 0 loss. Fires once per room. */
+export const EV_ROUND_END = 13;
 /** Cause of a death (`EV_DEATH.b`): a spell id 0..NUM_SPELLS is that spell, then these. */
 export const CAUSE_FIRE = 32;
 export const CAUSE_LAVA = 33;
@@ -68,6 +74,8 @@ export const ENT_PICKUP = 2;
 export const ENT_PROJECTILE = 3;
 /** A dropped bag: `id` is its index in the list, `a` the total charges, x and y the cell centre in 1/16 cell. */
 export const ENT_BAG = 4;
+/** An enemy: `id`, `sub` = kind, x and y in 1/16 cell (feet centre / feet line), `a` = hp, `health` = state | facing << 7. */
+export const ENT_ENEMY = 5;
 export const NUM_SPELLS = 12;
 export interface EntityView {
   type: number;

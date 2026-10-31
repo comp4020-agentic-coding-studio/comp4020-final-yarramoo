@@ -136,3 +136,41 @@ pub const PICKUP_TABLE: [&[(u8, u32)]; 2] = [
     &[(2, 2), (3, 2), (7, 2), (8, 2), (9, 2)],
     &[(4, 2), (5, 2), (10, 2), (11, 1)],
 ];
+
+// ---- enemies (F4, docs/research/enemies-design.md) ------------------------------------------------------
+
+/// Enemy kinds: 0 Slime. Later slices append (ids stay stable).
+pub const ENEMY_SLIME: u8 = 0;
+pub const NUM_ENEMY_KINDS: usize = 1;
+/// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
+pub const MAX_ENEMIES: usize = 48;
+pub const MAX_ENEMIES_STEPPED: usize = 24;
+/// An enemy steps only inside this rectangle (cells) around an active, alive player; it is strictly inside the
+/// chunk-activity rectangle (`ACTIVE_W` x `ACTIVE_H`). It is computed from `players`, never from `grid.awake`.
+pub const ENEMY_ACTIVE_W: i32 = 448;
+pub const ENEMY_ACTIVE_H: i32 = 256;
+/// Immunity bits: an enemy of a kind with the bit set takes no damage from that hazard.
+pub const IMMUNE_FIRE: u8 = 1;
+pub const IMMUNE_LAVA: u8 = 2;
+pub const IMMUNE_ACID: u8 = 4;
+
+/// Per-kind stats: hp, hitbox width and height (cells), contact damage, contact cooldown (ticks), immunity mask.
+#[derive(Clone, Copy, Debug)]
+pub struct EnemyStats {
+    pub hp: u16,
+    pub w: i32,
+    pub h: i32,
+    pub contact_damage: u8,
+    pub contact_cooldown: u32,
+    pub immune: u8,
+}
+pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [EnemyStats { hp: 20, w: 5, h: 4, contact_damage: 8, contact_cooldown: 40, immune: 0 }];
+/// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
+pub const CAUSE_ENEMY_BASE: u8 = 40;
+/// Slimes the generator places at size L (scaled by area, at least `ENEMY_SLIMES_MIN`), and the no-slime zone
+/// around the surface spawn: this many columns either side of the world centre, within `ENEMY_SPAWN_ROWS` rows
+/// of the shallow top (the spawn column is the centre plus an rng offset of at most `SPAWN_JITTER` plus 7 * 15).
+pub const ENEMY_SLIMES_L: i32 = 25;
+pub const ENEMY_SLIMES_MIN: i32 = 8;
+pub const ENEMY_SPAWN_CLEAR: i32 = 160;
+pub const ENEMY_SPAWN_ROWS: i32 = 60;
