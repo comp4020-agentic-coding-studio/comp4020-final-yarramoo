@@ -233,6 +233,7 @@ impl Grid {
             OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
             ACID => self.update_acid(x, y, seed, tick),
             GAS => self.update_marsh_gas(x, y, seed, tick),
+            ICE => self.update_ice(x, y, seed, tick),
             FIRE => self.update_fire(x, y, seed, tick),
             SMOKE => self.update_gas(x, y, seed, tick, SMOKE),
             STEAM => self.update_gas(x, y, seed, tick, STEAM),
@@ -445,6 +446,34 @@ impl Grid {
         }
     }
 
+    /// Ice: static. `aux` is its freezing budget plus one (0 = fresh, becomes `ICE_COLD + 1`; 1 = spent).
+    /// A Water neighbour freezes (1 in 20) and spends one point; ice made this way is spent, so a lake
+    /// cannot freeze through a chain. Melting is done by the Fire or Lava next to it (those cells are
+    /// volatile and always run), so a sleeping chunk of ice is never what decides a melt. Only an ice cell
+    /// with budget left and Water beside it is volatile: its roll is a chance that needs no change nearby.
+    fn update_ice(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.aux[i] == 0 {
+            self.set(i, ICE, ICE_COLD + 1);
+            return;
+        }
+        if self.aux[i] <= 1 {
+            return;
+        }
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
+            if self.at(nx, ny) == WATER {
+                self.vol_seen = true;
+                if rng(seed, tick, x as u32, y as u32, SALT_ICE_FREEZE) % 20 == 0 {
+                    self.set(ny * self.w + nx, ICE, 1);
+                    self.moved[ny * self.w + nx] = 1;
+                    self.aux[i] -= 1;
+                    return;
+                }
+            }
+        }
+    }
+
     fn dissolvable(m: u8) -> bool {
         matches!(m, ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER)
     }
@@ -460,10 +489,14 @@ impl Grid {
         }
         for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
             if let Some((nx, ny)) = self.off(x, y, dx, dy) {
-                if is_flammable(self.at(nx, ny))
-                    && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_IGNITE) % 8 == 0
-                {
-                    self.set(ny * self.w + nx, FIRE, 0);
+                let m = self.at(nx, ny);
+                let n = ny * self.w + nx;
+                if is_flammable(m) && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_IGNITE) % 8 == 0 {
+                    self.set(n, FIRE, 0);
+                } else if m == ICE && rng(seed, tick, nx as u32, ny as u32, SALT_ICE_MELT) % 2 == 0 {
+                    self.set(n, WATER, 0);
+                } else if m == SAND && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_GLASS) % 10 == 0 {
+                    self.set(n, GLASS, 0);
                 }
             }
         }
@@ -488,6 +521,9 @@ impl Grid {
         for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
             if let Some((nx, ny)) = self.off(x, y, dx, dy) {
                 let m = self.at(nx, ny);
+                if m == ICE && rng(seed, tick, nx as u32, ny as u32, SALT_ICE_MELT) % 3 == 0 {
+                    self.set(ny * self.w + nx, WATER, 0);
+                }
                 if is_flammable(m) {
                     let n = match m {
                         WOOD => 12,
@@ -756,7 +792,7 @@ impl Grid {
                 }
                 let i = y as usize * self.w + x as usize;
                 match self.mat[i] {
-                    ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER => self.set(i, EMPTY, 0),
+                    ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER | ICE | GLASS => self.set(i, EMPTY, 0),
                     GUNPOWDER if self.aux[i] != 1 => self.set(i, GUNPOWDER, 1),
                     _ => {}
                 }
@@ -797,6 +833,8 @@ impl Grid {
 const GERMINATE_AT: u8 = 60;
 /// Dissolves an acid cell can do before it is used up.
 const ACID_STRENGTH: u8 = 12;
+/// Waters one fresh Ice cell can freeze over its life.
+const ICE_COLD: u8 = 3;
 /// Lifetime of the fire a burning Gas cell becomes: short, so a pocket flashes through.
 const FLASH_LIFE: u8 = 6;
 
@@ -1011,6 +1049,77 @@ mod tests {
         let t = done.unwrap_or_else(|| panic!("pocket left {} gas", count(&g, GAS)));
         assert!(t < 120, "flash fire took {t} ticks");
         assert_eq!(count(&g, FIRE), 0);
+    }
+
+    #[test]
+    fn fire_melts_ice() {
+        let mut g = boxed(64, 64);
+        for x in 10..14 {
+            g.set(62 * 64 + x, ICE, 0);
+        }
+        g.set(61 * 64 + 10, FIRE, 0);
+        g.set(61 * 64 + 11, FIRE, 0);
+        g.set(61 * 64 + 12, FIRE, 0);
+        g.set(61 * 64 + 13, FIRE, 0);
+        for x in 10..14 {
+            g.set(60 * 64 + x, BEDROCK, 0); // a ceiling, so the fire stays on the ice
+        }
+        run(&mut g, 4, 100);
+        // Fire beside the fresh meltwater turns to steam, so the last cell may survive; most must go.
+        assert!(count(&g, ICE) <= 1, "fire should melt the ice");
+        assert!(count(&g, WATER) + count(&g, STEAM) > 0);
+    }
+
+    #[test]
+    fn lava_melts_ice() {
+        let mut g = boxed(64, 64);
+        for x in 9..12 {
+            g.set(61 * 64 + x, ROCK, 0);
+        }
+        g.set(62 * 64 + 11, LAVA, 0);
+        g.set(62 * 64 + 12, ICE, 0);
+        g.set(61 * 64 + 12, BEDROCK, 0);
+        g.set(62 * 64 + 13, BEDROCK, 0);
+        run(&mut g, 4, 60);
+        assert_eq!(count(&g, ICE), 0);
+    }
+
+    #[test]
+    fn water_freezes_slowly_and_only_within_the_ice_cold_budget() {
+        // One ice cell in a big pool of water: it may freeze at most ICE_COLD neighbours, over time.
+        let mut g = boxed(64, 64);
+        for y in 50..63 {
+            g.set(y * 64 + 9, BEDROCK, 0);
+            g.set(y * 64 + 40, BEDROCK, 0);
+        }
+        for y in 55..63 {
+            for x in 10..40 {
+                g.set(y * 64 + x, WATER, 0);
+            }
+        }
+        g.set(58 * 64 + 20, ICE, 0);
+        g.step_cells(5, 0);
+        assert_eq!(count(&g, ICE), 1, "not instant");
+        run(&mut g, 5, 2000);
+        let n = count(&g, ICE);
+        assert!(n > 1, "some water should freeze");
+        assert!(n <= 1 + ICE_COLD as usize, "freezing is capped, got {n} ice");
+    }
+
+    #[test]
+    fn lava_turns_sand_to_glass_and_glass_is_inert_and_diggable() {
+        let mut g = boxed(64, 64);
+        g.set(62 * 64 + 10, SAND, 0);
+        g.set(62 * 64 + 12, BEDROCK, 0);
+        g.set(62 * 64 + 11, LAVA, 0);
+        g.set(61 * 64 + 11, ROCK, 0);
+        g.set(61 * 64 + 10, ROCK, 0);
+        run(&mut g, 4, 200);
+        assert_eq!(g.at(10, 62), GLASS);
+        g.set(60 * 64 + 20, GLASS, 0);
+        g.set(60 * 64 + 21, ICE, 0);
+        g.dig(20, 60, 21, 60, 1);
+        assert_eq!((g.at(20, 60), g.at(21, 60)), (EMPTY, EMPTY));
     }
 
     #[test]
@@ -1312,10 +1421,10 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=GAS).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=GLASS).filter(|&m| m != BEDROCK) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(GAS + 1));
+        assert!(!paintable(BEDROCK) && !paintable(GLASS + 1));
     }
 }
 
