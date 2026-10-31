@@ -23,7 +23,8 @@ describe("sim init with a room config", () => {
       expect(() => sim.init(1n, b)).toThrow(/-1/);
     };
     bad((b) => (b[0] = 2)); // version
-    bad((b) => (b[12] = 1)); // reserved
+    bad((b) => (b[12] = 2)); // enemies out of range (F4: byte 12 was reserved, now 0|1)
+    bad((b) => (b[13] = 1)); // reserved
     bad((b) => (b[1] = 7)); // terrain out of range
     bad((b) => (b[11] = 99)); // max players
     expect(() => sim.init(1n, encodeConfig(CLASSIC_SANDBOX).slice(0, 15))).toThrow(/-1/);

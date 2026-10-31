@@ -31,7 +31,7 @@ describe("server's snapshot entity parser matches the sim", () => {
   // The entity section is players, pickups, projectiles, bags, each behind a u32 count (sim/src/entities.rs). The
   // server reads only the player section, which must stay first; this pins where the bag section begins, using a
   // real sim that has a dead player and a bag, so a reordering shows up here and not in production.
-  it("sections are ordered players, pickups, projectiles, bags, with the bag a dead player dropped", () => {
+  it("sections are ordered players, pickups, projectiles, bags, enemies, round_over, with the bag a dead player dropped", () => {
     const sim = loadSim(wasmBytes);
     sim.init(5n, 1);
     sim.pushInput(encodeJoin(3));
@@ -71,11 +71,17 @@ describe("server's snapshot entity parser matches the sim", () => {
     const nj = e.getUint32(o, true);
     o += 4 + nj * PROJECTILE;
     const nb = e.getUint32(o, true);
-    expect([np, nj, nb]).toEqual([1, 0, 1]);
+    const bagAt = o + 4;
+    o += 4 + nb * BAG;
+    // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then a one-byte round_over close the block.
+    const ENEMY = 35;
+    const ne = e.getUint32(o, true);
+    o += 4 + ne * ENEMY + 1;
+    expect([np, nj, nb, ne]).toEqual([1, 0, 1, 0]); // a non-Survival world has no enemies
     expect(nk).toBeGreaterThan(0);
-    expect(o + 4 + nb * BAG).toBe(elen);
+    expect(o).toBe(elen);
     // The bag is the one the view reports: x, y are its cell, then the charges (just the pickup's grant).
-    expect(e.getUint16(o + 4, true)).toBe(Math.floor((bags[0].x - 8) / 16));
+    expect(e.getUint16(bagAt, true)).toBe(Math.floor((bags[0].x - 8) / 16));
     expect(bags[0].a).toBeGreaterThan(0);
   });
 
