@@ -504,3 +504,12 @@ A deep-pickup bolt that moves the caster to the last body-sized open spot along 
 - **Why:** an escape and traversal spell. The open question is the server's Pos validation:
   `maxPosJump` (D-067, D-078) would reject the jump unless the sim's teleport is visible to the server, or
   the client opens a new baseline the way a respawn does. Settle that before building it.
+
+## Falling rock: logs, not sand, and v1 bodies
+
+A cut tree crumbles to sand today (D-165); it could fall as Wood instead, so it still burns. Beyond that, the
+research's v1 (a translation-only `Body` entity that falls as one piece) and v2 (rotation).
+
+- **Source:** falling rock v0 and its review (`docs/research/review-falling-rock.md`), 1 Nov.
+- **Why:** sand everywhere loses the material identity that makes the sim fun. A collapsed overhang can
+  also plug a shaft on the guaranteed path; sand digs, but a gen-time check would be kinder.
