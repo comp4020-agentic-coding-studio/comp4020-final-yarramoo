@@ -421,7 +421,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       return;
     }
     // Q and E step back and forth through the whole bar (the wheel and -/= are zoom, and only nine digits fit).
-    if (castsOnClick() && (k === "q" || k === "e") && !e.ctrlKey && !e.metaKey) {
+    if (castsOnClick() && (k === "q" || k === "e") && !e.repeat && !e.ctrlKey && !e.metaKey) {
       const at = Math.max(0, BAR.indexOf(selectedSpell));
       selectedSpell = BAR[(at + (k === "e" ? 1 : BAR.length - 1)) % BAR.length];
       placeDigPreview();

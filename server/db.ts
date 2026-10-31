@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const SNAPSHOTS_KEPT = 5;
-export const SNAPSHOT_FORMAT_VERSION = 3;
+export const SNAPSHOT_FORMAT_VERSION = 8; // mirrors FORMAT_VERSION in sim/src/snapshot.rs (pinned by tests/net/spells-table.test.ts)
 
 /** Applied in order; PRAGMA user_version is the number applied. Append only, never edit. */
 const MIGRATIONS: string[] = [

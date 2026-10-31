@@ -34,6 +34,8 @@ if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with 
 
 /** Spell slots on the bar, in bar order (keys 1-9, then Q/E or the wheel to cycle). */
 export const BAR: number[] = [0, 1, 6, 2, 3, 4, 5, 7, 8, 9, 10, 11];
+/** Spell id of Wall (index into SPELLS / SPELL_NAMES). */
+export const SPELL_WALL = SPELL_NAMES.indexOf("Wall");
 export const INFINITE = 0xffff;
 
 /** Aim angle as the sim wants it: u16, 65536 per turn, 0 along +x, growing towards +y (down the screen). */

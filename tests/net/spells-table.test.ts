@@ -12,6 +12,23 @@ function arr(name: string): number[] {
   return m[1].split(",").map((x) => Number(x.trim())).filter((x) => !Number.isNaN(x));
 }
 
+describe("client mirrors of sim constants", () => {
+  it("ENEMY_MAX_HP in worker.ts equals ENEMY_STATS hp in tuning.rs", () => {
+    const worker = readFileSync(new URL("../../client/worker.ts", import.meta.url), "utf8");
+    const mirror = worker.match(/const ENEMY_MAX_HP = \[([^\]]*)\]/)![1].split(",").map((x) => Number(x.trim()));
+    const stats = rs.match(/pub const ENEMY_STATS[^=]*= \[([\s\S]*?)\n\];/)![1];
+    const hp = [...stats.matchAll(/EnemyStats \{ hp: (\d+)/g)].map((m) => Number(m[1]));
+    expect(hp.length).toBeGreaterThan(0);
+    expect(mirror).toEqual(hp);
+  });
+  it("db.ts snapshot format equals FORMAT_VERSION in snapshot.rs", () => {
+    const snap = readFileSync(new URL("../../sim/src/snapshot.rs", import.meta.url), "utf8");
+    const db = readFileSync(new URL("../../server/db.ts", import.meta.url), "utf8");
+    const rsv = Number(snap.match(/pub const FORMAT_VERSION: u16 = (\d+);/)![1]);
+    expect(Number(db.match(/SNAPSHOT_FORMAT_VERSION = (\d+)/)![1])).toBe(rsv);
+  });
+});
+
 describe("client spell table matches tuning.rs", () => {
   it("cooldown, speed and gravity", () => {
     const cd = arr("COOLDOWN");

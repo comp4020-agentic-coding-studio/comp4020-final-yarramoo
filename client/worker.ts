@@ -42,7 +42,7 @@ import {
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
 import type { SfxName } from "./sfx.ts";
 import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
-import { BOMB_RADIUS, DEATH_TICKS, SPELLS } from "./spells.ts";
+import { BOMB_RADIUS, DEATH_TICKS, SPELL_WALL, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, knockIsFresh, reactToTick } from "./lockstep.ts";
@@ -809,7 +809,7 @@ function onCast(spell: number, angle: number) {
   const v = (localSim ?? ls?.sim)?.playerView(myId);
   const ready = !v || (v.charges[spell] > 0 && v.cooldown[spell] === 0);
   // Wall is instant (no flight): no ghost. Black Hole has no gravity, so the straight-line ghost is right.
-  if (ready && SPELLS[spell].enabled && spell !== 9) {
+  if (ready && SPELLS[spell].enabled && spell !== SPELL_WALL) {
     const sp = SPELLS[spell];
     ghosts.push({ seq, spell, x: avatar.x, y: avatar.y - 5, vx: Math.cos(rad) * sp.speed, vy: Math.sin(rad) * sp.speed, bornMs: now });
   }
