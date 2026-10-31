@@ -186,6 +186,8 @@ struct Scale {
     worm_branch_span: i32,
     link_x_span: i32,
     target_spots: [(i32, i32, i32); 2],
+    /// Worm radii (min, max, start), cells: roomy tunnels, two to three bodies tall at L, scaled down on small worlds.
+    worm_r: (i32, i32, i32),
 }
 
 impl Scale {
@@ -194,6 +196,9 @@ impl Scale {
         let shallow_top = scale_u(h, SHALLOW_TOP);
         let deep_top = scale_u(h, DEEP_TOP);
         let worm_target_y = deep_top + 100;
+        // 100% at L (2048 wide), 80% at M, 60% at S, so a small world is not solid tunnel.
+        let pct = (60 + 40 * (w - 512) / (2048 - 512)).clamp(60, 100);
+        let wr = |v: i32| (v * pct / 100).max(5);
         Scale {
             surface_y,
             shallow_top,
@@ -218,6 +223,7 @@ impl Scale {
             worm_target_y,
             worm_branch_span: scale_u(h, 450).max(60),
             link_x_span: (w - 348).max(40),
+            worm_r: (wr(WORM_R_MIN), wr(WORM_R_MAX), wr(WORM_R_START)),
             target_spots: [
                 (shallow_top + 40, deep_top - 40, scale_count(w, h, 40, 8)),
                 (deep_top + 40, scale_u(h, 1400), scale_count(w, h, 25, 6)),
@@ -764,9 +770,9 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             id: k as u32,
             x,
             y: surf[x as usize] - 4,
-            r: 7,
-            r_min: 5,
-            r_max: 9,
+            r: sc.worm_r.2,
+            r_min: sc.worm_r.0,
+            r_max: sc.worm_r.1,
             drift: 0,
             step: 0,
             max_steps: 2500,
@@ -784,9 +790,9 @@ fn carve_worms(g: &mut Grid, seed: u64, surf: &[i32], path: &mut Vec<(i32, i32)>
             id,
             x,
             y: base,
-            r: 5,
-            r_min: 5,
-            r_max: 9,
+            r: sc.worm_r.2,
+            r_min: sc.worm_r.0,
+            r_max: sc.worm_r.1,
             drift: 0,
             step: 0,
             max_steps: 280 + (rng(seed, 0, id, 2, SALT_GEN_HWORM) % 280),
@@ -877,6 +883,10 @@ fn wander_link(g: &mut Grid, seed: u64, from: (i32, i32), to: (i32, i32), id: u3
 const FIT_W: usize = crate::tuning::HITBOX_W as usize + 1;
 const FIT_H: usize = crate::tuning::HITBOX_H as usize + 1;
 const REPAIR_PASSES: u32 = 3;
+/// Entrance shaft and link worm radii at L (cells): about 2-3 player bodies tall (the hitbox is 10 tall).
+const WORM_R_MIN: i32 = 10;
+const WORM_R_MAX: i32 = 16;
+const WORM_R_START: i32 = 12;
 
 /// Flood a `bw` x `bh` box (keyed by top-left) through Empty cells from `start`. Returns the top-left
 /// of the box whose bottom is deepest, or None if the start box does not fit. Liquids, sand and solids block.
@@ -1020,9 +1030,9 @@ mod tests {
             }
         }
         let top = |x: usize| (0..g.h).find(|&y| g.mat[y * g.w + x] != EMPTY).unwrap();
-        // Entrance shafts open a few columns, so allow a small fraction outside the band.
+        // Entrance shafts (up to 5, each about 2 x WORM_R_MAX wide since F1) open columns, so allow a small fraction outside the band.
         let bad = (WALL_COLS + 1..g.w - WALL_COLS).filter(|&x| !(190..=270).contains(&top(x))).count();
-        assert!(bad < 60, "{bad} columns off the surface band");
+        assert!(bad < 120, "{bad} columns off the surface band");
         let shallow: Vec<u8> = (300..780).flat_map(|y| g.mat[y * g.w + 20..y * g.w + 2028].to_vec()).collect();
         let open = shallow.iter().filter(|&&m| m == EMPTY).count() * 100 / shallow.len();
         assert!((10..=40).contains(&open), "shallow band is {open}% open");
@@ -1194,5 +1204,27 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Measurement: native release gen time and pickups per band and size. `--ignored`; writes /tmp/f1-gen.txt.
+    #[test]
+    #[ignore = "measurement"]
+    fn measure_gen_time_and_pickups() {
+        use crate::config::RoomConfig;
+        let mut out = String::new();
+        for size in 0u8..=2 {
+            let cfg = RoomConfig { size, ..RoomConfig::caves_pvp() };
+            let (mut best, mut open, mut sh, mut dp) = (u128::MAX, 0usize, 0usize, 0usize);
+            for seed in 1..=4u64 {
+                let t = std::time::Instant::now();
+                let s = Sim::new(seed, cfg).unwrap();
+                best = best.min(t.elapsed().as_micros());
+                open += s.grid.mat.iter().filter(|&&m| m == EMPTY).count() * 100 / s.grid.mat.len();
+                sh += s.pickups.iter().filter(|p| p.spell < 4).count();
+                dp += s.pickups.iter().filter(|p| p.spell >= 4).count();
+            }
+            out += &format!("size {size}: best {} ms, open {}% avg, pickups/seed shallow {} deep {}\n", best / 1000, open / 4, sh / 4, dp / 4);
+        }
+        std::fs::write("/tmp/f1-gen.txt", out).unwrap();
     }
 }

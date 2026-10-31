@@ -68,7 +68,7 @@ describe("D5 with the M5 script", () => {
         bombs: ents.filter((e) => e.type === ENT_PROJECTILE && e.sub === 5).length,
       };
     }
-    expect(marks[90]).toMatchObject({ dead: 1 });
+    expect(marks[90]).toMatchObject({ dead: 2 }); // F1: roomier caves put bots 1 and 2 in one bomb blast at tick 76 (was 1)
     expect(marks[90].bombs).toBeGreaterThan(0);
     expect(marks[240].dead).toBeGreaterThan(0);
     expect(marks[240].bags).toBeGreaterThan(0);
