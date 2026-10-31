@@ -47,6 +47,10 @@ Challenges
 23. [An achievement the sim's outputs cannot express](#23-an-achievement-the-sims-outputs-cannot-express)
 24. [The merge rehearsal: two bugs only the real image could show](#24-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
 
+Later
+25. [Fun before modes: juice, Dig and roomy caves](#25-fun-before-modes-juice-dig-and-roomy-caves)
+26. [The canvas that shrank for a week, and two workers who blamed the browser](#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)
+
 ---
 
 ## 1. Server-paced deterministic lockstep
@@ -1106,3 +1110,56 @@ flowchart TD
 [`e2851ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e2851ed),
 [`d0d0634`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d0d0634),
 [`d9c6ed1`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d9c6ed1) (the merge).
+
+## 25. Fun before modes: juice, Dig and roomy caves
+
+**Context.** By 31 October the room system and two modes were in, but the user's own playtest found the base
+world not fun. Their list: no feedback, nothing to aim for, few materials and spells, caves too thin to walk
+through, and nothing at spawn that changes the world. Because every mode is a preset over one config (entry
+11), work on the base world pays off in every mode at once. The new modes waited, and the 2 November feature
+freeze was dropped (D-148).
+
+**Decision.** Three slices, in order, from cheapest and safest to most structural:
+
+- **Juice (D-149).** Synthesized sounds, shake scaled by distance, and a hit flash. Client only, so no
+  determinism risk.
+- **Dig (D-150).** An unlimited capsule-shaped dig on key 3. Blast stopped digging, so fighting and digging
+  stay separate buttons; the user chose this over a bigger Blast dig. Adding a seventh spell exposed a latent
+  clash: `EV_DEATH` causes were "a spell id, then 6, 7, 8 for fire, lava and gunpowder", so the environmental
+  causes moved to 32-34 first, in a commit of their own. The server's snapshot parser had its own hard-coded
+  65-byte player record. The net tests caught it, and it now derives from `NUM_SPELLS`.
+- **Roomy caves (D-151).** Wider worms and open chambers, carved on worm-path points before pruning, so they
+  are connected by construction and come before any liquid is placed.
+
+**What it costs.** A snapshot format bump (format 5) and a world reset. This is fine only because the game
+isn't live yet (entry 11, D-133). Gen time at L rose by roughly 50-130 ms, measured on a loaded machine.
+
+**Evidence.** D-148 to D-151; [`docs/research/review-f1.md`](research/review-f1.md);
+[`docs/art/shots/f1-dig-shaft.png`](art/shots/f1-dig-shaft.png) shows six Dig casts boring a shaft the
+player falls down. Commits [`9d7e2e7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9d7e2e7)
+(the juice review fix), [`ff099cb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ff099cb)
+(the causes), [`3f107a4`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3f107a4)
+(Dig), [`6639d78`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/6639d78) (the chambers).
+
+## 26. The canvas that shrank for a week, and two workers who blamed the browser
+
+**What happened.** R3 (25 October) moved the room page into a `#room-root` wrapper div. The page's layout
+relied on `main { flex: 1 }` filling the body's flex column, and a plain block wrapper breaks that chain. So
+on desktop the stage collapsed to its content height, and the canvas fitted itself into about 150 px: a
+postage stamp in the middle of the screen with the HUD on top of it.
+
+**Why nobody saw it.** No test measures layout. The net tests join by raw socket, and the menu test checks
+state hashes. The juice worker and the F1 worker each opened the game in `agent-browser`, saw a 267x150
+canvas, and wrote that off as "the headless canvas renders tiny". Both screenshots that were meant to show
+a feature showed nothing.
+
+**How it was found.** The session model checked Dig in the browser because neither worker had confirmed it.
+Before trusting a screenshot, it read the computed heights: `#room-root` was 208 px tall in an 800 px window.
+
+**What changed.** One CSS rule (D-152); the canvas is now 960x540 at 2x. The lesson for briefs: when a
+screenshot looks wrong, measure the layout before blaming the tool. It is the same "open it and look" gap as
+D-145's `/game` 404 and D-147's dropped Paint, but this time it got through even though someone did open it
+and look.
+
+**Evidence.** D-152; before: [`docs/art/shots/juice-dig-preview.png`](art/shots/juice-dig-preview.png);
+after: [`docs/art/shots/f1-dig-preview.png`](art/shots/f1-dig-preview.png).
