@@ -95,7 +95,9 @@ impl Sim {
         }
         let aggro = i64::from(SLIME_AGGRO_CELLS * POS_ONE);
         let hunt = best.filter(|&(d2, _)| d2 <= aggro * aggro);
-        // Grounded: standing on a solid cell.
+        // Grounded: any solid cell under the body counts, so a slime resting on a single corner cell can still hop
+        // (the alternative, requiring wider support, would leave it falling forever). Climbing off a corner is the
+        // step-up's job.
         let grounded = self.enemy_blocked(e.x, e.y + 1, st.w, st.h);
         if grounded && e.vy >= 0 {
             e.vy = 0;
@@ -134,6 +136,16 @@ impl Sim {
         while rx != 0 {
             let d = rx.clamp(-POS_ONE, POS_ONE);
             if self.enemy_blocked(x + d, y, st.w, st.h) {
+                // Step-up: a blocked move is retried 1, 2 or 3 cells higher (a ledge or a 45-degree slope), while
+                // not rising. The loop is bounded (3 tests); gravity then settles the slime onto the new ground.
+                {
+                    if let Some(k) = (1..=SLIME_STEP_UP_CELLS).find(|&k| !self.enemy_blocked(x + d, y - k * POS_ONE, st.w, st.h)) {
+                        y -= k * POS_ONE;
+                        x += d;
+                        rx -= d;
+                        continue;
+                    }
+                }
                 let s = d.signum();
                 while !self.enemy_blocked(x + s, y, st.w, st.h) && x + s != x + d {
                     x += s;

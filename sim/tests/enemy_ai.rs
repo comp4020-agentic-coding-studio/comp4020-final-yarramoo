@@ -247,3 +247,38 @@ fn enemy_work_is_bounded_and_measured() {
     // 24 enemies x (a few 5x4 tests per move step, up to a few dozen tests): well under 24 * 400 cells
     assert!(worst < 24 * 400, "{worst}");
 }
+
+// ---- fix pass: slopes ------------------------------------------------------------------------------------
+
+/// Rock rises one cell per column from x=520 (a 45-degree slope going right); the slime starts at its foot and the
+/// player stands at the top. The slime must climb it and reach contact.
+fn slope_world(rise_per_col: usize) -> Sim {
+    let mut s = arena(&[(1, 500)]);
+    let w = s.grid.w;
+    for x in 520..600 {
+        let h = ((x - 520) * rise_per_col).min(40);
+        for y in (200 - h)..200 {
+            s.grid.mat[y * w + x] = ROCK;
+        }
+    }
+    s.players[0].x = 575 * PX;
+    s.players[0].y = (200 - 40) * PX;
+    s.enemies = vec![slime(0, 510, 200)];
+    s
+}
+
+#[test]
+fn a_slime_climbs_a_45_degree_slope_and_reaches_a_player_at_the_top() {
+    for rise in [1usize, 2] {
+        let mut s = slope_world(rise);
+        let mut hit_at = None;
+        for t in 0..900 {
+            s.step();
+            if s.players[0].health < HEALTH_MAX {
+                hit_at = Some(t);
+                break;
+            }
+        }
+        assert!(hit_at.is_some(), "rise {rise}: the slime never reached the player; it is at x={} y={}", s.enemies[0].x / PX, s.enemies[0].y / PX);
+    }
+}
