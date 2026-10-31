@@ -15,6 +15,8 @@ pub struct Liquid {
     /// What this liquid may displace (Empty, light gases, and any lighter liquid: density order).
     ok: fn(u8) -> bool,
 }
+/// Acid sinks through Oil and is sunk through by Water (Oil < Acid < Water).
+const ACID_FLOW: Liquid = Liquid { diag: SALT_ACID_DIAG, side: SALT_ACID_SIDE, reach: 4, ok: Grid::acid_ok };
 const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6, ok: Grid::water_ok };
 /// Oil floats on Water: it only displaces what is lighter than it.
 const OIL_FLOW: Liquid = Liquid { diag: SALT_OIL_DIAG, side: SALT_OIL_SIDE, reach: 5, ok: Grid::liquid_ok };
@@ -217,7 +219,7 @@ impl Grid {
         // Volatile: acts on chance, a timer or a counter even when nothing around it changes, so the
         // chunk may not sleep (plan 6.4). Lava also ignites neighbours by chance. A resting powder or
         // liquid is not volatile: with an unchanged neighbourhood it provably does nothing.
-        if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA)
+        if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA | ACID)
             || (m == STEM && self.aux[i] != 0)
             || (m == GUNPOWDER && self.aux[i] == 1)
         {
@@ -229,6 +231,7 @@ impl Grid {
             }
             WATER => self.update_water(x, y, seed, tick),
             OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
+            ACID => self.update_acid(x, y, seed, tick),
             FIRE => self.update_fire(x, y, seed, tick),
             SMOKE => self.update_gas(x, y, seed, tick, SMOKE),
             STEAM => self.update_gas(x, y, seed, tick, STEAM),
@@ -297,6 +300,10 @@ impl Grid {
 
     /// Water also sinks through Oil (density order: Oil < Water).
     fn water_ok(m: u8) -> bool {
+        Self::liquid_ok(m) || m == OIL || m == ACID
+    }
+
+    fn acid_ok(m: u8) -> bool {
         Self::liquid_ok(m) || m == OIL
     }
 
@@ -374,6 +381,44 @@ impl Grid {
 
     fn update_water(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         self.liquid_move(x, y, seed, tick, WATER_FLOW);
+    }
+
+    /// Acid: `aux` is its strength (0 = fresh, becomes `ACID_STRENGTH`). Each tick at most one thing happens:
+    /// dilute against a Water neighbour (both become Water, 1 in 6), or dissolve one dissolvable neighbour
+    /// (1 in 4), using one point of strength (the cell vanishes at 1). Bedrock and Glass are immune. Otherwise
+    /// it flows. Work: four neighbour reads, one move.
+    fn update_acid(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.aux[i] == 0 {
+            self.set(i, ACID, ACID_STRENGTH);
+            return;
+        }
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
+            let n = ny * self.w + nx;
+            let m = self.mat[n];
+            if m == WATER {
+                if rng(seed, tick, x as u32, y as u32, SALT_ACID_DILUTE) % 6 == 0 {
+                    self.set(i, WATER, 0);
+                    return;
+                }
+            } else if Self::dissolvable(m) && rng(seed, tick, nx as u32, ny as u32, SALT_ACID_EAT) % 4 == 0 {
+                self.set(n, EMPTY, 0);
+                let a = self.aux[i] - 1;
+                if a <= 1 {
+                    self.set(i, EMPTY, 0);
+                } else {
+                    self.aux[i] = a;
+                    self.touch(i);
+                }
+                return;
+            }
+        }
+        self.liquid_move(x, y, seed, tick, ACID_FLOW);
+    }
+
+    fn dissolvable(m: u8) -> bool {
+        matches!(m, ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER)
     }
 
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
@@ -720,6 +765,8 @@ impl Grid {
 }
 
 const GERMINATE_AT: u8 = 60;
+/// Dissolves an acid cell can do before it is used up.
+const ACID_STRENGTH: u8 = 12;
 
 #[cfg(test)]
 mod tests {
@@ -858,6 +905,40 @@ mod tests {
         }
         let t = done.unwrap_or_else(|| panic!("pool left {} oil", count(&g, OIL)));
         assert!(t < 400, "oil took {t} ticks to burn");
+    }
+
+    #[test]
+    fn acid_eats_rock_and_stops_at_bedrock() {
+        // A column of acid on a rock floor over bedrock: it digs down through the rock, never the bedrock.
+        let mut g = Grid::new(64, 64);
+        for x in 0..64 {
+            g.set(63 * 64 + x, BEDROCK, 0);
+            for y in 58..63 {
+                g.set(y * 64 + x, ROCK, 0);
+            }
+        }
+        for y in 40..58 {
+            for x in 20..24 {
+                g.set(y * 64 + x, ACID, 0);
+            }
+        }
+        let rock0 = count(&g, ROCK);
+        run(&mut g, 3, 600);
+        assert!(count(&g, ROCK) < rock0, "acid should dissolve rock");
+        assert_eq!(count(&g, BEDROCK), 64);
+        assert!((0..64).all(|x| g.at(x, 63) == BEDROCK));
+        // Each dissolve spends strength: acid is consumed.
+        assert!(count(&g, ACID) < 18 * 4);
+    }
+
+    #[test]
+    fn acid_dilutes_water() {
+        let mut g = boxed(64, 64);
+        g.set(62 * 64 + 10, ACID, 0);
+        g.set(62 * 64 + 11, WATER, 0);
+        run(&mut g, 3, 200);
+        assert_eq!(count(&g, ACID), 0);
+        assert_eq!(count(&g, WATER), 2);
     }
 
     #[test]
@@ -1159,10 +1240,10 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=OIL).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=ACID).filter(|&m| m != BEDROCK) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(OIL + 1));
+        assert!(!paintable(BEDROCK) && !paintable(ACID + 1));
     }
 }
 

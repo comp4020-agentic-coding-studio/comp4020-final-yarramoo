@@ -16,10 +16,11 @@ pub const STEAM: u8 = 12;
 pub const GUNPOWDER: u8 = 13;
 pub const LAVA: u8 = 14;
 pub const OIL: u8 = 15;
+pub const ACID: u8 = 16;
 
 /// Materials that `Paint` may place: everything except Bedrock, the world boundary.
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=OIL)
+    matches!(m, EMPTY | ROCK..=ACID)
 }
 
 pub fn is_gas(m: u8) -> bool {
