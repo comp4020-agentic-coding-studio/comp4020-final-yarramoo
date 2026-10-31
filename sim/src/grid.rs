@@ -12,10 +12,14 @@ pub struct Liquid {
     diag: u32,
     side: u32,
     reach: usize,
+    /// What this liquid may displace (Empty, light gases, and any lighter liquid: density order).
+    ok: fn(u8) -> bool,
 }
-const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6 };
+const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6, ok: Grid::water_ok };
+/// Oil floats on Water: it only displaces what is lighter than it.
+const OIL_FLOW: Liquid = Liquid { diag: SALT_OIL_DIAG, side: SALT_OIL_SIDE, reach: 5, ok: Grid::liquid_ok };
 /// Lava is thicker, so it spreads less per update (and it only moves on even ticks).
-const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3 };
+const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3, ok: Grid::liquid_ok };
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
 /// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
 pub const ACTIVE_W: i32 = crate::tuning::ACTIVE_W;
@@ -224,6 +228,7 @@ impl Grid {
                 self.powder_move(x, y, seed, tick, SALT_SAND_DIAG);
             }
             WATER => self.update_water(x, y, seed, tick),
+            OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
             FIRE => self.update_fire(x, y, seed, tick),
             SMOKE => self.update_gas(x, y, seed, tick, SMOKE),
             STEAM => self.update_gas(x, y, seed, tick, STEAM),
@@ -290,6 +295,11 @@ impl Grid {
         m == EMPTY || m == SMOKE || m == STEAM
     }
 
+    /// Water also sinks through Oil (density order: Oil < Water).
+    fn water_ok(m: u8) -> bool {
+        Self::liquid_ok(m) || m == OIL
+    }
+
     /// Returns true if the powder moved.
     fn powder_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, salt: u32) -> bool {
         if self.try_move(x, y, 0, 1, Self::powder_ok) {
@@ -301,7 +311,7 @@ impl Grid {
 
     /// Shared liquid motion: down, diagonal down, then a sideways slide of up to `reach` cells.
     fn liquid_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, l: Liquid) {
-        let ok = Self::liquid_ok;
+        let ok = l.ok;
         if self.try_move(x, y, 0, 1, ok) {
             return;
         }
@@ -332,8 +342,8 @@ impl Grid {
         } else {
             1
         };
-        if !self.slide(x, y, s, l.reach) {
-            self.slide(x, y, -s, l.reach);
+        if !self.slide(x, y, s, l.reach, ok) {
+            self.slide(x, y, -s, l.reach, ok);
         }
     }
 
@@ -341,15 +351,15 @@ impl Grid {
     /// blocked one, and dropping into a gap it passes over. One step at a time, a deep heap only levels
     /// from its surface a cell per update and settles into a staircase on chunk edges; dispersion is how
     /// a liquid finds its level. Bounded by `reach`, integer-only, and a fixed scan order.
-    fn slide(&mut self, x: usize, y: usize, dir: isize, reach: usize) -> bool {
+    fn slide(&mut self, x: usize, y: usize, dir: isize, reach: usize, ok: fn(u8) -> bool) -> bool {
         let mut best = None;
         for k in 1..=reach as isize {
             let Some((nx, ny)) = self.off(x, y, dir * k, 0) else { break };
-            if !Self::liquid_ok(self.at(nx, ny)) {
+            if !ok(self.at(nx, ny)) {
                 break;
             }
             best = Some((nx, ny));
-            if self.off(nx, ny, 0, 1).is_some_and(|(bx, by)| Self::liquid_ok(self.at(bx, by))) {
+            if self.off(nx, ny, 0, 1).is_some_and(|(bx, by)| ok(self.at(bx, by))) {
                 break; // a gap below: fall into it from here
             }
         }
@@ -406,7 +416,11 @@ impl Grid {
             if let Some((nx, ny)) = self.off(x, y, dx, dy) {
                 let m = self.at(nx, ny);
                 if is_flammable(m) {
-                    let n = if m == WOOD { 12 } else { 4 };
+                    let n = match m {
+                        WOOD => 12,
+                        OIL => 2,
+                        _ => 4,
+                    };
                     if rng(seed, tick, nx as u32, ny as u32, SALT_FIRE_IGNITE) % n == 0 {
                         self.set(ny * self.w + nx, FIRE, 0);
                     }
@@ -797,6 +811,56 @@ mod tests {
     }
 
     #[test]
+    fn oil_floats_on_water() {
+        // Water starts above the oil; it must sink through it and the oil must rise to the top.
+        let mut g = boxed(64, 64);
+        for y in 40..50 {
+            g.set(y * 64 + 5, WATER, 0);
+        }
+        for y in 50..60 {
+            g.set(y * 64 + 5, OIL, 0);
+        }
+        // Walls so the column stays a column.
+        for y in 0..64 {
+            g.set(y * 64 + 4, BEDROCK, 0);
+            g.set(y * 64 + 6, BEDROCK, 0);
+        }
+        run(&mut g, 1, 400);
+        for y in 43..53 {
+            assert_eq!(g.at(5, y), OIL, "row {y}");
+        }
+        for y in 53..63 {
+            assert_eq!(g.at(5, y), WATER, "row {y}");
+        }
+    }
+
+    #[test]
+    fn oil_burns_fast_and_spreads_fire() {
+        // A 40-wide, 4-deep pool in a basin, lit at one end: the fire must run the whole surface and
+        // consume the oil, far faster than wood burns.
+        let mut g = boxed(64, 64);
+        for y in 56..63 {
+            g.set(y * 64 + 4, BEDROCK, 0);
+            g.set(y * 64 + 45, BEDROCK, 0);
+        }
+        for y in 59..63 {
+            for x in 5..45 {
+                g.set(y * 64 + x, OIL, 0);
+            }
+        }
+        g.set(58 * 64 + 5, FIRE, 0);
+        let mut done = None;
+        for t in 0..600 {
+            g.step_cells(2, t);
+            if done.is_none() && count(&g, OIL) == 0 {
+                done = Some(t);
+            }
+        }
+        let t = done.unwrap_or_else(|| panic!("pool left {} oil", count(&g, OIL)));
+        assert!(t < 400, "oil took {t} ticks to burn");
+    }
+
+    #[test]
     fn water_spreads() {
         let mut g = Grid::new(64, 64);
         for x in 0..64 {
@@ -1095,10 +1159,10 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=14).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=OIL).filter(|&m| m != BEDROCK) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(15));
+        assert!(!paintable(BEDROCK) && !paintable(OIL + 1));
     }
 }
 

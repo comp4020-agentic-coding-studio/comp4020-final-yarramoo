@@ -15,10 +15,11 @@ pub const SMOKE: u8 = 11;
 pub const STEAM: u8 = 12;
 pub const GUNPOWDER: u8 = 13;
 pub const LAVA: u8 = 14;
+pub const OIL: u8 = 15;
 
 /// Materials that `Paint` may place: everything except Bedrock, the world boundary.
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=LAVA)
+    matches!(m, EMPTY | ROCK..=OIL)
 }
 
 pub fn is_gas(m: u8) -> bool {
@@ -33,5 +34,5 @@ pub fn fill_empty_writable(m: u8) -> bool {
 }
 
 pub fn is_flammable(m: u8) -> bool {
-    matches!(m, WOOD | SEED | STEM | FLOWER)
+    matches!(m, WOOD | SEED | STEM | FLOWER | OIL)
 }

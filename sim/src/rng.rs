@@ -36,6 +36,9 @@ pub const SALT_LAVA_DIAG: u32 = 21;
 pub const SALT_LAVA_SIDE: u32 = 22;
 pub const SALT_LAVA_IGNITE: u32 = 23;
 
+pub const SALT_OIL_DIAG: u32 = 200;
+pub const SALT_OIL_SIDE: u32 = 201;
+
 pub const SALT_GEN_SURF_A: u32 = 100;
 pub const SALT_GEN_SURF_B: u32 = 101;
 pub const SALT_GEN_SURF_C: u32 = 102;
