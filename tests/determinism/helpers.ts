@@ -123,32 +123,29 @@ export function bossScript(): { script: Script; path: string } {
   if (!boss) throw new Error("survival world has no boss");
   const inputs: Record<string, string[]> = {};
   const at = (t: number, b: Uint8Array) => (inputs[String(t)] ??= []).push(hex(b));
-  // Six players stand in a row 16..26 cells to the boss's right (inside the arena, in open air at its height) and all
-  // cast Fire bolts straight at it every 15 ticks, one Bomb in eight; between them they outlast its bolts long enough
-  // to take it through every phase. The boss starts at the arena centre, so the aim is read from the sim.
+  // Six players each take one supply-pile pickup (the last six: four Fire bolts, two Bombs), then stand in a ring 13-15 cells from
+  // the boss's start point (inside its 14-cell closing distance, so it barely moves and the aim stays good). SCRIPTED ADVANTAGE: this fixed, perfectly aimed
+  // stance (a scripted player aims at the boss's start point); a real player has to aim at a moving target. Fire bolts every 15 ticks, a Bomb when a player holds one.
   const N = 6;
   let seq = 0;
   for (let k = 0; k < N; k++) at(1, encodeJoin(k + 1));
-  // Collect: player 1 takes the whole supply pile outside the arena (the last six pickups: 30 Fire bolt and 10 Bomb charges).
   const loot = ents.filter((e) => e.type === ENT_PICKUP).sort((a, b) => a.id - b.id).slice(-6);
   let t0 = 3;
   loot.forEach((p, i) => {
-    for (let s2 = 0; s2 < 2; s2++) at(t0 + s2 * 3, encodePos(1, 0, p.x, p.y + 16, 1));
+    for (let s2 = 0; s2 < 2; s2++) at(t0 + s2 * 3, encodePos(i + 1, 0, p.x, p.y + 16, 1));
     t0 += 6;
   });
   const start = t0 + 6;
+  // Stances around the boss (cells, relative to its centre, y down), so no player's bolt crosses another's box.
+  const stance = [[13, 0], [-13, 0], [0, -15], [10, -10], [-10, -10], [0, -15]];
   for (let t = start; t < 2400 + start; t += 3) {
     for (let k = 0; k < N; k++) {
-      const px = boss.x + (12 + k) * 16;
-      const py = boss.y;
+      const px = boss.x + stance[k][0] * 16;
+      const py = boss.y - 2 * 16 + stance[k][1] * 16; // chest (5 cells up) level with the boss's centre (7 up)
       at(t, encodePos(k + 1, 0, px, py, 0));
       if ((t - start) % 15 === 0) {
-        const dx = boss.x - px;
-        const dy = boss.y - 7 * 16 - (py - 5 * 16);
-        const angle = Math.round(((Math.atan2(dy, dx) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
-        // Player 1 spends the pile (a Bomb every eighth cast); everyone else pushes (infinite charges) and every fifth a Blast.
-        const spell = k === 0 ? ((t - start) / 15 % 8 === 7 ? 5 : 4) : ((t - start) / 15 % 5 === 4 ? 1 : 0);
-        at(t, encodeCast(k + 1, spell, angle, seq++ & 0xffff));
+        const angle = Math.round(((Math.atan2(boss.y - 7 * 16 - (py - 5 * 16), boss.x - px) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
+        at(t, encodeCast(k + 1, k >= 4 ? 5 : 4, angle, seq++ & 0xffff));
       }
     }
   }

@@ -103,14 +103,15 @@ describe("Node determinism", () => {
     expect(a.events!.some((e) => e.kind === 5 && e.player === 2 && e.b === -24)).toBe(true);
   });
 
-  // F6: the boss fight. D1/D6 agree, the boss took damage. It does NOT reach phase 2 here: the party dies first (gap disclosed in the F6 report).
+  // F6: the boss fight. D1/D6 agree, the boss took damage. It reaches phase 3 or dies (scripted stance, see helpers.ts).
   const bossRun = bossScript().script;
-  it("D1/D6 with the boss: agree, and the boss is hurt by real casts (phase 1 only, see the F6 report)", () => {
+  it("D1/D6 with the boss: agree, and the fight reaches phase 3 or the boss's death", () => {
     const a = run(readWasm(wasmPath), bossRun, {}, { collectEvents: true });
     const b = run(readWasm(wasmPath), bossRun);
     const seven = run(readWasm(wasmPath), bossRun, {}, { batching: { kind: "batch", k: 7 } });
     expect(compare(a, b, ["run1", "run2"])).toBeNull();
     expect(compare(a, seven, ["each", "k=7"])).toBeNull();
     expect(a.events!.filter((e) => e.kind === 11).length).toBeGreaterThanOrEqual(5);
+    expect(a.events!.some((e) => (e.kind === 14 && e.b === 3) || (e.kind === 12 && e.c === 4))).toBe(true);
   });
 });

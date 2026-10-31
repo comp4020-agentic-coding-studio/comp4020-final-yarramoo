@@ -292,7 +292,7 @@ pub const ISLAND_WORK_MAX: usize = 4000;
 // ---- the boss and its arena (F6, docs/briefs/fun7-boss.md) -------------------------------------------------
 
 /// The Deep Mage's hp (design 1200; the balance commit sets the final number, see the F6 report).
-pub const BOSS_HP: u16 = 1200;
+pub const BOSS_HP: u16 = 800;
 /// Arena ellipse radii (cells) at size L; smaller worlds scale by the same percentage as the chambers, but never
 /// below the minimums (the boss is 11 x 14 cells). The flat floor is `ry / 2` below the centre.
 pub const ARENA_RX_L: i32 = 70;
@@ -305,7 +305,7 @@ pub const ARENA_KEEP_OUT: i32 = 16;
 /// (one pickup each, 4 cells apart, nearest the arena first).
 pub const SUPPLY_ALCOVE_W: i32 = 28;
 pub const SUPPLY_ALCOVE_H: i32 = 8;
-pub const SUPPLY_PILE: [u8; 6] = [4, 4, 5, 4, 5, 10];
+pub const SUPPLY_PILE: [u8; 6] = [4, 4, 4, 4, 5, 5];
 
 /// Boss movement and attacks (F6). Attack cadences are stateless: an attack fires on the ticks where
 /// `(tick + id) % period == offset` (and, for aimed ones, the line is clear), so the boss needs no timers.

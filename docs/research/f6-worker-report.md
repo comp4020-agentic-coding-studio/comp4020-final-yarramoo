@@ -54,6 +54,20 @@
 - Red first: the win test failed against the stub `round_won` (false) in the sense that the end-to-end test could not pass before it was implemented; I did not
   separately run it red against a stubbed sim. Flag.
 
+### 5. Balance (measured)
+- Charges on the path, seed 1 size M (16 non-pile pickups): Fire bolt 10 charges (one pickup), Bomb 15 (three), Lava Flask 4, Black Hole 4. Seed 2: Fire 30, Bomb 15. Seed 3: Fire 10, Bomb 5.
+  So a descent that collects everything it passes holds 10-30 bolts and 5-15 bombs.
+- Damage per charge against the boss: Fire bolt 20 (bolt damage; the boss's Fire immunity only blocks the burning hazard); Bomb up to 60 at the centre, linear to 0 at radius 18
+  (about 30 average on a near miss); Push 5, Blast 8 (infinite charges, slow). Cooldowns: Fire 15 ticks, Bomb 60.
+- Boss damage to a player: Fire bolt 20 per 60 ticks (phase 1-2, 20/s), a fan of three 20-damage bolts per 90 ticks in phase 3 (up to 40/s if all hit), Bomb up to 60 per 120 ticks (phase 2+), contact 20 per 40 ticks.
+  A 100-hp player survives 5 bolt hits, i.e. 300 ticks of unavoided phase 1 fire.
+- Supply pile (outside the arena): 4x Fire bolt pickups (40 bolts = 800 dmg) and 2x Bomb pickups (10 bombs = up to 600). Changed from [4,4,5,4,5,10] to [4,4,4,4,5,5] (Lava Flask dropped: no use against a fire-immune boss).
+- Boss hp 1200 -> 800 (`BOSS_HP`). One well-supplied player with the pile alone has 800 (bolts) + about 300 (10 bombs at ~30) = 1100 damage against 800 hp: 73 percent of the charges must land,
+  so they can just win only by dodging well (it is not a number a test proves). Two players hold 2200 against 800 hp: comfortable. Not verified: an actual one-player fight; the sim test only shows kills with infinite Fire bolts.
+- D2 script now reaches phase 3 and the boss's phases (EV_ENEMY_PHASE 2 at tick 93, 3 at tick 153 of the fight), and the party takes lethal damage after: asserted `(kind 14 and b 3) or boss death`.
+  SCRIPTED ADVANTAGE: six players each take one pile pickup then stand in a fixed ring 13-15 cells from the boss's start point, aimed at it (a real player aims at a moving target). The fight itself is not weakened.
+- Phase tests now use `BOSS_HP` fractions instead of the 1200 literals.
+
 ## Unfinished (call budget reached)
 - **Checklist 5 (balance), 6 (client) and 7 (screenshots) were not done.** `BOSS_HP` is still the design's 1200 and the supply pile is the 6 pickups
   (4x Fire bolt = 40, 2x Bomb... actually `SUPPLY_PILE` = Fire bolt x3, Bomb x2, Lava Flask x1) chosen without measurement. The report has no balance arithmetic.

@@ -129,7 +129,7 @@ fn losing_still_loses_while_the_boss_lives() {
 fn d5_a_snapshot_mid_phase_three_with_ring_summons_and_bolts_continues_identically() {
     let mut s = fight();
     let i = s.enemies.iter().position(|e| e.kind == ENEMY_BOSS).unwrap();
-    s.enemies[i].hp = 300;
+    s.enemies[i].hp = BOSS_HP / 6;
     for _ in 0..700 {
         s.step();
         s.players[0].health = HEALTH_MAX;
@@ -162,7 +162,7 @@ fn d7_sleeping_is_invisible_through_all_three_phases() {
         for t in 0..1800u32 {
             if t == 300 || t == 900 {
                 let i = s.enemies.iter().position(|e| e.kind == ENEMY_BOSS).unwrap();
-                s.enemies[i].hp = if t == 300 { 700 } else { 300 };
+                s.enemies[i].hp = if t == 300 { BOSS_HP / 2 } else { BOSS_HP / 6 };
             }
             if frozen {
                 // no sleeping: every chunk is marked awake before every step

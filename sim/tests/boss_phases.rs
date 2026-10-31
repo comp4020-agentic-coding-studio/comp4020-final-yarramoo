@@ -59,12 +59,13 @@ fn each_threshold_switches_the_phase_once_and_emits_one_event() {
     let ph: Vec<(i32, i32)> = ev.iter().filter(|e| e.kind == EV_ENEMY_PHASE).map(|e| (e.a, e.b)).collect();
     let id = i32::from(s.enemies[bi(&s)].id);
     assert_eq!(ph, vec![(id, 2), (id, 3)]);
-    // the boundary: more than two thirds (801 of 1200) is phase 1, exactly two thirds (800) is phase 2
+    // the boundary: hp * 3 > 2 * max is phase 1, else phase 2
+    let two_thirds = BOSS_HP * 2 / 3;
     let mut t = fight();
-    set_hp(&mut t, 801);
+    set_hp(&mut t, two_thirds + 1);
     run(&mut t, 5);
     assert_eq!(phase(&t), 1);
-    set_hp(&mut t, 800);
+    set_hp(&mut t, two_thirds);
     run(&mut t, 5);
     assert_eq!(phase(&t), 2);
 }
@@ -72,7 +73,7 @@ fn each_threshold_switches_the_phase_once_and_emits_one_event() {
 #[test]
 fn phase_two_summons_imps_up_to_four_alive_with_sorted_unique_ids() {
     let mut s = fight();
-    set_hp(&mut s, 700);
+    set_hp(&mut s, BOSS_HP / 2);
     let mut max_alive = 0;
     let mut seen_top = s.enemies.iter().map(|e| e.id).max().unwrap();
     for t in 0..2400 {
@@ -110,7 +111,7 @@ fn phase_two_summons_imps_up_to_four_alive_with_sorted_unique_ids() {
 #[test]
 fn phase_two_lobs_enemy_bombs_that_only_hurt_players() {
     let mut s = fight();
-    set_hp(&mut s, 700);
+    set_hp(&mut s, BOSS_HP / 2);
     let mut bombs = 0;
     for _ in 0..600 {
         s.step();
@@ -123,7 +124,7 @@ fn phase_two_lobs_enemy_bombs_that_only_hurt_players() {
 #[test]
 fn phase_three_fires_a_fan_of_three_and_places_a_capped_lava_ring() {
     let mut s = fight();
-    set_hp(&mut s, 300);
+    set_hp(&mut s, BOSS_HP / 6);
     let lava0 = s.grid.mat.iter().filter(|&&m| m == LAVA).count();
     let mut fan_max = 0;
     let mut ring_writes = Vec::new();
@@ -149,7 +150,7 @@ fn phase_three_fires_a_fan_of_three_and_places_a_capped_lava_ring() {
 #[test]
 fn a_fan_at_the_bolt_cap_fires_only_what_fits() {
     let mut s = fight();
-    set_hp(&mut s, 300);
+    set_hp(&mut s, BOSS_HP / 6);
     // fill 14 of 16 slots with enemy bolts parked far away
     let a = s.arena.unwrap();
     for k in 0..14 {
@@ -176,7 +177,7 @@ fn worst_work(s: &mut Sim, ticks: u32) -> u32 {
 #[test]
 fn boss_work_is_bounded_in_phase_three_with_summons_alive() {
     let mut s = fight();
-    set_hp(&mut s, 300);
+    set_hp(&mut s, BOSS_HP / 6);
     let a = s.arena.unwrap();
     let b = s.enemies[bi(&s)].id;
     for k in 0..4u16 {
