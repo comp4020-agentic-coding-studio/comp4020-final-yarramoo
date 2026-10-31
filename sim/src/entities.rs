@@ -130,7 +130,7 @@ impl Projectile {
 }
 
 /// A dropped bag of a dead player's finite charges (M5 slice 3). State: hashed and snapshotted, kept in
-/// spawn order. `charges[k]` is spell `2 + k` (Water, Rose, Fire bolt, Bomb); never all zero.
+/// spawn order. `charges[k]` is spell `BAG_SPELL_IDS[k]`; never all zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bag {
     /// The cell the bag occupies.

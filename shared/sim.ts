@@ -68,7 +68,7 @@ export const ENT_PICKUP = 2;
 export const ENT_PROJECTILE = 3;
 /** A dropped bag: `id` is its index in the list, `a` the total charges, x and y the cell centre in 1/16 cell. */
 export const ENT_BAG = 4;
-export const NUM_SPELLS = 7;
+export const NUM_SPELLS = 12;
 export interface EntityView {
   type: number;
   id: number;

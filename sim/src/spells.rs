@@ -15,6 +15,11 @@ pub const ROSE: u8 = 3;
 pub const FIRE_BOLT: u8 = 4;
 pub const BOMB: u8 = 5;
 pub const DIG: u8 = 6;
+pub const ACID_FLASK: u8 = 7;
+pub const OIL_FLASK: u8 = 8;
+pub const WALL: u8 = 9;
+pub const LAVA_FLASK: u8 = 10;
+pub const BLACK_HOLE: u8 = 11;
 
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
@@ -375,7 +380,7 @@ impl Sim {
         // The victim's finite charges (spells 2..=5) leave with the death; Push and Blast stay.
         let mut taken = [0u16; BAG_SPELLS];
         for (k, t) in taken.iter_mut().enumerate() {
-            let c = &mut p.charges[2 + k];
+            let c = &mut p.charges[BAG_SPELL_IDS[k]];
             if *c != INFINITE {
                 *t = *c;
                 *c = 0;
@@ -451,7 +456,7 @@ impl Sim {
                 let b = self.bags.remove(i);
                 let mut total = 0u32;
                 for (k, &add) in b.charges.iter().enumerate() {
-                    let c = &mut p.charges[2 + k];
+                    let c = &mut p.charges[BAG_SPELL_IDS[k]];
                     if *c != INFINITE {
                         *c = c.saturating_add(add).min(INFINITE - 1);
                     }

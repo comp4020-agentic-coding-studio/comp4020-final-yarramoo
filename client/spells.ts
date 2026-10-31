@@ -24,11 +24,16 @@ export const SPELLS: SpellInfo[] = [
   { name: SPELL_NAMES[4], colour: [1, 0.55, 0.12], cooldown: 15, speed: 896 / 256, gravity: 4 / 256, enabled: true },
   { name: SPELL_NAMES[5], colour: [0.8, 0.25, 0.25], cooldown: 60, speed: 640 / 256, gravity: 20 / 256, enabled: true },
   { name: SPELL_NAMES[6], colour: [0.7, 0.5, 0.3], cooldown: 18, speed: 0, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[7], colour: [0.45, 0.9, 0.2], cooldown: 25, speed: 768 / 256, gravity: 10 / 256, enabled: false },
+  { name: SPELL_NAMES[8], colour: [0.35, 0.25, 0.1], cooldown: 20, speed: 768 / 256, gravity: 10 / 256, enabled: false },
+  { name: SPELL_NAMES[9], colour: [0.55, 0.55, 0.6], cooldown: 45, speed: 0, gravity: 0, enabled: false },
+  { name: SPELL_NAMES[10], colour: [1, 0.35, 0.05], cooldown: 60, speed: 768 / 256, gravity: 10 / 256, enabled: false },
+  { name: SPELL_NAMES[11], colour: [0.35, 0.1, 0.6], cooldown: 120, speed: 384 / 256, gravity: 0, enabled: false },
 ];
 if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with the sim");
 
-/** Spell slots on the bar, in key order 1..7. */
-export const BAR: number[] = [0, 1, 6, 2, 3, 4, 5];
+/** Spell slots on the bar, in bar order (keys 1-9, then Q/E or the wheel to cycle). */
+export const BAR: number[] = [0, 1, 6, 2, 3, 4, 5, 7, 8, 9, 10, 11];
 export const INFINITE = 0xffff;
 
 /** Aim angle as the sim wants it: u16, 65536 per turn, 0 along +x, growing towards +y (down the screen). */

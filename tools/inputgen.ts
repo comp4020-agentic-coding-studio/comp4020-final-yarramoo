@@ -118,7 +118,7 @@ function generateGame(opts: GenOptions): Script {
       b.x = Math.min(1100, Math.max(960, b.x + int(-2, 2)));
       b.y = Math.min(235, Math.max(200, b.y + int(-1, 1)));
       push(t, encodePos(b.id, 0, b.x * 16, b.y * 16, int(0, 1)));
-      if (rand() < 0.06) push(t, encodeCast(b.id, rand() < 0.5 ? int(0, 1) : int(0, 5), int(0, 65535), b.seq++ & 0xffff));
+      if (rand() < 0.06) push(t, encodeCast(b.id, rand() < 0.5 ? int(0, 1) : int(0, 11), int(0, 65535), b.seq++ & 0xffff));
     }
   }
   return { seed: seed.toString(), world_kind: 1, ticks, inputs };

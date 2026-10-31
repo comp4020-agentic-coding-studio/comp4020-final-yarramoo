@@ -1,13 +1,13 @@
 //! Gameplay constants (plan 6.6, 6.7). All integers; one place so balance changes never touch logic.
 
-/// Spell ids: 0 Push, 1 Blast, 2 Water, 3 Rose seed, 4 Fire bolt, 5 Bomb, 6 Dig (plan 6.7; Dig appended so ids stay stable).
-pub const NUM_SPELLS: usize = 7;
+/// Spell ids: 0 Push, 1 Blast, 2 Water, 3 Rose seed, 4 Fire bolt, 5 Bomb, 6 Dig, 7 Acid Flask, 8 Oil Flask, 9 Wall, 10 Lava Flask, 11 Black Hole (plan 6.7; appended so ids stay stable). Teleport (12) was skipped, see docs/research/f3-worker-report.md.
+pub const NUM_SPELLS: usize = 12;
 /// Infinite charges (the starter spells).
 pub const INFINITE: u16 = u16::MAX;
 /// Charges a player starts with, per spell: Push and Blast are infinite.
-pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0, INFINITE];
+pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0, INFINITE, 0, 0, 0, 0, 0];
 /// Charges one pickup of each spell grants (plan 6.7).
-pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5, 0];
+pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5, 0, 8, 10, 10, 4, 2];
 /// Ticks before a collected pickup is available again (plan 14: 60 s).
 pub const PICKUP_RESPAWN: u32 = 3600;
 
@@ -46,13 +46,13 @@ pub const PROJ_MAX_SPEED: i32 = 8 * PROJ_ONE;
 pub const MAX_SUBSTEPS: i32 = 8;
 
 /// Spells the sim implements; a disabled spell's cast is refused.
-pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true];
+pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true, false, false, false, false, false];
 /// Ticks between casts of the same spell.
-pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18];
+pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18, 25, 20, 45, 60, 120];
 /// Launch speed, 1/256 cell per tick (Push 5 cells a tick; Water and Rose are lobbed slower).
-pub const SPEED: [i32; NUM_SPELLS] = [1280, 0, 768, 768, 896, 640, 0];
+pub const SPEED: [i32; NUM_SPELLS] = [1280, 0, 768, 768, 896, 640, 0, 768, 768, 0, 768, 384];
 /// Downward acceleration, 1/256 cell per tick per tick.
-pub const GRAVITY_Q8: [i32; NUM_SPELLS] = [0, 0, 10, 10, 4, 20, 0];
+pub const GRAVITY_Q8: [i32; NUM_SPELLS] = [0, 0, 10, 10, 4, 20, 0, 10, 10, 0, 10, 0];
 /// Knockback impulses in 1/16 cell per tick (plan 6.7).
 pub const KNOCK_PUSH: i32 = 64;
 pub const KNOCK_BLAST: i32 = 96;
@@ -65,6 +65,21 @@ pub const DIG_REACH: i32 = 14;
 /// Height of a player's chest above the feet, in cells: where bolts leave and what the cone aims at.
 pub const CHEST: i32 = 5;
 pub const WATER_BURST_CELLS: usize = 60;
+/// Flask bursts (Acid, Oil, Lava): the most Empty cells each fills; same disc as water, `WATER_BURST_R2`.
+pub const ACID_BURST_CELLS: usize = 50;
+pub const OIL_BURST_CELLS: usize = 70;
+pub const LAVA_BURST_CELLS: usize = 60;
+/// Wall: a rock slab `WALL_THICK` x `WALL_LEN` cells, centred `WALL_REACH` cells along the aim from the chest.
+pub const WALL_THICK: i32 = 3;
+pub const WALL_LEN: i32 = 12;
+pub const WALL_REACH: i32 = 10;
+/// Black Hole: radius (cells) of the disc of solids cleared each tick, lifetime in ticks, how far it pulls
+/// players (cells), the pull per tick (1/16 cell per tick, through `EV_KNOCK`), and the cap per owner.
+pub const BH_RADIUS: i32 = 3;
+pub const BH_LIFETIME: u16 = 150;
+pub const BH_PULL_RANGE: i32 = 20;
+pub const BH_PULL: i32 = 12;
+pub const MAX_BLACK_HOLES_PER_PLAYER: usize = 2;
 /// Squared radius (cells) of the disc a water burst fills, in Empty cells only.
 pub const WATER_BURST_R2: i32 = 36;
 pub const SEED_BURST_CELLS: u32 = 8;
@@ -102,8 +117,10 @@ pub const MAX_BOMB_EXPLOSIONS_PER_TICK: u32 = 8;
 
 // ---- dropped bags (M5 slice 3) -------------------------------------------------------------------------
 
-/// A bag holds the four finite spells (2 Water, 3 Rose, 4 Fire bolt, 5 Bomb): index k is spell `2 + k`.
-pub const BAG_SPELLS: usize = 4;
+/// A bag holds every finite spell: index k is spell `BAG_SPELL_IDS[k]` (the ids that start with 0 charges).
+/// Push, Blast and Dig are infinite and never bagged.
+pub const BAG_SPELL_IDS: [usize; 9] = [2, 3, 4, 5, 7, 8, 9, 10, 11];
+pub const BAG_SPELLS: usize = BAG_SPELL_IDS.len();
 /// Ticks a bag lasts: 90 s at 60 ticks a second.
 pub const BAG_LIFETIME: u32 = 5400;
 /// At most this many bags exist; a new one past the cap evicts the oldest (index 0) and its charges are lost.

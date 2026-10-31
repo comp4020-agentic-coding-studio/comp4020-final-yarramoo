@@ -27,7 +27,7 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
 };
 
 /** Spell index to display name. */
-export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig"];
+export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig", "Acid Flask", "Oil Flask", "Wall", "Lava Flask", "Black Hole"];
 
 /**
  * How the avatar controller treats each material id (one list, so a new material is one line). "gas" never
