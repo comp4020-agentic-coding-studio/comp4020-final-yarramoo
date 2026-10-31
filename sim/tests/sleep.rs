@@ -1,6 +1,7 @@
 //! D7: sleeping is invisible. The same script with sleeping on and off must hash identically at every
 //! checkpoint, in both world kinds. Scripts leave regions quiet, then disturb them.
 use sim::input::encode_paint;
+use sim::grid::CHUNK_AREA;
 use sim::sim::Sim;
 
 type Script = Vec<(u32, Vec<u8>)>;
@@ -201,30 +202,63 @@ fn sleeping_actually_skips_work() {
     assert!(s.grid.ran_chunks < all / 8, "{} of {} chunks still ran", s.grid.ran_chunks, all);
 }
 
-/// Bounded work: a sandbox packed with Acid over Rock, and one packed with Gas and Fire, each steps in a
-/// small multiple of what a world of Water costs (release build). Each rule reads four neighbours and moves
-/// at most once, so there is no data-dependent blow-up; this pins that.
+/// Bounded work, counted rather than timed. A region packed with Acid over Rock, one packed with Gas and Fire
+/// (which flashes the pocket in the first ticks) and one of Water as the baseline each run 60 ticks. Per tick
+/// we take `ran_chunks` (chunks stepped; each is a fixed CHUNK_AREA cells of work) and the number of cells whose
+/// material or aux changed, and keep the MAX over ticks, the first and flash ticks included.
+/// - Chunks: the bound is every chunk of the grid, once (`w*h / CHUNK_AREA`). The packed region keeps the whole
+///   sandbox awake, so the measured max reaches the bound, and `HALVED` shows a bound half as large fails.
+/// - Cells changed: reported in /tmp/f2-work.txt, not bounded tightly (a flash fire changes most of a pocket).
+
+struct Work {
+    max_chunks: u32,
+    max_changed: usize,
+    max_changed_after_first: usize,
+    area: usize,
+    cells: usize,
+}
+
+fn max_work(fill: u8, lit: u8) -> Work {
+    let mut s = Sim::new(3, 0).unwrap();
+    s.grid.set_all_active();
+    let mut area = 0;
+    for y in 100..400usize {
+        for x in 20..490usize {
+            let i = y * s.grid.w + x;
+            let m = if y > 380 { 2 } else if (x + y) % 7 == 0 { lit } else { fill };
+            s.grid.set(i, m, 0);
+            area += 1;
+        }
+    }
+    let mut w = Work { max_chunks: 0, max_changed: 0, max_changed_after_first: 0, area, cells: s.grid.w * s.grid.h };
+    for t in 0..60 {
+        let (m0, a0) = (s.grid.mat.clone(), s.grid.aux.clone());
+        s.step();
+        let changed = (0..m0.len()).filter(|&i| m0[i] != s.grid.mat[i] || a0[i] != s.grid.aux[i]).count();
+        w.max_changed = w.max_changed.max(changed);
+        if t > 0 {
+            w.max_changed_after_first = w.max_changed_after_first.max(changed);
+        }
+        w.max_chunks = w.max_chunks.max(s.grid.ran_chunks);
+    }
+    w
+}
+
 #[test]
 fn new_materials_keep_a_tick_within_bounds() {
-    let time = |fill: u8, lit: u8| {
-        let mut s = Sim::new(3, 0).unwrap();
-        s.grid.set_all_active();
-        for y in 100..400usize {
-            for x in 20..490usize {
-                let i = y * s.grid.w + x;
-                let m = if y > 380 { 2 } else if (x + y) % 7 == 0 { lit } else { fill };
-                s.grid.set(i, m, 0);
-            }
-        }
-        let t = std::time::Instant::now();
-        for _ in 0..60 {
-            s.step();
-        }
-        t.elapsed().as_micros() / 60
-    };
-    let water = time(5, 5);
-    let (acid, gas) = (time(16, 16), time(17, 10));
-    let _ = std::fs::write("/tmp/f2-bounds.txt", format!("per tick us: water {water} acid {acid} gas+fire {gas}\n"));
-    let cap = (water * 6).max(30_000);
-    assert!(acid < cap && gas < cap, "acid {acid} us, gas+fire {gas} us per tick (water {water}, cap {cap})");
+    let mut report = String::new();
+    for (name, fill, lit) in [("water", 5u8, 5u8), ("acid", 16, 16), ("gas+fire", 17, 10)] {
+        let w = max_work(fill, lit);
+        let chunk_bound = (w.cells / CHUNK_AREA) as u32;
+        report += &format!(
+            "{name}: max chunks {} (bound {chunk_bound}), max changed {} (after first {}), area {}\n",
+            w.max_chunks, w.max_changed, w.max_changed_after_first, w.area
+        );
+        assert!(w.max_chunks <= chunk_bound, "{name}: {} chunks stepped in one tick, bound {chunk_bound}", w.max_chunks);
+        // Tightness: the bound is not slack. Half of it would fail.
+        assert!(w.max_chunks > chunk_bound / 2, "{name}: bound {chunk_bound} is more than twice the measured max {}", w.max_chunks);
+        // Changes are only reported: a flash fire legitimately changes most of a packed pocket in a tick.
+        assert!(w.max_changed <= w.cells, "{name}: more cells changed than exist");
+    }
+    let _ = std::fs::write("/tmp/f2-work.txt", report);
 }
