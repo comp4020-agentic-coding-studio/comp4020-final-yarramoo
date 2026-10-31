@@ -188,6 +188,9 @@ struct Scale {
     target_spots: [(i32, i32, i32); 2],
     /// Worm radii (min, max, start), cells: roomy tunnels, two to three bodies tall at L, scaled down on small worlds.
     worm_r: (i32, i32, i32),
+    /// Open caverns (shallow band, deep band) and their radius range, cells; same size scaling as the worms.
+    chambers: (i32, i32),
+    chamber_r: (i32, i32),
 }
 
 impl Scale {
@@ -223,6 +226,8 @@ impl Scale {
             worm_target_y,
             worm_branch_span: scale_u(h, 450).max(60),
             link_x_span: (w - 348).max(40),
+            chambers: (scale_count(w, h, 4, 1), scale_count(w, h, 8, 2)),
+            chamber_r: (wr(CHAMBER_R_MIN), wr(CHAMBER_R_MAX)),
             worm_r: (wr(WORM_R_MIN), wr(WORM_R_MAX), wr(WORM_R_START)),
             target_spots: [
                 (shallow_top + 40, deep_top - 40, scale_count(w, h, 40, 8)),
@@ -241,6 +246,7 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     carve_noise_caves(g, seed, &surf, &sc);
     let mut path = Vec::new();
     carve_worms(g, seed, &surf, &mut path, &sc);
+    carve_chambers(g, seed, &path, &sc);
     connect_and_prune(g, seed, &path);
     line_entrances_with_dirt(g, seed, &surf);
     let mut pool_scratch = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
@@ -672,6 +678,45 @@ fn dig(g: &mut Grid, cx: i32, cy: i32, r: i32, clear_all: bool) {
     }
 }
 
+/// Open caverns, each centred on a point a worm already passed through, so every chamber is joined to the
+/// tunnel network (`connect_and_prune` and `repair_traversal` then run as before). A few in the shallow band
+/// and more in the deep one. Counter-based: chamber `k` of band `b` is a pure function of (seed, k, b).
+/// Rock and Dirt only (like worms), so it cannot disturb Bedrock, and it skips centres near the border or the
+/// surface. Runs before the materials are placed, so piles and pools land in the opened space or on its floor.
+fn carve_chambers(g: &mut Grid, seed: u64, path: &[(i32, i32)], sc: &Scale) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    for band in 0..2u32 {
+        let (lo, hi) = if band == 0 { (sc.shallow_top, sc.deep_top) } else { (sc.deep_top, sc.repair_depth) };
+        let count = if band == 0 { sc.chambers.0 } else { sc.chambers.1 };
+        for k in 0..count as u32 {
+            let span = (sc.chamber_r.1 - sc.chamber_r.0 + 1) as u32;
+            let rx = sc.chamber_r.0 + (rng(seed, 0, k, band, SALT_GEN_CHAMBER) % span) as i32;
+            let ry = rx * 2 / 3;
+            let ok = |p: &&(i32, i32)| {
+                p.1 >= lo && p.1 < hi && p.1 - ry >= sc.surface_y + 60 && p.1 + ry < h - FLOOR_ROWS as i32 - 12
+                    && p.0 - rx > WALL_COLS as i32 + 12 && p.0 + rx < w - WALL_COLS as i32 - 12
+            };
+            let n = path.iter().filter(ok).count();
+            if n == 0 {
+                continue;
+            }
+            let pick = (rng(seed, 0, k, band + 2, SALT_GEN_CHAMBER) % n as u32) as usize;
+            let &(cx, cy) = path.iter().filter(ok).nth(pick).unwrap_or(&(0, 0));
+            for y in (cy - ry).max(0)..=(cy + ry).min(h - 1) {
+                for x in (cx - rx).max(0)..=(cx + rx).min(w - 1) {
+                    let (dx, dy) = (i64::from(x - cx), i64::from(y - cy));
+                    if dx * dx * i64::from(ry * ry) + dy * dy * i64::from(rx * rx) <= i64::from(rx * rx) * i64::from(ry * ry) {
+                        let i = (y * w + x) as usize;
+                        if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                            g.mat[i] = EMPTY;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// True if a disc of radius `r` at (x, y) would reach the protected border.
 fn near_border(g: &Grid, x: i32, y: i32, r: i32) -> bool {
     let m = r + 10;
@@ -887,6 +932,9 @@ const REPAIR_PASSES: u32 = 3;
 const WORM_R_MIN: i32 = 10;
 const WORM_R_MAX: i32 = 16;
 const WORM_R_START: i32 = 12;
+/// Chamber radii at L (cells); each is an ellipse two thirds as tall as wide.
+const CHAMBER_R_MIN: i32 = 25;
+const CHAMBER_R_MAX: i32 = 45;
 
 /// Flood a `bw` x `bh` box (keyed by top-left) through Empty cells from `start`. Returns the top-left
 /// of the box whose bottom is deepest, or None if the start box does not fit. Liquids, sand and solids block.
@@ -1226,5 +1274,36 @@ mod tests {
             out += &format!("size {size}: best {} ms, open {}% avg, pickups/seed shallow {} deep {}\n", best / 1000, open / 4, sh / 4, dp / 4);
         }
         std::fs::write("/tmp/f1-gen.txt", out).unwrap();
+    }
+
+    /// `carve_chambers` opens big ellipses centred on worm-path points, inside the walls and bands, Rock and Dirt
+    /// only, as a pure function of (seed, path). Shown red with the function returning early.
+    #[test]
+    fn chambers_open_roomy_caverns_on_the_path() {
+        let (w, h) = (2048i32, 1536i32);
+        let fresh = || {
+            let mut g = Grid::new(w as usize, h as usize);
+            for i in 0..g.mat.len() {
+                g.mat[i] = ROCK;
+            }
+            g
+        };
+        let mut g = fresh();
+        let sc = Scale::new(w, h);
+        let path: Vec<(i32, i32)> = (0..40).map(|k| (200 + k * 40, sc.shallow_top + 100 + k * 25)).collect();
+        carve_chambers(&mut g, 5, &path, &sc);
+        let open = g.mat.iter().filter(|&&m| m == EMPTY).count();
+        // 4 shallow + 8 deep ellipses of radius 25-45 (area pi*rx*(2/3)rx): well over 20k cells.
+        assert!(open > 20_000, "{open} cells opened");
+        for y in 0..g.h {
+            for x in 0..g.w {
+                if g.mat[y * g.w + x] == EMPTY {
+                    assert!(x >= WALL_COLS && x < g.w - WALL_COLS && y < g.h - FLOOR_ROWS && y >= sc.surface_y as usize, "opened {x},{y}");
+                }
+            }
+        }
+        let mut g2 = fresh();
+        carve_chambers(&mut g2, 5, &path, &sc);
+        assert!(g2.mat == g.mat, "carve_chambers must be a pure function of (seed, path)");
     }
 }

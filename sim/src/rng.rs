@@ -73,6 +73,7 @@ pub const SALT_GEN_SPOT_X: u32 = 132;
 pub const SALT_GEN_SPOT_Y: u32 = 133;
 pub const SALT_GEN_LINK: u32 = 134;
 pub const SALT_GEN_ENTRANCE_BAND: u32 = 135;
+pub const SALT_GEN_CHAMBER: u32 = 136;
 pub const SALT_STEM_LEAN: u32 = 143;
 pub const SALT_STEM_BRANCH: u32 = 144;
 pub const SALT_STEM_BLOOM: u32 = 145;
