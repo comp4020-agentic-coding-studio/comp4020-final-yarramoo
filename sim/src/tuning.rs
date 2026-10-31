@@ -149,7 +149,8 @@ pub const ENEMY_SLIME: u8 = 0;
 pub const ENEMY_IMP: u8 = 1;
 pub const ENEMY_ACID_SLIME: u8 = 2;
 pub const ENEMY_WORM: u8 = 3;
-pub const NUM_ENEMY_KINDS: usize = 4;
+pub const ENEMY_BOSS: u8 = 4;
+pub const NUM_ENEMY_KINDS: usize = 5;
 /// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
 /// F5 raised this from 48: at size L the generator places 25 slimes + 8 imps + 10 acid slimes + 8 worms = 51.
 pub const MAX_ENEMIES: usize = 64;
@@ -184,6 +185,8 @@ pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
     EnemyStats { hp: 60, w: 5, h: 4, contact_damage: 15, contact_cooldown: 40, immune: IMMUNE_ACID, weak: 0 },
     // Burrower worm: tunnels through rock; no immunities (lava and fire hurt it at the shared rate).
     EnemyStats { hp: 90, w: 5, h: 4, contact_damage: 20, contact_cooldown: 40, immune: 0, weak: 0 },
+    // The Deep Mage (F6): a big flier that makes the lava ring, so immune to fire and lava; contact shove 20.
+    EnemyStats { hp: BOSS_HP, w: 11, h: 14, contact_damage: 20, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: 0 },
 ];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
@@ -285,3 +288,21 @@ pub const WORM_BURIED_CELLS: i32 = 6;
 pub const MAX_ISLAND_REMOVED: usize = 8192;
 pub const ISLAND_MAX: usize = 400;
 pub const ISLAND_WORK_MAX: usize = 4000;
+
+// ---- the boss and its arena (F6, docs/briefs/fun7-boss.md) -------------------------------------------------
+
+/// The Deep Mage's hp (design 1200; the balance commit sets the final number, see the F6 report).
+pub const BOSS_HP: u16 = 1200;
+/// Arena ellipse radii (cells) at size L; smaller worlds scale by the same percentage as the chambers, but never
+/// below the minimums (the boss is 11 x 14 cells). The flat floor is `ry / 2` below the centre.
+pub const ARENA_RX_L: i32 = 70;
+pub const ARENA_RY_L: i32 = 40;
+pub const ARENA_RX_MIN: i32 = 40;
+pub const ARENA_RY_MIN: i32 = 24;
+/// Liquids, gas, sand and gunpowder are cleared, and no other enemy is placed, inside the arena grown by this margin.
+pub const ARENA_KEEP_OUT: i32 = 16;
+/// The supply alcove beside the arena: width (cells beyond the rim) and height, and the spells piled in it
+/// (one pickup each, 4 cells apart, nearest the arena first).
+pub const SUPPLY_ALCOVE_W: i32 = 28;
+pub const SUPPLY_ALCOVE_H: i32 = 8;
+pub const SUPPLY_PILE: [u8; 6] = [4, 4, 5, 4, 5, 10];

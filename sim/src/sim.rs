@@ -22,6 +22,7 @@ pub struct Base {
     pub aux: Vec<u8>,
     pub pickups: Vec<Pickup>,
     pub enemies: Vec<Enemy>,
+    pub arena: Option<crate::gen::Arena>,
 }
 
 pub struct Sim {
@@ -42,6 +43,8 @@ pub struct Sim {
     pub enemies: Vec<Enemy>,
     /// Scratch: cells examined by enemy collision this tick (the work count the report measures). Not state.
     pub enemy_work: u32,
+    /// The boss arena (Survival worlds). Derived from the seed by the generator, never hashed or snapshotted.
+    pub arena: Option<crate::gen::Arena>,
     /// 1 once the one-life round has ended (`EV_ROUND_END` fired). State: hashed and snapshotted.
     pub round_over: u8,
     /// 1 once the first enemy kill or the first player death has happened in a one-life round (D-161). State.
@@ -67,15 +70,16 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, enemy_work: 0, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
                     grid.mat.copy_from_slice(&b.mat);
                     grid.aux.copy_from_slice(&b.aux);
-                    return Some(make(grid, b.pickups.clone(), b.enemies.clone(), None));
+                    return Some(make(grid, b.pickups.clone(), b.enemies.clone(), b.arena, None));
                 }
-                let spots = crate::gen::generate(&mut grid, seed);
+                let world = crate::gen::generate_world(&mut grid, seed, cfg.has_enemies());
+                let (spots, arena) = (world.spots, world.arena);
                 let pickups: Vec<Pickup> = spots
                     .iter()
                     .enumerate()
@@ -95,13 +99,14 @@ impl Sim {
                                 }
                             })
                             .map_or(table[0].0, |&(k, _)| k);
+                        let spell = sp.fixed.unwrap_or(spell);
                         Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
                     })
                     .collect();
                 // F4 (D-157): the generator places the slimes once; they join the cached base like pickups.
                 let enemies: Vec<Enemy> = if cfg.has_enemies() {
                     let at: Vec<(u16, u16)> = pickups.iter().map(|p| (p.x, p.y)).collect();
-                    crate::gen::enemy_spots(&grid, seed, &at)
+                    crate::gen::enemy_spots(&grid, seed, &at, arena.as_ref())
                         .iter()
                         .enumerate()
                         .map(|(i, &(x, y, kind))| Enemy::new(i as u16, kind, i32::from(x) * POS_ONE + POS_ONE / 2, (i32::from(y) + 1) * POS_ONE))
@@ -109,8 +114,8 @@ impl Sim {
                 } else {
                     Vec::new()
                 };
-                let base = Base { seed, cfg: bytes, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone(), enemies: enemies.clone() };
-                Some(make(grid, pickups, enemies, Some(base)))
+                let base = Base { seed, cfg: bytes, mat: grid.mat.clone(), aux: grid.aux.clone(), pickups: pickups.clone(), enemies: enemies.clone(), arena };
+                Some(make(grid, pickups, enemies, arena, Some(base)))
             }
             TERRAIN_EMPTY_BOX => {
                 // The classic canvas: bedrock floor and side walls, at every size (R1).
@@ -121,7 +126,7 @@ impl Sim {
                         }
                     }
                 }
-                Some(make(grid, Vec::new(), Vec::new(), None))
+                Some(make(grid, Vec::new(), Vec::new(), None, None))
             }
             TERRAIN_SOLID_BOX => {
                 // Dirt over Rock, for digging and carving (plan-game-modes "Config fields"): a shallow Dirt
@@ -142,7 +147,7 @@ impl Sim {
                         grid.mat[y * w + x] = m;
                     }
                 }
-                Some(make(grid, Vec::new(), Vec::new(), None))
+                Some(make(grid, Vec::new(), Vec::new(), None, None))
             }
             _ => None,
         }

@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
@@ -204,6 +204,8 @@ struct Scale {
     /// Open caverns (shallow band, deep band) and their radius range, cells; same size scaling as the worms.
     chambers: (i32, i32),
     chamber_r: (i32, i32),
+    /// Boss arena radii (rx, ry), cells.
+    arena_r: (i32, i32),
 }
 
 impl Scale {
@@ -246,6 +248,7 @@ impl Scale {
             link_x_span: (w - 348).max(40),
             chambers: (scale_count(w, h, 4, 1), scale_count(w, h, 8, 2)),
             chamber_r: (wr(CHAMBER_R_MIN), wr(CHAMBER_R_MAX)),
+            arena_r: ((ARENA_RX_L * pct / 100).max(ARENA_RX_MIN), (ARENA_RY_L * pct / 100).max(ARENA_RY_MIN)),
             worm_r: (wr(WORM_R_MIN), wr(WORM_R_MAX), wr(WORM_R_START)),
             target_spots: [
                 (shallow_top + 40, deep_top - 40, scale_count(w, h, 40, 8)),
@@ -255,6 +258,40 @@ impl Scale {
     }
 }
 
+/// The boss arena (F6): one flat-floored ellipse in the deep band, only in worlds with enemies (Survival).
+/// Derived from (seed, path), so it is not state; `Sim` keeps it beside the grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arena {
+    pub cx: i32,
+    pub cy: i32,
+    pub rx: i32,
+    pub ry: i32,
+    /// First solid row of the flat floor (the open air ends at `floor_y - 1`).
+    pub floor_y: i32,
+    /// +1 or -1: the side of the supply alcove.
+    pub side: i32,
+}
+
+impl Arena {
+    /// True when (x, y) lies inside the ellipse grown by `margin` cells on every side. Integer only.
+    pub fn contains(&self, x: i32, y: i32, margin: i32) -> bool {
+        let (rx, ry) = (i64::from(self.rx + margin), i64::from(self.ry + margin));
+        let (dx, dy) = (i64::from(x - self.cx), i64::from(y - self.cy));
+        dx * dx * ry * ry + dy * dy * rx * rx <= rx * rx * ry * ry
+    }
+    /// Half the width of the open air at the floor row: `rx * 0.866`, as the integer `rx * 433 / 500`.
+    pub fn floor_half_width(&self) -> i32 {
+        self.rx * 433 / 500
+    }
+}
+
+/// Everything `generate_world` makes besides the grid.
+pub struct World {
+    pub spots: Vec<PickupSpot>,
+    pub path: Vec<(i32, i32)>,
+    pub arena: Option<Arena>,
+}
+
 /// Generate a game world into an all-Empty grid.
 pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
     generate_with_path(g, seed).0
@@ -262,6 +299,13 @@ pub fn generate(g: &mut Grid, seed: u64) -> Vec<PickupSpot> {
 
 /// `generate`, also returning the guaranteed worm path (tests measure placements against it).
 pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, Vec<(i32, i32)>) {
+    let w = generate_world(g, seed, false);
+    (w.spots, w.path)
+}
+
+/// The generator. `with_arena` (Survival only) adds the boss arena and its supply pile; without it the terrain is
+/// byte for byte what it was before F6.
+pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
     let surf = surface_heights(seed, w, h, sc.surface_y);
@@ -270,6 +314,7 @@ pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, V
     let mut path = Vec::new();
     carve_worms(g, seed, &surf, &mut path, &sc);
     carve_chambers(g, seed, &path, &sc);
+    let arena = if with_arena { carve_arena(g, seed, &path, &sc) } else { None };
     connect_and_prune(g, seed, &path);
     line_entrances_with_dirt(g, seed, &surf);
     let mut pool_scratch = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
@@ -283,33 +328,159 @@ pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, V
     place_gas_pockets(g, seed, &sc, &path);
     place_ice(g, seed, &sc, &path);
     place_coal(g, seed, &sc);
+    if let Some(a) = &arena {
+        clear_arena(g, a);
+    }
     repair_traversal(g, seed, &sc);
-    (pick_spots(g, seed, &sc), path)
+    let mut spots = pick_spots(g, seed, &sc, arena.as_ref());
+    if let Some(a) = &arena {
+        supply_pile(a, &mut spots);
+    }
+    World { spots, path, arena }
+}
+
+/// The arena: centred on a worm-path point in the deep band between `deep_top` and `repair_depth - 40`, clear of the
+/// border (the supply alcove included), so it joins the traversal network. Rock and Dirt above the floor row become
+/// Empty; Empty cells inside the ellipse at or below the floor row become Rock (a flat floor); two or three pillars
+/// stand on the floor for cover; a niche for the supply pile opens beside the floor. A fixed-size ellipse: bounded.
+fn carve_arena(g: &mut Grid, seed: u64, path: &[(i32, i32)], sc: &Scale) -> Option<Arena> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let (rx, ry) = sc.arena_r;
+    let reach = rx + SUPPLY_ALCOVE_W + 8;
+    let clear = |p: &&(i32, i32)| {
+        p.1 - ry >= sc.surface_y + 60 && p.1 + ry < h - FLOOR_ROWS as i32 - 12 && !near_border(g, p.0, p.1, reach)
+    };
+    let in_band = |p: &&(i32, i32)| p.1 >= sc.deep_top && p.1 <= sc.repair_depth - 40;
+    // Only a path point already open to the sky: a point in a sealed pocket would be filled by `connect_and_prune`.
+    let mut seen = vec![0u8; g.mat.len()];
+    let mut stack = Vec::new();
+    flood(g, &mut seen, g.w / 2, &mut stack, None);
+    let open = |p: &&(i32, i32)| seen[(p.1 * w + p.0) as usize] != 0;
+    let mut cands: Vec<(i32, i32)> = path.iter().filter(clear).filter(in_band).filter(open).copied().collect();
+    if cands.is_empty() {
+        // No path point in the band (a tiny world): the clear point nearest the middle of the band.
+        let mid = (sc.deep_top + sc.repair_depth - 40) / 2;
+        cands = path.iter().filter(clear).filter(open).min_by_key(|p| ((p.1 - mid).abs(), p.0)).copied().into_iter().collect();
+    }
+    if cands.is_empty() {
+        return None;
+    }
+    let (cx, cy) = cands[(rng(seed, 0, 0, 0, SALT_GEN_ARENA) % cands.len() as u32) as usize];
+    let floor_y = cy + ry / 2;
+    let mut a = Arena { cx, cy, rx, ry, floor_y, side: 1 };
+    // The alcove goes on the side of the nearest path point outside the ellipse, else an rng side.
+    a.side = path
+        .iter()
+        .filter(|p| !a.contains(p.0, p.1, 0))
+        .min_by_key(|p| ((p.0 - cx) * (p.0 - cx) + (p.1 - cy) * (p.1 - cy), **p))
+        .map_or(if rng(seed, 0, 0, 0, SALT_GEN_ARENA_SIDE) & 1 == 0 { 1 } else { -1 }, |p| if p.0 < cx { -1 } else { 1 });
+    for y in (cy - ry).max(0)..=(cy + ry).min(h - 1) {
+        for x in (cx - rx).max(0)..=(cx + rx).min(w - 1) {
+            if !a.contains(x, y, 0) {
+                continue;
+            }
+            let i = (y * w + x) as usize;
+            if y < floor_y {
+                if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                    g.mat[i] = EMPTY;
+                }
+            } else if g.mat[i] == EMPTY {
+                g.mat[i] = ROCK;
+            }
+        }
+    }
+    // Pillars: low rock columns on the floor, away from the middle so the boss's spawn stays clear.
+    let (pw, ph) = (4, (ry / 3).max(6));
+    let third = (rng(seed, 0, 0, 0, SALT_GEN_ARENA_PILLAR) & 1) as i32 * 2 - 1;
+    for off in [-rx * 3 / 5, rx * 3 / 5, third * rx * 3 / 10] {
+        for y in floor_y - ph..floor_y {
+            for x in cx + off - pw / 2..cx + off + pw / 2 {
+                let i = (y * w + x) as usize;
+                if a.contains(x, y, 0) && g.mat[i] == EMPTY {
+                    g.mat[i] = ROCK;
+                }
+            }
+        }
+    }
+    // The alcove: a niche from just inside the rim outward, on the floor row, so the pile is joined to the arena.
+    let hw = a.floor_half_width();
+    let (x_in, x_out) = (hw - 4, hw + SUPPLY_ALCOVE_W);
+    for d in x_in..=x_out {
+        let x = cx + a.side * d;
+        for y in floor_y - SUPPLY_ALCOVE_H..=floor_y {
+            let i = (y * w + x) as usize;
+            if y < floor_y {
+                if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                    g.mat[i] = EMPTY;
+                }
+            } else if g.mat[i] == EMPTY {
+                g.mat[i] = ROCK;
+            }
+        }
+    }
+    Some(a)
+}
+
+/// After every material is placed: liquids, gas, fire, sand and gunpowder inside the arena grown by `ARENA_KEEP_OUT`
+/// become Empty (no pool on the floor, no gas or lava pocket beside it). The supply alcove is outside the ellipse but
+/// not the margin, so it is cleared too; its pickups are placed afterwards.
+fn clear_arena(g: &mut Grid, a: &Arena) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let m = ARENA_KEEP_OUT;
+    for y in (a.cy - a.ry - m).max(0)..=(a.cy + a.ry + m).min(h - 1) {
+        for x in (a.cx - a.rx - m).max(0)..=(a.cx + a.rx + m).min(w - 1) {
+            if a.contains(x, y, m) {
+                let i = (y * w + x) as usize;
+                if is_liquid(g.mat[i]) || is_gas(g.mat[i]) || matches!(g.mat[i], SAND | GUNPOWDER) {
+                    g.mat[i] = EMPTY;
+                }
+            }
+        }
+    }
+    let hw = a.floor_half_width();
+    for d in hw - 4..=hw + SUPPLY_ALCOVE_W {
+        let x = a.cx + a.side * d;
+        for y in a.floor_y - SUPPLY_ALCOVE_H..a.floor_y {
+            let i = (y * w + x) as usize;
+            if is_liquid(g.mat[i]) || is_gas(g.mat[i]) || matches!(g.mat[i], SAND | GUNPOWDER) {
+                g.mat[i] = EMPTY;
+            }
+        }
+    }
+}
+
+/// The supply pile: `SUPPLY_PILE` pickups of the deep spells in the alcove, outside the ellipse, 4 cells apart.
+fn supply_pile(a: &Arena, spots: &mut Vec<PickupSpot>) {
+    let first = a.floor_half_width() + 6;
+    for (k, &spell) in SUPPLY_PILE.iter().enumerate() {
+        let x = a.cx + a.side * (first + 4 * k as i32);
+        spots.push(PickupSpot { x: x as u16, y: (a.floor_y - 1) as u16, band: 1, fixed: Some(spell) });
+    }
 }
 
 /// Slimes: the shallow band's floors, at most `want` of them (F4, D-157: placed once, never respawned). Returns cells
 /// (x, y) of the Empty floor cell, in placement order, which is the enemy id order. Kept off the surface spawn
 /// area (`ENEMY_SPAWN_CLEAR` columns either side of the world centre, within `ENEMY_SPAWN_ROWS` rows of the
 /// shallow top), off pickups, out of liquids (the whole 5x4 body must be Empty), and apart from each other.
-pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16, u8)> {
+pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], arena: Option<&Arena>) -> Vec<(u16, u16, u8)> {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
     let mut all: Vec<(u16, u16, u8)> = Vec::new();
     let want = scale_count(w, h, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.shallow_top + 20, (sc.deep_top - 40).max(sc.shallow_top + 60));
-    floor_spots(g, seed, pickups, &mut all, ENEMY_SLIME, want, (y_lo, y_hi), (SALT_GEN_ENEMY_X, SALT_GEN_ENEMY_Y));
-    imp_spots(g, seed, &sc, pickups, &mut all);
-    worm_spots(g, seed, &sc, pickups, &mut all);
+    floor_spots(g, seed, pickups, &mut all, ENEMY_SLIME, want, (y_lo, y_hi), (SALT_GEN_ENEMY_X, SALT_GEN_ENEMY_Y), arena);
+    imp_spots(g, seed, &sc, pickups, &mut all, arena);
+    worm_spots(g, seed, &sc, pickups, &mut all, arena);
     let want = scale_count(w, h, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.deep_top + 20, (sc.repair_depth - 20).max(sc.deep_top + 60));
-    floor_spots(g, seed, pickups, &mut all, ENEMY_ACID_SLIME, want, (y_lo, y_hi), (SALT_GEN_ACID_SLIME_X, SALT_GEN_ACID_SLIME_Y));
+    floor_spots(g, seed, pickups, &mut all, ENEMY_ACID_SLIME, want, (y_lo, y_hi), (SALT_GEN_ACID_SLIME_X, SALT_GEN_ACID_SLIME_Y), arena);
     all
 }
 
 /// Walkers on floors in the row range `rows`: up to `want` of `kind`, appended to `all`. The whole 5x4 body must be
 /// Empty (no liquid, gas or plant), the floor not sand, clear of pickups, the spawn area, and every enemy already placed.
 #[allow(clippy::too_many_arguments)]
-fn floor_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, kind: u8, want: usize, rows: (i32, i32), salts: (u32, u32)) {
+fn floor_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, kind: u8, want: usize, rows: (i32, i32), salts: (u32, u32), arena: Option<&Arena>) {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
     let (y_lo, y_hi) = rows;
@@ -331,6 +502,9 @@ fn floor_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, 
         if !body || g.mat[((yf + 1) * w + x) as usize] == SAND {
             continue;
         }
+        if arena.is_some_and(|a| a.contains(x, yf, ARENA_KEEP_OUT)) {
+            continue;
+        }
         if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 8 && (i32::from(py) - yf).abs() < 8) {
             continue;
         }
@@ -345,7 +519,7 @@ fn floor_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, 
 /// Burrower worms (F5): buried in solid Rock in the lower half of the deep band, with `WORM_BURIED_CELLS` cells of Rock
 /// in every direction around the centre (so every cell near it, and any open cell, is a few cells away), off the pickups
 /// and apart from every other enemy. `(x, y)` is the bottom row of the 5x4 body, so the centre is two rows above.
-fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>) {
+fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, arena: Option<&Arena>) {
     let (w, h) = (g.w as i32, g.h as i32);
     let want = scale_count(w, h, ENEMY_WORMS_L, ENEMY_WORMS_MIN) as usize;
     let (y_lo, y_hi) = ((sc.deep_top + sc.repair_depth) / 2, sc.repair_depth);
@@ -361,6 +535,9 @@ fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut
             continue;
         }
         let y = cy + 2;
+        if arena.is_some_and(|a| a.contains(x, cy, ARENA_KEEP_OUT)) {
+            continue;
+        }
         if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 8 && (i32::from(py) - y).abs() < 8) {
             continue;
         }
@@ -375,7 +552,7 @@ fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut
 /// Fire imps (F5): open air in the lower shallow band and the top of the deep band, inside a 13 x 13 pocket of Empty
 /// cells (so it never spawns in liquid, gas or against a wall), off the pickups and the spawn column, and apart from
 /// every other enemy. `(x, y)` is the feet cell; the 5x4 body stands above it.
-fn imp_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>) {
+fn imp_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, arena: Option<&Arena>) {
     let (w, h) = (g.w as i32, g.h as i32);
     let want = scale_count(w, h, ENEMY_IMPS_L, ENEMY_IMPS_MIN) as usize;
     let (y_lo, y_hi) = ((sc.shallow_top + sc.deep_top) / 2, sc.deep_top + 100);
@@ -387,6 +564,9 @@ fn imp_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut 
         let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_IMP_X) % (w - 80) as u32) as i32;
         let y = y_lo + (rng(seed, 0, k, 0, SALT_GEN_IMP_Y) % (y_hi - y_lo).max(1) as u32) as i32;
         if y + 7 >= h || (0..13).any(|i| (0..13).any(|j| g.mat[((y - 6 + j) * w + x - 6 + i) as usize] != EMPTY)) {
+            continue;
+        }
+        if arena.is_some_and(|a| a.contains(x, y, ARENA_KEEP_OUT)) {
             continue;
         }
         if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 12 && (i32::from(py) - y).abs() < 12) {
@@ -408,6 +588,8 @@ pub struct PickupSpot {
     pub y: u16,
     /// 0 = shallow band, 1 = deep band.
     pub band: u8,
+    /// `Some(spell)` for the boss supply pile; `None` rolls the band's table.
+    pub fixed: Option<u8>,
 }
 
 fn solid_ground(m: u8) -> bool {
@@ -885,7 +1067,7 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) {
 }
 
 /// Floor positions for pickups: about 40 in the shallow band, 25 in the deep, at least 40 apart.
-fn pick_spots(g: &Grid, seed: u64, sc: &Scale) -> Vec<PickupSpot> {
+fn pick_spots(g: &Grid, seed: u64, sc: &Scale, arena: Option<&Arena>) -> Vec<PickupSpot> {
     let w = g.w as i32;
     let mut out: Vec<PickupSpot> = Vec::new();
     for (band, &(y_lo, y_hi, want)) in sc.target_spots.iter().enumerate() {
@@ -905,10 +1087,13 @@ fn pick_spots(g: &Grid, seed: u64, sc: &Scale) -> Vec<PickupSpot> {
             if (1..=8).any(|d| g.mat[((yf - d) * w + x) as usize] != EMPTY) {
                 continue;
             }
+            if arena.is_some_and(|a| a.contains(x, yf, ARENA_KEEP_OUT)) {
+                continue;
+            }
             if out.iter().any(|s| (i32::from(s.x) - x).abs() < 40 && (i32::from(s.y) - yf).abs() < 40) {
                 continue;
             }
-            out.push(PickupSpot { x: x as u16, y: yf as u16, band: band as u8 });
+            out.push(PickupSpot { x: x as u16, y: yf as u16, band: band as u8, fixed: None });
             n += 1;
         }
     }
