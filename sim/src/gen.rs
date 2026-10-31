@@ -808,7 +808,7 @@ fn place_ice(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]) {
     }
 }
 
-/// Coal seams: thin worm-like veins that replace Rock only, in the shallow and deep bands (Rock only, so
+/// Coal seams: worm-like veins 3-5 cells thick that replace Rock only, in the shallow and deep bands (Rock only, so
 /// they never open or close space), so digging sometimes hits them.
 fn place_coal(g: &mut Grid, seed: u64, scale: &Scale) {
     let (w, h) = (g.w as i32, g.h as i32);
@@ -819,8 +819,10 @@ fn place_coal(g: &mut Grid, seed: u64, scale: &Scale) {
         let mut y = lo + (rng(seed, 0, k, 0, SALT_GEN_COAL_Y) % (hi - lo).max(1) as u32) as i32;
         let len = 50 + (rng(seed, 0, k, 1, SALT_GEN_COAL_LEN) % 80) as i32;
         let mut dir = (rng(seed, 0, k, 2, SALT_GEN_COAL_DIR) % 8) as i32;
+        // Each seam is 3 or 5 cells thick: a disc of radius 1 or 2 stamped along the worm.
+        let r = 1 + (rng(seed, 0, k, 3, SALT_GEN_COAL_LEN) % 2) as i32;
         for st in 0..len as u32 {
-            for (dx, dy) in [(0, 0), (1, 0), (0, 1)] {
+            for (dx, dy) in (-r..=r).flat_map(|a| (-r..=r).map(move |b| (a, b))).filter(|&(a, b)| a * a + b * b <= r * r + 1) {
                 let (cx, cy) = (x + dx, y + dy);
                 if cx > 0 && cy > 0 && cx < w - 1 && cy < h - 1 {
                     let i = (cy * w + cx) as usize;
@@ -1602,8 +1604,9 @@ mod tests {
                 let s = Sim::new(seed, cfg).unwrap();
                 best = best.min(t.elapsed().as_micros());
                 open += s.grid.mat.iter().filter(|&&m| m == EMPTY).count() * 100 / s.grid.mat.len();
-                sh += s.pickups.iter().filter(|p| p.spell < 4).count();
-                dp += s.pickups.iter().filter(|p| p.spell >= 4).count();
+                let deep = |p: &crate::entities::Pickup| crate::tuning::PICKUP_TABLE[1].iter().any(|&(k, _)| k == p.spell);
+                sh += s.pickups.iter().filter(|p| !deep(p)).count();
+                dp += s.pickups.iter().filter(|p| deep(p)).count();
             }
             out += &format!("size {size}: best {} ms, open {}% avg, pickups/seed shallow {} deep {}\n", best / 1000, open / 4, sh / 4, dp / 4);
         }
