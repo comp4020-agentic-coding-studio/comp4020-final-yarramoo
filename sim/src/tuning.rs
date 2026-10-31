@@ -186,7 +186,7 @@ pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
     // Burrower worm: tunnels through rock; no immunities (lava and fire hurt it at the shared rate).
     EnemyStats { hp: 90, w: 5, h: 4, contact_damage: 20, contact_cooldown: 40, immune: 0, weak: 0 },
     // The Deep Mage (F6): a big flier that makes the lava ring, so immune to fire and lava; contact shove 20.
-    EnemyStats { hp: BOSS_HP, w: 11, h: 14, contact_damage: 20, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: 0 },
+    EnemyStats { hp: 800, w: 11, h: 14, contact_damage: 20, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: 0 },
 ];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
@@ -292,7 +292,7 @@ pub const ISLAND_WORK_MAX: usize = 4000;
 // ---- the boss and its arena (F6, docs/briefs/fun7-boss.md) -------------------------------------------------
 
 /// The Deep Mage's hp (design 1200; the balance commit sets the final number, see the F6 report).
-pub const BOSS_HP: u16 = 800;
+pub const BOSS_HP: u16 = 800; // must equal the boss row of ENEMY_STATS (a test pins the client mirror)
 /// Arena ellipse radii (cells) at size L; smaller worlds scale by the same percentage as the chambers, but never
 /// below the minimums (the boss is 11 x 14 cells). The flat floor is `ry / 2` below the centre.
 pub const ARENA_RX_L: i32 = 70;

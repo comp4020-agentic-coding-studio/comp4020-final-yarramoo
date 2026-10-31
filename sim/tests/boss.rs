@@ -140,3 +140,8 @@ fn a_boss_snapshot_round_trips_and_hostile_ones_are_refused() {
     assert!(bad(&|t| { let i = bi(t); t.enemies[i].hp = BOSS_HP + 1; }), "hp above max");
     assert!(bad(&|t| { t.enemies[0].kind = 9; }), "kind 9");
 }
+
+#[test]
+fn boss_hp_constant_matches_the_stats_table() {
+    assert_eq!(ENEMY_STATS[usize::from(ENEMY_BOSS)].hp, BOSS_HP);
+}

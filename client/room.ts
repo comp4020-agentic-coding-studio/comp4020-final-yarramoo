@@ -692,6 +692,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
 
   function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
     lastPlayers = m;
+    updateBossBar(m.boss);
     if (m.following && !overview) {
       camera.x = m.cam.x;
       camera.y = m.cam.y;
@@ -719,6 +720,24 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     placeBags(m);
     (window as unknown as { __players: unknown }).__players = m.list;
     (window as unknown as { __spells: unknown }).__spells = { selected: selectedSpell, ...m.spells };
+  }
+
+  /** The Deep Mage's bar along the bottom of the stage, shown while it is in the entities view. */
+  function updateBossBar(b: { hp: number; max: number; phase: number } | null): void {
+    let el = document.getElementById("bossBar");
+    if (!b) {
+      if (el) el.hidden = true;
+      return;
+    }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "bossBar";
+      el.innerHTML = '<span class="n">The Deep Mage</span><div class="t"><b></b></div>';
+      stage.append(el);
+    }
+    el.hidden = false;
+    el.dataset.phase = String(b.phase);
+    (el.querySelector("b") as HTMLElement).style.width = `${Math.max(0, Math.min(100, (b.hp * 100) / b.max))}%`;
   }
 
   /** One-life round over (D-160): a banner with a button that makes a fresh Survival room and goes there. */
@@ -986,6 +1005,10 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     };
     (window as unknown as Record<string, unknown>).__devGotoEnemy = (kind?: number) => {
       if (devAvatar) send({ type: "devgoto", spell: kind === undefined ? -1 : -2 - kind });
+    };
+    // Dev route only (this block is inside the devAvatar branch): set the boss's hp for the phase screenshots.
+    (window as unknown as Record<string, unknown>).__devBossHp = (hp: number) => {
+      if (devAvatar) send({ type: "devbosshp", hp });
     };
     (window as unknown as Record<string, unknown>).__devMe = () => lastPlayers?.list.find((p) => p.me) ?? null;
   }

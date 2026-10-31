@@ -35,6 +35,8 @@ export type ToWorker =
   /** Client-only camera: the world window to draw, in cells. Never an input. */
   /** Dev (local mode only): switch chunk sleeping, to measure what it buys. */
   | { type: "sleep"; on: boolean }
+  /** Dev route only: set the boss's hp (`__devBossHp`). */
+  | { type: "devbosshp"; hp: number }
   | { type: "camera"; x: number; y: number; vw: number; vh: number }
   | { type: "resize"; width: number; height: number }
   /** Switch to sending frames to the main thread (render fallback). */
@@ -79,6 +81,8 @@ export type FromWorker =
       following: boolean;
       energy: number;
       energyMax: number;
+      /** The Deep Mage while it is in the entities view (hp, max hp, phase 1..3), else null. Render-only. */
+      boss: { hp: number; max: number; phase: number } | null;
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
     }

@@ -68,14 +68,23 @@
   SCRIPTED ADVANTAGE: six players each take one pile pickup then stand in a fixed ring 13-15 cells from the boss's start point, aimed at it (a real player aims at a moving target). The fight itself is not weakened.
 - Phase tests now use `BOSS_HP` fractions instead of the 1200 literals.
 
-## Unfinished (call budget reached)
-- **Checklist 5 (balance), 6 (client) and 7 (screenshots) were not done.** `BOSS_HP` is still the design's 1200 and the supply pile is the 6 pickups
-  (4x Fire bolt = 40, 2x Bomb... actually `SUPPLY_PILE` = Fire bolt x3, Bomb x2, Lava Flask x1) chosen without measurement. The report has no balance arithmetic.
-  Evidence only: in the D2 script six players with the whole pile did not get the boss below 2/3 hp before dying, so 1200 hp is probably too high for the
-  supply as it stands. Unverified: that one well-supplied player can win (the sim test wins with infinite Fire bolts).
-- Client: no sprite, HUD bar, sounds, toast, banner check or `__devGotoEnemy(4)` / `__devBossHp`. Nothing was opened in a browser. `EV_ENEMY_PHASE` (14) and kind 4
-  are unknown to `client/` and `shared/names.ts`; the entities view already carries the boss as `ENT_ENEMY` sub 4.
-- Net tests pass (314) with the sim as it is; a format version was NOT bumped (layout unchanged, see decisions).
+### 6. Client
+- `fx.ts` `pushBoss` (26-row robed mage with a bobbing glowing staff, violet / orange / red per phase, white hurt flash), `worker.ts` (boss branch in the enemy loop: phase from
+  the view's state bits 2..3, a roar plus burst on a phase change seen live, `bossHud` posted with the players message, big death burst and `bossdeath` sound, `devbosshp`
+  handler), `protocol.ts`, `sfx.ts` (`roar`, `bossdeath`), `toasts.ts` ("was struck down by the Deep Mage", cause 44), `room.ts` (HUD bar `#bossBar`, `__devBossHp`
+  inside the `devAvatar` block, so a real room never gets it; the worker handler is also `import.meta.env.DEV` and needs `avatar`), `index.html` (bar CSS).
+- `__devGotoEnemy(4)` puts the avatar 14 cells right of the boss, 2 cells below its feet line (its centre height), in open arena air. `__devMe()` read 690,469, the boss near the
+  centre; the screenshot shows both together. The enemy-hp mirror test caught `hp: BOSS_HP` (regex wants a literal), so the stats row is literal 800 and a sim test pins it to `BOSS_HP`.
+- The Victory banner is the existing `showRoundBanner(win)`, fed by `round.sub === 1` from state (so a reconnecting client sees it) and by `EV_ROUND_END`; the sim tests show the state
+  says `round_result 1` after a win, and it survives a snapshot restore. **Not seen in a browser**: I could not drive a real kill by hand in the budget.
+  The loss banner ("The party fell") was seen, in each screenshot, because the dev avatar dies to the boss's contact within seconds.
+- Not built: the depth hint (optional).
+
+### 7. Screenshots (looked at each)
+- `docs/art/shots/f6-arena-boss-hud.png`: the arena, flat floor with two pillars, the violet boss, the HUD bar full and the name. Seen.
+- `docs/art/shots/f6-phase2.png`: orange robe, bar about 50 percent orange, toast "You was struck down by the Deep Mage" (the existing local-player wording "You was"). Seen.
+- `docs/art/shots/f6-phase3.png`: red robe, bar about 18 percent red. Seen. (Both phase shots sit under "The party fell" because the dev avatar had died.)
+- A first attempt at `__devBossHp` did nothing (wrong byte offset into the snapshot's enemy record); fixed offset 13 and re-shot.
 
 ## Counts and arena
 - Arena radii: S 40x24, M 56x32, L 70x40. L seed 1: 51 normal enemies + boss; with 4 summons alive 56 of 64.

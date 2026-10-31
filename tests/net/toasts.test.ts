@@ -12,7 +12,7 @@ describe("formatDeath", () => {
     expect(d(1, 0, 41)).toBe("Ana was burned by an imp");
     expect(d(1, 0, 42)).toBe("Ana was dissolved by an acid slime");
     expect(d(1, 0, 43)).toBe("Ana was eaten by a worm");
-  });
+    expect(d(1, 0, 44)).toBe("Ana was struck down by the Deep Mage");  });
 
   it("a slime death names the slime", () => {
     expect(d(1, 0, 40)).toBe("Ana was slain by a slime");

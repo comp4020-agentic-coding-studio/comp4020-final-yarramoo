@@ -44,8 +44,8 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
   } else if (d.cause === CAUSE_ACID) {
     text = k ? `${k} dissolved ${v} in acid` : `${v} dissolved in acid`;
   } else if (d.cause >= 40 && d.cause < 48) {
-    // 40 + enemy kind: 0 slime, 1 imp, 2 acid slime, 3 worm.
-    const how = ["was slain by a slime", "was burned by an imp", "was dissolved by an acid slime", "was eaten by a worm"][d.cause - 40];
+    // 40 + enemy kind: 0 slime, 1 imp, 2 acid slime, 3 worm, 4 the Deep Mage.
+    const how = ["was slain by a slime", "was burned by an imp", "was dissolved by an acid slime", "was eaten by a worm", "was struck down by the Deep Mage"][d.cause - 40];
     text = `${v} ${how ?? "was slain by a monster"}`;
   } else {
     text = `${v} died`;

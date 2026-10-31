@@ -68,10 +68,51 @@ const WORM = [".ppppp.", "pppppdp", "pepepdp", "pttpppp", ".ddppd."];
 const WORM_COL: Record<string, [number, number, number]> = { p: [0.85, 0.5, 0.5], d: [0.55, 0.3, 0.32], t: [1, 1, 0.9], e: [0.1, 0.05, 0.05] };
 const HIT_COL: Record<string, [number, number, number]> = Object.fromEntries("rowyegldatp".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
 
+// The Deep Mage (24 wide, 26 tall incl. staff): h hood, f face glow, r robe, R robe shade, s sleeve, t staff, g staff gem.
+const BOSS = [
+  "..........hhhhhh..........",
+  "........hhhhhhhhhh........",
+  ".......hhhhhhhhhhhh.......",
+  "......hhhhffhhffhhhh......",
+  "......hhhhffhhffhhhh.....g",
+  "......hhhhhhhhhhhhhh....gg",
+  ".......hhhhhhhhhhhh....ggg",
+  "......rrrrrhhhhrrrrr....gg",
+  ".....rrrrrrrrrrrrrrrr....t",
+  "....rrrrrrrrrrrrrrrrrr...t",
+  "...ssrrrrrrrrrrrrrrrrss..t",
+  "...sssrrrrrrrrrrrrrrsss..t",
+  "...ssrrrrRRRRRRrrrrrss...t",
+  "....rrrrRRRRRRRRrrrrr....t",
+  "....rrrrrRRRRRRrrrrrr....t",
+  "...rrrrrrrRRRRrrrrrrrr...t",
+  "...rrrrrrrrrrrrrrrrrrr...t",
+  "..rrrrrrrrrrrrrrrrrrrrr..t",
+  "..rrrrrrrrrrrrrrrrrrrrr..t",
+  ".rrrrrrrrrrrrrrrrrrrrrrr.t",
+  ".RRRRRRRRRRRRRRRRRRRRRRR.t",
+  "..RRRRRRRRRRRRRRRRRRRRR..t",
+];
+/** Per-phase robe tint: 1 violet, 2 orange, 3 enraged red. */
+const BOSS_PAL: Record<number, Record<string, [number, number, number]>> = {
+  1: { h: [0.25, 0.15, 0.45], f: [0.6, 0.95, 1], r: [0.38, 0.22, 0.66], R: [0.24, 0.13, 0.44], s: [0.5, 0.32, 0.8], t: [0.5, 0.35, 0.2], g: [0.5, 0.9, 1] },
+  2: { h: [0.4, 0.2, 0.3], f: [1, 0.85, 0.4], r: [0.7, 0.32, 0.2], R: [0.45, 0.2, 0.12], s: [0.85, 0.5, 0.25], t: [0.5, 0.35, 0.2], g: [1, 0.7, 0.2] },
+  3: { h: [0.35, 0.05, 0.08], f: [1, 0.95, 0.8], r: [0.85, 0.12, 0.1], R: [0.5, 0.06, 0.06], s: [1, 0.35, 0.2], t: [0.4, 0.25, 0.15], g: [1, 0.4, 0.1] },
+};
+const BOSS_HIT: Record<string, [number, number, number]> = Object.fromEntries("hfrRstg".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
+
+/** The Deep Mage, feet centre (px, py), `phase` 1..3 (the view's state bits 2..3). Hurt flash white. */
+export function pushBoss(rects: Rect[], px: number, py: number, phase: number, hit: boolean, now: number): void {
+  const x0 = Math.round(px) - 12;
+  const y0 = Math.round(py) - BOSS.length;
+  pushGrid(rects, BOSS, hit ? BOSS_HIT : BOSS_PAL[phase] ?? BOSS_PAL[1], x0, y0 + Math.round(Math.sin(now / 300)));
+}
+
 /** An enemy of `kind` (0 slime, 1 imp, 2 acid slime, 3 worm) standing with its feet centre at (px, py). `awake` is the
  * view's hunting bit: a dormant worm is not drawn at all (it is inside the rock), an awake one shows its head. */
 export function pushEnemy(rects: Rect[], kind: number, px: number, py: number, air: "rising" | "falling" | "ground", hit: boolean, hpFrac: number, maxHp: number, awake: boolean, now: number): void {
   if (kind === 0) return pushSlime(rects, px, py, air, hit, hpFrac);
+  if (kind === 4) return pushBoss(rects, px, py, 1, hit, now);
   if (kind === 3 && !awake) return;
   const x0 = Math.round(px) - 3;
   let rows: string[];
