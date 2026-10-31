@@ -51,6 +51,7 @@ Later
 25. [Fun before modes: juice, Dig and roomy caves](#25-fun-before-modes-juice-dig-and-roomy-caves)
 26. [The canvas that shrank for a week, and two workers who blamed the browser](#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)
 27. [Six new materials, and the half of the game that didn't know about them](#27-six-new-materials-and-the-half-of-the-game-that-didnt-know-about-them)
+28. [Rigid bodies: falling rock in a lockstep integer sim (researched, not built)](#28-rigid-bodies-falling-rock-in-a-lockstep-integer-sim-researched-not-built)
 
 ---
 
@@ -1193,3 +1194,50 @@ guard.
 [`ff52e02`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ff52e02) (the class table),
 [`25cc92b`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/25cc92b) (acid damage),
 [`cc03512`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/cc03512) (the gen margins).
+
+## 28. Rigid bodies: falling rock in a lockstep integer sim (researched, not built)
+
+**Context.** On 31 October the user asked what it would take for rock that a player cuts entirely free to
+fall as a solid piece, the way it does in Noita. Noita's talk describes "destructible rigid body physics"
+alongside its falling-sand world (GDC 2019, Purho). Per a developer's summary, it gets there by tracing pixel
+islands into polygons for a float physics engine. Ours cannot copy that. Every client must step the same
+world bit for bit in lockstep, `sim/` bans floating point outright (invariant 3), and there is no server
+stepping or rollback to paper over a divergence.
+
+**A possible approach** ([`docs/research/rigid-bodies.md`](research/rigid-bodies.md)):
+
+- **Detect.** When a solid cell is removed, flood-fill its solid neighbours, with a cell cap. An island
+  that reaches the cap counts as anchored, so cutting a whole cave ceiling free does nothing rather than
+  costing unbounded work.
+- **Represent.** Lift a freed island out of the grid into a `Body` entity: a cell list plus a fixed-point
+  position and velocity. Write it back into the grid when it comes to rest. Because bodies are cell lists,
+  not polygons, the polygon pipeline is unnecessary.
+- **Simulate translation only at first.** Rotation needs fixed-point trig, inertia and impulse tuning, and
+  the research puts it at roughly ten times the work.
+
+**Why multiplayer makes it hard:**
+
+- **Sleeping.** A body must not behave differently when chunks sleep. It reuses the rule from the enemies
+  design: a body steps only inside a rectangle around active players, computed from player positions,
+  which are hashed state, never from the sleep flag (D7).
+- **Order.** Bodies colliding with each other resolve in id order, so the result is deterministic but
+  asymmetric. v1 avoids body-against-body impulses entirely.
+- **Players.** Player positions are client-predicted, so the sim cannot physically push one. The research
+  recommends that a body stop above a player, with no crushing in v1. Otherwise a body could rasterise
+  rock over a player.
+- **Snapshots.** Bodies in flight are hashed state in a variable-length section, so a late joiner gets them
+  intact, at a capped size.
+- **Cost.** Every client runs every body, so the body count, cell count and substeps are all capped.
+
+**Decision.** Nothing is built yet. The recommended ladder:
+
+- **v0:** detect a freed island and crumble it into a falling powder (about half a day, no snapshot change).
+- **v0.5:** an in-grid straight drop of small islands.
+- **v1:** the `Body` entity, translation only (about 2 days).
+- **v2:** rotation (5+ days, high risk). This one goes in `FUTURE.md`.
+
+The research rates v0 at about 60% of the visible effect for about 10% of the effort.
+
+**Evidence.** [`docs/research/rigid-bodies.md`](research/rigid-bodies.md) (its prior-art section says plainly that it
+rests on search results; the GDC page was checked, and it does not name Box2D);
+[`docs/research/enemies-design.md`](research/enemies-design.md) section 3 for the stepping rule it reuses.

@@ -485,3 +485,12 @@ generator-placed enemies Survival gets first.
 - **Why:** respawning would let enemies work in Deathmatch or a co-op endless mode. Wave spawning near
   players would make a wave mode possible. Both need a respawn timer in hashed state, plus a rule that
   never spawns in view.
+
+## Rigid bodies: rock that falls when cut free
+
+v0: crumble a freed island into falling powder. v0.5: drop small islands straight down in the grid. v1: a
+translation-only `Body` entity. v2: rotation.
+
+- **Source:** the user, 31 Oct; research in `docs/research/rigid-bodies.md`; engineering-decisions entry 28.
+- **Why:** it's the Noita moment of cutting a chunk free and watching it fall. v0 is cheap (about half a day,
+  no snapshot change); rotation (v2) is 5+ days of high-risk work in fixed point.
