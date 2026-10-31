@@ -360,18 +360,36 @@ describe("snapshots in the game world", () => {
       };
     }
     // Stand where the sim put each player. A aims at B (Push and Blast, so knockback is exercised when the line
-    // is clear); B shoots straight up, so a bolt is always in flight, whatever the terrain between them.
+    // is clear); B shoots up into open sky (below), so a bolt is always in flight, whatever the terrain between them.
     const at = (id: number) => a.ls.sim.entities().find((e) => e.type === 1 && e.id === id)!;
     await waitFor(() => (a.ls.run(100000), at(ra.id) !== undefined && at(rb.id) !== undefined), 5000, "both joined");
     const [pa, pb] = [at(ra.id), at(rb.id)];
     const aim = Math.round(((Math.atan2(pb.y - pa.y, pb.x - pa.x) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
+    // B's spawn column depends on the tick it joined at, so a fixed "straight up" sometimes started inside A's
+    // hitbox (B one cell from A) or under a tree, and no bolt ever flew (failed 4 runs in 6 after F2). Aim B
+    // up and away from A, at the first angle whose first 40 cells are open sky, so a bolt is always in flight.
+    const mv = a.ls.sim.matView();
+    const W = a.ls.sim.width();
+    const away = pb.x >= pa.x ? 1 : -1;
+    const clear = (deg: number) => {
+      const r = (deg * Math.PI) / 180;
+      for (let k = 2; k <= 40; k++) {
+        const x = Math.round(pb.x / 16 + Math.cos(r) * k);
+        const y = Math.round(pb.y / 16 - 5 + Math.sin(r) * k);
+        if (y < 0) return true;
+        if (mv[y * W + x] !== 0) return false;
+      }
+      return true;
+    };
+    const upDeg = [60, 45, 75, 30, 90].map((d) => (away > 0 ? -d : -180 + d)).find(clear) ?? -90;
+    const upAim = Math.round((((upDeg / 360) % 1) + 1) % 1 * 65536) & 0xffff;
     let n = 0;
     const shooter = setInterval(() => {
       n++;
       a.move(pa.x / 16, pa.y / 16, 1);
       b.move(pb.x / 16, pb.y / 16, 0);
       a.cast(n % 4 === 0 ? 1 : 0, aim, n & 0xffff);
-      b.cast(0, 49152, n & 0xffff);
+      b.cast(0, upAim, n & 0xffff);
     }, 117); // about 7 ticks: not a divisor of the snapshot cadence, see the snapshot loop below
     const stepper = setInterval(() => (a.ls.run(100000), b.ls.run(100000)), 4);
     cleanups.push(() => (clearInterval(shooter), clearInterval(stepper)));
