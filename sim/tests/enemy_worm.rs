@@ -15,6 +15,12 @@ fn rock_arena(px: i32) -> Sim {
     let mut s = Sim::new(5, RoomConfig::survival()).unwrap();
     s.enemies.clear();
     let w = s.grid.w;
+    // The generated world's own acid pools would eat Rock and move the global Rock count these tests assert on.
+    for m in s.grid.mat.iter_mut() {
+        if *m == ACID {
+            *m = EMPTY;
+        }
+    }
     for y in 100..320 {
         for x in 300..700 {
             s.grid.mat[y * w + x] = ROCK;

@@ -236,8 +236,8 @@ impl Scale {
             lava_y_span: scale_u(h, 520).max(40),
             lava_count: scale_count(w, h, 40, 6),
             tree_count: scale_count(w, h, 28, 4),
-            oil_count: scale_count(w, h, 24, 4),
-            acid_count: scale_count(w, h, 10, 2),
+            oil_count: scale_count(w, h, 24, 6),
+            acid_count: scale_count(w, h, 10, 3),
             gas_count: scale_count(w, h, 14, 3),
             ice_count: scale_count(w, h, 8, 2),
             coal_count: scale_count(w, h, 36, 6),
@@ -678,7 +678,7 @@ fn find_water_surface(g: &Grid, x: i32, y0: i32, max_down: i32) -> Option<i32> {
 /// the rest rest on a floor. Oil keeps away from Lava (`try_pool`'s `foe`).
 fn place_oil(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
     let mut placed = 0;
-    for k in 0..2000u32 {
+    for k in 0..6000u32 {
         if placed == scale.oil_count {
             break;
         }
@@ -706,12 +706,12 @@ fn near_path(path: &[(i32, i32)], x: i32, y: i32, r: i32) -> bool {
 /// down would be a trap that rewards nothing). Water must not touch them (it would dilute at once).
 fn place_acid(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale, path: &[(i32, i32)]) {
     let mut placed = 0;
-    for k in 0..3000u32 {
+    for k in 0..12000u32 {
         if placed == scale.acid_count {
             break;
         }
         let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_ACID_X) % scale.water_x_span as u32) as i32;
-        let y = scale.lava_y_lo - 40 + (rng(seed, 0, k, 0, SALT_GEN_ACID_Y) % (scale.lava_y_span + 40) as u32) as i32;
+        let y = scale.deep_top + 20 + (rng(seed, 0, k, 0, SALT_GEN_ACID_Y) % (scale.lava_y_span + 80) as u32) as i32;
         let depth = 3 + (rng(seed, 0, k, 0, SALT_GEN_ACID_D) % 6) as i32;
         let Some(yf) = find_floor(g, x, y, 120) else { continue };
         if yf < scale.deep_top + 20 || g.mat[yf as usize * g.w + x as usize] != EMPTY || near_path(path, x, yf, ACID_PATH_MARGIN) {
