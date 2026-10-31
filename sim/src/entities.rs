@@ -172,7 +172,7 @@ pub struct Enemy {
     pub vy: i16,
     pub hp: u16,
     pub facing: u8,
-    /// 0 idle, 1 chase (render hint and AI mode).
+    /// Bit 0: hunting a player. Bit 1: airborne (render hint, set every stepped tick).
     pub state: u8,
     /// Contact damage is available when `tick >= cooldown_until`.
     pub cooldown_until: u32,
@@ -403,7 +403,7 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         e.hp = r.u16().ok_or(())?;
         e.facing = r.u8().ok_or(())?;
         e.state = r.u8().ok_or(())?;
-        if e.facing > 1 || e.state > 1 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
+        if e.facing > 1 || e.state > 3 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
             return Err(());
         }
         e.cooldown_until = r.u32().ok_or(())?;

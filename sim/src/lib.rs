@@ -3,6 +3,7 @@
 #![allow(clippy::result_unit_err)]
 
 pub mod config;
+pub mod enemy;
 pub mod entities;
 pub mod gen;
 pub mod grid;

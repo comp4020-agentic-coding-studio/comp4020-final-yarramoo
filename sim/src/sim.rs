@@ -40,6 +40,8 @@ pub struct Sim {
     pub bags: Vec<Bag>,
     /// Enemies, sorted by id (Survival only). State: hashed and snapshotted. Placed by the generator, never spawned later.
     pub enemies: Vec<Enemy>,
+    /// Scratch: cells examined by enemy collision this tick (the work count the report measures). Not state.
+    pub enemy_work: u32,
     /// 1 once the one-life round has ended (`EV_ROUND_END` fired). State: hashed and snapshotted.
     pub round_over: u8,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
@@ -61,7 +63,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, enemy_work: 0, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -155,7 +157,7 @@ impl Sim {
 
     /// One tick, in this order (D-102):
     /// 1. inputs
-    /// 2. `update_entities`: projectiles, then respawns, then bags (expire, fall, take), then pickups
+    /// 2. `update_entities`: projectiles, then enemies (F4), then respawns, then bags (expire, fall, take), then pickups
     /// 3. `refresh_active`
     /// 4. `grid.step_cells`
     /// 5. grid explosions -> `explode_at` (damage, knockback, `EV_EXPLODE`)
@@ -299,6 +301,7 @@ impl Sim {
     /// so two players on one pickup resolve to the lower id.
     fn update_entities(&mut self) {
         self.update_projectiles();
+        self.update_enemies();
         let tick = self.tick;
         // Respawns come first, in id order, whether or not the player is still active: a player who
         // left while dead must not stay dead.

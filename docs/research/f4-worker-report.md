@@ -26,3 +26,13 @@
 - New tests (`sim/tests/enemies.rs`): byte layout and snapshot round trip, hostile bytes, view record, empty
   section, enemies-only-when-on, floor/liquid/spawn/pickup placement, counts per size, cached base.
 
+### 4. Stepping rule, slime AI, contact damage, embedded rescue
+- `sim/src/enemy.rs` (new), `materials.rs` (`material_class`, `blocks_enemy`, pinned to `shared/names.ts` by a test that parses it),
+  slime tuning in `tuning.rs`, salts 240-243 in `rng.rs`. Enemies step in `update_entities` right after `update_projectiles`.
+- Red first: with `update_enemies` stubbed to return immediately, 6 of the 10 new tests failed (stepping, cap, targeting
+  tie, hop, contact damage, embedded rescue). `a_dead_or_absent_player_wakes_nothing`, the D7 test and the work test
+  pass with the stub by nature (nothing moves), so D7 is a regression guard, not a red-first test; it does
+  exercise a near, an outside and an on-the-edge slime plus a paint that disturbs a settled region.
+- Work count (`Sim.enemy_work`, cells examined by collision tests): 48 slimes, 24 stepped: worst 3600 cells/tick, mean 2966 cells/tick
+- Gate: cargo test, clippy, typecheck, test:determinism green.
+

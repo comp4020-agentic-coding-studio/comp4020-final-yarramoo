@@ -174,3 +174,23 @@ pub const ENEMY_SLIMES_L: i32 = 25;
 pub const ENEMY_SLIMES_MIN: i32 = 8;
 pub const ENEMY_SPAWN_CLEAR: i32 = 160;
 pub const ENEMY_SPAWN_ROWS: i32 = 60;
+/// Slime movement, 1/16 cell and 1/16 cell per tick: gravity per tick, fastest fall, jump and hop impulses, the
+/// distance (cells) inside which it hunts, and the hop cooldown (`base` plus an rng draw below `jitter`).
+pub const SLIME_GRAVITY: i32 = 1;
+pub const SLIME_FALL_MAX: i32 = 48;
+pub const SLIME_JUMP_VY: i32 = 12;
+pub const SLIME_HOP_VX: i32 = 3;
+pub const SLIME_IDLE_JUMP_VY: i32 = 8;
+pub const SLIME_IDLE_HOP_VX: i32 = 2;
+pub const SLIME_AGGRO_CELLS: i32 = 120;
+pub const SLIME_HOP_BASE: u32 = 30;
+pub const SLIME_HOP_JITTER: u32 = 20;
+pub const SLIME_IDLE_BASE: u32 = 60;
+pub const SLIME_IDLE_JITTER: u32 = 60;
+/// Fastest an enemy moves on one axis (knockback is clamped to this), so one tick's movement stays bounded.
+pub const ENEMY_MAX_SPEED: i32 = 128;
+/// How far up (cells) the embedded rescue looks for the first free spot.
+pub const ENEMY_RESCUE_CELLS: i32 = 64;
+/// A contact hit knocks the player this much (1/16 cell per tick), away from the enemy and up.
+pub const CONTACT_KNOCK_X: i32 = 40;
+pub const CONTACT_KNOCK_Y: i32 = -24;

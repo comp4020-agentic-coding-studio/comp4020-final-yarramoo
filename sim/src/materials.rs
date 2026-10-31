@@ -45,3 +45,23 @@ pub fn fill_empty_writable(m: u8) -> bool {
 pub fn is_flammable(m: u8) -> bool {
     matches!(m, WOOD | SEED | STEM | FLOWER | OIL | GAS)
 }
+
+/// Movement classes, mirroring `shared/names.ts` `MATERIAL_CLASS` (a test parses that file and pins this).
+pub const CLASS_EMPTY: u8 = 0;
+pub const CLASS_SOLID: u8 = 1;
+pub const CLASS_LIQUID: u8 = 2;
+pub const CLASS_GAS: u8 = 3;
+
+pub fn material_class(m: u8) -> u8 {
+    match m {
+        EMPTY => CLASS_EMPTY,
+        WATER | LAVA | OIL | ACID => CLASS_LIQUID,
+        FIRE | SMOKE | STEAM | GAS => CLASS_GAS,
+        _ => CLASS_SOLID,
+    }
+}
+
+/// Enemies (slimes) cannot enter solid cells; they wade through liquid and gas. Unknown ids count as solid.
+pub fn blocks_enemy(m: u8) -> bool {
+    material_class(m) == CLASS_SOLID
+}
