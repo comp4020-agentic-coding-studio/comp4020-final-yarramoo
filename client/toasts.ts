@@ -1,6 +1,6 @@
 // Death-feed text. Pure: the worker passes in a plain-name lookup (never `name#id`), render-only (invariant 9).
 import { achievementById } from "../shared/achievements.ts";
-import { CAUSE_FIRE, CAUSE_GUNPOWDER, CAUSE_LAVA } from "../shared/sim.ts";
+import { CAUSE_ACID, CAUSE_FIRE, CAUSE_GUNPOWDER, CAUSE_LAVA } from "../shared/sim.ts";
 
 export interface DeathInfo {
   victim: number;
@@ -41,6 +41,8 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
     text = k ? `${k} sent ${v} into lava` : `${v} fell in lava`;
   } else if (d.cause === CAUSE_GUNPOWDER) {
     text = k ? `${k} blew up ${v} (gunpowder)` : `${v} was blasted by gunpowder`;
+  } else if (d.cause === CAUSE_ACID) {
+    text = k ? `${k} dissolved ${v} in acid` : `${v} dissolved in acid`;
   } else {
     text = `${v} died`;
   }

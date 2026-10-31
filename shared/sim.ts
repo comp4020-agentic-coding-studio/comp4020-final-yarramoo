@@ -40,6 +40,7 @@ export const EV_BAG_PICKUP = 10;
 export const CAUSE_FIRE = 32;
 export const CAUSE_LAVA = 33;
 export const CAUSE_GUNPOWDER = 34;
+export const CAUSE_ACID = 35;
 /** Why a cast was refused (`CastRejected.b`). */
 export const REJECT_SPELL = 1;
 export const REJECT_CHARGES = 2;

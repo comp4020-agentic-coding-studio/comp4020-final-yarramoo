@@ -388,3 +388,36 @@ fn death_and_respawn_are_deterministic_and_snapshot_restores_while_dead() {
     }
     assert_eq!(r.state_hash(), a.state_hash());
 }
+
+#[test]
+fn acid_costs_one_hp_every_four_ticks_and_lava_wins() {
+    let mut s = boxed(&[1]);
+    let h0 = pl(&s, 1).health;
+    for _ in 0..20 {
+        fill_hitbox(&mut s, 1, ACID);
+        s.step();
+    }
+    assert_eq!(h0 - pl(&s, 1).health, 5, "acid: 1 HP on ticks divisible by 4");
+    // Lava and acid together: lava's rate and lava's cause.
+    let mut s = boxed(&[1]);
+    let h0 = pl(&s, 1).health;
+    for _ in 0..20 {
+        fill_hitbox(&mut s, 1, LAVA);
+        let (x0, y0, _, _) = pl(&s, 1).hitbox_cells();
+        let w = s.grid.w;
+        s.grid.set(y0 as usize * w + x0 as usize, ACID, 0);
+        s.step();
+    }
+    assert_eq!(h0 - pl(&s, 1).health, 10, "lava wins");
+    // A kill by acid reports CAUSE_ACID.
+    let mut s = boxed(&[1]);
+    s.players[0].health = 1;
+    let mut deaths = Vec::new();
+    for _ in 0..4 {
+        fill_hitbox(&mut s, 1, ACID);
+        s.step();
+        deaths.extend(s.events.iter().filter(|e| e.kind == EV_DEATH).copied());
+    }
+    let d = deaths.first().expect("died in acid");
+    assert_eq!((d.player, d.a, d.b), (1, 0, i32::from(CAUSE_ACID)));
+}

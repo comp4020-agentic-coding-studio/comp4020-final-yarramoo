@@ -500,7 +500,7 @@ impl Sim {
     }
 
     /// Lava and fire contact for every active, alive player, in id order. Lava costs 1 HP on even ticks,
-    /// fire 1 HP when `(tick + id) % 6 == 0`; lava wins if both touch. Reads only the player's own hitbox,
+    /// fire 1 HP when `(tick + id) % 6 == 0`, acid 1 HP when `tick % 4 == 0`; lava wins over both, fire over acid. Reads only the player's own hitbox,
     /// which lies inside the awake region of an active player, so chunk sleeping cannot change the result.
     pub(crate) fn hazard_scan(&mut self) {
         let tick = self.tick;
@@ -511,12 +511,13 @@ impl Sim {
                 continue;
             }
             let (x0, y0, x1, y1) = p.hitbox_cells();
-            let (mut lava, mut fire) = (false, false);
+            let (mut lava, mut fire, mut acid) = (false, false, false);
             for y in y0.max(0)..=y1.min(h - 1) {
                 for x in x0.max(0)..=x1.min(w - 1) {
                     match self.grid.mat[(y * w + x) as usize] {
                         LAVA => lava = true,
                         FIRE => fire = true,
+                        ACID => acid = true,
                         _ => {}
                     }
                 }
@@ -528,6 +529,8 @@ impl Sim {
                 }
             } else if fire && tick.wrapping_add(id).is_multiple_of(6) {
                 self.apply_damage(i, 1, CAUSE_FIRE);
+            } else if acid && tick.is_multiple_of(4) {
+                self.apply_damage(i, 1, CAUSE_ACID);
             }
         }
     }

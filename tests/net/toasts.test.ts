@@ -1,6 +1,6 @@
 // The death feed text is a pure function of a death event and a plain-name lookup.
 import { describe, expect, it } from "vitest";
-import { CAUSE_FIRE, CAUSE_GUNPOWDER, CAUSE_LAVA } from "../../shared/sim.ts";
+import { CAUSE_ACID, CAUSE_FIRE, CAUSE_GUNPOWDER, CAUSE_LAVA } from "../../shared/sim.ts";
 import { formatDeath } from "../../client/toasts.ts";
 
 const names: Record<number, string> = { 1: "Ana", 2: "Bo", 3: "Cy" };
@@ -38,6 +38,8 @@ describe("formatDeath", () => {
   it("unknown names and causes fall back to someone, never an id", () => {
     expect(d(9, 8, 5)).toBe("someone blew up someone (Bomb)");
     expect(d(9, 0, CAUSE_LAVA)).toBe("someone fell in lava");
+    expect(d(2, 0, CAUSE_ACID)).toBe("Bo dissolved in acid");
+    expect(d(2, 1, CAUSE_ACID)).toBe("Ana dissolved Bo in acid");
     expect(d(2, 0, 99)).toBe("Bo died");
     expect(d(9, 8, 5)).not.toMatch(/#|\d/);
   });

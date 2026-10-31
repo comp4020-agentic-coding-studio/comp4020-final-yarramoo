@@ -84,6 +84,7 @@ pub const KILL_CREDIT_TICKS: u32 = 300;
 pub const CAUSE_FIRE: u8 = 32;
 pub const CAUSE_LAVA: u8 = 33;
 pub const CAUSE_GUNPOWDER: u8 = 34;
+pub const CAUSE_ACID: u8 = 35;
 
 // ---- Fire bolt and Bomb (M5 slice 2, plan 6.7) ---------------------------------------------------------
 
