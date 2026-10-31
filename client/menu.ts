@@ -2,7 +2,7 @@
 // sheet with a share bar, and the name sheet on first join/create. Live preview is deferred (see FUTURE.md
 // and the worker report's "Architectural decisions for review" — not built in this slice, flagged rather than
 // rushed, per the brief's own conditional wording for commit 6).
-import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, CREATIVE, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, CREATIVE, SURVIVAL, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 interface ModeDef {
@@ -18,10 +18,10 @@ const MODES: ModeDef[] = [
   {
     key: "survival",
     title: "Survival",
-    rule: "Last one standing. PvP, one life.",
-    pvp: true,
+    rule: "Descend together. Co-op, one life.",
+    pvp: false,
     icon: "/icons/survival.png",
-    cfg: { terrain: 0, size: 1, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 1, respawnSecs: 0, pickupRespawn: 0, round: 1, maxPlayers: 8 },
+    cfg: SURVIVAL,
   },
   {
     key: "deathmatch",
@@ -29,7 +29,7 @@ const MODES: ModeDef[] = [
     rule: "Fight, respawn. PvP.",
     pvp: true,
     icon: "/icons/deathmatch.png",
-    cfg: { terrain: 0, size: 1, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawnSecs: 3, pickupRespawn: 1, round: 0, maxPlayers: 8 },
+    cfg: { terrain: 0, size: 1, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawnSecs: 3, pickupRespawn: 1, round: 0, maxPlayers: 8, enemies: 0 },
   },
   {
     key: "creative",

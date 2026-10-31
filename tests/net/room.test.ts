@@ -1,13 +1,15 @@
 // R0a: the room config table in shared/room.ts, checked against the same byte vectors as sim/tests/config.rs.
 import { describe, expect, it } from "vitest";
-import { CAVES_PVP, CLASSIC_SANDBOX, CREATIVE, decodeConfig, encodeConfig } from "../../shared/room.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, CREATIVE, SURVIVAL, decodeConfig, encodeConfig } from "../../shared/room.ts";
 
 const hex = (s: string) => Uint8Array.from(s.match(/../g) ?? [], (h) => parseInt(h, 16));
 const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 
 const CLASSIC = "01020000000001000000000800000000";
 const CAVES = "01000201020000000301000800000000";
-const SURVIVAL = "01000101020000010000010400000000";
+const OLD_SURVIVAL = "01000101020000010000010400000000";
+const SURVIVAL_HEX = "01000101010000010000010801000000";
+const ENEMIES_ON = "01020000000001000000000801000000";
 const CREATIVE_HEX = "01010101000101000101000800000000";
 
 // (why, byte index, new value) applied to the classic vector; same table as sim/tests/config.rs.
@@ -27,7 +29,8 @@ const MUTATIONS: [string, number, number][] = [
   ["round 1 needs death 1", 10, 1],
   ["max_players 1", 11, 1],
   ["max_players 9", 11, 9],
-  ["reserved byte 12", 12, 1],
+  ["enemies 2", 12, 2],
+  ["reserved byte 13", 13, 1],
   ["reserved byte 15", 15, 1],
 ];
 
@@ -36,15 +39,17 @@ describe("room config (shared/room.ts)", () => {
     expect(toHex(encodeConfig(CLASSIC_SANDBOX))).toBe(CLASSIC);
     expect(toHex(encodeConfig(CAVES_PVP))).toBe(CAVES);
     expect(toHex(encodeConfig(CREATIVE))).toBe(CREATIVE_HEX);
+    expect(toHex(encodeConfig(SURVIVAL))).toBe(SURVIVAL_HEX);
   });
 
   it("good vectors round-trip", () => {
-    for (const h of [CLASSIC, CAVES, SURVIVAL, CREATIVE_HEX]) {
+    for (const h of [CLASSIC, CAVES, OLD_SURVIVAL, SURVIVAL_HEX, ENEMIES_ON, CREATIVE_HEX]) {
       const c = decodeConfig(hex(h));
       expect(c, h).not.toBeNull();
       expect(toHex(encodeConfig(c!))).toBe(h);
     }
-    expect(decodeConfig(hex(SURVIVAL))).toMatchObject({ death: 1, round: 1, maxPlayers: 4, size: 1 });
+    expect(decodeConfig(hex(OLD_SURVIVAL))).toMatchObject({ death: 1, round: 1, maxPlayers: 4, size: 1, enemies: 0 });
+    expect(decodeConfig(hex(SURVIVAL_HEX))).toMatchObject({ damage: 1, death: 1, round: 1, enemies: 1 });
   });
 
   for (const [why, at, val] of MUTATIONS) {

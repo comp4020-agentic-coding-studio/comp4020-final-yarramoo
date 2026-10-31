@@ -23,6 +23,8 @@ export interface RoomConfig {
   /** 0 none, 1 last player standing (needs death 1). */
   round: number;
   maxPlayers: number;
+  /** 0 off, 1 generator-placed enemies (Survival). */
+  enemies: number;
 }
 
 /** Wire order of the fields after the version byte, with their inclusive ranges. */
@@ -38,6 +40,7 @@ export const CONFIG_FIELDS: readonly { key: keyof RoomConfig; min: number; max: 
   { key: "pickupRespawn", min: 0, max: 1 },
   { key: "round", min: 0, max: 1 },
   { key: "maxPlayers", min: 2, max: 8 },
+  { key: "enemies", min: 0, max: 1 },
 ];
 
 /** World size in cells by `size`. S is 512x512 for now (see sim/src/config.rs). */
@@ -49,16 +52,21 @@ export const SIZE_DIMS: readonly (readonly [number, number])[] = [
 
 /** Today's world 0. */
 export const CLASSIC_SANDBOX: RoomConfig = {
-  terrain: 2, size: 0, avatars: 0, damage: 0, spells: 0, brushes: 1, death: 0, respawnSecs: 0, pickupRespawn: 0, round: 0, maxPlayers: 8,
+  terrain: 2, size: 0, avatars: 0, damage: 0, spells: 0, brushes: 1, death: 0, respawnSecs: 0, pickupRespawn: 0, round: 0, maxPlayers: 8, enemies: 0,
 };
 /** Today's world 1. */
 export const CAVES_PVP: RoomConfig = {
-  terrain: 0, size: 2, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawnSecs: 3, pickupRespawn: 1, round: 0, maxPlayers: 8,
+  terrain: 0, size: 2, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawnSecs: 3, pickupRespawn: 1, round: 0, maxPlayers: 8, enemies: 0,
 };
 /** R4: brushes and avatars together (plan-game-modes.md "Presets"). Solid box, not Caves (see
  * sim/src/config.rs's `creative()` for why); Caves is an equally valid advanced-sheet choice. */
 export const CREATIVE: RoomConfig = {
-  terrain: 1, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawnSecs: 1, pickupRespawn: 1, round: 0, maxPlayers: 8,
+  terrain: 1, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawnSecs: 1, pickupRespawn: 1, round: 0, maxPlayers: 8, enemies: 0,
+};
+
+/** D-157/D-158/D-160: co-op descent, one life, enemies placed by the generator (sim/src/config.rs `survival()`). */
+export const SURVIVAL: RoomConfig = {
+  terrain: 0, size: 1, avatars: 1, damage: 1, spells: 0, brushes: 0, death: 1, respawnSecs: 0, pickupRespawn: 0, round: 1, maxPlayers: 8, enemies: 1,
 };
 
 export function encodeConfig(c: RoomConfig): Uint8Array {
@@ -73,7 +81,7 @@ export function encodeConfig(c: RoomConfig): Uint8Array {
 /** null for a wrong length or version, a non-zero reserved byte, or any out-of-range field (nothing is clamped). */
 export function decodeConfig(b: Uint8Array): RoomConfig | null {
   if (b.length !== CONFIG_BYTES || b[0] !== CONFIG_VERSION) return null;
-  for (let i = 12; i < CONFIG_BYTES; i++) if (b[i] !== 0) return null;
+  for (let i = 13; i < CONFIG_BYTES; i++) if (b[i] !== 0) return null;
   const c: Record<string, number> = {};
   for (let i = 0; i < CONFIG_FIELDS.length; i++) {
     const f = CONFIG_FIELDS[i];

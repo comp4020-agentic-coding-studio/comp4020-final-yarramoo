@@ -4,7 +4,7 @@
 //!
 //! Layout (version 1), one byte each:
 //! `version, terrain, size, avatars, damage, spells, brushes, death, respawn_secs, pickup_respawn, round,
-//! max_players, reserved x4` (reserved bytes must be zero). `shared/room.ts` mirrors this table.
+//! max_players, enemies, reserved x3` (reserved bytes must be zero). `shared/room.ts` mirrors this table.
 //!
 //! Every rule gate in the sim goes through a helper here, never a bare field compare, so the meaning of a
 //! gate lives in one place.
@@ -33,43 +33,51 @@ pub struct RoomConfig {
     pub pickup_respawn: u8,
     pub round: u8,
     pub max_players: u8,
+    /// 0 off, 1 generator-placed enemies (Survival, D-157). Only meaningful with avatars.
+    pub enemies: u8,
 }
 
 impl RoomConfig {
     /// Today's world 0: an empty walled canvas, painting only, no avatars.
     pub const fn classic_sandbox() -> RoomConfig {
-        RoomConfig { terrain: TERRAIN_EMPTY_BOX, size: 0, avatars: 0, damage: 0, spells: 0, brushes: 1, death: 0, respawn_secs: 0, pickup_respawn: 0, round: 0, max_players: 8 }
+        RoomConfig { terrain: TERRAIN_EMPTY_BOX, size: 0, avatars: 0, damage: 0, spells: 0, brushes: 1, death: 0, respawn_secs: 0, pickup_respawn: 0, round: 0, max_players: 8, enemies: 0 }
     }
 
     /// Today's world 1: the caves, avatars, full PvP, spells from pickups, respawn after 3 s (DEATH_TICKS).
     pub const fn caves_pvp() -> RoomConfig {
-        RoomConfig { terrain: TERRAIN_CAVES, size: 2, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawn_secs: 3, pickup_respawn: 1, round: 0, max_players: 8 }
+        RoomConfig { terrain: TERRAIN_CAVES, size: 2, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawn_secs: 3, pickup_respawn: 1, round: 0, max_players: 8, enemies: 0 }
     }
 
     /// R4: a shared world of brushes and avatars at once (plan-game-modes.md "Presets"). Solid box (Dirt over
     /// Rock), not Caves: Solid box has no traversal guarantee to maintain and digging/building both work on
     /// it immediately (Caves is an equally valid advanced-sheet choice, not defaulted to here).
     pub const fn creative() -> RoomConfig {
-        RoomConfig { terrain: TERRAIN_SOLID_BOX, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawn_secs: 1, pickup_respawn: 1, round: 0, max_players: 8 }
+        RoomConfig { terrain: TERRAIN_SOLID_BOX, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawn_secs: 1, pickup_respawn: 1, round: 0, max_players: 8, enemies: 0 }
+    }
+
+    /// D-157/D-158/D-160: the co-op descent. Caves M, damage 1 (environment and enemies only, no PvP), one life,
+    /// loss when everyone is dead, generator-placed enemies. Solo is allowed.
+    pub const fn survival() -> RoomConfig {
+        RoomConfig { terrain: TERRAIN_CAVES, size: 1, avatars: 1, damage: 1, spells: 0, brushes: 0, death: 1, respawn_secs: 0, pickup_respawn: 0, round: 1, max_players: 8, enemies: 1 }
     }
 
     pub fn encode(&self) -> [u8; CONFIG_BYTES] {
         let mut b = [0u8; CONFIG_BYTES];
-        b[..12].copy_from_slice(&[
+        b[..13].copy_from_slice(&[
             CONFIG_VERSION, self.terrain, self.size, self.avatars, self.damage, self.spells, self.brushes, self.death,
-            self.respawn_secs, self.pickup_respawn, self.round, self.max_players,
+            self.respawn_secs, self.pickup_respawn, self.round, self.max_players, self.enemies,
         ]);
         b
     }
 
     /// None for a wrong length or version, a non-zero reserved byte, or any out-of-range field. Nothing is clamped.
     pub fn decode(b: &[u8]) -> Option<RoomConfig> {
-        if b.len() != CONFIG_BYTES || b[0] != CONFIG_VERSION || b[12..].iter().any(|&x| x != 0) {
+        if b.len() != CONFIG_BYTES || b[0] != CONFIG_VERSION || b[13..].iter().any(|&x| x != 0) {
             return None;
         }
         let c = RoomConfig {
             terrain: b[1], size: b[2], avatars: b[3], damage: b[4], spells: b[5], brushes: b[6], death: b[7],
-            respawn_secs: b[8], pickup_respawn: b[9], round: b[10], max_players: b[11],
+            respawn_secs: b[8], pickup_respawn: b[9], round: b[10], max_players: b[11], enemies: b[12],
         };
         let ok = c.terrain <= 2
             && c.size <= 2
@@ -82,13 +90,18 @@ impl RoomConfig {
             && c.pickup_respawn <= 1
             && c.round <= 1
             && (c.round == 0 || c.death == 1)
-            && (2..=8).contains(&c.max_players);
+            && (2..=8).contains(&c.max_players)
+            && c.enemies <= 1;
         ok.then_some(c)
     }
 
     /// Avatars exist: Join, Pos and Cast act, and the world has entities, explosions and hazards.
     pub fn has_players(&self) -> bool {
         self.avatars == 1
+    }
+    /// Generator-placed enemies exist and step (Survival).
+    pub fn has_enemies(&self) -> bool {
+        self.enemies == 1
     }
     pub fn damage_from_players(&self) -> bool {
         self.damage == 2

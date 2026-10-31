@@ -1,10 +1,10 @@
 // Runner contract: run(simBytes, script, imports?) -> hash log + final chunk hashes.
 // Environment-free (no Node APIs) so the browser page can import it.
 import { unhex } from "../../shared/inputs.ts";
-import { CAVES_PVP, CLASSIC_SANDBOX, configForKind, encodeConfig, type RoomConfig } from "../../shared/room.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, SURVIVAL, configForKind, encodeConfig, type RoomConfig } from "../../shared/room.ts";
 import { loadSim } from "../../shared/sim.ts";
 
-const PRESETS: Record<string, RoomConfig> = { classic_sandbox: CLASSIC_SANDBOX, caves_pvp: CAVES_PVP };
+const PRESETS: Record<string, RoomConfig> = { classic_sandbox: CLASSIC_SANDBOX, caves_pvp: CAVES_PVP, survival: SURVIVAL };
 import type { SimEvent } from "../../shared/sim.ts";
 
 export interface ScriptLike {

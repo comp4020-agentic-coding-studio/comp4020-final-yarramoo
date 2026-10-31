@@ -97,6 +97,7 @@ pub fn run_script_json(json: &str) -> Vec<(u32, u64)> {
         (Some(J::Str(n)), _) => match n.as_str() {
             "classic_sandbox" => RoomConfig::classic_sandbox(),
             "caves_pvp" => RoomConfig::caves_pvp(),
+            "survival" => RoomConfig::survival(),
             _ => panic!("unknown config {n}"),
         },
         (None, Some(J::Num(n))) => u8::try_from(*n).ok().and_then(IntoRoom::into_room).expect("world_kind"),

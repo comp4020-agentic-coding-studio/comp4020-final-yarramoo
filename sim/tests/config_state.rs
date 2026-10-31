@@ -14,6 +14,7 @@ fn different_configs_give_different_tick_zero_hashes() {
         ("brushes", RoomConfig { brushes: 0, ..base }),
         ("max_players", RoomConfig { max_players: 4, ..base }),
         ("respawn_secs", RoomConfig { respawn_secs: 5, ..base }),
+        ("enemies", RoomConfig { enemies: 1, ..base }),
     ] {
         assert_ne!(h, Sim::new(3, c).unwrap().state_hash(), "{name} is not in the hash");
     }

@@ -27,6 +27,7 @@ fn creative() -> RoomConfig {
         pickup_respawn: 1,
         round: 0,
         max_players: 8,
+        enemies: 0,
     }
 }
 
