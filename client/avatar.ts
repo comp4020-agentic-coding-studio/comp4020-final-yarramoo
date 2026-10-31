@@ -3,9 +3,11 @@
 // the sim applies as the "official" position. Collision reads the latest simulated grid and nothing else.
 //
 // Material rules (D-063): SOLID blocks (Rock, Dirt, Sand and the other powders, Wood, plants, Bedrock);
-// GASES (Fire, Smoke, Steam) never block; LIQUIDS (Water, Lava) never block but slow you and let you swim.
+// GASES (Fire, Smoke, Steam, marsh Gas) never block; LIQUIDS (Water, Lava, Oil, Acid) never block but slow you
+// and let you swim. The classes live in MATERIAL_CLASS (shared/names.ts).
 // Lava is only slowing here: damage is the sim's job in M5.
 import { MAX_AVATAR_SPEED, POS_ONE } from "../shared/avatar.ts";
+import { MATERIAL_CLASS } from "../shared/names.ts";
 
 export const BOX_W = 5;
 export const BOX_H = 10;
@@ -24,10 +26,6 @@ const ENERGY_REGEN = 2;
 const MAX_STEP_UP = 3;
 
 const EMPTY = 0;
-const WATER = 5;
-const FIRE = 10;
-const STEAM = 12;
-const LAVA = 14;
 
 export interface Grid {
   mat: Uint8Array;
@@ -41,8 +39,8 @@ export interface Keys {
   up: boolean;
 }
 
-export const isGas = (m: number): boolean => m >= FIRE && m <= STEAM;
-export const isLiquid = (m: number): boolean => m === WATER || m === LAVA;
+export const isGas = (m: number): boolean => MATERIAL_CLASS[m] === "gas";
+export const isLiquid = (m: number): boolean => MATERIAL_CLASS[m] === "liquid";
 export const isSolid = (m: number): boolean => m !== EMPTY && !isGas(m) && !isLiquid(m);
 
 export class Avatar {

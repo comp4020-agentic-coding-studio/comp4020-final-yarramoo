@@ -115,3 +115,21 @@ describe("avatar controller", () => {
     expect(worst).toBeLessThan(MAX_AVATAR_SPEED);
   });
 });
+
+// Every material id pinned to how the controller treats it. A new material must be added here and in
+// MATERIAL_CLASS (shared/names.ts), or the first assertion fails.
+import { isGas, isLiquid, isSolid } from "../../client/avatar.ts";
+import { MATERIAL_NAMES } from "../../shared/names.ts";
+
+describe("avatar material classes", () => {
+  const E = "empty", S = "solid", L = "liquid", G = "gas";
+  const want = [E, S, S, S, S, L, S, S, S, S, G, G, G, S, L, L, L, G, S, S, S];
+  it("pins every material id 0-20 to exactly one class", () => {
+    expect(Object.keys(MATERIAL_NAMES).length).toBe(want.length);
+    for (let m = 0; m < want.length; m++) {
+      const got = m === 0 ? E : isSolid(m) ? S : isLiquid(m) ? L : isGas(m) ? G : "none";
+      expect(got, `${m} ${MATERIAL_NAMES[m]}`).toBe(want[m]);
+      if (m > 0) expect([isSolid(m), isLiquid(m), isGas(m)].filter(Boolean).length, `${m} exactly one`).toBe(1);
+    }
+  });
+});

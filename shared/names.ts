@@ -28,3 +28,33 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
 
 /** Spell index to display name. */
 export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig"];
+
+/**
+ * How the avatar controller treats each material id (one list, so a new material is one line). "gas" never
+ * blocks, "liquid" never blocks but slows and lets you swim, "solid" blocks. Index = material id. An id past
+ * the end counts as solid (the safe default for a wall).
+ */
+export type MaterialClass = "empty" | "solid" | "liquid" | "gas";
+export const MATERIAL_CLASS: readonly MaterialClass[] = [
+  "empty", // 0
+  "solid", // 1 Bedrock
+  "solid", // 2 Rock
+  "solid", // 3 Dirt
+  "solid", // 4 Sand
+  "liquid", // 5 Water
+  "solid", // 6 Wood
+  "solid", // 7 Seed
+  "solid", // 8 Stem
+  "solid", // 9 Flower
+  "gas", // 10 Fire
+  "gas", // 11 Smoke
+  "gas", // 12 Steam
+  "solid", // 13 Gunpowder
+  "liquid", // 14 Lava
+  "liquid", // 15 Oil
+  "liquid", // 16 Acid
+  "gas", // 17 Gas
+  "solid", // 18 Ice
+  "solid", // 19 Glass
+  "solid", // 20 Coal
+];
