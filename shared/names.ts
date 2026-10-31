@@ -20,6 +20,7 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
   14: "Lava",
   15: "Oil",
   16: "Acid",
+  17: "Gas",
 };
 
 /** Spell index to display name. */

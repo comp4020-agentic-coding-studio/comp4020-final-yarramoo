@@ -232,6 +232,7 @@ impl Grid {
             WATER => self.update_water(x, y, seed, tick),
             OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
             ACID => self.update_acid(x, y, seed, tick),
+            GAS => self.update_marsh_gas(x, y, seed, tick),
             FIRE => self.update_fire(x, y, seed, tick),
             SMOKE => self.update_gas(x, y, seed, tick, SMOKE),
             STEAM => self.update_gas(x, y, seed, tick, STEAM),
@@ -295,7 +296,7 @@ impl Grid {
 
     /// Liquids displace Empty and the light gases (not Fire).
     fn liquid_ok(m: u8) -> bool {
-        m == EMPTY || m == SMOKE || m == STEAM
+        m == EMPTY || m == SMOKE || m == STEAM || m == GAS
     }
 
     /// Water also sinks through Oil (density order: Oil < Water).
@@ -417,6 +418,33 @@ impl Grid {
         self.liquid_move(x, y, seed, tick, ACID_FLOW);
     }
 
+    /// Marsh gas: rises like smoke but never expires, so it lingers in pockets. No chance is involved except
+    /// which side to take when two are open (drawn only then), so a gas cell that cannot move provably does
+    /// nothing and its chunk may sleep. Burning is done by the Fire cell next to it (see `update_fire`).
+    fn update_marsh_gas(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        fn ok(m: u8) -> bool {
+            m == EMPTY
+        }
+        if self.try_move(x, y, 0, -1, ok) {
+            return;
+        }
+        let open = |g: &Grid, dx: isize, dy: isize| g.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(g.at(nx, ny)));
+        for dy in [-1isize, 0] {
+            let (l, r) = (open(self, -1, dy), open(self, 1, dy));
+            if l || r {
+                let d = if l && r {
+                    if rng(seed, tick, x as u32, y as u32, SALT_MGAS_DIR) & 1 == 0 { -1 } else { 1 }
+                } else if l {
+                    -1
+                } else {
+                    1
+                };
+                self.try_move(x, y, d, dy, ok);
+                return;
+            }
+        }
+    }
+
     fn dissolvable(m: u8) -> bool {
         matches!(m, ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER)
     }
@@ -464,10 +492,12 @@ impl Grid {
                     let n = match m {
                         WOOD => 12,
                         OIL => 2,
+                        GAS => 1,
                         _ => 4,
                     };
                     if rng(seed, tick, nx as u32, ny as u32, SALT_FIRE_IGNITE) % n == 0 {
-                        self.set(ny * self.w + nx, FIRE, 0);
+                        // Gas flashes: a short-lived fire, so the front runs through the pocket.
+                        self.set(ny * self.w + nx, FIRE, if m == GAS { FLASH_LIFE } else { 0 });
                     }
                 }
             }
@@ -767,6 +797,8 @@ impl Grid {
 const GERMINATE_AT: u8 = 60;
 /// Dissolves an acid cell can do before it is used up.
 const ACID_STRENGTH: u8 = 12;
+/// Lifetime of the fire a burning Gas cell becomes: short, so a pocket flashes through.
+const FLASH_LIFE: u8 = 6;
 
 #[cfg(test)]
 mod tests {
@@ -939,6 +971,46 @@ mod tests {
         run(&mut g, 3, 200);
         assert_eq!(count(&g, ACID), 0);
         assert_eq!(count(&g, WATER), 2);
+    }
+
+    #[test]
+    fn gas_rises_and_lingers_under_a_ceiling() {
+        let mut g = boxed(64, 64);
+        for x in 0..64 {
+            g.set(30 * 64 + x, BEDROCK, 0);
+        }
+        g.set(50 * 64 + 5, GAS, 0);
+        run(&mut g, 3, 500);
+        assert_eq!(count(&g, GAS), 1, "gas never expires");
+        assert!((0..64).any(|x| g.at(x, 31) == GAS), "it rose to the ceiling");
+    }
+
+    #[test]
+    fn gas_flash_burns_the_whole_pocket() {
+        let mut g = boxed(64, 64);
+        for y in 40..63 {
+            g.set(y * 64 + 4, BEDROCK, 0);
+            g.set(y * 64 + 45, BEDROCK, 0);
+        }
+        for x in 4..46 {
+            g.set(40 * 64 + x, BEDROCK, 0);
+        }
+        for y in 41..45 {
+            for x in 5..45 {
+                g.set(y * 64 + x, GAS, 0);
+            }
+        }
+        g.set(45 * 64 + 5, FIRE, 0);
+        let mut done = None;
+        for t in 0..300 {
+            g.step_cells(2, t);
+            if done.is_none() && count(&g, GAS) == 0 {
+                done = Some(t);
+            }
+        }
+        let t = done.unwrap_or_else(|| panic!("pocket left {} gas", count(&g, GAS)));
+        assert!(t < 120, "flash fire took {t} ticks");
+        assert_eq!(count(&g, FIRE), 0);
     }
 
     #[test]
@@ -1240,10 +1312,10 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=ACID).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=GAS).filter(|&m| m != BEDROCK) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(ACID + 1));
+        assert!(!paintable(BEDROCK) && !paintable(GAS + 1));
     }
 }
 

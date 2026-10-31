@@ -17,17 +17,18 @@ pub const GUNPOWDER: u8 = 13;
 pub const LAVA: u8 = 14;
 pub const OIL: u8 = 15;
 pub const ACID: u8 = 16;
+pub const GAS: u8 = 17;
 
 /// Materials that `Paint` may place: everything except Bedrock, the world boundary.
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=ACID)
+    matches!(m, EMPTY | ROCK..=GAS)
 }
 
 pub fn is_gas(m: u8) -> bool {
-    matches!(m, FIRE | SMOKE | STEAM)
+    matches!(m, FIRE | SMOKE | STEAM | GAS)
 }
 
-/// Fill-empty paint mode may write over this cell: Empty itself, or a gas (Fire/Smoke/Steam), which the
+/// Fill-empty paint mode may write over this cell: Empty itself, or a gas (Fire/Smoke/Steam/Gas), which the
 /// plan's own wording ("paint sand without erasing rock") treats as not really "there" — never a solid,
 /// liquid or Bedrock (plan-game-modes.md "Sandspiel-style brushes").
 pub fn fill_empty_writable(m: u8) -> bool {
@@ -35,5 +36,5 @@ pub fn fill_empty_writable(m: u8) -> bool {
 }
 
 pub fn is_flammable(m: u8) -> bool {
-    matches!(m, WOOD | SEED | STEM | FLOWER | OIL)
+    matches!(m, WOOD | SEED | STEM | FLOWER | OIL | GAS)
 }
