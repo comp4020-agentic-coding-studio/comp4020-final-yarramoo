@@ -34,3 +34,18 @@
   (they asserted every enemy is a slime; not weakened).
 - Red first: with `imp_ai` returning at once and water damage off, 7 of 11 failed; LOS, D7, placement, counts pass by nature
   (LOS tests the function directly; D7 compares two identical frozen runs under the stub).
+
+### 3. Acid slime
+- `enemy.rs`: the Slime AI is shared; the acid slime hops at `ACID_SLIME_HOP_VX` 3 (Slime 5) with 15 extra ticks between
+  hops. Trail: while hunting, one ACID cell in the Empty cell at its feet when `(tick + id) % 20 == 0`, with a per-tick
+  budget of 1 cell across all enemies (`step_enemy` takes `&mut trail`). Death: `reap_enemies` collects burst points and calls
+  the existing `burst` (made `pub(crate)`) with `ACID_DEATH_CELLS` 12 (Empty cells only). Immune to acid, hurt by fire at the
+  shared rate, hp 60, contact 15.
+- Gen: `floor_spots` generalised from F4's slime loop (same rules); acid slimes on deep floors between `deep_top + 20`
+  and `repair_depth - 20`. Counts (`/tmp/f5-acid-counts.txt`): S 3, M 3, L 10; totals S 11-14, M 14, L 43 (under 48).
+- Tests (`sim/tests/enemy_acid.rs`, 9): slower than a slime and 15 damage, trail cap (1 per tick across 6 slimes, about 1 per
+  20 ticks alone, none when idle), burst cap, acid immune and fire hurt, deep placement, seed 1 real terrain (corridor around the
+  generated slime, positions read from the sim), D7 with trail and burst, snapshot mid-trail.
+- Red first: with the trail, burst and slower hop disabled, 2 of 9 failed (trail, burst); the slower-hop test and others
+  passed because the shared AI code still reached the player in time (I left the arrival-time comparison as is: it passed
+  red too, so it is a weak test, flagged).

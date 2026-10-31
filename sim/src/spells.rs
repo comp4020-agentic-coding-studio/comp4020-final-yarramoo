@@ -511,7 +511,7 @@ impl Sim {
     /// The shared flask burst: fill up to `cap` Empty cells of the `WATER_BURST_R2` disc with `mat`. `down` fills
     /// the lowest rows first (Lava's "sea"); otherwise the impact row and the rows above come first. `cap` is
     /// clamped to the largest cap here, and at most 13 x 13 cells are looked at.
-    fn burst(&mut self, at: (i32, i32), mat: u8, cap: usize, down: bool) {
+    pub(crate) fn burst(&mut self, at: (i32, i32), mat: u8, cap: usize, down: bool) {
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
         let mut left = cap.min(OIL_BURST_CELLS);
         for k in 0..13i32 {

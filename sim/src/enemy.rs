@@ -139,12 +139,13 @@ impl Sim {
             return;
         }
         let targets = self.alive_targets();
+        let mut trail = ACID_TRAIL_PER_TICK;
         for i in self.stepping_set(&targets) {
-            self.step_enemy(i, &targets);
+            self.step_enemy(i, &targets, &mut trail);
         }
     }
 
-    fn step_enemy(&mut self, i: usize, targets: &[Target]) {
+    fn step_enemy(&mut self, i: usize, targets: &[Target], trail: &mut u32) {
         let tick = self.tick;
         let mut e = self.enemies[i].clone();
         let st = ENEMY_STATS[usize::from(e.kind)];
@@ -189,12 +190,14 @@ impl Sim {
                     if dx != 0 {
                         e.facing = u8::from(dx > 0);
                     }
-                    e.vx = if dx > 0 { SLIME_HOP_VX } else if dx < 0 { -SLIME_HOP_VX } else { 0 } as i16;
+                    let hop = if e.kind == ENEMY_ACID_SLIME { ACID_SLIME_HOP_VX } else { SLIME_HOP_VX };
+                    e.vx = if dx > 0 { hop } else if dx < 0 { -hop } else { 0 } as i16;
                     // A target well above (more than 4 cells) gets a taller hop; the direction is recomputed from the
                     // target on every grounded tick, and landing zeroes vx above, so a hop never slides on.
                     let above = targets.iter().any(|&(_, px, py)| e.y - py > 4 * POS_ONE && (px - e.x).abs() < 24 * POS_ONE);
                     e.vy = -(if above { SLIME_JUMP_VY + SLIME_JUMP_UP_BONUS } else { SLIME_JUMP_VY }) as i16;
-                    e.hop_until = tick.wrapping_add(SLIME_HOP_BASE + rng(self.seed, tick, id, 0, SALT_ENEMY_HOP) % SLIME_HOP_JITTER);
+                    let extra = if e.kind == ENEMY_ACID_SLIME { ACID_SLIME_HOP_EXTRA } else { 0 };
+                    e.hop_until = tick.wrapping_add(SLIME_HOP_BASE + extra + rng(self.seed, tick, id, 0, SALT_ENEMY_HOP) % SLIME_HOP_JITTER);
                     e.state |= 1;
                 } else {
                     let r = rng(self.seed, tick, id, 1, SALT_ENEMY_IDLE);
@@ -213,6 +216,15 @@ impl Sim {
             e.vy = (i32::from(e.vy) + SLIME_GRAVITY).min(SLIME_FALL_MAX) as i16;
         }
         self.integrate(&mut e, st, true);
+        // The acid trail: one ACID cell in the Empty cell at its feet, while hunting, within the per-tick budget.
+        if e.kind == ENEMY_ACID_SLIME && e.state & 1 == 1 && *trail > 0 && tick.wrapping_add(u32::from(e.id)).is_multiple_of(ACID_TRAIL_EVERY) {
+            let (cx, cy) = (e.x >> POS_SHIFT, (e.y >> POS_SHIFT) - 1);
+            let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+            if cx >= 0 && cy >= 0 && cx < w && cy < h && self.grid.mat[(cy * w + cx) as usize] == EMPTY {
+                self.grid.set((cy * w + cx) as usize, ACID, 0);
+                *trail -= 1;
+            }
+        }
         self.enemy_contact(&mut e, st);
         self.enemies[i] = e;
     }
@@ -340,15 +352,23 @@ impl Sim {
             self.round_started = 1;
         }
         let mut dead = Vec::new();
+        let mut bursts = Vec::new();
         self.enemies.retain(|e| {
             if e.hp != 0 {
                 return true;
             }
             let credited = e.last_hit_by != 0 && tick.wrapping_sub(e.last_hit_tick) <= KILL_CREDIT_TICKS;
+            if e.kind == ENEMY_ACID_SLIME {
+                bursts.push((e.x >> POS_SHIFT, (e.y >> POS_SHIFT) - 2));
+            }
             dead.push(Event { kind: EV_ENEMY_DEATH, player: if credited { e.last_hit_by } else { 0 }, a: e.x, b: e.y, c: i32::from(e.kind) });
             false
         });
         self.events.extend(dead);
+        // An acid slime bursts into at most `ACID_DEATH_CELLS` ACID cells (Empty cells only), in id order.
+        for at in bursts {
+            self.burst(at, ACID, ACID_DEATH_CELLS, false);
+        }
     }
 
     /// Lava, fire and acid contact for the enemies that step this tick, in id order, at the player cadence:

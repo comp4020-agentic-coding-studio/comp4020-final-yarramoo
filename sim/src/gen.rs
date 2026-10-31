@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
@@ -294,15 +294,31 @@ pub(crate) fn generate_with_path(g: &mut Grid, seed: u64) -> (Vec<PickupSpot>, V
 pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16, u8)> {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
+    let mut all: Vec<(u16, u16, u8)> = Vec::new();
     let want = scale_count(w, h, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.shallow_top + 20, (sc.deep_top - 40).max(sc.shallow_top + 60));
-    let mut out: Vec<(u16, u16)> = Vec::new();
+    floor_spots(g, seed, pickups, &mut all, ENEMY_SLIME, want, (y_lo, y_hi), (SALT_GEN_ENEMY_X, SALT_GEN_ENEMY_Y));
+    imp_spots(g, seed, &sc, pickups, &mut all);
+    let want = scale_count(w, h, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN) as usize;
+    let (y_lo, y_hi) = (sc.deep_top + 20, (sc.repair_depth - 20).max(sc.deep_top + 60));
+    floor_spots(g, seed, pickups, &mut all, ENEMY_ACID_SLIME, want, (y_lo, y_hi), (SALT_GEN_ACID_SLIME_X, SALT_GEN_ACID_SLIME_Y));
+    all
+}
+
+/// Walkers on floors in the row range `rows`: up to `want` of `kind`, appended to `all`. The whole 5x4 body must be
+/// Empty (no liquid, gas or plant), the floor not sand, clear of pickups, the spawn area, and every enemy already placed.
+#[allow(clippy::too_many_arguments)]
+fn floor_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, kind: u8, want: usize, rows: (i32, i32), salts: (u32, u32)) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let sc = Scale::new(w, h);
+    let (y_lo, y_hi) = rows;
+    let mut placed = 0usize;
     for k in 0..6000u32 {
-        if out.len() >= want {
+        if placed >= want {
             break;
         }
-        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_ENEMY_X) % (w - 80) as u32) as i32;
-        let y = y_lo + (rng(seed, 0, k, 0, SALT_GEN_ENEMY_Y) % (y_hi - y_lo) as u32) as i32;
+        let x = 40 + (rng(seed, 0, k, 0, salts.0) % (w - 80) as u32) as i32;
+        let y = y_lo + (rng(seed, 0, k, 0, salts.1) % (y_hi - y_lo) as u32) as i32;
         if (x - w / 2).abs() <= ENEMY_SPAWN_CLEAR && y < sc.shallow_top + ENEMY_SPAWN_ROWS {
             continue;
         }
@@ -310,7 +326,6 @@ pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16
         if yf < y_lo || yf > y_hi {
             continue;
         }
-        // The 5x4 body is Empty (so no liquid, gas or plant), and the floor is not sand (it would shift).
         let body = (x - 2..=x + 2).all(|bx| (yf - 3..=yf).all(|by| g.mat[(by * w + bx) as usize] == EMPTY));
         if !body || g.mat[((yf + 1) * w + x) as usize] == SAND {
             continue;
@@ -318,14 +333,12 @@ pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)]) -> Vec<(u16, u16
         if pickups.iter().any(|&(px, py)| (i32::from(px) - x).abs() < 8 && (i32::from(py) - yf).abs() < 8) {
             continue;
         }
-        if out.iter().any(|&(ox, oy)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - yf).abs() < 20) {
+        if all.iter().any(|&(ox, oy, _)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - yf).abs() < 20) {
             continue;
         }
-        out.push((x as u16, yf as u16));
+        all.push((x as u16, yf as u16, kind));
+        placed += 1;
     }
-    let mut all: Vec<(u16, u16, u8)> = out.iter().map(|&(x, y)| (x, y, ENEMY_SLIME)).collect();
-    imp_spots(g, seed, &sc, pickups, &mut all);
-    all
 }
 
 /// Fire imps (F5): open air in the lower shallow band and the top of the deep band, inside a 13 x 13 pocket of Empty

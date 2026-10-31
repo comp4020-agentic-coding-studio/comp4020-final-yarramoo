@@ -147,7 +147,8 @@ pub const PICKUP_TABLE: [&[(u8, u32)]; 2] = [
 /// Enemy kinds: 0 Slime. Later slices append (ids stay stable).
 pub const ENEMY_SLIME: u8 = 0;
 pub const ENEMY_IMP: u8 = 1;
-pub const NUM_ENEMY_KINDS: usize = 2;
+pub const ENEMY_ACID_SLIME: u8 = 2;
+pub const NUM_ENEMY_KINDS: usize = 3;
 /// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
 pub const MAX_ENEMIES: usize = 48;
 pub const MAX_ENEMIES_STEPPED: usize = 24;
@@ -177,6 +178,8 @@ pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
     EnemyStats { hp: 20, w: 5, h: 4, contact_damage: 8, contact_cooldown: 40, immune: 0, weak: 0 },
     // Fire imp: flies, fires bolts (no contact damage); immune to fire and lava, hurt by water.
     EnemyStats { hp: 30, w: 5, h: 4, contact_damage: 0, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: WEAK_WATER },
+    // Acid slime: a slower, tougher walker; immune to acid (fire hurts it at the normal rate).
+    EnemyStats { hp: 60, w: 5, h: 4, contact_damage: 15, contact_cooldown: 40, immune: IMMUNE_ACID, weak: 0 },
 ];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
@@ -237,3 +240,18 @@ pub const IMP_LOS_EVERY: u32 = 15;
 pub const LOS_MAX_STEPS: i32 = 120;
 /// Hp an imp loses to water: 1 every this many ticks.
 pub const IMP_WATER_EVERY: u32 = 4;
+
+// ---- acid slime (F5) ------------------------------------------------------------------------------------
+
+/// Acid slimes placed at size L (scaled by area, at least `ENEMY_ACID_SLIMES_MIN`), on deep floors.
+pub const ENEMY_ACID_SLIMES_L: i32 = 10;
+pub const ENEMY_ACID_SLIMES_MIN: i32 = 3;
+/// Hop speed (slower than the Slime's `SLIME_HOP_VX`) and the extra ticks between hops.
+pub const ACID_SLIME_HOP_VX: i32 = 3;
+pub const ACID_SLIME_HOP_EXTRA: u32 = 15;
+/// While hunting it drops one ACID cell at its feet every this many ticks (`(tick + id) % N == 0`); in all, at most
+/// `ACID_TRAIL_PER_TICK` trail cells are written per tick whatever the number of slimes.
+pub const ACID_TRAIL_EVERY: u32 = 20;
+pub const ACID_TRAIL_PER_TICK: u32 = 1;
+/// A dying acid slime bursts into at most this many ACID cells (Empty cells of the disc around it only).
+pub const ACID_DEATH_CELLS: usize = 12;
