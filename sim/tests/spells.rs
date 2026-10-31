@@ -645,3 +645,35 @@ fn every_spell_cast_at_its_caps_writes_a_bounded_number_of_cells() {
     assert!(after_cast < 15 * 29 + 36 + 2 * 49 * 8, "cells written by the casts: {after_cast}");
 }
 const DIG_ID: u8 = 6;
+
+// ---- F3: pickups by depth band ---------------------------------------------------------------------------
+
+#[test]
+fn pickups_by_band_come_only_from_their_own_table_and_weights_roughly_hold() {
+    let mut counts = [[0u32; NUM_SPELLS]; 2];
+    for seed in 1..=8u64 {
+        let s = Sim::new(seed, 1).unwrap();
+        let a = Sim::new(seed, 1).unwrap();
+        assert_eq!(s.pickups, a.pickups, "deterministic");
+        // the band of a spot is its depth: the shallow spells never appear in the deeper half and vice versa
+        for p in &s.pickups {
+            let shallow = PICKUP_TABLE[0].iter().any(|&(k, _)| k == p.spell);
+            let deep = PICKUP_TABLE[1].iter().any(|&(k, _)| k == p.spell);
+            assert!(shallow != deep, "spell {} is in exactly one table", p.spell);
+            assert_eq!(p.charges, PICKUP_CHARGES[usize::from(p.spell)]);
+            counts[usize::from(deep)][usize::from(p.spell)] += 1;
+        }
+    }
+    for (b, table) in PICKUP_TABLE.iter().enumerate() {
+        let n: u32 = counts[b].iter().sum();
+        assert!(n > 100, "band {b} has {n} pickups over 8 seeds");
+        let total: u32 = table.iter().map(|&(_, w)| w).sum();
+        for &(k, w) in table.iter() {
+            let want = n * w / total;
+            let got = counts[b][usize::from(k)];
+            assert!(got * 2 > want && got < want * 2, "band {b} spell {k}: {got} vs expected {want}");
+        }
+    }
+    // the rare ones really are rarer than the commoner deep spells
+    assert!(counts[1][11] < counts[1][10]);
+}

@@ -69,9 +69,21 @@ impl Sim {
                     .iter()
                     .enumerate()
                     .map(|(i, sp)| {
-                        // Shallow spots give Water or Rose seed, deep spots Fire bolt or Bomb (plan 6.7).
-                        let pick = (rng(seed, 0, i as u32, 0, SALT_PICKUP_SPELL) & 1) as u8;
-                        let spell = 2 + 2 * sp.band + pick;
+                        // Each band has its own weighted table (F3): shallow gives the utility spells, deep the rarer ones.
+                        let table = PICKUP_TABLE[usize::from(sp.band != 0)];
+                        let total: u32 = table.iter().map(|&(_, w)| w).sum();
+                        let mut roll = rng(seed, 0, i as u32, 0, SALT_PICKUP_SPELL) % total;
+                        let spell = table
+                            .iter()
+                            .find(|&&(_, w)| {
+                                if roll < w {
+                                    true
+                                } else {
+                                    roll -= w;
+                                    false
+                                }
+                            })
+                            .map_or(table[0].0, |&(k, _)| k);
                         Pickup { id: i as u16, spell, x: sp.x, y: sp.y, charges: PICKUP_CHARGES[spell as usize], respawn_at: 0 }
                     })
                     .collect();

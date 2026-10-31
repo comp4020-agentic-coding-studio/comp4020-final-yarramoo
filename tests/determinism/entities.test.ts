@@ -17,7 +17,7 @@ describe("entities() and events() over the ABI", () => {
     expect(players).toHaveLength(1);
     expect(players[0]).toMatchObject({ id: 5, active: true, health: 100, a: 0 });
     expect(pickups.length).toBeGreaterThanOrEqual(48);
-    expect(pickups.every((p) => p.active && p.sub >= 2 && p.sub <= 5)).toBe(true);
+    expect(pickups.every((p) => p.active && [2, 3, 4, 5, 7, 8, 9, 10, 11].includes(p.sub))).toBe(true);
     const k = pickups[0];
     // Stand on it: Pos is 1/16 cell, feet at the pickup cell's bottom edge.
     sim.pushInput(encodePos(5, 0, k.x, k.y, 0));

@@ -100,7 +100,7 @@ fn sandbox_has_no_entities() {
 fn pickups_exist_alternate_spells_collect_and_respawn() {
     let mut s = Sim::new(2, 1).unwrap();
     assert!(s.pickups.len() >= 48);
-    assert!(s.pickups.iter().all(|k| (2..=5).contains(&k.spell)));
+    assert!(s.pickups.iter().all(|k| PICKUP_TABLE.iter().any(|t| t.iter().any(|&(id, _)| id == k.spell))));
     assert!(s.pickups.iter().any(|k| k.spell == 2) && s.pickups.iter().any(|k| k.spell == 3));
     let k = s.pickups[0].clone();
     push(&mut s, encode_join(1));

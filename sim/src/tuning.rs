@@ -127,3 +127,12 @@ pub const BAG_LIFETIME: u32 = 5400;
 pub const MAX_BAGS: usize = 64;
 /// A drop within this many cells (Chebyshev: `max(|dx|, |dy|)`) of an existing bag merges into it.
 pub const BAG_MERGE_CELLS: i32 = 8;
+
+// ---- pickup spells by depth band (F3) ------------------------------------------------------------------
+
+/// Spells a pickup spot can give, `(spell id, weight)`, by band (0 shallow, 1 deep). Chosen per spot by
+/// counter-based rng (`SALT_PICKUP_SPELL`); the deep rarities (Black Hole) weigh half the others.
+pub const PICKUP_TABLE: [&[(u8, u32)]; 2] = [
+    &[(2, 2), (3, 2), (7, 2), (8, 2), (9, 2)],
+    &[(4, 2), (5, 2), (10, 2), (11, 1)],
+];

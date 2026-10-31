@@ -1378,7 +1378,7 @@ mod tests {
     fn pickup_spots_are_on_floors_in_their_band() {
         let s = Sim::new(2, 1).unwrap();
         let g = &s.grid;
-        let band = |p: &crate::entities::Pickup| u8::from(p.spell >= 4);
+        let band = |p: &crate::entities::Pickup| u8::from(crate::tuning::PICKUP_TABLE[1].iter().any(|&(k, _)| k == p.spell));
         let shallow = s.pickups.iter().filter(|p| band(p) == 0).count();
         let deep = s.pickups.iter().filter(|p| band(p) == 1).count();
         assert!(shallow >= 30 && deep >= 18, "{shallow} shallow, {deep} deep");
