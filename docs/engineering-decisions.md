@@ -50,6 +50,7 @@ Challenges
 Later
 25. [Fun before modes: juice, Dig and roomy caves](#25-fun-before-modes-juice-dig-and-roomy-caves)
 26. [The canvas that shrank for a week, and two workers who blamed the browser](#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)
+27. [Six new materials, and the half of the game that didn't know about them](#27-six-new-materials-and-the-half-of-the-game-that-didnt-know-about-them)
 
 ---
 
@@ -1163,3 +1164,32 @@ and look.
 
 **Evidence.** D-152; before: [`docs/art/shots/juice-dig-preview.png`](art/shots/juice-dig-preview.png);
 after: [`docs/art/shots/f1-dig-preview.png`](art/shots/f1-dig-preview.png).
+
+## 27. Six new materials, and the half of the game that didn't know about them
+
+**What happened.** F2 added Oil, Acid, Gas, Ice, Glass and Coal (D-153). Each one had an update rule, a unit
+test, a colour and sleep-invisibility coverage, and the full gate passed. The worker never walked an avatar
+into one.
+
+**What the review found.** The player's movement controller is in the client, not the sim (invariant 1:
+TypeScript predicts the local avatar, and Pos is client-authoritative). It classified materials with
+hard-coded ranges: gas was ids 10-12, liquid was Water or Lava, and everything else was solid. So the
+three new fluids were walls. A player would stand on top of an acid pool and walk into a gas cloud as if it
+were rock. No sim test could see this, because the sim has no player collision to test.
+
+**What changed (D-154).** One `MATERIAL_CLASS` table in `shared/names.ts` classifies every id, and a test
+pins each of ids 0-20 to exactly one class, so the next material fails a test until someone classifies it.
+The user decided acid should hurt (1 HP every 4 ticks, half lava's rate). The same review found that an
+acid pool was checked against the guaranteed path only at its seed cell, and that the test meant to catch
+this reused the generator's own check. Both were fixed with an independent distance test.
+
+**A correction kept visible.** The review also asked for the wall-clock work test to be replaced with a
+work count. The replacement asserts at most 64 chunks per tick on a 64-chunk grid. That holds by
+construction, so it can never fail. D-154 records that plainly rather than counting it as a regression
+guard.
+
+**Evidence.** D-153, D-154; [`docs/research/review-f2.md`](research/review-f2.md);
+[`docs/research/f2-fixes-report.md`](research/f2-fixes-report.md); commits
+[`ff52e02`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ff52e02) (the class table),
+[`25cc92b`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/25cc92b) (acid damage),
+[`cc03512`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/cc03512) (the gen margins).
