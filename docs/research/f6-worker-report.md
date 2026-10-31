@@ -26,3 +26,15 @@
 - Tests `sim/tests/boss.rs` (6). Red first: the leash test failed on the first version ("left the arena at tick 3") and the fire test failed
   while the test player stood behind a pillar (fixed in the test setup: the player floats above the pillars). A snapshot hostile test covers phase 0/4, counter, hp, kind.
 - Gate green.
+
+### 3. Phases 2 and 3
+- Phase derives from hp thirds, only rises, emits `EV_ENEMY_PHASE` (14; a = id, b = phase). Boundary: exactly 800/1200 is phase 2, 801 phase 1.
+- Phase 2: Bomb lob every 120 ticks (`BOMB`, enemy-owned), summons: 2 imps per cast every 300 ticks, at most 4 alive, 40 per fight, rng cells
+  (8 tries) that are Empty 5x4 pockets inside the arena. Summon id = boss id + 1 + counter (counter is the boss's `hop_until`, hashed, snapshotted,
+  decode-checked), so ids are unique forever and stay sorted. Phase 3: speed x1.5, 3-bolt fan every 90 ticks (bolts that don't fit under the cap
+  of 16 are dropped), 24-cell lava arc every 240 ticks via `Grid::set`.
+- Enemy count: L seed 1 places 51 normal + 1 boss; plus 4 summons alive = 56 <= 64 (asserted for seeds 1-4).
+- Work maximum (`/tmp/f6-boss-work.txt`): 1226 cells per tick with the boss in phase 3, 4 summons and the rest of the stepping set; test bound 1400, and the
+  test also asserts work > 700 so halving the bound fails.
+- Tests `sim/tests/boss_phases.rs` (6). Red first: two failed on the first run (a wrong boundary expectation of mine, and a check that summons are inside the
+  arena, rewritten to track only fresh ids); both were test errors, not sim errors. Honest note: I did not run the file against a stubbed sim.

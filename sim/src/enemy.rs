@@ -7,9 +7,9 @@
 
 use crate::entities::*;
 use crate::materials::*;
-use crate::rng::{rng, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
+use crate::rng::{rng, SALT_BOSS_RING, SALT_BOSS_SUMMON, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
 use crate::sim::Sim;
-use crate::spells::{isqrt, FIRE_BOLT};
+use crate::spells::{isqrt, BOMB, FIRE_BOLT};
 use crate::tuning::*;
 
 /// An alive, active player as the AI sees it: `(id, x, y)` in 1/16 cell.
@@ -110,6 +110,59 @@ impl Sim {
         e.vy += (wy - i32::from(e.vy)).signum() as i16;
     }
 
+    /// Phase 2+: on ticks where `(tick + id) % BOSS_SUMMON_TICKS == 150`, up to `BOSS_SUMMON_PER_CAST` imps appear in
+    /// rng-chosen EMPTY 5 x 4 pockets inside the arena (`BOSS_SUMMON_TRIES` tries each, 20 cells read per try), while
+    /// fewer than `BOSS_SUMMONS_ALIVE` summoned imps live, the room has space, and the fight total is under
+    /// `BOSS_SUMMONS_TOTAL`. Ids: `boss id + 1 + summons so far` (the counter is the boss's `hop_until`, which only
+    /// grows), so they are unique forever, above every placed id, and appended in order.
+    fn boss_summon(&mut self, e: &mut Enemy, id32: u32) {
+        let Some(a) = self.arena else { return };
+        if id32 % BOSS_SUMMON_TICKS != 150 {
+            return;
+        }
+        let w = self.grid.w as i32;
+        for n in 0..BOSS_SUMMON_PER_CAST as u32 {
+            let alive = self.enemies.iter().filter(|o| o.kind == ENEMY_IMP && o.id > e.id).count();
+            if alive >= BOSS_SUMMONS_ALIVE || self.enemies.len() >= MAX_ENEMIES || e.hop_until >= BOSS_SUMMONS_TOTAL {
+                return;
+            }
+            let hw = a.floor_half_width();
+            for t in 0..BOSS_SUMMON_TRIES {
+                let r = rng(self.seed, self.tick, u32::from(e.id), n * 16 + t, SALT_BOSS_SUMMON);
+                let x = a.cx - hw + (r % (2 * hw as u32 + 1)) as i32;
+                let y = a.cy - a.ry / 2 + ((r >> 16) % (a.ry as u32 / 2)) as i32;
+                self.enemy_work += 20;
+                let free = (x - 2..=x + 2).all(|bx| (y - 4..y).all(|by| a.contains(bx, by, -2) && self.grid.mat[(by * w + bx) as usize] == EMPTY));
+                if free {
+                    let id = e.id + 1 + e.hop_until as u16;
+                    e.hop_until += 1;
+                    self.enemies.push(Enemy::new(id, ENEMY_IMP, x * POS_ONE + POS_ONE / 2, y * POS_ONE));
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Phase 3: on ticks where `(tick + id) % BOSS_RING_TICKS == 60`, `BOSS_RING_CELLS` LAVA cells in an arc on the
+    /// floor (the row above it, bowed up one row at the ends, so it reads as an arc), centred on an rng offset.
+    /// Only EMPTY cells change, written with `Grid::set`: at most 24 writes.
+    fn boss_ring(&mut self, e: &Enemy) {
+        let Some(a) = self.arena else { return };
+        let w = self.grid.w as i32;
+        let hw = a.floor_half_width();
+        let span = (2 * hw - BOSS_RING_CELLS).max(1) as u32;
+        let x0 = a.cx - hw + (rng(self.seed, self.tick, u32::from(e.id), 0, SALT_BOSS_RING) % span) as i32;
+        for k in 0..BOSS_RING_CELLS {
+            let bow = i32::from(!(3..BOSS_RING_CELLS - 3).contains(&k));
+            let (x, y) = (x0 + k, a.floor_y - 1 - bow);
+            let i = (y * w + x) as usize;
+            if a.contains(x, y, 0) && self.grid.mat[i] == EMPTY {
+                self.grid.set(i, LAVA, 0);
+            }
+        }
+        self.enemy_work += BOSS_RING_CELLS as u32;
+    }
+
     /// The Deep Mage (F6): a flier like the imp. Hovers, drifts toward the nearest player (closing beyond
     /// `BOSS_CLOSE_CELLS`, bobbing otherwise), is leashed to the arena ellipse, and fires a Fire bolt at the nearest
     /// player in line of sight every `BOSS_FIRE_TICKS` ticks (stateless cadence: `(tick + id) % period == 0`).
@@ -125,10 +178,25 @@ impl Sim {
                 best = Some((d2, dx, dy));
             }
         }
+        // The phase follows hp (thirds of the maximum) and only ever rises: each rise emits `EV_ENEMY_PHASE`.
+        let max = u32::from(st.hp);
+        let want: u8 = if u32::from(e.hp) * 3 > max * 2 { 1 } else if u32::from(e.hp) * 3 > max { 2 } else { 3 };
+        if want > e.state >> 2 {
+            e.state = (e.state & 0b11) | (want << 2);
+            self.events.push(Event { kind: EV_ENEMY_PHASE, player: 0, a: i32::from(e.id), b: i32::from(want), c: 0 });
+        }
+        let phase = e.state >> 2;
         let bob = if (tick / 32).is_multiple_of(2) { 1 } else { -1 };
-        let speed = BOSS_SPEED;
+        let speed = if phase >= 3 { BOSS_SPEED * 3 / 2 } else { BOSS_SPEED };
         let (mut wx, mut wy) = (0, bob);
         e.state &= !1;
+        let id32 = tick.wrapping_add(u32::from(e.id));
+        if phase >= 2 {
+            self.boss_summon(e, id32);
+        }
+        if phase >= 3 && id32 % BOSS_RING_TICKS == 60 {
+            self.boss_ring(e);
+        }
         if let Some((d2, dx, dy)) = best.filter(|&(d2, _, _)| d2 <= i64::from(BOSS_AGGRO_CELLS * POS_ONE).pow(2)) {
             e.state |= 1;
             let dist = i64::from(isqrt(d2 as u64));
@@ -143,14 +211,30 @@ impl Sim {
             if dx != 0 {
                 e.facing = u8::from(dx > 0);
             }
-            if tick.wrapping_add(u32::from(e.id)).is_multiple_of(BOSS_FIRE_TICKS) && dist <= i64::from(BOSS_FIRE_RANGE * POS_ONE) {
-                let from = (e.x, e.y - mid);
+            let period = if phase >= 3 { BOSS_FAN_TICKS } else { BOSS_FIRE_TICKS };
+            let in_range = dist <= i64::from(BOSS_FIRE_RANGE * POS_ONE);
+            let from = (e.x, e.y - mid);
+            if in_range && (id32.is_multiple_of(period) || (phase == 2 && id32 % BOSS_BOMB_TICKS == 30)) {
                 let to = (from.0 + dx, from.1 + dy);
                 if self.line_clear((from.0 >> POS_SHIFT, from.1 >> POS_SHIFT), (to.0 >> POS_SHIFT, to.1 >> POS_SHIFT)) {
                     let cells = (dist >> POS_SHIFT) as i32;
                     let lift = cells * cells / 1568 * POS_ONE;
-                    self.enemy_fire((e.kind, e.id), FIRE_BOLT, from, (dx, dy - lift));
+                    if id32.is_multiple_of(period) {
+                        self.enemy_fire((e.kind, e.id), FIRE_BOLT, from, (dx, dy - lift));
+                        if phase >= 3 {
+                            // The fan: the aim turned a quarter-radian either way (perpendicular / `BOSS_FAN_SLOPE`).
+                            for sgn in [-1, 1] {
+                                self.enemy_fire((e.kind, e.id), FIRE_BOLT, from, (dx - sgn * dy / BOSS_FAN_SLOPE, dy - lift + sgn * dx / BOSS_FAN_SLOPE));
+                            }
+                        }
+                    }
                 }
+            }
+            if in_range && phase >= 2 && id32 % BOSS_BOMB_TICKS == 30 {
+                // A lob: aimed above the player so the arc lands near them (gravity 20/256 per tick, speed 2.5 cells per tick).
+                let cells = (dist >> POS_SHIFT) as i32;
+                let lift = cells * cells / 620 * POS_ONE + cells * POS_ONE / 6;
+                self.enemy_fire((e.kind, e.id), BOMB, from, (dx, dy - lift));
             }
         }
         // The leash: toward the arena centre when the next step would leave the ellipse (grown by a negative margin).
