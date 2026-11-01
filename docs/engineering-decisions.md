@@ -1278,3 +1278,26 @@ then **measure before concluding**.
 
 **Evidence.** D-162 (the slime correction), D-165 (falling rock); `docs/art/shots/f4-slime-kills-party-fell.png`,
 `falling-rock-block-floats.png` (before), `falling-rock-crumbles.png` (after); `docs/research/review-falling-rock.md`.
+
+## 30. The boss, and a test that only looked at the world that couldn't fail
+
+**What.** F6 added the Deep Mage, its arena and the Survival win (D-167). Three choices shape later work.
+First, the arena is carved only in Survival worlds, so every other world is byte-identical and pinned by
+hashes. Second, the boss's phase, its summon counter and the win are packed into fields that already exist
+(`state` bits, `hop_until`, a `round_started` bit) rather than bumping the snapshot format. Third, a win on
+the tick the last player dies counts as a win.
+
+**The challenge.** The guarantee that every band is reachable, `traversable_to_every_band`, ran only on
+PvP cave worlds, and those never have an arena. So the one world shape the boss slice changed was the one
+the invariant test never looked at. The independent review spotted the gap from the code. The new Survival
+test, run red first, found that `repair_traversal` cut tunnels through the arena floor on 6 seeds across
+the three sizes. `reseal_floor` restores the floor unless sealing it would cut the path down.
+
+**What it costs later.** The reused fields save a format bump today, but every later slice has to know about
+them. The ready-up lobby (D-166) must clear the win bit when it resets a round. Deathmatch gets no arena. The
+balance is arithmetic only: one player holding the whole supply pile has about 1100 damage against 800 hp,
+and nobody has played that fight yet.
+
+**Evidence.** D-166, D-167; `docs/briefs/fun7-boss.md`; `docs/research/f6-worker-report.md`,
+`docs/research/review-f6.md`; `docs/art/shots/f6-arena-boss-hud.png`, `f6-phase2.png`, `f6-phase3.png`,
+`f6-victory.png`; commits `2cfc477`..`b73f7e6`.
