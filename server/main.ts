@@ -452,6 +452,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const p = (async () => {
       const w = mk(id, cfg, seedForRoom(id));
       await w.load();
+      wireWorld(w);
       worlds.set(id, w); // inserted only once load() has finished, so a racing join never sees a half-loaded room
       log.event("room.loaded", { world: id, code: row.code, mode: row.mode, size: cfg.size });
       return w;
@@ -480,18 +481,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     for (const l of live.values()) if (l.visitorId === visitorId && l.ws.readyState === l.ws.OPEN) l.ws.send(frame, { binary: true });
   });
   // A majority-agreed death (D-120). Sim player ids are visitor ids in the game world (D-065).
-  const nameOfVisitor = (id: number): string => {
-    for (const m of game.members.values()) if (m.visitorId === id) return m.visitorName;
-    return db?.playerNames([id])[id] ?? "";
-  };
-  game.onDeathResolved = (d) => {
-    const ctxOf = (id: number) => ({ name: nameOfVisitor(id), world: game.id, tick: d.tick });
-    // Not rate-limited: each real death resolves exactly once (resolved keys are remembered) and needs a quorum of
-    // registered voters, so a client cannot repeat it. A global limit here dropped real deaths: a bomb that killed
-    // three players logged one. The per-claim lines a client CAN repeat are limited where the claim arrives.
-    log.event("claim.death", { world: game.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
-    achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
-  };
+  /** Wire a world's majority-claim results to stats, achievements and the log (D-120). Every world with players, fixed or a room (F7). */
+  function wireWorld(w: World): void {
+    const nameOfVisitor = (id: number): string => {
+      for (const m of w.members.values()) if (m.visitorId === id) return m.visitorName;
+      return db?.playerNames([id])[id] ?? "";
+    };
+    w.onDeathResolved = (d) => {
+      const ctxOf = (id: number) => ({ name: nameOfVisitor(id), world: w.id, tick: d.tick });
+      // Not rate-limited: each real death resolves exactly once (resolved keys are remembered) and needs a quorum of
+      // registered voters, so a client cannot repeat it. The per-claim lines a client CAN repeat are limited where the claim arrives.
+      log.event("claim.death", { world: w.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
+      achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
+    };
+  }
+  wireWorld(game);
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
