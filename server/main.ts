@@ -458,6 +458,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const p = (async () => {
       const w = mk(id, cfg, seedForRoom(id));
       await w.load();
+      w.roundEnded = row.endedAt !== null; // review S5: the row, not memory, says the round is over
       wireWorld(w);
       worlds.set(id, w); // inserted only once load() has finished, so a racing join never sees a half-loaded room
       log.event("room.loaded", { world: id, code: row.code, mode: row.mode, size: cfg.size });
@@ -740,6 +741,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     res.end(JSON.stringify({ rooms: rooms.listPublicRooms().map(publicRoom) }));
   }
 
+  /** An unloaded Survival room is running if it has logged ticks and has not ended (the round state itself is not stored). */
+  function roomIsRunning(r: RoomRow): boolean {
+    const cfg = decodeConfig(r.config);
+    return cfg?.round === 1 && (db?.getWorld(r.id)?.lastTick ?? 0) > 0;
+  }
+
   /** GET /api/rooms/:code: config and world id for joining. Still inert in R2a (nothing can join yet). */
   function getRoomRoute(req: IncomingMessage, res: ServerResponse, code: string): void {
     if (!rooms) {
@@ -753,7 +760,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     const roomWorld = worlds.get(r.id);
-    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, ended: r.endedAt !== null, running: !!roomWorld?.roundRunning && r.endedAt === null, config: Buffer.from(r.config).toString("base64") }));
+    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, ended: r.endedAt !== null, running: r.endedAt === null && (roomWorld ? roomWorld.roundActive() : roomIsRunning(r)), config: Buffer.from(r.config).toString("base64") }));
   }
 
   const http: Server = createServer((req, res) => {
@@ -1094,6 +1101,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
           // anonymous resolve touches nothing in the database. Identity never reaches the sim.
           const spectating = !!(msg.flags & HELLO_SPECTATE);
+          // Review N1: a finished round takes no more players; a non-spectator HELLO is refused (the client's late panel offers Spectate).
+          if (w.roundEnded && !spectating) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("round is over; spectate or start a new room", msg.worldId);
+          }
           const gamePlayer = w.kind === WORLD_GAME && !spectating;
           const who = identity.resolve(msg.token, gamePlayer);
           if (who === "unknown" && gamePlayer) {
@@ -1365,7 +1377,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             hashPasses: w.stats.hashPasses,
             hashFails: w.stats.hashFails,
             resyncs: w.stats.resyncs,
-            round: w.cfg.round !== 1 ? null : w.roundEnded ? "ended" : w.roundRunning ? "running" : "lobby",
+            round: w.cfg.round !== 1 ? null : w.roundEnded ? "ended" : w.roundActive() ? "running" : "lobby",
             snapshotsAccepted: w.stats.snapshotsAccepted,
             snapshotsRejected: w.stats.snapshotsRejected,
             snapshotBytes: w.snapshot?.data.length ?? 0,

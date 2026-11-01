@@ -169,3 +169,36 @@ describe("lobby stat gating", () => {
     expect(s.game.creditsStats()).toBe(true);
   }, 30000);
 });
+
+describe("restored and ended rooms (review S5, N1)", () => {
+  it("an unloaded room with ticks reports running; after the round ends it reports ended, refuses players and accepts spectators", async () => {
+    const d = mkdtempSync(join(tmpdir(), "sand-f7d-"));
+    cleanups.push(() => rmSync(d, { recursive: true, force: true }));
+    const cfg = Buffer.from(encodeConfig({ ...SURVIVAL, size: 0 })).toString("base64");
+    let s = await startServer({ port: 0, dataDir: d, quiet: true, snapshotEveryTicks: 120 });
+    const room = (await (await fetch(`http://127.0.0.1:${s.port}/api/rooms`, { method: "POST", body: JSON.stringify({ name: "Back", mode: "survival", config: cfg, visibility: "public" }) })).json()) as { id: number; code: string };
+    const who = await register(s.port, "Back");
+    const c = await connect(s.port, hex, { world: room.id, token: who.token });
+    await waitFor(() => c.ls.sim.entities().some((e) => e.type === ENT_PLAYER && e.active), 8000, "joined");
+    await sleep(500);
+    c.close();
+    await sleep(300);
+    await s.close();
+    // A fresh process: the room is not loaded, and its round state is not in memory.
+    s = await startServer({ port: 0, dataDir: d, quiet: true });
+    cleanups.push(() => s.close());
+    expect(s.worlds.has(room.id)).toBe(false);
+    const get = async () => (await (await fetch(`http://127.0.0.1:${s.port}/api/rooms/${room.code}`)).json()) as { running: boolean; ended: boolean };
+    expect(await get()).toMatchObject({ running: true, ended: false });
+    // End it (as a resolved round-end claim would) and reload: ended comes from the row.
+    s.db!.db.prepare("update rooms set ended_at = 1 where id = ?").run(room.id);
+    expect(await get()).toMatchObject({ running: false, ended: true });
+    const rejected = await new Promise<string>((ok) => {
+      void connect(s.port, hex, { world: room.id, token: who.token }).then(() => ok("joined"), (e: Error) => ok(e.message));
+    });
+    expect(rejected).toContain("round is over");
+    const spec = await connect(s.port, hex, { world: room.id, spectate: true });
+    expect(s.worlds.get(room.id)!.roundEnded).toBe(true);
+    spec.close();
+  }, 40000);
+});

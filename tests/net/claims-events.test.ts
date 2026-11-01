@@ -5,8 +5,10 @@ import { EventLog } from "../../server/log.ts";
 import { PlayerStats } from "../../server/stats.ts";
 import { GameDb } from "../../server/db.ts";
 import { RoomsStore } from "../../server/rooms.ts";
-import { World, type Peer, type ResolvedKill, type ResolvedRoundEnd, type ResolvedRoundStart } from "../../server/world.ts";
+import { CLOSE_SILENT, World, type Peer, type ResolvedKill, type ResolvedRoundEnd, type ResolvedRoundStart } from "../../server/world.ts";
 import { decodeClient, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END } from "../../shared/protocol.ts";
+import { readFileSync } from "node:fs";
+import { NUM_ENEMY_KINDS } from "../../shared/sim.ts";
 import { SURVIVAL, encodeConfig } from "../../shared/room.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,6 +35,8 @@ function rig(n: number) {
   w.tick();
   return { w, kills, starts, ends, conns, tick: () => w.clock.lastClosed - 3 };
 }
+/** The round must have started (a majority start claim) before it can end. */
+const started = (r: ReturnType<typeof rig>) => r.conns.forEach((c) => r.w.onRoundStartClaim(c, { tick: r.tick() - 1, active: r.conns.length }));
 const kill = (tick: number, killer = 1): ResolvedKill => ({ tick, killer, x: 800, y: 900, kind: 1 });
 
 describe("wire format", () => {
@@ -78,6 +82,7 @@ describe("round start and end claims", () => {
   });
   it("the alive set is part of the claim: disagreeing sets do not resolve together", () => {
     const r = rig(3);
+    started(r);
     const t = r.tick();
     r.w.onRoundEndClaim(r.conns[0], { tick: t, win: true, players: 3, alive: [1, 2] });
     r.w.onRoundEndClaim(r.conns[1], { tick: t, win: true, players: 3, alive: [1] });
@@ -88,14 +93,73 @@ describe("round start and end claims", () => {
   });
   it("refuses a win with nobody alive and an alive id the room never saw", () => {
     const r = rig(1);
+    started(r);
     r.w.onRoundEndClaim(r.conns[0], { tick: r.tick(), win: true, players: 1, alive: [] });
     r.w.onRoundEndClaim(r.conns[0], { tick: r.tick(), win: true, players: 1, alive: [42] });
     expect(r.ends).toEqual([]);
   });
   it("a loss may have nobody alive", () => {
     const r = rig(1);
+    started(r);
     r.w.onRoundEndClaim(r.conns[0], { tick: r.tick(), win: false, players: 1, alive: [] });
     expect(r.ends).toHaveLength(1);
+  });
+});
+
+describe("review fixes (F7 third pass)", () => {
+  it("a round cannot end before it started, start twice, or end twice, even after a flood of 1100 kill claims", () => {
+    const r = rig(1);
+    const t = r.tick();
+    r.w.onRoundEndClaim(r.conns[0], { tick: t, win: true, players: 1, alive: [1] });
+    expect(r.ends).toEqual([]); // never started
+    started(r);
+    expect(r.starts).toHaveLength(1);
+    r.w.onRoundStartClaim(r.conns[0], { tick: t, active: 5 });
+    expect(r.starts).toHaveLength(1); // already running
+    r.w.onRoundEndClaim(r.conns[0], { tick: t, win: false, players: 1, alive: [] });
+    expect(r.ends).toHaveLength(1);
+    // Flood resolved kills (each from a fresh member window, as a lone client in a 1-player room could over time).
+    for (let i = 0; i < 1100; i++) {
+      r.w.members.get(r.conns[0])!.claimsInWindow = 0;
+      r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 16 + i, y: 16, kind: 0 });
+    }
+    expect(r.kills.length).toBeGreaterThan(1050);
+    r.w.onRoundEndClaim(r.conns[0], { tick: t, win: true, players: 1, alive: [1] });
+    expect(r.ends).toHaveLength(1); // a forged win after the loss resolves nothing
+  });
+  it("a kill claim with an unknown enemy kind or a position outside the world is refused", () => {
+    const r = rig(1);
+    const t = r.tick();
+    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 900, kind: 5 });
+    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 900, kind: 4294967295 });
+    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: -16, y: 900, kind: 0 });
+    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 512 * 16 + 1, kind: 0 }); // size S is 512 cells
+    expect(r.kills).toEqual([]);
+    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 900, kind: 4 });
+    expect(r.kills).toHaveLength(1);
+  });
+  it("the shared enemy-kind count matches the sim", () => {
+    const src = readFileSync("sim/src/tuning.rs", "utf8");
+    expect(Number(/pub const NUM_ENEMY_KINDS: usize = (\d+);/.exec(src)![1])).toBe(NUM_ENEMY_KINDS);
+  });
+  it("a stalled server does not read every client as silent", () => {
+    let t = 1000;
+    const w = new World({ id: 778, cfg: { ...SURVIVAL, size: 0 }, now: () => t, log: new EventLog({ quiet: true }) });
+    const closes: number[] = [];
+    const p: Peer = { send() {}, buffered: () => 0, close: (c) => closes.push(c) };
+    const c = w.join(p, { playerId: 1, name: "P1", visitorId: 1, visitorName: "P1" }).conn;
+    w.onLive(c, w.clock.lastClosed);
+    t += 100;
+    w.tick();
+    t += 30_000; // the event loop was blocked: the client's frames are still queued
+    w.tick();
+    expect(closes).toEqual([]);
+    t += 10_001; // now genuinely silent, with ticks running normally
+    for (let i = 0; i < 700; i++) {
+      t += 15;
+      w.tick();
+    }
+    expect(closes).toEqual([CLOSE_SILENT]);
   });
 });
 

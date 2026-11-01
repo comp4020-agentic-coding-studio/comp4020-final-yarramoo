@@ -70,6 +70,8 @@ export interface SimEvent {
   c: number;
 }
 
+/** Enemy kinds the sim has (NUM_ENEMY_KINDS in sim/src/tuning.rs; pinned by tests/net/claims-events.test.ts). */
+export const NUM_ENEMY_KINDS = 5;
 export const ENT_PLAYER = 1;
 export const ENT_PICKUP = 2;
 /** A bolt in flight: `id` is the owner, `sub` the spell, `a` the cast_seq, x and y in 1/16 cell. */

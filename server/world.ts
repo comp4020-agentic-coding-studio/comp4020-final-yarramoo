@@ -3,7 +3,7 @@
 // (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
 import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
-import { NUM_SPELLS } from "../shared/sim.ts";
+import { NUM_ENEMY_KINDS, NUM_SPELLS } from "../shared/sim.ts";
 import { POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
   CHUNK_CELLS,
@@ -84,6 +84,8 @@ export const CLOSE_OUT_OF_SYNC = 4001;
 /** F7: a live member silent this long is closed (CLOSE_SILENT) and leaves normally. Catching-up members are exempt. */
 export const LIVENESS_MS = 10_000;
 export const CLOSE_SILENT = 4002;
+/** A gap this long between tick() calls means the server stalled, not the clients. */
+export const TICK_STALL_MS = 2_000;
 export const SNAPSHOT_EVERY_TICKS = 1800;
 /** A requested snapshot tick is at least this far ahead of the clock. */
 export const SNAPSHOT_LEAD_TICKS = 120;
@@ -274,6 +276,11 @@ export class World {
   /** F7: this world was loaded from the database with closed ticks. roundRunning is memory-only, so after a restart this
    * stands in for it (a restored lobby may then be credited early; a restored running round is never denied). */
   restoredWithTicks = false;
+  /** F7 review: the round is under way as far as the server can tell: a start claim resolved, or a restored Survival room that has ticks. */
+  roundActive(): boolean {
+    return this.cfg.round === 1 && !this.roundEnded && (this.roundRunning || this.restoredWithTicks);
+  }
+  private lastTickAt = -1;
   /** F7: may Pos/Cast inputs count towards stats? Not while a Survival lobby is open (no start claim resolved yet).
    * The claim lags the real start by up to a second, so the first moments of a round are not credited. */
   creditsStats(): boolean {
@@ -804,6 +811,12 @@ export class World {
 
   /** Called from the server's timer. */
   tick(): void {
+    // Review S4: a stalled event loop reads every client as silent, because their frames are still queued. After a long gap
+    // between sweeps, forgive everyone and skip the sweep.
+    const nowT = this.now();
+    const stalled = this.lastTickAt >= 0 && nowT - this.lastTickAt > TICK_STALL_MS;
+    this.lastTickAt = nowT;
+    if (stalled) for (const m of this.members.values()) m.lastHeard = nowT;
     // A member whose send failed is left at once, not only at the next tick close, which a held clock never reaches.
     while (this.dropped.length) this.leave(this.dropped.shift()!);
     if (this.heldSince !== null) this.evaluateHold(); // the safety valve's deadline
@@ -814,7 +827,7 @@ export class World {
       this.lastFlush = t;
       this.flush();
     }
-    this.reapSilent(t);
+    if (!stalled) this.reapSilent(t);
     this.resolveDue(t);
     this.sweepDiagnoses(t);
     if (t - this.lastClaimSweep >= CLAIM_SWEEP_MS) {
@@ -1212,6 +1225,9 @@ export class World {
   onKillClaim(memberId: number, k: ResolvedKill): void {
     const m = this.admitClaim(memberId, k.tick);
     if (!m) return;
+    // Review S3: the kind becomes a stat name and the position a map key, so both must be what the sim could emit.
+    const [ww, wh] = SIZE_DIMS[this.cfg.size];
+    if (k.kind >= NUM_ENEMY_KINDS || k.x < 0 || k.y < 0 || k.x >= ww * 16 || k.y >= wh * 16) return void this.badClaim(memberId, m, "claim_bad_kill");
     const kk: ResolvedKill = this.seenPlayers.has(k.killer) ? k : { ...k, killer: 0 };
     const group = `k:${kk.tick}:${kk.x}:${kk.y}`;
     this.vote(memberId, m, group, `${group}:${kk.killer}:${kk.kind}`, kk.tick, () => this.onKillResolved?.({ ...kk }), { kind: "kill" });
@@ -1221,7 +1237,7 @@ export class World {
   onRoundStartClaim(memberId: number, r: ResolvedRoundStart): void {
     const m = this.admitClaim(memberId, r.tick);
     if (!m) return;
-    if (this.cfg.round !== 1) return void this.badClaim(memberId, m, "claim_no_round");
+    if (this.cfg.round !== 1 || this.roundRunning || this.roundEnded) return void this.badClaim(memberId, m, "claim_no_round");
     this.vote(memberId, m, "rs", `rs:${r.tick}:${r.active}`, r.tick, () => {
       this.roundRunning = true;
       this.onRoundStartResolved?.({ ...r });
@@ -1235,7 +1251,8 @@ export class World {
   onRoundEndClaim(memberId: number, r: ResolvedRoundEnd): void {
     const m = this.admitClaim(memberId, r.tick);
     if (!m) return;
-    if (this.cfg.round !== 1) return void this.badClaim(memberId, m, "claim_no_round");
+    // Review S2: only a started, not yet ended round can end, and only once (a flood of kills cannot evict this).
+    if (!this.roundActive()) return void this.badClaim(memberId, m, "claim_no_round");
     for (const id of r.alive) if (!this.seenPlayers.has(id)) return void this.badClaim(memberId, m, "claim_unknown_player");
     if (r.win && r.alive.length === 0) return void this.badClaim(memberId, m, "claim_win_nobody_alive"); // a win needs a survivor
     const alive = [...new Set(r.alive)].sort((a, b) => a - b);
@@ -1326,7 +1343,8 @@ export class World {
       }
     }
     this.claims.delete(key);
-    this.resolvedDeaths.set(tally.group, key);
+    // The round markers are plain booleans (roundRunning / roundEnded), not entries in the FIFO a flood of kills could evict.
+    if (tally.group !== "rs" && tally.group !== "re") this.resolvedDeaths.set(tally.group, key);
     if (this.resolvedDeaths.size > MAX_RESOLVED_DEATHS) this.resolvedDeaths.delete(this.resolvedDeaths.keys().next().value!);
     tally.fire();
   }

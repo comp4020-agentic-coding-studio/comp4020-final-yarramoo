@@ -29,3 +29,13 @@ Committed together as one gated batch (the gate takes about 8 minutes; one run p
 ## Left
 - Items 6 (balance) and 7 (two-browser descent): third pass.
 - Boss kill through a real-client test.
+
+## Third pass, A: review fixes (`docs/research/review-f7.md`)
+- S2: `onRoundStartClaim` refuses once running or ended; `onRoundEndClaim` refuses unless `roundActive()` (a start claim resolved, or a restored Survival room with ticks, and not ended). The `rs`/`re` markers are booleans, not entries in the `resolvedDeaths` FIFO. Test (red first, shown by reverting `world.ts`): a forged win after a loss and a flood of 1100 resolved kills resolves nothing.
+- S3: `onKillClaim` refuses an enemy kind >= `NUM_ENEMY_KINDS` (new in `shared/sim.ts`, pinned against `sim/src/tuning.rs` by a test) and a position outside the room's size.
+- S5: a loaded room takes `roundEnded` from `rooms.ended_at`; `running` in `GET /api/rooms/:code` and the admin summary is `roundActive()`, or for an unloaded room "Survival, has logged ticks, not ended". Tested with a real restart.
+- S4: `tick()` forgives every member (`lastHeard = now`) and skips the sweep when the gap since the previous `tick()` exceeds 2 s. Tested with the injected clock.
+- N1: an ended room refuses a non-spectator HELLO with "round is over; spectate or start a new room"; spectators still join. Chosen over "join as spectator" because it needs no new server role and the client's late panel already offers Spectate.
+- Dead empty `if` for code 4002 in the client replaced by a comment.
+- Existing claim tests that ended a never-started round now start it first (a precondition, no assertion weakened).
+- Accepted risk (S1, per coordinator): one vote is a majority with 1 or 2 eligible voters, as for deaths since D-120. A cheater in a co-op room only cheats their own room, and requiring both voters in a 2-player room would let one player block the end. Room achievements are therefore not leaderboard material.
