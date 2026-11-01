@@ -4,7 +4,7 @@ import WebSocket from "ws";
 import { decodeConfig } from "../../shared/room.ts";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
 import { encodeCast, encodePaint, encodePos, encodeReady, KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../../shared/inputs.ts";
-import { decodeServer, encodeChunkHashes, encodeClaim, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END, CLAIM_ROUND_START, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
+import { decodeServer, encodeChunkHashes, encodeClaim, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END, CLAIM_ROUND_START, encodeHash, encodeHello, encodeInput, encodeLive, encodePing, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
 import { ENT_PLAYER, EV_DEATH, EV_ENEMY_DEATH, EV_ROUND_END, EV_ROUND_START, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
@@ -132,6 +132,10 @@ export async function connect(
 
   await new Promise<void>((ok, bad) => {
     ws.on("open", () => ws.send(encodeHello(unhex(hashHex), opts.world ?? 0, opts.token, opts.spectate ? 1 : 0)));
+    // Like the real client (client/worker.ts), ping every 2 s. Without it, a test client that is slow to send anything
+    // under a loaded full-suite run was closed by the server's liveness timeout (F7) and its test timed out.
+    const pinger = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send(encodePing(Math.round(performance.now()) >>> 0)), 2000);
+    ws.on("close", () => clearInterval(pinger));
     ws.on("error", bad);
     ws.on("message", (d: Buffer) => {
       const m = decodeServer(new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
