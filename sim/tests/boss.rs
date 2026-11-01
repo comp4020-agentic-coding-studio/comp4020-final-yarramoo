@@ -22,6 +22,7 @@ fn fight(dx: i32) -> Sim {
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: these tests are about the fight; the lobby has its own tests
     let a = s.arena.unwrap();
     s.players[0].x = (a.cx + dx) * PX;
     // in the air above the pillars (the player does not fall without a client), so the line is clear

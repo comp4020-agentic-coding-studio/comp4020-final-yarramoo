@@ -20,9 +20,11 @@ pub struct Player {
     pub cooldown_until: [u32; NUM_SPELLS],
     pub last_hit_by: u32,
     pub last_hit_tick: u32,
+    /// F6b: the lobby ready flag (0 or 1). Only ever set in a one-life room's lobby.
+    pub ready: u8,
 }
 
-pub const PLAYER_BYTES: usize = 4 + 1 + 2 + 4 + 4 + 1 + 1 + 4 + 2 * NUM_SPELLS + 4 * NUM_SPELLS + 4 + 4;
+pub const PLAYER_BYTES: usize = 4 + 1 + 2 + 4 + 4 + 1 + 1 + 4 + 2 * NUM_SPELLS + 4 * NUM_SPELLS + 4 + 4 + 1;
 
 impl Player {
     pub fn new(id: u32, x: i32, y: i32) -> Player {
@@ -39,6 +41,7 @@ impl Player {
             cooldown_until: [0; NUM_SPELLS],
             last_hit_by: 0,
             last_hit_tick: 0,
+            ready: 0,
         }
     }
 
@@ -70,6 +73,7 @@ impl Player {
         }
         v.extend_from_slice(&self.last_hit_by.to_le_bytes());
         v.extend_from_slice(&self.last_hit_tick.to_le_bytes());
+        v.push(self.ready);
     }
 }
 
@@ -216,15 +220,15 @@ impl Enemy {
 
 /// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
 /// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order), n_enemies u32, enemies (by id),
-/// round [over, started, result] u8 x 3`. Players stay first:
+/// round tail (`ROUND_TAIL_BYTES`: over, started, result u8, `lobby_since` u32)`. Players stay first:
 /// the server reads the player section at a fixed offset (`activePlayersIn`).
-pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round: [u8; 3]) -> Vec<u8> {
+pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round: [u8; ROUND_TAIL_BYTES]) -> Vec<u8> {
     let mut v = Vec::with_capacity(
         16 + players.len() * PLAYER_BYTES
             + pickups.len() * PICKUP_BYTES
             + projectiles.len() * PROJECTILE_BYTES
             + bags.len() * BAG_BYTES
-            + 7
+            + ROUND_TAIL_BYTES
             + enemies.len() * ENEMY_BYTES,
     );
     v.extend_from_slice(&(players.len() as u32).to_le_bytes());
@@ -277,7 +281,7 @@ impl R<'_> {
 /// Decode entity bytes against the freshly generated `pickups` (their identity must match; only
 /// `respawn_at` and `charges` are taken from the bytes). Hostile input fails cleanly, never panics.
 /// `w`, `h` are the world's size in cells: a bag outside it is refused.
-pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>, Vec<Enemy>, [u8; 3]);
+pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>, Vec<Enemy>, [u8; ROUND_TAIL_BYTES]);
 
 pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<Decoded, ()> {
     let mut r = R(b, 0);
@@ -310,7 +314,7 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         return Err(());
     }
     let ne = u32::from_le_bytes(b[en_at as usize..en_at as usize + 4].try_into().map_err(|_| ())?) as usize;
-    if ne > MAX_ENEMIES || en_at + 4 + (ne as u64) * (ENEMY_BYTES as u64) + 3 != b.len() as u64 {
+    if ne > MAX_ENEMIES || en_at + 4 + (ne as u64) * (ENEMY_BYTES as u64) + ROUND_TAIL_BYTES as u64 != b.len() as u64 {
         return Err(());
     }
     let mut players: Vec<Player> = Vec::with_capacity(np);
@@ -336,6 +340,10 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         }
         p.last_hit_by = r.u32().ok_or(())?;
         p.last_hit_tick = r.u32().ok_or(())?;
+        p.ready = r.u8().ok_or(())?;
+        if p.ready > 1 {
+            return Err(());
+        }
         players.push(p);
     }
     if r.u32().ok_or(())? as usize != pickups.len() {
@@ -430,8 +438,13 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         }
         enemies.push(e);
     }
-    let round = [r.u8().ok_or(())?, r.u8().ok_or(())?, r.u8().ok_or(())?];
-    if round[0] > 1 || round[1] > 3 || round[2] > 1 {
+    let mut round = [0u8; ROUND_TAIL_BYTES];
+    for x in round.iter_mut() {
+        *x = r.u8().ok_or(())?;
+    }
+    let since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
+    // A running round has no countdown; a live countdown is only meaningful with a player present.
+    if round[0] > 1 || round[1] > 3 || round[2] > 1 || (round[1] & ROUND_RUNNING != 0 && since != LOBBY_IDLE) {
         return Err(());
     }
     Ok((players, projectiles, bags, enemies, round))
@@ -466,6 +479,8 @@ pub const EV_ENEMY_DEATH: u8 = 12;
 pub const EV_ROUND_END: u8 = 13;
 /// The boss entered a new phase: a = enemy id, b = phase (2 or 3).
 pub const EV_ENEMY_PHASE: u8 = 14;
+/// F6b: the lobby countdown completed and the round is running (a = players). Fires once.
+pub const EV_ROUND_START: u8 = 15;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;
@@ -501,14 +516,16 @@ pub const ENT_PROJECTILE: u8 = 3;
 pub const ENT_BAG: u8 = 4;
 /// An enemy: `id`, `active` = 1, `sub` = kind, x, y in 1/16 cell, `a` = hp, `health` byte = `state | facing << 7`.
 pub const ENT_ENEMY: u8 = 5;
-/// The one-life round's state (only in `round` 1 rooms): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started.
+/// The one-life round's state (only in `round` 1 rooms): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started (bit 0 running, bit 1 boss win), `x` = lobby countdown ticks left (-1 when not counting).
 pub const ENT_ROUND: u8 = 6;
+/// F6b: a player's lobby ready flag (lobby phase only): `id` = player, `active` = ready.
+pub const ENT_READY: u8 = 7;
 /// Entity record: `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`.
 pub const ENTITY_BYTES: usize = 18;
 
 #[allow(clippy::too_many_arguments)] // one slice per entity list, as `encode`
 /// Entity views for the renderer, players then pickups, written into `out` (at most `max` records).
-pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round: [u8; 3], round_on: bool, tick: u32, out: &mut [u8], max: usize) -> usize {
+pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round: [u8; ROUND_TAIL_BYTES], round_on: bool, tick: u32, out: &mut [u8], max: usize) -> usize {
     let mut n = 0;
     let mut put = |t: u8, id: u32, active: bool, sub: u8, x: i32, y: i32, a: u16, health: u8| {
         if n >= max || (n + 1) * ENTITY_BYTES > out.len() {
@@ -551,7 +568,14 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
         put(ENT_ENEMY, u32::from(e.id), true, e.kind, e.x, e.y, e.hp, e.state | (e.facing << 7));
     }
     if round_on {
-        put(ENT_ROUND, 0, true, round[2], 0, 0, u16::from(round[0]), round[1]);
+        let since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
+        let left = if since == LOBBY_IDLE { -1 } else { since.saturating_add(LOBBY_COUNTDOWN_TICKS).saturating_sub(tick).min(LOBBY_COUNTDOWN_TICKS) as i32 };
+        put(ENT_ROUND, 0, true, round[2], left, 0, u16::from(round[0]), round[1]);
+        if round[1] & ROUND_RUNNING == 0 {
+            for p in players {
+                put(ENT_READY, p.id, p.ready == 1, 0, 0, 0, 0, 0);
+            }
+        }
     }
     n
 }

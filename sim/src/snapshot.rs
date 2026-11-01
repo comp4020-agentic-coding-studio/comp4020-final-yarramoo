@@ -6,8 +6,8 @@ use crate::sim::Sim;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
-/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_started, round_result`. Restore refuses any other version (the game is not live, so no stored state is lost).
-pub const FORMAT_VERSION: u16 = 8;
+/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_started, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. Restore refuses any other version (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 9;
 const CFG_AT: usize = 4 + 2 + 32 + 8;
 const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
@@ -89,7 +89,8 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         if !s.enemies.is_empty() && !cfg.has_enemies() {
             return Err(());
         }
-        [s.round_over, s.round_started, s.round_result] = round;
+        [s.round_over, s.round_started, s.round_result] = [round[0], round[1], round[2]];
+        s.lobby_since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
     }
     o = eend;
     let n = u32_at(o) as usize;

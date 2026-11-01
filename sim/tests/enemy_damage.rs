@@ -25,6 +25,7 @@ fn arena() -> Sim {
     }
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s.players[0].x = 500 * PX;
     s.players[0].y = 201 * PX; // chest at row 196: the slime's top row
     s.players[0].charges = [INFINITE; NUM_SPELLS];
@@ -214,6 +215,7 @@ fn two_players(cfg: RoomConfig) -> Sim {
     s.push_input(&encode_join(1));
     s.push_input(&encode_join(2));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     for p in s.players.iter_mut() {
         p.x = (if p.id == 1 { 500 } else { 520 }) * PX;
         p.y = 201 * PX;

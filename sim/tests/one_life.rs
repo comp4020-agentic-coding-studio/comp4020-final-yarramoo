@@ -14,6 +14,7 @@ fn room(players: &[u32]) -> Sim {
         s.push_input(&encode_join(id));
     }
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s
 }
 
@@ -151,30 +152,27 @@ fn a_living_player_who_disconnects_keeps_the_round_alive() {
 
 #[test]
 fn a_late_joiner_spectates_once_the_round_has_started_or_ended() {
-    // before anything happens: alive
+    // F6b (D-166): the round starts when the lobby countdown completes, not at the first kill or death. Before it, a
+    // joiner is alive (a friend arriving in the lobby); a first kill or death alone no longer makes a late joiner dead.
     let mut s = room(&[1]);
+    s.round_started = 0; // back to the lobby
     s.push_input(&encode_join(2));
     s.step();
-    assert!(s.players[1].health > 0, "a friend joining early is alive");
-    assert_eq!(s.round_started, 0);
-    // after the first player death: dead
-    kill(&mut s, 0);
-    s.step();
-    assert_eq!(s.round_started, 1);
-    s.push_input(&encode_join(3));
-    s.step();
-    let p3 = s.players.iter().find(|p| p.id == 3).unwrap();
-    assert_eq!((p3.health, p3.dead_until), (0, u32::MAX), "a joiner after a death spectates");
-    // after the first enemy kill: dead
-    let mut s = room(&[1]);
+    assert!(s.players[1].health > 0, "a friend joining in the lobby is alive");
     s.enemies = vec![Enemy::new(0, ENEMY_SLIME, s.players[0].x + 5 * PX, s.players[0].y)];
     s.enemies[0].hp = 1;
     s.damage_enemy(0, 1, 1);
     s.reap_enemies();
-    assert_eq!(s.round_started, 1);
+    assert_eq!(s.round_started, 0, "a kill no longer starts the round (D-161 replaced)");
     s.push_input(&encode_join(4));
     s.step();
-    assert_eq!(s.players.iter().find(|p| p.id == 4).unwrap().health, 0);
+    assert!(s.players.iter().find(|p| p.id == 4).unwrap().health > 0, "still the lobby");
+    // once running: a joiner is dead
+    s.round_started = ROUND_RUNNING;
+    s.push_input(&encode_join(3));
+    s.step();
+    let p3 = s.players.iter().find(|p| p.id == 3).unwrap();
+    assert_eq!((p3.health, p3.dead_until), (0, u32::MAX), "a joiner after the start spectates");
     // after round_over: dead; and an existing id rejoining is unchanged
     let mut s = room(&[1]);
     kill(&mut s, 0);
@@ -199,7 +197,7 @@ fn the_round_state_is_in_the_view_the_snapshot_and_the_hash() {
     kill(&mut s, 0);
     s.step();
     let mut out = vec![0u8; 100 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, [s.round_over, s.round_started, s.round_result], true, s.tick, &mut out, 100);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, s.round_tail(), true, s.tick, &mut out, 100);
     let o = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
     assert_eq!((o[0], o[5], o[6], u16::from_le_bytes([o[15], o[16]]), o[17]), (ENT_ROUND, 1, 0, 1, 1));
     let h = s.state_hash();

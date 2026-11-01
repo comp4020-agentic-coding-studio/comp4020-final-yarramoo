@@ -1285,8 +1285,8 @@ export class World {
 }
 
 /** Active player ids in a compressed game snapshot, read from its entity section (layout in plan 6.11). */
-/** One player record in a snapshot: 21 fixed bytes, 6 per spell (charges u16, cooldown u32), 8 trailing (sim/src/entities.rs PLAYER_BYTES). */
-const PLAYER_RECORD = 21 + 6 * NUM_SPELLS + 8;
+/** One player record in a snapshot: 21 fixed bytes, 6 per spell (charges u16, cooldown u32), 9 trailing (ready byte, sim/src/entities.rs PLAYER_BYTES). */
+const PLAYER_RECORD = 21 + 6 * NUM_SPELLS + 9;
 
 export function activePlayersIn(compressed: Uint8Array): Set<number> {
   const out = new Set<number>();

@@ -26,6 +26,7 @@ fn arena(players: &[(u32, i32)]) -> Sim {
         assert_eq!(s.push_input(&encode_join(id)), 0);
     }
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     for &(id, x) in players {
         let k = s.players.iter().position(|p| p.id == id).unwrap();
         s.players[k].x = x * PX;
@@ -346,6 +347,7 @@ fn a_slime_reaches_a_player_on_every_connected_real_ledge() {
                 let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
                 s.push_input(&encode_join(1));
                 s.step();
+                s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
                 s.players[0].x = c * PX + PX / 2;
                 s.players[0].y = (fy + 1) * PX;
                 for (i, o) in s.enemies.iter_mut().enumerate() {
@@ -384,6 +386,7 @@ fn a_slime_reaches_a_player_beside_the_seed_1_rock_pit() {
     let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     let (w, h) = (s.grid.w as i32, s.grid.h as i32);
     let (sx, sy) = (s.players[0].x, s.players[0].y);
     let idx = (0..s.enemies.len()).min_by_key(|&i| (s.enemies[i].x - sx).abs() + (s.enemies[i].y - sy).abs()).unwrap();
@@ -400,6 +403,7 @@ fn a_slime_reaches_a_player_beside_the_seed_1_rock_pit() {
         let mut t = Sim::new(1, RoomConfig::survival()).unwrap();
         t.push_input(&encode_join(1));
         t.step();
+        t.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
         t.players[0].x = cx * PX + PX / 2;
         t.players[0].y = (fy + 1) * PX;
         for (i, o) in t.enemies.iter_mut().enumerate() {
@@ -441,6 +445,7 @@ fn a_slime_that_drifted_while_idle_still_reaches_a_player_beside_it() {
         let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
         s.push_input(&encode_join(1));
         s.step();
+        s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
         let (w, h) = (s.grid.w as i32, s.grid.h as i32);
         let (sx, sy) = (s.players[0].x, s.players[0].y);
         let idx = (0..s.enemies.len()).min_by_key(|&i| (s.enemies[i].x - sx).abs() + (s.enemies[i].y - sy).abs()).unwrap();
@@ -468,6 +473,8 @@ fn a_slime_that_drifted_while_idle_still_reaches_a_player_beside_it() {
             let mut t = Sim::new(1, RoomConfig::survival()).unwrap();
             t.push_input(&encode_join(1));
             t.step();
+            t.round_started |= ROUND_RUNNING; // F6b: running round, not the lobby
+            s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
             t.enemies = s.enemies.clone();
             t.grid.mat.copy_from_slice(&s.grid.mat);
             t.tick = s.tick;

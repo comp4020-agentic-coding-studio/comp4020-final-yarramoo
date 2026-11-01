@@ -24,6 +24,7 @@ fn arena(px: i32) -> Sim {
     }
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s.players[0].x = px * PX;
     s.players[0].y = 260 * PX;
     s
@@ -254,6 +255,7 @@ fn a_generated_imp_on_seed_1_hunts_and_shoots_a_player_in_its_cave() {
     s.enemies = keep;
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     // the player stands on the nearest floor below the imp, a few cells to the side
     let (w, h) = (s.grid.w as i32, s.grid.h as i32);
     let ex = e.x >> 4;

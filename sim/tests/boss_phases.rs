@@ -14,6 +14,7 @@ fn fight() -> Sim {
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: these tests are about the fight; the lobby has its own tests
     let a = s.arena.unwrap();
     s.players[0].x = (a.cx + 20) * PX;
     s.players[0].y = (a.floor_y - 14) * PX;

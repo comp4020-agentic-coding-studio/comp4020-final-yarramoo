@@ -562,7 +562,7 @@ impl Sim {
     /// Blast still carves and knocks back, it just never takes health.
     pub fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
         let player_caused = usize::from(cause) < NUM_SPELLS;
-        let allowed = if player_caused { self.cfg.damage_from_players() } else { self.cfg.damage_from_env() };
+        let allowed = !self.in_lobby() && if player_caused { self.cfg.damage_from_players() } else { self.cfg.damage_from_env() };
         if !allowed {
             return;
         }
@@ -579,9 +579,6 @@ impl Sim {
         p.dead_until = if self.cfg.death == 1 { u32::MAX } else { tick.wrapping_add(self.cfg.respawn_ticks()) };
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
-        if self.cfg.round == 1 {
-            self.round_started |= 1;
-        }
         let (id, px, py) = (p.id, p.x, p.y);
         // The victim's finite charges (spells 2..=5) leave with the death; Push and Blast stay.
         let mut taken = [0u16; BAG_SPELLS];

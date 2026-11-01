@@ -62,7 +62,7 @@ describe("server's snapshot entity parser matches the sim", () => {
     const dv = new DataView(snap.buffer, snap.byteOffset, snap.byteLength);
     const elen = dv.getUint32(HEADER, true);
     const e = new DataView(snap.buffer, snap.byteOffset + HEADER + 4, elen);
-    const [PLAYER, PICKUP, PROJECTILE, BAG] = [101, 13, 23, 26];
+    const [PLAYER, PICKUP, PROJECTILE, BAG] = [102, 13, 23, 26];
     let o = 0;
     const np = e.getUint32(o, true);
     o += 4 + np * PLAYER;
@@ -73,10 +73,10 @@ describe("server's snapshot entity parser matches the sim", () => {
     const nb = e.getUint32(o, true);
     const bagAt = o + 4;
     o += 4 + nb * BAG;
-    // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then three round bytes (over, started, result) close the block.
+    // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then the round tail (over, started, result, lobby_since u32) closes the block.
     const ENEMY = 35;
     const ne = e.getUint32(o, true);
-    o += 4 + ne * ENEMY + 3;
+    o += 4 + ne * ENEMY + 7;
     expect([np, nj, nb, ne]).toEqual([1, 0, 1, 0]); // a non-Survival world has no enemies
     expect(nk).toBeGreaterThan(0);
     expect(o).toBe(elen);

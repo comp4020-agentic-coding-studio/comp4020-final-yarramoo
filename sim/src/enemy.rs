@@ -332,7 +332,7 @@ impl Sim {
     /// over at most 8 players, a handful of body-collision tests (at most 5 x 4 cells each) and a contact scan.
     pub(crate) fn update_enemies(&mut self) {
         self.enemy_work = 0;
-        if self.enemies.is_empty() || self.round_over != 0 {
+        if self.enemies.is_empty() || self.round_over != 0 || self.in_lobby() {
             return;
         }
         let targets = self.alive_targets();
@@ -570,9 +570,6 @@ impl Sim {
             return;
         }
         let tick = self.tick;
-        if self.cfg.round == 1 {
-            self.round_started |= 1;
-        }
         let mut dead = Vec::new();
         let mut bursts = Vec::new();
         let mut boss_died = false;
@@ -605,7 +602,7 @@ impl Sim {
     /// fire over acid; a per-kind immunity mask skips a hazard. Reads only the enemy's own hitbox (inside the
     /// stepping rectangle), so chunk sleeping cannot change it.
     pub(crate) fn enemy_hazard_scan(&mut self) {
-        if self.enemies.is_empty() || self.round_over != 0 {
+        if self.enemies.is_empty() || self.round_over != 0 || self.in_lobby() {
             return;
         }
         let targets = self.alive_targets();

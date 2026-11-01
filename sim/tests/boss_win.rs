@@ -13,6 +13,7 @@ fn fight() -> Sim {
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: these tests are about the fight; the lobby has its own tests
     let a = s.arena.unwrap();
     // the player floats beside the boss at its height; charges for every spell
     s.players[0].x = (a.cx + 14) * PX;
@@ -105,7 +106,7 @@ fn the_boss_dying_on_the_tick_the_last_player_dies_counts_as_a_win() {
     let i = s.enemies.iter().position(|e| e.kind == ENEMY_BOSS).unwrap();
     s.enemies[i].hp = 1;
     s.players[0].health = 0;
-    s.round_started = 0;
+    s.round_started = ROUND_RUNNING; // no boss-win bit yet
     // the boss takes its last hp from a world source on the same tick everyone is dead
     s.damage_enemy(i, 1, 0);
     s.reap_enemies();

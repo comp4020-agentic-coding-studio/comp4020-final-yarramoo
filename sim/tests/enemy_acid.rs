@@ -24,6 +24,7 @@ fn arena(px: i32) -> Sim {
     }
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s.players[0].x = px * PX;
     s.players[0].y = 200 * PX;
     s
@@ -222,6 +223,7 @@ fn a_generated_acid_slime_on_seed_1_reaches_a_player_beside_it() {
     s.enemies = vec![e.clone()];
     s.push_input(&encode_join(1));
     s.step();
+    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     let (ex, ey) = (e.x >> 4, (e.y >> 4) - 1);
     s.players[0].x = (ex + 12) * PX + PX / 2;
     s.players[0].y = (ey + 1) * PX;

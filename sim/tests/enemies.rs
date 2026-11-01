@@ -55,7 +55,7 @@ fn hostile_enemy_bytes_fail_cleanly() {
     let pk = s.pickups.clone();
     let try_decode = |b: &[u8]| decode(b, &mut pk.clone(), 1024, 768);
     assert!(try_decode(&e).is_ok());
-    let at = e.len() - 3 - ENEMY_BYTES - 4;
+    let at = e.len() - ROUND_TAIL_BYTES - ENEMY_BYTES - 4;
     let mut c = e.clone();
     c[at..at + 4].copy_from_slice(&(MAX_ENEMIES as u32 + 1).to_le_bytes());
     assert!(try_decode(&c).is_err(), "count over the cap");
@@ -79,7 +79,7 @@ fn hostile_enemy_bytes_fail_cleanly() {
     assert!(try_decode(&z).is_err(), "dead enemy in state");
     let mut r = e.clone();
     let l = r.len();
-    r[l - 1] = 2; // round_result
+    r[l - ROUND_TAIL_BYTES + 2] = 2; // round_result (the tail is over, started, result, lobby_since u32)
     assert!(try_decode(&r).is_err(), "round_over 2");
     // a full MAX_ENEMIES is accepted
     s.enemies = (0..MAX_ENEMIES as u16).map(|i| Enemy::new(i, ENEMY_SLIME, 50 * 16, 60 * 16)).collect();
@@ -110,7 +110,7 @@ fn the_entities_view_lists_enemies_after_the_players() {
     e.facing = 1;
     s.enemies = vec![e];
     let mut out = vec![0u8; 4000 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, [0; 3], false, s.tick, &mut out, 4000);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, [0; ROUND_TAIL_BYTES], false, s.tick, &mut out, 4000);
     let o = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
     assert_eq!(o[0], ENT_ENEMY);
     assert_eq!(u32::from_le_bytes(o[1..5].try_into().unwrap()), 4);

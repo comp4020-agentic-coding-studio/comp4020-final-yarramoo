@@ -6,6 +6,8 @@ pub enum Input {
     Leave { player: u32 },
     Pos { player: u32, life: u16, x: i32, y: i32, facing: u8 },
     Cast { player: u32, spell: u8, angle: u16, cast_seq: u16 },
+    /// F6b: toggle the lobby ready flag (`ready` is 0 or 1; anything else is malformed).
+    Ready { player: u32, ready: u8 },
     // `mat`'s bit 7 is extracted into `fill_empty` at decode (material ids are 0-20, below bit 7); `mat` itself
     // is already masked down to the plain material id, so nothing downstream needs to know about the flag
     // bit at all (R4, plan-game-modes.md "Paint modes").
@@ -47,6 +49,7 @@ pub fn decode(b: &[u8]) -> Result<Input, ()> {
         Some(3) => 16,
         Some(4) => 10,
         Some(5) => 15,
+        Some(6) => 6,
         _ => return Err(()),
     };
     if b.len() != want {
@@ -63,6 +66,13 @@ pub fn decode(b: &[u8]) -> Result<Input, ()> {
         2 => Input::Leave { player },
         3 => Input::Pos { player, life: r.u16(), x: r.i32(), y: r.i32(), facing: r.u8() },
         4 => Input::Cast { player, spell: r.u8(), angle: r.u16(), cast_seq: r.u16() },
+        6 => {
+            let ready = r.u8();
+            if ready > 1 {
+                return Err(());
+            }
+            Input::Ready { player, ready }
+        }
         _ => {
             let raw = r.u8();
             Input::Paint {
@@ -107,6 +117,13 @@ pub fn encode_cast(player: u32, spell: u8, angle: u16, cast_seq: u16) -> Vec<u8>
     v
 }
 
+pub fn encode_ready(player: u32, ready: u8) -> Vec<u8> {
+    let mut v = vec![6];
+    v.extend_from_slice(&player.to_le_bytes());
+    v.push(ready);
+    v
+}
+
 pub fn encode_join(player: u32) -> Vec<u8> {
     let mut v = vec![1];
     v.extend_from_slice(&player.to_le_bytes());
@@ -147,6 +164,8 @@ mod tests {
             decode(&[4, 1, 0, 0, 0, 3, 0x34, 0x12, 9, 0]),
             Ok(Input::Cast { player: 1, spell: 3, angle: 0x1234, cast_seq: 9 })
         );
+        assert_eq!(decode(&[6, 7, 0, 0, 0, 1]), Ok(Input::Ready { player: 7, ready: 1 }));
+        assert_eq!(decode(&encode_ready(7, 0)), Ok(Input::Ready { player: 7, ready: 0 }));
         assert_eq!(
             decode(&encode_paint(2, 4, -1, 2, 300, 4, 3)),
             Ok(Input::Paint { player: 2, mat: 4, x0: -1, y0: 2, x1: 300, y1: 4, radius: 3, fill_empty: false })
@@ -171,5 +190,8 @@ mod tests {
         assert!(decode(&[1, 0, 0, 0]).is_err());
         assert!(decode(&[5, 0, 0, 0, 0, 4]).is_err());
         assert!(decode(&[1, 0, 0, 0, 0, 0]).is_err());
+        assert!(decode(&[6, 1, 0, 0, 0]).is_err(), "Ready too short");
+        assert!(decode(&[6, 1, 0, 0, 0, 1, 0]).is_err(), "Ready too long");
+        assert!(decode(&[6, 1, 0, 0, 0, 2]).is_err(), "Ready value 2");
     }
 }

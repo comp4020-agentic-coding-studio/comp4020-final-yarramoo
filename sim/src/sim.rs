@@ -1,7 +1,7 @@
 //! The simulation instance: grid + tick + queued inputs.
 
 use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX, TERRAIN_SOLID_BOX};
-use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_ROUND_END, EV_SPAWN};
+use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_ROUND_END, EV_ROUND_START, EV_SPAWN};
 use crate::grid::Grid;
 use crate::hash;
 use crate::input::{decode, Input};
@@ -51,6 +51,8 @@ pub struct Sim {
     pub round_started: u8,
     /// 1 if the round ended in a win, 0 for a loss (meaningful once `round_over` is 1). State.
     pub round_result: u8,
+    /// F6b (D-166): the tick the lobby countdown began (every active player ready), or `LOBBY_IDLE`. State.
+    pub lobby_since: u32,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
     /// Cache of the generated world, so `restore` need not regenerate it. Not state.
@@ -70,7 +72,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, enemy_work: 0, arena, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, lobby_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -187,6 +189,7 @@ impl Sim {
         for i in inputs {
             self.apply(i);
         }
+        self.update_lobby();
         self.update_entities();
         self.refresh_active();
         self.grid.step_cells(self.seed, self.tick);
@@ -221,7 +224,7 @@ impl Sim {
     /// player who leaves does not by itself end the round (a reconnect must find it running); the win comes with
     /// the boss slice: `round_won` below is the hook, always false until then.
     fn check_round_end(&mut self) {
-        if self.cfg.round != 1 || self.round_over != 0 {
+        if self.cfg.round != 1 || self.round_over != 0 || self.in_lobby() {
             return;
         }
         // Lost: everyone who ever joined is dead (`health == 0`, whatever `active` says). A living player who
@@ -233,6 +236,44 @@ impl Sim {
             self.round_result = u8::from(won);
             self.events.push(Event { kind: EV_ROUND_END, player: 0, a: i32::from(won), b: 0, c: 0 });
         }
+    }
+
+    /// F6b (D-166): a one-life room is in its lobby until the countdown completes (`ROUND_RUNNING`). In the lobby
+    /// nothing hurts, enemies and pickups are inert and spells cannot be cast; players may still move.
+    pub fn in_lobby(&self) -> bool {
+        self.cfg.round == 1 && self.round_started & ROUND_RUNNING == 0 && self.round_over == 0
+    }
+
+    /// Runs after the tick's inputs. When every active player is ready (and there is at least one) the countdown
+    /// begins at this tick; `LOBBY_COUNTDOWN_TICKS` later, still all ready, the round starts. Un-ready, Join and
+    /// Leave all reset `lobby_since` to idle, so the count restarts from the next all-ready tick.
+    fn update_lobby(&mut self) {
+        if !self.in_lobby() {
+            return;
+        }
+        let mut active = 0u32;
+        let mut all = true;
+        for p in self.players.iter().filter(|p| p.active) {
+            active += 1;
+            all &= p.ready == 1;
+        }
+        if active == 0 || !all {
+            self.lobby_since = LOBBY_IDLE;
+            return;
+        }
+        if self.lobby_since == LOBBY_IDLE {
+            self.lobby_since = self.tick;
+        }
+        if self.tick.wrapping_sub(self.lobby_since) >= LOBBY_COUNTDOWN_TICKS {
+            self.round_started |= ROUND_RUNNING;
+            self.lobby_since = LOBBY_IDLE;
+            self.events.push(Event { kind: EV_ROUND_START, player: 0, a: active as i32, b: 0, c: 0 });
+        }
+    }
+
+    pub fn round_tail(&self) -> [u8; ROUND_TAIL_BYTES] {
+        let l = self.lobby_since.to_le_bytes();
+        [self.round_over, self.round_started, self.round_result, l[0], l[1], l[2], l[3]]
     }
 
     /// D-158: the boss's death wins the round. `reap_enemies` sets bit 1 of the hashed `round_started` byte when a boss
@@ -269,11 +310,13 @@ impl Sim {
                 }
             }
             // Players live in game worlds only: a sandbox visitor has no entity to grow without bound.
-            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } if !self.cfg.has_players() => {}
+            Input::Join { .. } | Input::Leave { .. } | Input::Pos { .. } | Input::Cast { .. } | Input::Ready { .. } if !self.cfg.has_players() => {}
             Input::Join { player } => self.join(player),
             Input::Leave { player } => {
                 if let Ok(k) = self.player_index(player) {
                     self.players[k].active = false;
+                    self.players[k].ready = 0;
+                    self.lobby_since = LOBBY_IDLE;
                 }
             }
             Input::Pos { player, life, x, y, facing } => {
@@ -290,7 +333,21 @@ impl Sim {
                     }
                 }
             }
-            Input::Cast { player, spell, angle, cast_seq } => self.cast(player, spell, angle, cast_seq),
+            Input::Cast { player, spell, angle, cast_seq } => {
+                if !self.in_lobby() {
+                    self.cast(player, spell, angle, cast_seq)
+                }
+            }
+            Input::Ready { player, ready } => {
+                if self.in_lobby() {
+                    if let Ok(k) = self.player_index(player) {
+                        let p = &mut self.players[k];
+                        if p.active {
+                            p.ready = ready;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -313,9 +370,8 @@ impl Sim {
                     // concept. Every charge check and decrement already special-cases INFINITE.
                     p.charges = [INFINITE; NUM_SPELLS];
                 }
-                // D-161: in a one-life round, a player whose first Join comes after the round started (first enemy
-                // kill or first player death) or ended joins already dead and spectates.
-                if self.cfg.round == 1 && (self.round_started != 0 || self.round_over != 0) {
+                // D-166: in a one-life round, a player whose first Join comes after the lobby countdown completed or the round ended joins already dead and spectates.
+                if self.cfg.round == 1 && !self.in_lobby() {
                     p.health = 0;
                     p.dead_until = u32::MAX;
                 }
@@ -325,6 +381,9 @@ impl Sim {
         };
         let p = &mut self.players[k];
         p.active = true;
+        // F6b: any join resets readiness and the countdown (a rejoiner must ready up again).
+        p.ready = 0;
+        self.lobby_since = LOBBY_IDLE;
         let ev = Event { kind: EV_SPAWN, player: id, a: p.x, b: p.y, c: i32::from(p.life) };
         self.events.push(ev);
     }
@@ -367,7 +426,7 @@ impl Sim {
             }
         }
         self.update_bags();
-        if self.pickups.is_empty() {
+        if self.pickups.is_empty() || self.in_lobby() {
             return;
         }
         for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
@@ -431,7 +490,7 @@ impl Sim {
         if !self.cfg.has_players() {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, [self.round_over, self.round_started, self.round_result])
+        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, self.round_tail())
     }
 
     pub fn state_hash(&mut self) -> u64 {
