@@ -53,11 +53,12 @@ export function castScript(): { script: Script; path: string } {
 /**
  * F6b (D-166): a Survival room opens as a lobby; the round starts 180 ticks after the last player readies. Scripts join
  * at tick 1, send Ready at tick 2 (the countdown begins at tick 2 and the round starts at tick 182), and shift every
- * later input by LOBBY_SHIFT so the fight is the same fight as before, starting at the same offset from the round start.
+ * later input by LOBBY_SHIFT so the fight is an equivalent fight to before, starting at the same offset from the round start (an equivalent fight, not byte-identical).
  * Re-pointed expectation: what was tick T of the fight is now tick T + LOBBY_SHIFT; the hashes are compared per tick, so
- * equal hashes still mean the same fight.
+ * equal hashes still mean an equivalent fight ran identically on every engine.
  */
 export const LOBBY_SHIFT = 190;
+// The start puts every living player back at a spawn point and bumps its `life` to 1, so Pos inputs after it carry life 1.
 function lobbyAt(inputs: Record<string, string[]>, players: number) {
   for (let k = 1; k <= players; k++) (inputs["2"] ??= []).push(hex(encodeReady(k, 1)));
   return (t: number, b: Uint8Array) => (inputs[String(t === 1 ? 1 : t + LOBBY_SHIFT)] ??= []).push(hex(b));
@@ -85,8 +86,8 @@ export function survivalScript(): { script: Script; path: string } {
     for (let t = t0; t < t0 + 270; t += 3) {
       // player 1 stands 12 cells left of the slime and keeps casting right; player 2 stands on it and takes hits
       // one cell lower than the slime's feet so the chest-height bolt crosses its top row
-      at(t, encodePos(1, 0, e.x - 12 * 16, e.y + 16, 1));
-      at(t, encodePos(2, 0, e.x + 16 * (k + 1), e.y, 0));
+      at(t, encodePos(1, 1, e.x - 12 * 16, e.y + 16, 1));
+      at(t, encodePos(2, 1, e.x + 16 * (k + 1), e.y, 0));
       // Push every 24 ticks (its cooldown is 20); every fifth cast is a Blast (cooldown 90), 120 ticks after the last one
       if ((t - t0) % 24 === 0) at(t, encodeCast(1, ((t - t0) / 24) % 5 === 4 ? 1 : 0, 0, seq++ & 0xffff));
     }
@@ -114,8 +115,8 @@ export function tiersScript(): { script: Script; path: string } {
   at(1, encodeJoin(1));
   at(1, encodeJoin(2));
   for (let t = 5; t < 600; t += 3) {
-    at(t, encodePos(1, 0, imp.x + 3 * 16, imp.y + 16, 0));
-    at(t, encodePos(2, 0, worm.x + 20 * 16, worm.y - 2 * 16, 0));
+    at(t, encodePos(1, 1, imp.x + 3 * 16, imp.y + 16, 0));
+    at(t, encodePos(2, 1, worm.x + 20 * 16, worm.y - 2 * 16, 0));
   }
   const script: Script = { seed: "20261031", config: "survival", ticks: 600 + LOBBY_SHIFT, inputs } as unknown as Script;
   mkdirSync(dirname(path), { recursive: true });
@@ -146,7 +147,7 @@ export function bossScript(): { script: Script; path: string } {
   const loot = ents.filter((e) => e.type === ENT_PICKUP).sort((a, b) => a.id - b.id).slice(-6);
   let t0 = 3;
   loot.forEach((p, i) => {
-    for (let s2 = 0; s2 < 2; s2++) at(t0 + s2 * 3, encodePos(i + 1, 0, p.x, p.y + 16, 1));
+    for (let s2 = 0; s2 < 2; s2++) at(t0 + s2 * 3, encodePos(i + 1, 1, p.x, p.y + 16, 1));
     t0 += 6;
   });
   const start = t0 + 6;
@@ -156,7 +157,7 @@ export function bossScript(): { script: Script; path: string } {
     for (let k = 0; k < N; k++) {
       const px = boss.x + stance[k][0] * 16;
       const py = boss.y - 2 * 16 + stance[k][1] * 16; // chest (5 cells up) level with the boss's centre (7 up)
-      at(t, encodePos(k + 1, 0, px, py, 0));
+      at(t, encodePos(k + 1, 1, px, py, 0));
       if ((t - start) % 15 === 0) {
         const angle = Math.round(((Math.atan2(boss.y - 7 * 16 - (py - 5 * 16), boss.x - px) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
         at(t, encodeCast(k + 1, k >= 4 ? 5 : 4, angle, seq++ & 0xffff));

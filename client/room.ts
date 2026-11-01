@@ -816,8 +816,10 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     if (!l || l.running) return;
     const waiting = l.list.filter((p) => !p.ready).length;
     const secs = l.left >= 0 ? Math.ceil(l.left / 60) : -1;
+    const majSecs = l.majorityLeft >= 0 ? Math.ceil(l.majorityLeft / 60) : -1;
+    const slow = l.list.filter((p) => !p.ready).map((p) => p.name);
     const me = l.list.find((p) => p.me);
-    const key = JSON.stringify([l.list.map((p) => [p.id, p.name, p.ready]), secs, !!me]);
+    const key = JSON.stringify([l.list.map((p) => [p.id, p.name, p.ready]), secs, majSecs, !!me]);
     if (key === lobbyKey && lobbyEl) return;
     lobbyKey = key;
     if (!lobbyEl) {
@@ -833,6 +835,10 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const sub = document.createElement("p");
     sub.className = "sub";
     sub.textContent = secs >= 0 ? "Descending..." : waiting > 0 ? `Waiting for ${waiting}` : "Ready up to begin";
+    const maj = document.createElement("p");
+    maj.className = "sub";
+    maj.textContent = majSecs >= 0 && secs < 0 ? `Starting in ${majSecs} s without ${slow.join(", ")}` : "";
+    maj.hidden = !maj.textContent;
     const about = document.createElement("p");
     about.textContent = "Co-op, one life: descend together and kill the Deep Mage.";
     const ul = document.createElement("ul");
@@ -846,7 +852,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       li.append(tick, name);
       ul.append(li);
     }
-    el.append(h, sub, about, ul);
+    el.append(h, sub, maj, about, ul);
     if (me) {
       const b = document.createElement("button");
       b.type = "button";

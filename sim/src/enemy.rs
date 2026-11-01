@@ -539,6 +539,10 @@ impl Sim {
     /// credit). The enemy is only marked (hp 0); `reap_enemies` removes it and emits the death, so indices stay
     /// valid while one source loops over several enemies. An enemy already at 0 takes nothing.
     pub fn damage_enemy(&mut self, idx: usize, amount: u16, attacker: u32) {
+        // F6b: nothing hurts in the lobby, the world's explosions included (the boss must not die before the start).
+        if self.in_lobby() {
+            return;
+        }
         let tick = self.tick;
         let e = &mut self.enemies[idx];
         if e.hp == 0 || amount == 0 {

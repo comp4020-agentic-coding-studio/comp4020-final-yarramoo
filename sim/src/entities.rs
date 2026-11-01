@@ -443,8 +443,9 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         *x = r.u8().ok_or(())?;
     }
     let since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
-    // A running round has no countdown; a live countdown is only meaningful with a player present.
-    if round[0] > 1 || round[1] > 3 || round[2] > 1 || (round[1] & ROUND_RUNNING != 0 && since != LOBBY_IDLE) {
+    let majority = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);
+    // A running round has no countdown; the boss bit means the round ran.
+    if round[0] > 1 || round[1] > 3 || round[2] > 1 || (round[1] & ROUND_RUNNING != 0 && (since != LOBBY_IDLE || majority != LOBBY_IDLE)) || (round[1] & ROUND_BOSS_KILLED != 0 && round[1] & ROUND_RUNNING == 0) {
         return Err(());
     }
     Ok((players, projectiles, bags, enemies, round))
@@ -516,7 +517,7 @@ pub const ENT_PROJECTILE: u8 = 3;
 pub const ENT_BAG: u8 = 4;
 /// An enemy: `id`, `active` = 1, `sub` = kind, x, y in 1/16 cell, `a` = hp, `health` byte = `state | facing << 7`.
 pub const ENT_ENEMY: u8 = 5;
-/// The one-life round's state (only in `round` 1 rooms): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started (bit 0 running, bit 1 boss win), `x` = lobby countdown ticks left (-1 when not counting).
+/// The one-life round's state (only in `round` 1 rooms): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started (bit 0 running, bit 1 boss win), `x` = all-ready countdown ticks left (-1 when not counting), `y` = majority countdown ticks left (-1 when not counting).
 pub const ENT_ROUND: u8 = 6;
 /// F6b: a player's lobby ready flag (lobby phase only): `id` = player, `active` = ready.
 pub const ENT_READY: u8 = 7;
@@ -570,7 +571,9 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
     if round_on {
         let since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
         let left = if since == LOBBY_IDLE { -1 } else { since.saturating_add(LOBBY_COUNTDOWN_TICKS).saturating_sub(tick).min(LOBBY_COUNTDOWN_TICKS) as i32 };
-        put(ENT_ROUND, 0, true, round[2], left, 0, u16::from(round[0]), round[1]);
+        let mj = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);
+        let mleft = if mj == LOBBY_IDLE { -1 } else { mj.saturating_add(LOBBY_MAJORITY_TICKS).saturating_sub(tick).min(LOBBY_MAJORITY_TICKS) as i32 };
+        put(ENT_ROUND, 0, true, round[2], left, mleft, u16::from(round[0]), round[1]);
         if round[1] & ROUND_RUNNING == 0 {
             for p in players {
                 put(ENT_READY, p.id, p.ready == 1, 0, 0, 0, 0, 0);

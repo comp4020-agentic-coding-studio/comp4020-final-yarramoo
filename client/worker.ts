@@ -582,10 +582,10 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   }
 
   // F6b: the lobby (from the entities view) and the late-arrival offer. Both render-only.
-  let lobby: { running: boolean; left: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null = null;
+  let lobby: { running: boolean; left: number; majorityLeft: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null = null;
   if (round) {
     const running = (round.health & 1) === 1;
-    lobby = { running, left: round.x, list: running ? [] : ents.filter((e) => e.type === ENT_READY).map((e) => ({ id: e.id, name: nameOf(e.id) ?? "Player", ready: e.active, me: e.id === myId })) };
+    lobby = { running, left: round.x, majorityLeft: round.y, list: running ? [] : ents.filter((e) => e.type === ENT_READY).map((e) => ({ id: e.id, name: nameOf(e.id) ?? "Player", ready: e.active, me: e.id === myId })) };
     if (!lateChecked && mine && net === "live" && !spectate) {
       lateChecked = true;
       lateOffer = running && round.a === 0 && mine.health === 0;

@@ -3,6 +3,7 @@
 use crate::config::{RoomConfig, CONFIG_BYTES};
 use crate::grid::{CHUNK, CHUNK_AREA};
 use crate::sim::Sim;
+use crate::tuning::LOBBY_IDLE;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
@@ -91,6 +92,7 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         }
         [s.round_over, s.round_started, s.round_result] = [round[0], round[1], round[2]];
         s.lobby_since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
+        s.majority_since = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);
     }
     o = eend;
     let n = u32_at(o) as usize;
@@ -124,5 +126,10 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         s.grid.mark_chunk(c);
     }
     s.tick = tick;
+    // A countdown cannot have begun in the snapshot's future, and a room without a round carries no lobby state.
+    let bad_since = |v: u32| v != LOBBY_IDLE && v > tick;
+    if bad_since(s.lobby_since) || bad_since(s.majority_since) || (s.cfg.round != 1 && (s.lobby_since != LOBBY_IDLE || s.majority_since != LOBBY_IDLE || s.players.iter().any(|p| p.ready != 0))) {
+        return Err(());
+    }
     Ok(s)
 }

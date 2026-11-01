@@ -76,7 +76,7 @@ describe("server's snapshot entity parser matches the sim", () => {
     // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then the round tail (over, started, result, lobby_since u32) closes the block.
     const ENEMY = 35;
     const ne = e.getUint32(o, true);
-    o += 4 + ne * ENEMY + 7;
+    o += 4 + ne * ENEMY + 11;
     expect([np, nj, nb, ne]).toEqual([1, 0, 1, 0]); // a non-Survival world has no enemies
     expect(nk).toBeGreaterThan(0);
     expect(o).toBe(elen);

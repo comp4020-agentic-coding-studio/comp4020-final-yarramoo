@@ -53,6 +53,8 @@ pub struct Sim {
     pub round_result: u8,
     /// F6b (D-166): the tick the lobby countdown began (every active player ready), or `LOBBY_IDLE`. State.
     pub lobby_since: u32,
+    /// F6b (S3): the tick a strict majority of active players became ready, or `LOBBY_IDLE`. State.
+    pub majority_since: u32,
     /// Scratch: events from the last step, for the render-only `events()` view. Never an input.
     pub events: Vec<Event>,
     /// Cache of the generated world, so `restore` need not regenerate it. Not state.
@@ -72,7 +74,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, lobby_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -244,36 +246,69 @@ impl Sim {
         self.cfg.round == 1 && self.round_started & ROUND_RUNNING == 0 && self.round_over == 0
     }
 
-    /// Runs after the tick's inputs. When every active player is ready (and there is at least one) the countdown
-    /// begins at this tick; `LOBBY_COUNTDOWN_TICKS` later, still all ready, the round starts. Un-ready, Join and
-    /// Leave all reset `lobby_since` to idle, so the count restarts from the next all-ready tick.
+    /// Runs after the tick's inputs. Two countdowns, both pure state:
+    /// - every active player ready (and at least one): `LOBBY_COUNTDOWN_TICKS` after the first such tick the round starts;
+    /// - a strict majority ready (2 * ready > active): `LOBBY_MAJORITY_TICKS` after the first such tick the round starts
+    ///   and everyone not ready becomes a spectator (dead, as for a late joiner). A solo player is a majority of one, so
+    ///   the short rule always fires first for a room of one.
+    ///
+    /// Un-ready, Join and a real Leave reset both (the count of active players changed or a flag flipped); losing the
+    /// majority resets the long one. At the start every living player is put back at a spawn point (S2: no pre-positioning).
     fn update_lobby(&mut self) {
         if !self.in_lobby() {
             return;
         }
-        let mut active = 0u32;
-        let mut all = true;
+        let (mut active, mut ready) = (0u32, 0u32);
         for p in self.players.iter().filter(|p| p.active) {
             active += 1;
-            all &= p.ready == 1;
+            ready += u32::from(p.ready);
         }
-        if active == 0 || !all {
+        if active == 0 || 2 * ready <= active {
             self.lobby_since = LOBBY_IDLE;
+            self.majority_since = LOBBY_IDLE;
             return;
         }
-        if self.lobby_since == LOBBY_IDLE {
-            self.lobby_since = self.tick;
+        if self.majority_since == LOBBY_IDLE {
+            self.majority_since = self.tick;
         }
-        if self.tick.wrapping_sub(self.lobby_since) >= LOBBY_COUNTDOWN_TICKS {
-            self.round_started |= ROUND_RUNNING;
+        if ready == active {
+            if self.lobby_since == LOBBY_IDLE {
+                self.lobby_since = self.tick;
+            }
+        } else {
             self.lobby_since = LOBBY_IDLE;
-            self.events.push(Event { kind: EV_ROUND_START, player: 0, a: active as i32, b: 0, c: 0 });
+        }
+        let short = self.lobby_since != LOBBY_IDLE && self.tick.wrapping_sub(self.lobby_since) >= LOBBY_COUNTDOWN_TICKS;
+        let long = self.tick.wrapping_sub(self.majority_since) >= LOBBY_MAJORITY_TICKS;
+        if short || long {
+            self.start_round(active);
         }
     }
 
+    fn start_round(&mut self, active: u32) {
+        self.round_started |= ROUND_RUNNING;
+        self.lobby_since = LOBBY_IDLE;
+        self.majority_since = LOBBY_IDLE;
+        for k in 0..self.players.len() {
+            let (id, active_p, ready) = (self.players[k].id, self.players[k].active, self.players[k].ready);
+            if active_p && ready == 0 {
+                // Not ready at the long start: a spectator, exactly like a late joiner.
+                self.players[k].health = 0;
+                self.players[k].dead_until = u32::MAX;
+            } else if self.players[k].health > 0 {
+                let (x, y) = self.spawn_point(id);
+                let p = &mut self.players[k];
+                p.life = p.life.wrapping_add(1);
+                p.x = x;
+                p.y = y;
+            }
+        }
+        self.events.push(Event { kind: EV_ROUND_START, player: 0, a: active as i32, b: 0, c: 0 });
+    }
+
     pub fn round_tail(&self) -> [u8; ROUND_TAIL_BYTES] {
-        let l = self.lobby_since.to_le_bytes();
-        [self.round_over, self.round_started, self.round_result, l[0], l[1], l[2], l[3]]
+        let (l, m) = (self.lobby_since.to_le_bytes(), self.majority_since.to_le_bytes());
+        [self.round_over, self.round_started, self.round_result, l[0], l[1], l[2], l[3], m[0], m[1], m[2], m[3]]
     }
 
     /// D-158: the boss's death wins the round. `reap_enemies` sets bit 1 of the hashed `round_started` byte when a boss
@@ -314,9 +349,13 @@ impl Sim {
             Input::Join { player } => self.join(player),
             Input::Leave { player } => {
                 if let Ok(k) = self.player_index(player) {
-                    self.players[k].active = false;
-                    self.players[k].ready = 0;
-                    self.lobby_since = LOBBY_IDLE;
+                    // Only a real active -> inactive change resets the countdowns (a spurious Leave does nothing).
+                    if self.players[k].active {
+                        self.players[k].active = false;
+                        self.players[k].ready = 0;
+                        self.lobby_since = LOBBY_IDLE;
+                        self.majority_since = LOBBY_IDLE;
+                    }
                 }
             }
             Input::Pos { player, life, x, y, facing } => {
@@ -384,6 +423,7 @@ impl Sim {
         // F6b: any join resets readiness and the countdown (a rejoiner must ready up again).
         p.ready = 0;
         self.lobby_since = LOBBY_IDLE;
+        self.majority_since = LOBBY_IDLE;
         let ev = Event { kind: EV_SPAWN, player: id, a: p.x, b: p.y, c: i32::from(p.life) };
         self.events.push(ev);
     }

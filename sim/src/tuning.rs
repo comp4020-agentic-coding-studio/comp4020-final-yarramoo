@@ -347,5 +347,8 @@ pub const ROUND_RUNNING: u8 = 1;
 pub const LOBBY_COUNTDOWN_TICKS: u32 = 180;
 /// `Sim::lobby_since` while no countdown is running.
 pub const LOBBY_IDLE: u32 = u32::MAX;
-/// Bytes of the round tail in the entity encoding: over, started, result, then `lobby_since` u32 LE.
-pub const ROUND_TAIL_BYTES: usize = 7;
+/// F6b fix pass (S3): once a strict majority of the active players is ready, this many ticks (30 s) later the round
+/// starts anyway and everyone not ready becomes a spectator. A shorter all-ready countdown still wins when it comes first.
+pub const LOBBY_MAJORITY_TICKS: u32 = 1800;
+/// Bytes of the round tail in the entity encoding: over, started, result, `lobby_since` u32 LE, `majority_since` u32 LE.
+pub const ROUND_TAIL_BYTES: usize = 11;

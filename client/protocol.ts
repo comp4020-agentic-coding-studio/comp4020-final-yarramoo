@@ -88,7 +88,7 @@ export type FromWorker =
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
       /** F6b: the Survival lobby (null when the room has no round). `left` is ticks of countdown left, -1 when none runs. Names are plain. Render-only. */
-      lobby: { running: boolean; left: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null;
+      lobby: { running: boolean; left: number; /** Ticks until the majority timeout starts the round without the unready, -1 when no majority. */ majorityLeft: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null;
       /** F6b: I arrived after the descent began (the sim made me a dead spectator): offer the choice. */
       late: boolean;
     }
