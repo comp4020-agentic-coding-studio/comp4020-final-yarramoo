@@ -4,7 +4,7 @@ Status: partial. Items 1 and 2 done; 3 to 7 not reached (tool-call budget spent 
 
 ## Commits
 1. Deaths in every room: `0270940`. Red first: `tests/net/claims-rooms.test.ts` timed out ("death counted in a created room") before `wireWorld()` existed; green after. Gate: cargo 339, determinism 53, net 326, all exit 0.
-2. Generalised claims (kill, round start, round end): see git log (hash in the handback). Tests `tests/net/claims-events.test.ts` (12). Red-first caveat: the test file was written after the implementation, so the "red" is only that it could not compile or import before; the quorum behaviour was not shown red separately.
+2. Generalised claims (kill, round start, round end): `2e8fbe4`. Gate: cargo 339, determinism 53, net all green (after updating the schema-version and achievement-list expectations, which this slice changes on purpose). Tests `tests/net/claims-events.test.ts` (12). Red-first caveat: the test file was written after the implementation, so the "red" is only that it could not compile or import before; the quorum behaviour was not shown red separately.
 
 ## Architectural decisions for review
 - Claim format: new message `C_CLAIM_EVENT = 0x09` (`kind u8, tick u32, a, b, c, d u32, n u8, ids u32[n]`, n <= 32). `C_CLAIM` (death) is byte for byte unchanged, so the protocol version was NOT bumped. Alternative: a kind byte inside C_CLAIM (breaks deaths) or one message code per claim. Cost to Deathmatch: none.
