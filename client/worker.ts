@@ -89,6 +89,8 @@ let ls: Lockstep | null = null;
 let myId = 0;
 /** The real config bytes from WELCOME, kept for a resync's beginReplay (R3: a real room has no bare "kind"). */
 let seedInfo: { seed: bigint; cfg: Uint8Array } | null = null;
+/** The networked room has avatars (its config's `avatars` byte); set in `beginReplay`. Decides the game frame. */
+let netAvatars = false;
 let players = 0;
 let net: NetState = "connecting";
 let attempt = 0;
@@ -270,7 +272,7 @@ function onTickApplied(tick: number, inputs: { player: number; kind: number }[])
     }
   }
   // Render-only reads of the sim's events (invariant 9), except Knock, which plan 6.7 says the victim applies.
-  if (ls && !ls.fastForwarding && ls.sim.width() > 512) {
+  if (ls && !ls.fastForwarding && netAvatars) {
     for (const e of ls.sim.events()) {
       if (e.kind === EV_DEATH && e.player === myId) myDeathTick = tick; // countdown display only
       // A report to the server, never a sim input (invariant 9, D-120). Only past the replay target, like HASH (D-038):
@@ -329,6 +331,7 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   const rc = decodeConfig(cfg);
   oneLife = rc?.death === 1;
   const kind = rc?.avatars === 1 ? 1 : 0;
+  netAvatars = kind === 1;
   send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc });
   renderer?.setWorld(sim.width(), sim.height());
 }
@@ -913,7 +916,9 @@ function frame(now: number) {
     if (ls && (net !== "catching-up" || now - lastFfDraw >= FF_DRAW_INTERVAL_MS)) {
       if (net === "catching-up") lastFfDraw = now;
       ranChunks = ls.sim.ranChunks();
-      const rects = net === "live" && ls.sim.width() > 512 ? gameFrame(ls.sim, dt, now) : [];
+      // From the room's config, not the world's width: a size-S game room is 512 wide, the same as the sandbox,
+      // and the old `width() > 512` test drew every S room as a sandbox (no players, HUD or lobby).
+      const rects = net === "live" && netAvatars ? gameFrame(ls.sim, dt, now) : [];
       if (renderer) {
         renderer.draw(ls.sim.matView(), ls.sim.auxView(), now / 1000, shakenCam(now), rects);
       } else if (sendFrames) {
