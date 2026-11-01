@@ -16,6 +16,7 @@ export const EVENT_NAMES = [
   "admin.refused",
   // Connection
   "hello.rejected",
+  "hello.failed",
   "join",
   "leave",
   "replaced",

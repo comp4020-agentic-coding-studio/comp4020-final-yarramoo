@@ -1104,6 +1104,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             ip_tag: ipTag,
             ua: userAgent.slice(0, 80),
           });
+        }).catch((e: unknown) => {
+          // A room that cannot load (World.load throws on purpose on verify_unavailable) or a failure in the join
+          // continuation must cost this one client, never the server: the production unhandledRejection handler rethrows.
+          handshaking = false;
+          log.limited(`hello_failed:${msg.worldId}`, 10_000, "hello.failed", { world: msg.worldId, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }, "error");
+          if (ws.readyState === ws.OPEN && !joined) rej("room unavailable; try again later", msg.worldId);
         });
         return;
       }
