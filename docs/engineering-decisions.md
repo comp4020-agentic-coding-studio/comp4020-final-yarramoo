@@ -1301,3 +1301,26 @@ and nobody has played that fight yet.
 **Evidence.** D-166, D-167; `docs/briefs/fun7-boss.md`; `docs/research/f6-worker-report.md`,
 `docs/research/review-f6.md`; `docs/art/shots/f6-arena-boss-hud.png`, `f6-phase2.png`, `f6-phase3.png`,
 `f6-victory.png`; commits `2cfc477`..`b73f7e6`.
+
+## 31. The lobby, and two bugs that only a real room at size S could show
+
+**What.** Survival now opens in a ready-up lobby (D-166, D-168). Every client must start on the same tick,
+so the ready flags and both countdowns are hashed sim state driven by a new `Ready` input. The server only
+stamps who sent it. The user's AFK rule is a strict-majority 30 s timeout. It came out of the independent
+review, which noted that one player who never readies would block the room forever.
+
+**The challenge.** The worker's two-browser look passed, yet two bugs sat right outside it (D-169). The
+worker used the default world size. When it opened a room by its `/r/<code>` link, the page was blank. It
+worked around that with a throwaway proxy and reported it, rather than hiding it. The session model then
+looked at a size-S room through `/r/` and found the second bug: the canvas drew, but with no players, no HUD
+and no lobby. A check from the first networked client (`width() > 512` means a game) had quietly turned every
+small game room into a sandbox once rooms gained sizes. Neither bug was in the lobby, and neither could fail
+any test that existed. One was in the build config and the other in a size assumption.
+
+**What changed.** A net test now loads every asset of every route from the real server. The look in this
+file's "Open it and look" rule now has to vary what the tests hold fixed: the route, the world size and the
+entry path. The size-S fix has no automated test; the screenshots are its only evidence.
+
+**Evidence.** D-166, D-168, D-169; `docs/briefs/fun8-lobby.md`; `docs/research/f6b-lobby-worker-report.md`,
+`docs/research/review-f6b.md`; `docs/art/shots/f6b-size-s-drawn-as-sandbox-before.png`,
+`f6b-size-s-countdown-bo.png`, `f6b-size-s-start-ada.png`; commits `4b9140f`..`5fc9634`.
