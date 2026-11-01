@@ -189,7 +189,8 @@ come into existence.
   before committing anything in `sim/`, `shared/` or the input path.
 - **An input must not be able to cost unbounded work.** Every client runs every
   input, so one huge `Paint` freezes the whole room. The sim clamps paint
-  endpoints to the world and the radius to `MAX_PAINT_RADIUS`; new input kinds
+  endpoints to the world, the radius to `MAX_PAINT_RADIUS` and the stroke length to `MAX_PAINT_STROKE`
+  (truncated from the start); new input kinds
   need the same bound.
 
 ## Server logging and identity

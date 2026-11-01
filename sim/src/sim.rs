@@ -13,6 +13,11 @@ const FLOOR_ROWS: usize = 16;
 const WALL_COLS: usize = 16;
 pub const MAX_PAINT_RADIUS: i32 = 32;
 
+/// Highest stamp index for a stroke of Chebyshev length `n`: `min(n, MAX_PAINT_STROKE)`. A stroke makes this + 1 stamps.
+pub fn paint_stamps(n: i32) -> i32 {
+    n.min(crate::tuning::MAX_PAINT_STROKE)
+}
+
 /// The pristine generated world for one (seed, config): derived data, not state. It is never hashed or
 /// snapshotted, so a hit and a miss give identical results (D-088). Generated (cave) worlds only; one per instance.
 pub struct Base {
@@ -498,7 +503,8 @@ impl Sim {
         let r = r.min(MAX_PAINT_RADIUS);
         let (dx, dy) = (x1 - x0, y1 - y0);
         let n = dx.abs().max(dy.abs());
-        for k in 0..=n {
+        // Truncate from (x0, y0) along the same line: the interpolation still uses the full `n`, so direction is kept.
+        for k in 0..=paint_stamps(n) {
             let (cx, cy) = if n == 0 { (x0, y0) } else { (x0 + dx * k / n, y0 + dy * k / n) };
             self.disc(mat, cx, cy, r, fill_empty);
         }

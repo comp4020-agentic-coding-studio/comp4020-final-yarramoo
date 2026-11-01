@@ -352,3 +352,14 @@ pub const LOBBY_IDLE: u32 = u32::MAX;
 pub const LOBBY_MAJORITY_TICKS: u32 = 1800;
 /// Bytes of the round tail in the entity encoding: over, started, result, `lobby_since` u32 LE, `majority_since` u32 LE.
 pub const ROUND_TAIL_BYTES: usize = 11;
+
+/// Longest Paint stroke one input may draw, in cells along the longer axis (Chebyshev length). A stroke is a run of
+/// disc stamps, one per cell of length, so this bounds the work every client does for one input: at most
+/// `MAX_PAINT_STROKE + 1` stamps of at most (2 * MAX_PAINT_RADIUS + 1)^2 cells, about 0.5 M writes, down from 6.6 M for a
+/// corner-to-corner stroke. `client/worker.ts` sends one segment per 33 ms (`SEND_EVERY_MS`) from the last sent point to the
+/// latest pointer position, so a segment is the distance the pointer moved in one send interval. The canvas shows at
+/// least 1 cell per 2 screen pixels, so 128 cells is 256+ px in 33 ms (above 7,700 px/s), faster than a real flick,
+/// and only a stalled tab (several intervals batched) can exceed it. Normal painting is unchanged.
+/// A too-long stroke is TRUNCATED from (x0, y0) along the same line, not dropped: the player still sees paint
+/// where the stroke began, and the following segments (which start at their own anchors) carry on.
+pub const MAX_PAINT_STROKE: i32 = 128;
