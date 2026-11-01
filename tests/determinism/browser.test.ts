@@ -118,10 +118,13 @@ describe("cross-engine", () => {
 
   // F6: the boss fight (phases, summons, the lava ring, fan and bombs) on every engine.
   const boss = bossScript();
-  const bossNode = run(readWasm(wasmPath), boss.script);
+  const bossNode = run(readWasm(wasmPath), boss.script, {}, { collectEvents: true });
   for (const [name, type] of engines) {
     it(`D2 with the boss: ${name} matches Node`, async () => {
       const out = await inBrowser(type, wasmPath, false, boss.path);
+      // The state hash (which includes the boss's phase, summons and bolts) is compared every tick, so equal hashes mean the
+      // engine reached the same phase 3 / death as Node; assert that Node's run really contains it (S3, review-f6).
+      expect(bossNode.events!.some((e) => (e.kind === 14 && e.b === 3) || (e.kind === 12 && e.c === 4))).toBe(true);
       expect(compare(bossNode, out.result, ["node", name])).toBeNull();
     });
   }

@@ -120,6 +120,11 @@ pub const SALT_STEM_BLOOM: u32 = 145;
 pub const SALT_SPAWN_X: u32 = 140;
 pub const SALT_PICKUP_SPELL: u32 = 141;
 pub const SALT_BURST: u32 = 142;
+pub const SALT_GEN_ARENA: u32 = 250;
+pub const SALT_GEN_ARENA_SIDE: u32 = 251;
+pub const SALT_GEN_ARENA_PILLAR: u32 = 252;
+pub const SALT_BOSS_SUMMON: u32 = 253;
+pub const SALT_BOSS_RING: u32 = 254;
 
 #[cfg(test)]
 mod tests {
@@ -143,8 +148,3 @@ mod tests {
         assert_eq!(mix(1), 0x5692161d100b05e5);
     }
 }
-pub const SALT_GEN_ARENA: u32 = 250;
-pub const SALT_GEN_ARENA_SIDE: u32 = 251;
-pub const SALT_GEN_ARENA_PILLAR: u32 = 252;
-pub const SALT_BOSS_SUMMON: u32 = 253;
-pub const SALT_BOSS_RING: u32 = 254;

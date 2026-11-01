@@ -146,3 +146,44 @@ fn normal_enemies_and_the_supply_pile_stay_out_of_the_arena() {
         }
     }
 }
+
+/// S1 (review-f6): the Survival twin of `traversable_to_every_band`: a 6x11 body walks from the surface to the target depth.
+#[test]
+fn survival_worlds_are_traversable_to_the_bottom_band_and_the_arena_floor_has_no_holes() {
+    let mut bad = Vec::new();
+    for size in 0u8..=2 {
+        for seed in 1..=12u64 {
+            let s = survival(size, seed);
+            let (w, h) = (s.grid.w as i32, s.grid.h as i32);
+            let target = 1380 * (h - 64) / (1536 - 64);
+            match sim::gen::box_reach(&s.grid, (s.grid.w / 2, 0), 6, 11) {
+                Some((_, y)) if (y + 11) as i32 >= target => {}
+                r => bad.push(format!("size {size} seed {seed}: reach {r:?} needs {target}")),
+            }
+            let a = s.arena.unwrap();
+            for x in a.cx - a.floor_half_width()..=a.cx + a.floor_half_width() {
+                if s.grid.mat[(a.floor_y * w + x) as usize] == 0 {
+                    bad.push(format!("size {size} seed {seed}: hole in the floor at {x}"));
+                    break;
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// S2: no real seed may leave a Survival world without an arena (and so without a boss, which makes it unwinnable).
+#[test]
+fn every_survival_seed_has_an_arena_and_a_boss() {
+    let mut missing = Vec::new();
+    for (size, n) in [(0u8, 200u64), (1, 40), (2, 8)] {
+        for seed in 1..=n {
+            let s = survival(size, seed);
+            let boss = s.enemies.iter().filter(|e| e.kind == sim::tuning::ENEMY_BOSS).count();
+            if s.arena.is_none() || boss != 1 {
+                missing.push((size, seed));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "{} worlds without an arena or boss: {missing:?}", missing.len());
+}

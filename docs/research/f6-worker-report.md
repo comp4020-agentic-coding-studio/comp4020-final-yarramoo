@@ -86,6 +86,19 @@
 - `docs/art/shots/f6-phase3.png`: red robe, bar about 18 percent red. Seen. (Both phase shots sit under "The party fell" because the dev avatar had died.)
 - A first attempt at `__devBossHp` did nothing (wrong byte offset into the snapshot's enemy record); fixed offset 13 and re-shot.
 
+### 8. Review fix pass (review-f6.md)
+- **S1 (red first, then fixed):** new `survival_worlds_are_traversable_to_the_bottom_band_and_the_arena_floor_has_no_holes` (sizes S/M/L, seeds 1-12). Run red before any fix: 6 holes found
+  (S seed 22, M seed 26, L seeds 11, 18, 25, 37), each a `repair_traversal` tunnel cutting the arena floor; traversal itself was fine everywhere. Fix: `reseal_floor` (floor row two deep back to
+  Rock after the repair, undone if it would break the walk to the repair depth). Green after.
+- **S2:** `every_survival_seed_has_an_arena_and_a_boss` over seeds 1-200 at S, 1-40 at M, 1-8 at L: **no seed was missing an arena or boss, so the test passes without a fix and was not shown red.**
+  I added no fallback because the failure never occurred in 248 seeds; `carve_arena` can still return None where no clear sky-open path point exists, and such a seed would have no boss.
+- **S3:** the browser D2 boss test now asserts Node's run holds a phase-3 event or the boss's death before comparing; the browser's per-tick state hash must equal Node's, so the engines reached the same fight.
+- **S4:** D7 boss test now also compares `grid.mat` and `grid.aux`. It passes (the ring is not sleep-dependent). Not shown red (no sleep-dependent ring to stub).
+- **S5 (stubs, then reverted):** `round_won` forced false: `a_scripted_player_kills...` and `the_boss_dying_on_the_tick...` FAILED. Id formula broken (`id = boss id + 1`): `phase_two_summons_..._sorted_unique_ids` FAILED.
+  `BOSS_SUMMONS_ALIVE` 8: **the existing test still passed (weak)**, so I added `with_four_summons_alive_no_fifth_is_ever_summoned`; with the cap at 8 it FAILED, with 4 it passes. All stubs reverted.
+- **HUD:** boss bar moved from the bottom (it covered the Lava Flask and Black Hole slots) to just under the minimap, above the canvas (`top: 84px`). `docs/art/shots/f6-arena-boss-hud.png` re-taken at 1280x800 and looked at: bar and name clear of the minimap and the spell bar, all 12 slots visible.
+- **Nits:** salts 250-254 moved above `mod tests`; `ENEMY_MAX_HP` already had its kind 4 entry (800).
+
 ## Counts and arena
 - Arena radii: S 40x24, M 56x32, L 70x40. L seed 1: 51 normal enemies + boss; with 4 summons alive 56 of 64.
 - Work maximum: 1226 cells per tick (boss phase 3, 4 summons).

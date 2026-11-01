@@ -332,6 +332,9 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
         clear_arena(g, a);
     }
     repair_traversal(g, seed, &sc);
+    if let Some(a) = &arena {
+        reseal_floor(g, a, &sc);
+    }
     let mut spots = pick_spots(g, seed, &sc, arena.as_ref());
     if let Some(a) = &arena {
         supply_pile(a, &mut spots);
@@ -445,6 +448,32 @@ fn clear_arena(g: &mut Grid, a: &Arena) {
             if is_liquid(g.mat[i]) || is_gas(g.mat[i]) || matches!(g.mat[i], SAND | GUNPOWDER) {
                 g.mat[i] = EMPTY;
             }
+        }
+    }
+}
+
+/// `repair_traversal` may cut a radius-6 tunnel through the arena floor. Seal the floor row (Rock, two rows deep) again, and
+/// keep the seal only if a body can still walk from the surface to the repair depth; otherwise undo it, so traversal always wins.
+fn reseal_floor(g: &mut Grid, a: &Arena, sc: &Scale) {
+    let w = g.w as i32;
+    let hw = a.floor_half_width();
+    let mut undo: Vec<(usize, u8)> = Vec::new();
+    for x in a.cx - hw..=a.cx + hw {
+        for y in a.floor_y..a.floor_y + 2 {
+            let i = (y * w + x) as usize;
+            if g.mat[i] != ROCK && g.mat[i] != BEDROCK && g.mat[i] != DIRT {
+                undo.push((i, g.mat[i]));
+                g.mat[i] = ROCK;
+            }
+        }
+    }
+    if undo.is_empty() {
+        return;
+    }
+    let ok = box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).is_some_and(|(_, dy)| (dy + FIT_H) as i32 >= sc.repair_depth);
+    if !ok {
+        for (i, m) in undo {
+            g.mat[i] = m;
         }
     }
 }

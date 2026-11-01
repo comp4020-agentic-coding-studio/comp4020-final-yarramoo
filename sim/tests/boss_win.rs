@@ -173,15 +173,17 @@ fn d7_sleeping_is_invisible_through_all_three_phases() {
             s.step();
             s.players[0].health = HEALTH_MAX;
         }
-        snapshot::write(&s)
+        (snapshot::write(&s), s.grid.mat.clone(), s.grid.aux.clone())
     };
     // enemies and the ring never depend on `grid.awake`; the grid itself may differ only through sleeping, which the
     // sim's own D7 pins, so compare the entity section (enemies, bolts, players)
     let (a, b) = (run(false), run(true));
-    let ent = |v: &[u8]| {
+    let ent = |v: &(Vec<u8>, Vec<u8>, Vec<u8>)| {
         let o = 4 + 2 + 32 + 8 + 16 + 4 + 2 + 2;
+        let v = &v.0;
         let n = u32::from_le_bytes(v[o..o + 4].try_into().unwrap()) as usize;
         v[o + 4..o + 4 + n].to_vec()
     };
     assert_eq!(ent(&a), ent(&b), "entities differ with chunk sleeping disabled");
+    assert!(a.1 == b.1 && a.2 == b.2, "the grid (mat or aux) differs with chunk sleeping disabled: the lava ring is sleep-dependent");
 }

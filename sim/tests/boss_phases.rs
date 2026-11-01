@@ -190,3 +190,27 @@ fn boss_work_is_bounded_in_phase_three_with_summons_alive() {
     assert!(worst > 0 && worst <= BOSS_WORK_BOUND, "work {worst}");
     assert!(worst > BOSS_WORK_BOUND / 2, "the bound must bite: halving it ({}) has to fail, work was {worst}", BOSS_WORK_BOUND / 2);
 }
+
+/// S5 (review-f6): the existing summon test never came near the cap (it passed with the cap at 8). Start with four summons
+/// alive and the counter at 4: no further summon may appear while they live, over five summon periods.
+#[test]
+fn with_four_summons_alive_no_fifth_is_ever_summoned() {
+    let mut s = fight();
+    set_hp(&mut s, BOSS_HP / 2);
+    let a = s.arena.unwrap();
+    let b = s.enemies[bi(&s)].id;
+    for k in 0..4u16 {
+        s.enemies.push(Enemy::new(b + 1 + k, ENEMY_IMP, (a.cx - 12 + 8 * i32::from(k)) * PX, (a.cy - 12) * PX));
+    }
+    let i = bi(&s);
+    s.enemies[i].hop_until = 4;
+    for _ in 0..(5 * BOSS_SUMMON_TICKS) {
+        s.step();
+        s.players[0].health = HEALTH_MAX;
+        for e in s.enemies.iter_mut().filter(|e| e.kind == ENEMY_IMP) {
+            e.hp = e.hp.max(1); // the four stay alive (a bolt cannot hurt them anyway)
+        }
+        assert!(s.enemies.iter().filter(|e| e.kind == ENEMY_IMP).count() <= BOSS_SUMMONS_ALIVE);
+    }
+    assert_eq!(s.enemies[bi(&s)].hop_until, 4, "no summon was made while four lived");
+}
