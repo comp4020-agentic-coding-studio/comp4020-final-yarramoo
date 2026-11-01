@@ -39,3 +39,15 @@ Committed together as one gated batch (the gate takes about 8 minutes; one run p
 - Dead empty `if` for code 4002 in the client replaced by a comment.
 - Existing claim tests that ended a never-started round now start it first (a precondition, no assertion weakened).
 - Accepted risk (S1, per coordinator): one vote is a majority with 1 or 2 eligible voters, as for deaths since D-120. A cheater in a co-op room only cheats their own room, and requiring both voters in a 2-player room would let one player block the end. Room achievements are therefore not leaderboard material.
+
+## Third pass, C: two-browser descent (partial)
+Real server from this tree (`pnpm build:client`, `node server/main.ts`, size M Survival room `/r/2238LR`), two `agent-browser` sessions with names registered through `/api/players`. Screenshots in `docs/art/shots/`, each viewed before citing:
+- `f7-1-lobby-ada.png`: both players in the Survival lobby, "Waiting for 2".
+- `f7-2-started-ada.png` / `f7-2-started-bo.png`: after both pressed R, "Descend!" toast, both avatars at the surface. Server logged `round.start` (tick 1423, active 2) from the browsers' majority claim.
+- `f7-3-late-cy.png`: a third registered session opened the link mid-round and got "The descent has begun" with Spectate / Find another room / Start a new room BEFORE joining. The server log has only two `join` lines (Ada, Bo): no dead record for the third. `GET /api/rooms/:code` returned `running: true, ended: false`.
+- Observed: one `input.rejected reason=claim_no_round` for Ada, 19 ms after `round.start`: Ada's client sent a second start claim (a different tick) after the first resolved. Harmless (the new refusal doing its job, logged limited) but noisy; a client could skip it.
+
+NOT done: the descent, the boss fight, Victory in both sessions, the round-end toast and the list check. The production client has no dev helpers (`__devGoto`, `__devBossHp` exist only on the Vite dev route with `?world=game&avatar=1`, a local sim), and walking two real avatars to the arena and killing the boss by hand was not feasible in the tool budget. The round-end and list behaviour is covered by the Node real-sim test (loss path) instead.
+
+## Third pass, B: balance
+Not started (priority order A, C, B). Nothing in `tuning.rs` was changed.
