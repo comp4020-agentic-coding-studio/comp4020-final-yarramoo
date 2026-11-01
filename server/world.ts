@@ -77,6 +77,13 @@ export const MAX_CHUNKS_RECORDED = 64;
  * no one playing, so this only ever delays an empty room; a hostile client costs at most this per connection.
  */
 export const CATCHUP_HOLD_MAX_MS = 120_000;
+/** F7: at most this many resyncs per member per RESYNC_BUDGET_MS; past it the socket is closed with CLOSE_OUT_OF_SYNC. */
+export const RESYNC_BUDGET = 3;
+export const RESYNC_BUDGET_MS = 60_000;
+export const CLOSE_OUT_OF_SYNC = 4001;
+/** F7: a live member silent this long is closed (CLOSE_SILENT) and leaves normally. Catching-up members are exempt. */
+export const LIVENESS_MS = 10_000;
+export const CLOSE_SILENT = 4002;
 export const SNAPSHOT_EVERY_TICKS = 1800;
 /** A requested snapshot tick is at least this far ahead of the clock. */
 export const SNAPSHOT_LEAD_TICKS = 120;
@@ -120,6 +127,10 @@ export interface Member {
   lastBadTick: number;
   claimWindowStart: number;
   claimsInWindow: number;
+  /** F7: when any frame last arrived from this connection (world clock), for the liveness timeout. */
+  lastHeard: number;
+  /** F7: world-clock times of this member's recent resyncs, for the budget. */
+  resyncAt: number[];
 }
 
 /** One death that a majority of eligible clients agreed on. Ids are sim player ids, which are visitor ids in the game world. */
@@ -260,6 +271,14 @@ export class World {
    * persisted on the room row by main.ts. */
   roundRunning = false;
   roundEnded = false;
+  /** F7: this world was loaded from the database with closed ticks. roundRunning is memory-only, so after a restart this
+   * stands in for it (a restored lobby may then be credited early; a restored running round is never denied). */
+  restoredWithTicks = false;
+  /** F7: may Pos/Cast inputs count towards stats? Not while a Survival lobby is open (no start claim resolved yet).
+   * The claim lags the real start by up to a second, so the first moments of a round are not credited. */
+  creditsStats(): boolean {
+    return this.cfg.round !== 1 || this.roundRunning || this.roundEnded || this.restoredWithTicks;
+  }
   /** Test and telemetry hook: called after each closed tick has been broadcast. */
   onTickClosed: ((tick: number) => void) | null = null;
 
@@ -487,6 +506,7 @@ export class World {
     this.snapshotOnline = this.kind === WORLD_GAME ? (snap ? activePlayersIn(snap.data).size : 0) : Math.max(0, -net);
     this.online = this.kind === WORLD_GAME ? this.snapshotOnline + net : 0;
     this.clock.setClosed(base + frames.length);
+    this.restoredWithTicks = base + frames.length > 0;
     this.lastRequestTick = base;
     if (rewrite) {
       this.elog.event("world.log_repaired", { world: this.id, after_tick: base, kept_ticks: frames.length }, "warn");
@@ -647,6 +667,8 @@ export class World {
       lastBadTick: 0,
       claimWindowStart: 0,
       claimsInWindow: 0,
+      lastHeard: this.now(),
+      resyncAt: [],
       counts,
       timing,
     };
@@ -743,6 +765,26 @@ export class World {
     return true;
   }
 
+  /** Any frame from `conn` arrived: it is alive. */
+  heard(conn: number): void {
+    const m = this.members.get(conn);
+    if (m) m.lastHeard = this.now();
+  }
+
+  /** Close members that are live (past their replay) but have sent nothing for LIVENESS_MS; they leave through `leave`. */
+  private reapSilent(t: number): void {
+    for (const m of this.members.values()) {
+      if (!m.live || t - m.lastHeard < LIVENESS_MS) continue;
+      this.elog.limited(`silent:${m.id}`, 10_000, "leave", { world: this.id, who: this.whoOf(m), reason: "silent" }, "warn");
+      try {
+        m.peer.close(CLOSE_SILENT, "no frames for 10 s");
+      } catch {
+        // already gone
+      }
+      this.dropped.push(m.id);
+    }
+  }
+
   stamp(input: TickInput): number {
     if (this.resetting) return 0;
     return this.clock.stamp(input);
@@ -772,6 +814,7 @@ export class World {
       this.lastFlush = t;
       this.flush();
     }
+    this.reapSilent(t);
     this.resolveDue(t);
     this.sweepDiagnoses(t);
     if (t - this.lastClaimSweep >= CLAIM_SWEEP_MS) {
@@ -857,6 +900,7 @@ export class World {
       this.seenPlayers.clear();
       this.roundRunning = false;
       this.roundEnded = false;
+      this.restoredWithTicks = false;
       Object.assign(this.stats, { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 });
       this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, members: victims.length }, "warn");
       return { oldTick, closed: victims.length };
@@ -959,7 +1003,7 @@ export class World {
       m.lastBadTick = tick;
       this.resync(m);
     }
-    this.elog.event("desync", { world: this.id, tick, who: members.map((m) => this.whoOf(m)).join(","), agreeing: all ? all.size - bad.size : null, uas: members.map((m) => (m.peer.userAgent ?? "").slice(0, 40)).join("|") }, "warn");
+    this.elog.limited(`desync:${this.id}`, 5_000, "desync", { world: this.id, tick, who: members.map((m) => this.whoOf(m)).join(","), agreeing: all ? all.size - bad.size : null, uas: members.map((m) => (m.peer.userAgent ?? "").slice(0, 40)).join("|") }, "warn");
   }
 
   // ---- chunk diagnosis (plan 6.10, D-126) ----------------------------------------------------------
@@ -1113,10 +1157,24 @@ export class World {
 
   /** Latest verified snapshot plus every closed tick after it, through the same path as a late join. */
   private resync(m: Member): void {
+    const t = this.now();
+    m.resyncAt = m.resyncAt.filter((x) => t - x < RESYNC_BUDGET_MS);
+    if (m.resyncAt.length >= RESYNC_BUDGET) {
+      // A member that cannot stay in sync costs the whole room a replay each time: close it and let the client say "reload".
+      this.elog.limited(`resync_refused:${m.id}`, 10_000, "resync.refused", { world: this.id, who: this.whoOf(m), budget: RESYNC_BUDGET }, "warn");
+      try {
+        m.peer.close(CLOSE_OUT_OF_SYNC, "out of sync, reload");
+      } catch {
+        // already gone
+      }
+      this.dropped.push(m.id);
+      return;
+    }
+    m.resyncAt.push(t);
     this.stats.resyncs++;
     m.counts.resyncs++;
     this.pstats?.bump(m.visitorId, STAT_RESYNCS);
-    this.elog.event("resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
+    this.elog.limited(`resync:${m.id}`, 10_000, "resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
     m.minHashTick = this.clock.lastClosed;
     m.live = false;
     m.catchupSince = this.now();
@@ -1125,6 +1183,8 @@ export class World {
     if (this.waitingUpload?.memberId === m.id) this.waitingUpload = null;
     if (this.request?.memberId === m.id) this.request = null;
     if (!this.sendCatchUp(m.peer, (base) => encodeResync(this.clock.lastClosed, base))) this.dropped.push(m.id);
+    // The client's replay starts from scratch; labels are not in the log, so say who everyone is again (as after WELCOME).
+    for (const o of this.members.values()) if (o.playerId && o.name) this.trySend(m.peer, encodePlayerName(o.playerId, o.name));
   }
 
   // ---- death claims (plan 10, D-120/D-121) -------------------------------------------------------

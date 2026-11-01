@@ -15,12 +15,17 @@ Status: partial. Items 1 and 2 done; 3 to 7 not reached (tool-call budget spent 
 - Achievements: onEnemyKill (slime_slayer, exterminator at 50 enemy_kills), onRoundWon (deep_mage_slain for every survivor, solo_descent when the sim holds 1 player, last_one_standing when exactly 1 survivor of a larger party).
 - Spectate record, resync budget/close code, liveness timeout: not decided (not built).
 
-## Left (not done)
-- Item 3: lobby stat gating from `roundRunning`; Spectate choice before join (client can already read `running`/`ended` from `GET /api/rooms/:code`). Toasts use the existing achievement toast path and plain names.
-- Item 4: PLAYER_NAME after RESYNC, resync budget, liveness timeout, incident pruning.
-- Item 5: log names `round.start`, `round.end`, `boss.killed`, `claim.round_start`, `claim.round_end`, `enemy.kill`, `resync.refused` are in `shared/events.ts` and `round.start/end`, `boss.killed` are emitted; `enemy.kill` aggregation, `claim.*` logging and dashboard round state are not.
-- Items 6 and 7: no balance numbers, no browser descent.
-- Unverified: client emission of the new claims in a real browser (typechecks only; no test client sends claim events yet).
+## Second pass (items 1, 4, 3, 5 of the follow-up)
+Committed together as one gated batch (the gate takes about 8 minutes; one run per batch, per the coordinator). Hashes in the handback.
+- Real-client claim test: `tests/net/claims-survival.test.ts`. Two Node clients run the real sim in a size-S Survival room and ready up. `tests/net/helpers.ts` now sends the same `encodeClaimEvent` calls as `client/worker.ts`, built from the events its Node sim emits (the worker itself cannot run in Node). Asserts: `round.start` resolved and `roundRunning`; a real Fire bolt kills a slime and `enemy_kills` and `slime_slayer` arrive for the killer only; a scripted loss resolves `round.end` (result loss, alive 0), the room leaves `GET /api/rooms`, and `GET /api/rooms/:code` says ended. The boss kill was NOT driven (no deterministic input path sets boss hp); the win path is covered by unit tests of `onRoundEndClaim` and `onRoundWon` only.
+- Helper bug found on the way: the test client only claimed when `sim.width() > 512`, which excludes size-S rooms; it now tests `cfg.avatars === 1`.
+- Names after RESYNC: `World.resync` resends `PLAYER_NAME` for every named member. Red shown first (test failed with the line removed).
+- Resync budget: 3 per member per 60 s (`RESYNC_BUDGET`); the 4th closes with code 4001 (`CLOSE_OUT_OF_SYNC`), logged `resync.refused`; the client shows "Out of sync, reload" and does not reconnect. The budget is per connection, so a reload (a fresh connection) starts fresh and an honest player is not locked out. `desync` and `resync` log through `log.limited`. Incidents are pruned to the newest 1000 on insert.
+- Liveness timeout: any frame from a member refreshes `lastHeard` (`World.heard`, called from main.ts for every frame); a member that is live (past its replay) and silent 10 s is closed with 4002 (`CLOSE_SILENT`) and leaves through the normal path. A catching-up member is exempt, so a slow honest client mid catch-up is never dropped. Tested with an injected clock. The client pings every 2 s so an idle honest client is never silent.
+- Lobby stat gating: `World.creditsStats()`; Pos depth and cast stats are not credited in a Survival room until the start claim resolves. Restart choice: a world loaded from the DB with closed ticks counts as credited (`restoredWithTicks`), since `roundRunning` is memory-only. Cost: a restored lobby with ticks is credited early; a restored running round is never wrongly denied. The claim lags the real start by up to a second, so that second is not credited.
+- Spectate before the join: `resolveRoomTarget` reads `running`/`ended` from `GET /api/rooms/:code`; `start()` shows the late panel and returns without opening a socket, so no dead player record. The "Spectate" button reloads with `?spectate=1` as before, which joins as a pure spectator. Not exercised in a real browser (item 7 pass).
+- `enemy.kill`: one line per room per summary interval (folded into the input.summary timer) with total and `by_kind`. `claim.kill`/`claim.round_*` names exist but are not emitted (the resolved events log as `round.*`, `boss.killed`, `enemy.kill`); the per-claim lines a client can repeat are the limited `claim.unresolved` and `input.rejected` ones. Admin dashboard world cards show `round` (lobby/running/ended); `/api/summary` carries only that aggregate state, no names.
 
-## FUTURE.md suggestions
-- Add the enemy id to EV_ENEMY_DEATH so kill claims need not key on position.
+## Left
+- Items 6 (balance) and 7 (two-browser descent): third pass.
+- Boss kill through a real-client test.

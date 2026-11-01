@@ -25,6 +25,8 @@ export interface RoomTarget {
   name: string | null;
   /** Share link info for a real room, so a freshly created/joined room can show the share bar (commit 3). */
   code: string | null;
+  /** F7: from GET /api/rooms/:code. A running or ended Survival room shows the late panel before any join (no dead record is left behind). */
+  late?: boolean;
 }
 
 /** Resolve what to join from the current path: /sandbox (id 0), /game (id 1, back-compat for the old cave-world
@@ -39,10 +41,10 @@ export async function resolveRoomTarget(pathname: string): Promise<RoomTarget> {
     const code = m[1];
     const res = await fetch(`/api/rooms/${code}`);
     if (!res.ok) throw new Error("No room has that code.");
-    const j = (await res.json()) as { id: number; code: string; name: string; mode: string; visibility: string; config: string };
+    const j = (await res.json()) as { id: number; code: string; name: string; mode: string; visibility: string; config: string; running?: boolean; ended?: boolean };
     const cfg = decodeConfig(Uint8Array.from(atob(j.config), (c) => c.charCodeAt(0)));
     if (!cfg) throw new Error("That room's config looked wrong.");
-    return { worldId: j.id, cfg, name: j.name, code: j.code };
+    return { worldId: j.id, cfg, name: j.name, code: j.code, late: cfg.round === 1 && !!(j.running || j.ended) };
   }
   // Fallback: an unrecognised room-ish path still joins the sandbox rather than failing outright.
   return { worldId: 0, cfg: CLASSIC_SANDBOX, name: null, code: null };
@@ -1056,6 +1058,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   function start(token: string, name: string) {
+    if (target.late && !spectate) {
+      // F7: the round is under way or over. Offer Spectate / another room BEFORE joining: a join would stamp a dead player record.
+      updateLobby(null, true);
+      return;
+    }
     const { w, h } = layout();
     const base = { wasmUrl, wsUrl, width: w, height: h, local, worldId, token, name, spectate };
     if ("OffscreenCanvas" in window && "transferControlToOffscreen" in canvas) {

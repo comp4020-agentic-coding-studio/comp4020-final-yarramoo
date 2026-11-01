@@ -1,10 +1,11 @@
 // A real-protocol test client: real sim, shared playout module, WebSocket to the real server.
 import { readFileSync } from "node:fs";
 import WebSocket from "ws";
+import { decodeConfig } from "../../shared/room.ts";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
 import { encodeCast, encodePaint, encodePos, encodeReady, KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../../shared/inputs.ts";
-import { decodeServer, encodeChunkHashes, encodeClaim, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
-import { EV_DEATH, loadSim, simBuildHash } from "../../shared/sim.ts";
+import { decodeServer, encodeChunkHashes, encodeClaim, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END, CLAIM_ROUND_START, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
+import { ENT_PLAYER, EV_DEATH, EV_ENEMY_DEATH, EV_ROUND_END, EV_ROUND_START, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
 export const wasmBytes = new Uint8Array(readFileSync(WASM));
@@ -105,8 +106,17 @@ export async function connect(
       if (ws.readyState !== WebSocket.OPEN) return;
       if (tick % 20 === 0) c.hashes.set(tick, c.ls.sim.stateHash()); // local record, for comparing clients
       // Like the real client (D-120): one CLAIM per EV_DEATH past the replay target, never for a replayed tick.
-      if (c.claims && tick > c.ls.catchUpTarget && c.ls.sim.width() > 512) {
-        for (const e of c.ls.sim.events()) if (e.kind === EV_DEATH) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c));
+      if (c.claims && tick > c.ls.catchUpTarget && decodeConfig(cfg)?.avatars === 1) {
+        for (const e of c.ls.sim.events()) {
+          if (e.kind === EV_DEATH) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c));
+          // F7: the same claims the real client sends (client/worker.ts), from the events this Node sim emits.
+          else if (e.kind === EV_ENEMY_DEATH) ws.send(encodeClaimEvent(CLAIM_KILL, tick, e.player, e.a, e.b, e.c));
+          else if (e.kind === EV_ROUND_START) ws.send(encodeClaimEvent(CLAIM_ROUND_START, tick, e.a, 0, 0, 0));
+          else if (e.kind === EV_ROUND_END) {
+            const ps = c.ls.sim.entities().filter((q) => q.type === ENT_PLAYER);
+            ws.send(encodeClaimEvent(CLAIM_ROUND_END, tick, e.a, ps.length, 0, 0, ps.filter((q) => q.health > 0).map((q) => q.id).sort((x, y) => x - y)));
+          }
+        }
       }
       // Like the real client: LIVE the moment the replay target is reached (D-122). `holdLive` lets a test withhold it.
       if (tick === c.ls.catchUpTarget && !c.holdLive) ws.send(encodeLive(tick));

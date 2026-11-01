@@ -99,6 +99,9 @@ const MIGRATIONS: string[] = [
   `alter table rooms add column ended_at integer;`,
 ];
 
+/** Incident rows kept (the newest). */
+export const MAX_INCIDENT_ROWS = 1000;
+
 export interface WorldRow {
   id: number;
   kind: string;
@@ -387,7 +390,10 @@ export class GameDb {
     const r = this.q("insert into desync_incidents (world_id, tick, details, created_at) values (?, ?, ?, ?)").run(
       worldId, tick, JSON.stringify(details), Date.now(),
     );
-    return Number(r.lastInsertRowid);
+    // F7: keep the last MAX_INCIDENT_ROWS only, so a desync storm cannot grow the table without bound.
+    const id = Number(r.lastInsertRowid);
+    this.q("delete from desync_incidents where id <= ?").run(id - MAX_INCIDENT_ROWS);
+    return id;
   }
 
   updateIncident(id: number, details: unknown): void {

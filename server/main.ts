@@ -149,6 +149,8 @@ export interface WorldSummary {
   hashPasses: number;
   hashFails: number;
   resyncs: number;
+  /** F7: a Survival room's round as a majority reported it (no names); null for rooms without a round. */
+  round: "lobby" | "running" | "ended" | null;
   snapshotsAccepted: number;
   snapshotsRejected: number;
   /** Compressed bytes and tick of the latest verified snapshot; 0 when none. */
@@ -485,6 +487,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     for (const l of live.values()) if (l.visitorId === visitorId && l.ws.readyState === l.ws.OPEN) l.ws.send(frame, { binary: true });
   });
   // A majority-agreed death (D-120). Sim player ids are visitor ids in the game world (D-065).
+  /** F7: resolved enemy kills per room since the last summary, folded into one `enemy.kill` line per room (never one line per kill). */
+  const kills = new Map<number, number>();
+  const killsByKind = new Map<number, Map<number, number>>();
+  const flushKills = (): void => {
+    for (const [world, n] of kills) {
+      const by = killsByKind.get(world) ?? new Map<number, number>();
+      log.event("enemy.kill", { world, kills: n, by_kind: [...by].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}:${v}`).join(",") });
+    }
+    kills.clear();
+    killsByKind.clear();
+  };
   /** Wire a world's majority-claim results to stats, achievements and the log (D-120). Every world with players, fixed or a room (F7). */
   function wireWorld(w: World): void {
     const nameOfVisitor = (id: number): string => {
@@ -500,6 +513,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     };
     // F7: enemy kills, round start and round end, each a majority claim like a death. Plain names in toasts, name#id in logs.
     w.onKillResolved = (k) => {
+      kills.set(w.id, (kills.get(w.id) ?? 0) + 1);
+      const kk = killsByKind.get(w.id) ?? new Map<number, number>();
+      kk.set(k.kind, (kk.get(k.kind) ?? 0) + 1);
+      killsByKind.set(w.id, kk);
       achievements.onEnemyKill(k.killer, k.kind, { name: nameOfVisitor(k.killer), world: w.id, tick: k.tick });
       if (k.kind === ENEMY_KIND_BOSS) log.event("boss.killed", { world: w.id, tick: k.tick, killer: k.killer ? `${nameOfVisitor(k.killer)}#${k.killer}` : null });
     };
@@ -937,6 +954,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   });
   /** One timer over all connections (not one per connection): a summary for each that sent anything. */
   const summaryTimer = setInterval(() => {
+    flushKills();
     for (const l of live.values()) {
       const w = l.counts.takeWindow();
       if (w) log.event("input.summary", summaryFields(l, w));
@@ -1161,6 +1179,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       if (w.closing) return;
       // A replaced tab (same token, newer connection) stays open until its socket closes; it must not stamp or count.
       if (!w.hasMember(joined.conn)) return;
+      w.heard(joined.conn);
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
       const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.cfg) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.cfg) : MAX_FRAME_BYTES;
       if (buf.length > frameCap) return ws.close(1009, "frame too large");
@@ -1200,12 +1219,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               const depth = depthCells(new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength).getInt32(6, true));
               joined.counts.position(depth);
               // Only a deeper maximum can newly satisfy Spelunker, so most Pos inputs stop here.
-              if (playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth)) achievements.onStat(joined.visitorId, STAT_MAX_DEPTH, { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+              if (w.creditsStats() && playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth)) achievements.onStat(joined.visitorId, STAT_MAX_DEPTH, { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
             } else if (msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN) {
               // Counted as an attempt (plan 10). Never one log line per cast: input.summary carries the counts.
               joined.counts.cast(spellKey(msg.payload[0]));
-              playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
-              achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+              // A lobby cast is refused by the sim anyway (F6b), so it is not a cast worth counting.
+              if (w.creditsStats()) {
+                playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
+                achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+              }
             } else if (msg.kind === KIND_READY && w.cfg.round === 1 && msg.payload.length === READY_PAYLOAD_LEN && msg.payload[0] <= 1) {
               // F6b: the lobby ready toggle, Survival rooms only. The player id is stamped from the connection, never the client's.
               joined.counts.ready();
@@ -1343,6 +1365,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             hashPasses: w.stats.hashPasses,
             hashFails: w.stats.hashFails,
             resyncs: w.stats.resyncs,
+            round: w.cfg.round !== 1 ? null : w.roundEnded ? "ended" : w.roundRunning ? "running" : "lobby",
             snapshotsAccepted: w.stats.snapshotsAccepted,
             snapshotsRejected: w.stats.snapshotsRejected,
             snapshotBytes: w.snapshot?.data.length ?? 0,

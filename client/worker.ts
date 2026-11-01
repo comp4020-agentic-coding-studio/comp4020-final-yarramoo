@@ -431,6 +431,15 @@ function connect() {
       setNet("rejected");
       return;
     }
+    if (ev.code === 4001) {
+      // F7: the server's resync budget ran out (3 a minute). Reconnecting would just desync again; say so and stop.
+      rejected = "Out of sync, reload";
+      setNet("rejected");
+      return;
+    }
+    if (ev.code === 4002) {
+      // F7: the server saw nothing from us for 10 s. That is a dead link, not a refusal: reconnect as usual.
+    }
     if (net === "rejected") return; // do not hammer a server that said reload
     const delay = RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)];
     attempt++;
