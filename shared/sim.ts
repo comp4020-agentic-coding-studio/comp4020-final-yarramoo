@@ -42,6 +42,8 @@ export const EV_ENEMY_HURT = 11;
 export const EV_ENEMY_DEATH = 12;
 /** RoundEnd: a = 1 win, 0 loss. Fires once per room. */
 export const EV_ROUND_END = 13;
+/** F6b: the lobby countdown completed; the round is running. */
+export const EV_ROUND_START = 15;
 /** Cause of a death (`EV_DEATH.b`): a spell id 0..NUM_SPELLS is that spell, then these. */
 export const CAUSE_FIRE = 32;
 export const CAUSE_LAVA = 33;
@@ -78,6 +80,8 @@ export const ENT_BAG = 4;
 export const ENT_ENEMY = 5;
 /** The one-life round state (round 1 rooms only): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started. */
 export const ENT_ROUND = 6;
+/** F6b: a player's lobby ready flag: `id` = player, `active` = ready. Only present while the lobby is open. */
+export const ENT_READY = 7;
 export const NUM_SPELLS = 12;
 export interface EntityView {
   type: number;

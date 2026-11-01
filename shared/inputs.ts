@@ -6,6 +6,7 @@ export const KIND_LEAVE = 2;
 export const KIND_POS = 3;
 export const KIND_CAST = 4;
 export const KIND_PAINT = 5;
+export const KIND_READY = 6;
 
 function make(len: number, kind: number, player: number): { b: Uint8Array; v: DataView } {
   const b = new Uint8Array(len);
@@ -38,6 +39,13 @@ export function encodeCast(player: number, spell: number, angle: number, castSeq
   v.setUint8(5, spell);
   v.setUint16(6, angle, true);
   v.setUint16(8, castSeq, true);
+  return b;
+}
+
+/** F6b: toggle the lobby ready flag (0 or 1). The server stamps `player`. */
+export function encodeReady(player: number, ready: number): Uint8Array {
+  const { b, v } = make(6, KIND_READY, player);
+  v.setUint8(5, ready);
   return b;
 }
 
