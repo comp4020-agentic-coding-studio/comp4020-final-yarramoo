@@ -41,6 +41,8 @@ export const EVENT_NAMES = [
   "room.create_rejected",
   "room.loaded",
   "room.unloaded",
+  "world.tick_failed",
+  "db.write_failed",
   // Housekeeping
   "tick_log.flush_failed",
   "identity.evicted",

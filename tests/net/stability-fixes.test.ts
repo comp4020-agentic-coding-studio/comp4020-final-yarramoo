@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GameDb } from "../../server/db.ts";
+import { EventLog } from "../../server/log.ts";
 import { startServer } from "../../server/main.ts";
+import { SANDBOX_ID, World, type Peer } from "../../server/world.ts";
 import { CLASSIC_SANDBOX, encodeConfig } from "../../shared/room.ts";
-import { buildHashHex, connect } from "./helpers.ts";
+import { buildHashHex, connect, sleep, waitFor } from "./helpers.ts";
 
 let hex: string;
 beforeAll(async () => {
@@ -45,3 +47,55 @@ describe("fix 1: a room that cannot load rejects its client and leaves the serve
   }, 20000);
 });
 
+interface FakePeer extends Peer {
+  frames: number;
+}
+const fakePeer = (): FakePeer => {
+  const p: FakePeer = { frames: 0, send() { p.frames++; }, buffered: () => 0, close() {}, userAgent: "fake" };
+  return p;
+};
+
+describe("fix 2: database errors in incident handling and a throwing world tick", () => {
+  it("a recordIncident that throws does not escape the hash path; the resync still goes out", () => {
+    let t = 1000;
+    const dir = tmp();
+    const db = new GameDb(dir);
+    cleanups.push(() => db.close());
+    db.recordIncident = () => {
+      throw new Error("disk full");
+    };
+    const log = new EventLog({ quiet: true });
+    const w = new World({ id: SANDBOX_ID, now: () => t, log, db });
+    const ids = [0, 1, 2].map(() => {
+      const conn = w.join(fakePeer(), {}).conn;
+      w.onLive(conn, w.clock.lastClosed);
+      return conn;
+    });
+    t += 2000;
+    w.tick();
+    for (const id of ids) w.members.get(id)!.minHashTick = 0;
+    expect(() => {
+      ids.forEach((id, i) => w.onHash(id, 60, i === 2 ? 0xbadn : 0x600dn));
+    }).not.toThrow();
+    expect(log.recent().some((e) => e.ev === "db.write_failed")).toBe(true);
+    expect(log.recent().some((e) => e.ev === "desync")).toBe(true);
+  });
+
+  it("a world whose tick throws is closed alone; the other worlds keep ticking", async () => {
+    const s = await startServer({ port: 0, dataDir: null, quiet: true });
+    cleanups.push(() => s.close());
+    const sandbox = s.worlds.get(0)!;
+    const game = s.worlds.get(1)!;
+    const a = await connect(s.port, hex);
+    await sleep(200);
+    game.tick = () => {
+      throw new Error("boom");
+    };
+    const before = sandbox.clock.lastClosed;
+    await waitFor(() => s.log.recent().some((e) => e.ev === "world.tick_failed" && e.world === 1), 3000, "tick_failed");
+    await sleep(500);
+    expect(sandbox.clock.lastClosed).toBeGreaterThan(before);
+    expect(game.closing).toBe(true);
+    a.close();
+  });
+});

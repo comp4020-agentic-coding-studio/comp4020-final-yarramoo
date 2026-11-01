@@ -747,6 +747,16 @@ export class World {
     this.checkLogLength();
   }
 
+  /** Incident rows are diagnostics, not state: a database error here is logged and the world carries on. */
+  private safeDb<T>(f: () => T): T | undefined {
+    try {
+      return f();
+    } catch (e) {
+      this.elog.limited(`db_write_failed:${this.id}`, 10_000, "db.write_failed", { world: this.id, what: "incident", error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }, "error");
+      return undefined;
+    }
+  }
+
   /** SIGTERM path: stop taking inputs, close the open tick, write everything. */
   shutdown(): void {
     this.closing = true;
@@ -904,7 +914,7 @@ export class World {
     };
     // A client compared against a truth that is already known has no agreeing peer to diff against (D-126).
     if (!all) details.chunks = { status: "unavailable", reason: "no_reference" };
-    const incidentId = this.db?.recordIncident(this.id, tick, details) ?? null;
+    const incidentId = this.safeDb(() => this.db?.recordIncident(this.id, tick, details)) ?? null;
     // Requests first, then the resync, in one synchronous run: a client replays from scratch on RESYNC and that
     // empties its chunk-hash ring, so it must see the request before the RESYNC. Neither waits for any reply.
     if (all) this.startDiagnosis(tick, incidentId, details, all, bad);
@@ -921,7 +931,7 @@ export class World {
   private startDiagnosis(tick: number, incidentId: number | null, details: Record<string, unknown>, all: Map<number, bigint>, bad: Map<number, bigint>): void {
     const skip = (reason: string): void => {
       details.chunks = { status: "unavailable", reason };
-      if (incidentId !== null) this.db?.updateIncident(incidentId, details);
+      if (incidentId !== null) this.safeDb(() => this.db?.updateIncident(incidentId, details));
       this.elog.limited(`diag_skipped:${this.id}`, 10_000, "desync.diag_skipped", { world: this.id, tick, reason }, "warn");
     };
     const t = this.now();
@@ -1043,7 +1053,7 @@ export class World {
 
   private finishDiagnosis(d: Diagnosis, chunks: Record<string, unknown>, indices: number[] | null): void {
     d.details.chunks = chunks;
-    if (d.incidentId !== null) this.db?.updateIncident(d.incidentId, d.details);
+    if (d.incidentId !== null) this.safeDb(() => this.db?.updateIncident(d.incidentId!, d.details));
     const first = chunks.first as { index: number; cx: number; cy: number } | null | undefined;
     this.elog.limited(
       `desync_chunks:${this.id}`,

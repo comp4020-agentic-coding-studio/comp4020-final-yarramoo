@@ -358,6 +358,23 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     log.event("room.unloaded", { world: w.id });
   }
 
+  /** A world whose tick threw is closed, alone: its clients get a clean close, the other worlds keep ticking. */
+  function failWorld(w: World, e: unknown): void {
+    log.limited(`tick_failed:${w.id}`, 10_000, "world.tick_failed", { world: w.id, error: e instanceof Error ? (e.stack ?? e.message).slice(0, 300) : String(e).slice(0, 300) }, "error");
+    cancelUnload(w.id);
+    try {
+      for (const l of [...live.values()]) {
+        if (l.world === w) l.ws.close(1011, "world failed"); // its own close handler runs finish()
+      }
+      w.shutdown();
+    } catch {
+      // the world is already broken; closing it is best effort
+    }
+    // The fixed worlds stay registered (a join to a closing world is refused with "server is shutting down" and
+    // the world is skipped by tick); a room is dropped so the next HELLO loads it fresh from the database.
+    if (w.id !== SANDBOX_ID && w.id !== GAME_ID) worlds.delete(w.id);
+  }
+
   function totalMembers(): number {
     let n = 0;
     for (const w of worlds.values()) n += w.playerCount;
@@ -1211,7 +1228,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   const timer = setInterval(() => {
-    for (const w of worlds.values()) w.tick();
+    for (const w of [...worlds.values()]) {
+      if (w.closing) continue; // failed (or shutting down): never ticked again
+      try {
+        w.tick();
+      } catch (e) {
+        failWorld(w, e);
+      }
+    }
   }, TIMER_MS);
   let closed: Promise<void> | null = null;
   const sum = (m: ReadonlyMap<string, number>) => {
