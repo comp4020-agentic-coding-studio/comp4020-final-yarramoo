@@ -7,8 +7,8 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { WebSocketServer, type WebSocket } from "ws";
-import { KIND_CAST, KIND_PAINT, KIND_POS } from "../shared/inputs.ts";
-import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
+import { KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../shared/inputs.ts";
+import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN, READY_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
   C_CHUNK_HASHES,
   cleanName,
@@ -880,13 +880,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     lag: l.timing.lag(l.world.clock.lastClosed),
     step_p95_ms: round2(l.timing.stepP95Ms),
   });
-  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number }) => ({
+  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number }) => ({
     world: l.world.id,
     who: l.who,
     conn: l.conn,
     casts: compactCounts(w.casts),
     paints: compactCounts(w.paints),
     pos: w.pos,
+    readies: w.readies,
     rejected: w.rejected,
     ...timingFields(l),
   });
@@ -1155,6 +1156,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               joined.counts.cast(spellKey(msg.payload[0]));
               playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
               achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+            } else if (msg.kind === KIND_READY && w.cfg.round === 1 && msg.payload.length === READY_PAYLOAD_LEN && msg.payload[0] <= 1) {
+              // F6b: the lobby ready toggle, Survival rooms only. The player id is stamped from the connection, never the client's.
+              joined.counts.ready();
             } else if (w.cfg.brushes === 1 && msg.kind === KIND_PAINT && msg.payload.length === PAINT_PAYLOAD_LEN) {
               joined.counts.paint(materialKey(msg.payload[0]));
               playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));

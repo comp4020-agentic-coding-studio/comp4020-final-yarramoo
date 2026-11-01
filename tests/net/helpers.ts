@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
-import { encodeCast, encodePaint, encodePos, KIND_CAST, KIND_PAINT, KIND_POS } from "../../shared/inputs.ts";
+import { encodeCast, encodePaint, encodePos, encodeReady, KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../../shared/inputs.ts";
 import { decodeServer, encodeChunkHashes, encodeClaim, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
 import { EV_DEATH, loadSim, simBuildHash } from "../../shared/sim.ts";
 
@@ -48,6 +48,10 @@ export interface TestClient {
   move(xCells: number, yCells: number, facing?: number, life?: number): void;
   /** Send a Cast for the game world: `angle` is already a u16 (65536 per turn, 0 along +x, growing downwards). */
   cast(spell: number, angle: number, seq: number): void;
+  /** Send a lobby Ready toggle (0 or 1). */
+  ready(r: number): void;
+  /** Send a raw game-world input of `kind` with `payload` (after kind and player), for hostile-input tests. */
+  raw(kind: number, payload: Uint8Array): void;
   /** Names the server told this client about, by player id. */
   names: Map<number, string>;
   /** Achievements the server sent this client, in order. */
@@ -171,6 +175,8 @@ export async function connect(
   c.move = (x, y, facing = 0, life = 0) =>
     ws.send(encodeInput(++seq, KIND_POS, encodePos(0, life, Math.round(x * 16), Math.round(y * 16), facing).subarray(5)));
   c.cast = (spell, angle, castSeq) => ws.send(encodeInput(++seq, KIND_CAST, encodeCast(0, spell, angle, castSeq).subarray(5)));
+  c.ready = (r) => ws.send(encodeInput(++seq, KIND_READY, encodeReady(0, r).subarray(5)));
+  c.raw = (kind, payload) => ws.send(encodeInput(++seq, kind, payload));
   c.sendLive = () => ws.send(encodeLive(c.ls.sim.tick()));
   c.localPaint = (mat, x, y, r) => void c.ls.sim.pushInput(simInputBytes({ player: c.playerId, kind: KIND_PAINT, payload: encodePaint(0, mat, x, y, x, y, r).subarray(5) }));
   c.drain = () => void c.ls.run(1_000_000);
