@@ -57,6 +57,13 @@ export const EVENT_NAMES = [
   // Later (M5/M6): reserved names only. Nothing emits these yet.
   "claim.death",
   "claim.kill",
+  "claim.round_start",
+  "claim.round_end",
+  "round.start",
+  "round.end",
+  "enemy.kill",
+  "boss.killed",
+  "resync.refused",
   "claim.unresolved",
   "achievement.awarded",
 ] as const;

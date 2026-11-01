@@ -11,6 +11,9 @@ import { KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../shared/inputs.ts
 import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN, READY_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
   C_CHUNK_HASHES,
+  CLAIM_KILL,
+  CLAIM_ROUND_END,
+  CLAIM_ROUND_START,
   cleanName,
   decodeClient,
   encodePong,
@@ -45,6 +48,7 @@ import {
   STAT_PLAY_MS,
   STAT_POS_REJECTED,
   STAT_SESSIONS,
+  ENEMY_KIND_BOSS,
 } from "../shared/stats.ts";
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
@@ -494,6 +498,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       log.event("claim.death", { world: w.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
       achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
     };
+    // F7: enemy kills, round start and round end, each a majority claim like a death. Plain names in toasts, name#id in logs.
+    w.onKillResolved = (k) => {
+      achievements.onEnemyKill(k.killer, k.kind, { name: nameOfVisitor(k.killer), world: w.id, tick: k.tick });
+      if (k.kind === ENEMY_KIND_BOSS) log.event("boss.killed", { world: w.id, tick: k.tick, killer: k.killer ? `${nameOfVisitor(k.killer)}#${k.killer}` : null });
+    };
+    w.onRoundStartResolved = (r) => {
+      log.event("round.start", { world: w.id, tick: r.tick, active: r.active });
+    };
+    w.onRoundEndResolved = (r) => {
+      rooms?.markEnded(w.id);
+      log.event("round.end", { world: w.id, tick: r.tick, result: r.win ? "win" : "loss", players: r.players, alive: r.alive.length });
+      if (r.win) achievements.onRoundWon(r.alive, r.players, (id) => ({ name: nameOfVisitor(id), world: w.id, tick: r.tick }));
+    };
   }
   wireWorld(game);
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
@@ -718,7 +735,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return;
     }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, config: Buffer.from(r.config).toString("base64") }));
+    const roomWorld = worlds.get(r.id);
+    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, ended: r.endedAt !== null, running: !!roomWorld?.roundRunning && r.endedAt === null, config: Buffer.from(r.config).toString("base64") }));
   }
 
   const http: Server = createServer((req, res) => {
@@ -1216,6 +1234,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           if (w.kind !== WORLD_GAME) return void badInput(w, joined.conn, "claim_in_sandbox", 0x06);
           w.onClaim(joined.conn, { tick: msg.tick, victim: msg.victim, killer: msg.killer, cause: msg.cause, bag: msg.bag });
           return;
+        case "claim-event": {
+          if (w.kind !== WORLD_GAME) return void badInput(w, joined.conn, "claim_in_sandbox", 0x09);
+          if (msg.kind === CLAIM_KILL) w.onKillClaim(joined.conn, { tick: msg.tick, killer: msg.a, x: msg.b | 0, y: msg.c | 0, kind: msg.d });
+          else if (msg.kind === CLAIM_ROUND_START) w.onRoundStartClaim(joined.conn, { tick: msg.tick, active: msg.a });
+          else if (msg.kind === CLAIM_ROUND_END) w.onRoundEndClaim(joined.conn, { tick: msg.tick, win: msg.a === 1, players: msg.b, alive: msg.ids });
+          else badInput(w, joined.conn, "bad_claim_kind", msg.kind);
+          return;
+        }
         case "live":
           w.onLive(joined.conn, msg.tick);
           return;

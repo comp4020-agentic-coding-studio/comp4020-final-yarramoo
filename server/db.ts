@@ -95,6 +95,8 @@ const MIGRATIONS: string[] = [
   create index rooms_visibility_last_active on rooms (visibility, last_active desc);
   create index rooms_creator_created on rooms (creator_player_id, created_at);
   `,
+  // F7: a Survival room whose round a majority of clients reported over. It leaves the public list and GET /api/rooms/:code says so.
+  `alter table rooms add column ended_at integer;`,
 ];
 
 export interface WorldRow {

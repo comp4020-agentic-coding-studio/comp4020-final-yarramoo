@@ -24,6 +24,17 @@ export const C_SNAPSHOT_UPLOAD = 0x05;
 /** `tick u32, victim u32, killer u32, cause u8, bag u8`: one EV_DEATH the client's sim emitted. A report, never an input. */
 export const C_CLAIM = 0x06;
 export const CLAIM_LEN = 15;
+/**
+ * F7: a generalised claim about a sim outcome other than a death. `kind u8, tick u32, a u32, b u32, c u32, d u32, n u8, ids u32[n]`.
+ * Kinds: CLAIM_KILL (a killer, b x, c y in 1/16 cell, d enemy kind: EV_ENEMY_DEATH carries no id, its position is the identity),
+ * CLAIM_ROUND_START (a active players), CLAIM_ROUND_END (a result 1 win / 0 loss, b players in the sim, ids = players alive, ascending). A report, never an input. EV_DEATH keeps C_CLAIM.
+ */
+export const C_CLAIM_EVENT = 0x09;
+export const CLAIM_EVENT_HEADER = 23;
+export const MAX_CLAIM_IDS = 32;
+export const CLAIM_KILL = 1;
+export const CLAIM_ROUND_START = 2;
+export const CLAIM_ROUND_END = 3;
 /** `tick u32`: "I have finished replaying to my WELCOME or RESYNC tick" (D-122). Lets the server stop holding the clock for me. */
 export const C_LIVE = 0x07;
 export const LIVE_LEN = 5;
@@ -119,6 +130,7 @@ export type ClientMsg =
   | { t: "hash"; tick: number; hash: bigint; stepP95: number; buffered: number }
   | { t: "snapshot-upload"; tick: number; hash: bigint; data: Uint8Array }
   | { t: "claim"; tick: number; victim: number; killer: number; cause: number; bag: number }
+  | { t: "claim-event"; kind: number; tick: number; a: number; b: number; c: number; d: number; ids: number[] }
   | { t: "live"; tick: number }
   | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array };
 
@@ -265,6 +277,23 @@ export function encodeClaim(tick: number, victim: number, killer: number, cause:
   b[13] = cause & 255;
   b[14] = bag & 255;
   return b;
+}
+
+/** CLAIM_EVENT: see C_CLAIM_EVENT. At most MAX_CLAIM_IDS ids are sent. */
+export function encodeClaimEvent(kind: number, tick: number, a: number, b: number, c: number, d: number, ids: readonly number[] = []): Uint8Array {
+  const n = Math.min(ids.length, MAX_CLAIM_IDS);
+  const out = new Uint8Array(CLAIM_EVENT_HEADER + 4 * n);
+  const v = view(out);
+  out[0] = C_CLAIM_EVENT;
+  out[1] = kind & 255;
+  v.setUint32(2, tick >>> 0, true);
+  v.setUint32(6, a >>> 0, true);
+  v.setUint32(10, b >>> 0, true);
+  v.setUint32(14, c >>> 0, true);
+  v.setUint32(18, d >>> 0, true);
+  out[22] = n;
+  for (let i = 0; i < n; i++) v.setUint32(CLAIM_EVENT_HEADER + 4 * i, ids[i] >>> 0, true);
+  return out;
 }
 
 /** LIVE: the tick the client's sim has reached after catching up. Informational: the server only needs the message. */
@@ -431,6 +460,14 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
     case C_CLAIM:
       if (b.length !== CLAIM_LEN) return null;
       return { t: "claim", tick: v.getUint32(1, true), victim: v.getUint32(5, true), killer: v.getUint32(9, true), cause: b[13], bag: b[14] };
+    case C_CLAIM_EVENT: {
+      if (b.length < CLAIM_EVENT_HEADER) return null;
+      const n = b[22];
+      if (n > MAX_CLAIM_IDS || b.length !== CLAIM_EVENT_HEADER + 4 * n) return null;
+      const ids: number[] = [];
+      for (let i = 0; i < n; i++) ids.push(v.getUint32(CLAIM_EVENT_HEADER + 4 * i, true));
+      return { t: "claim-event", kind: b[1], tick: v.getUint32(2, true), a: v.getUint32(6, true), b: v.getUint32(10, true), c: v.getUint32(14, true), d: v.getUint32(18, true), ids };
+    }
     case C_LIVE:
       if (b.length !== LIVE_LEN) return null;
       return { t: "live", tick: v.getUint32(1, true) };

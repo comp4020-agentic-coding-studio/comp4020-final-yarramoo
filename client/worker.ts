@@ -5,6 +5,10 @@ import {
   PAINT_PAYLOAD_LEN,
   decodeServer,
   encodeClaim,
+  encodeClaimEvent,
+  CLAIM_KILL,
+  CLAIM_ROUND_START,
+  CLAIM_ROUND_END,
   encodeChunkHashes,
   encodeHash,
   encodeHello,
@@ -278,6 +282,16 @@ function onTickApplied(tick: number, inputs: { player: number; kind: number }[])
       // A report to the server, never a sim input (invariant 9, D-120). Only past the replay target, like HASH (D-038):
       // a replaying client would re-claim every old death. Spectators claim too: they run the same sim.
       if (e.kind === EV_DEATH && ws && ws.readyState === WebSocket.OPEN && tick > ls.catchUpTarget) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c) as BufferSource);
+      // F7: the other outcomes the server cannot see (it never steps the sim). The same rules as a death claim: reports only.
+      if (ws && ws.readyState === WebSocket.OPEN && tick > ls.catchUpTarget) {
+        if (e.kind === EV_ENEMY_DEATH) ws.send(encodeClaimEvent(CLAIM_KILL, tick, e.player, e.a, e.b, e.c) as BufferSource);
+        else if (e.kind === EV_ROUND_START) ws.send(encodeClaimEvent(CLAIM_ROUND_START, tick, e.a, 0, 0, 0) as BufferSource);
+        else if (e.kind === EV_ROUND_END) {
+          // The sim's own alive set: a player entity with health above zero (a living player who disconnected still counts, D-160).
+          const players = ls.sim.entities().filter((q) => q.type === ENT_PLAYER);
+          ws.send(encodeClaimEvent(CLAIM_ROUND_END, tick, e.a, players.length, 0, 0, players.filter((q) => q.health > 0).map((q) => q.id).sort((x, y) => x - y)) as BufferSource);
+        }
+      }
       if (e.kind === EV_KNOCK && e.player === myId && knockIsFresh(tick, ls.latestClosed) && avatar && avatarReady && !spectate) avatar.knock(e.a, e.b);
       if (pendingEvents.length < 300) pendingEvents.push(e);
     }

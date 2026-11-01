@@ -10,6 +10,11 @@ export const STAT_RESYNCS = "resyncs";
 /** Credited kills and deaths, counted from majority CLAIMs about EV_DEATH (plan 10, D-120). */
 export const STAT_KILLS = "kills";
 export const STAT_DEATHS = "deaths";
+/** F7: enemy kills from majority claims. `stat_kills_<kind>` per enemy kind; the boss is kind 4. */
+export const STAT_ENEMY_KILLS = "enemy_kills";
+export const STAT_BOSS_KILLS = "boss_kills";
+export const ENEMY_KIND_BOSS = 4;
+export const killStat = (kind: number): string => `kills_k${kind}`;
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 

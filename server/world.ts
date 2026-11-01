@@ -131,10 +131,36 @@ export interface ResolvedDeath {
   bag: number;
 }
 
+/** F7: one enemy kill a majority agreed on. The killer is a player id (0: nobody credited); `x`, `y` are 1/16 cell. */
+export interface ResolvedKill {
+  tick: number;
+  killer: number;
+  x: number;
+  y: number;
+  kind: number;
+}
+/** F7: the round's end as a majority agreed it. `alive` is the sim's own alive set at the end (ascending ids); `players` how many the sim holds. */
+export interface ResolvedRoundEnd {
+  tick: number;
+  win: boolean;
+  players: number;
+  alive: number[];
+}
+export interface ResolvedRoundStart {
+  tick: number;
+  active: number;
+}
+
+/** An open tally. `group` names the thing being claimed (rivals share it, so one wins); `key` the exact content. */
 interface ClaimTally {
-  death: ResolvedDeath;
+  group: string;
+  tick: number;
   votes: Set<number>;
   firstAt: number;
+  /** Fires once, when the tally resolves. */
+  fire: () => void;
+  /** Log fields for an unresolved tally. */
+  what: Record<string, string | number>;
 }
 
 interface Checkpoint {
@@ -225,6 +251,15 @@ export class World {
   resetting = false;
   /** Called once per death a majority agreed on (the server turns it into stats and achievements). Never touches the sim. */
   onDeathResolved: ((d: ResolvedDeath) => void) | null = null;
+  /** F7: the same for an enemy kill, the round's start and the round's end (all majority claims; the server never steps the sim). */
+  onKillResolved: ((k: ResolvedKill) => void) | null = null;
+  onRoundStartResolved: ((r: ResolvedRoundStart) => void) | null = null;
+  onRoundEndResolved: ((r: ResolvedRoundEnd) => void) | null = null;
+  /** F7: a majority has agreed the Survival round started / ended. In memory only: a restart forgets `roundRunning` (the
+   * lobby gate then stays shut until the next start claim, which cannot come, so see main.ts); `roundEnded` is also
+   * persisted on the room row by main.ts. */
+  roundRunning = false;
+  roundEnded = false;
   /** Test and telemetry hook: called after each closed tick has been broadcast. */
   onTickClosed: ((tick: number) => void) | null = null;
 
@@ -820,6 +855,8 @@ export class World {
       this.claims.clear();
       this.resolvedDeaths.clear();
       this.seenPlayers.clear();
+      this.roundRunning = false;
+      this.roundEnded = false;
       Object.assign(this.stats, { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 });
       this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, members: victims.length }, "warn");
       return { oldTick, closed: victims.length };
@@ -1098,12 +1135,69 @@ export class World {
    * target at that tick (the same test as HASH). A claim is a report, never a sim input (invariant 9).
    */
   onClaim(memberId: number, claimed: ResolvedDeath): void {
+    const m = this.admitClaim(memberId, claimed.tick);
+    if (!m) return;
+    // Only players this world has seen join can die or kill: a forged id must never reach player_stats (a foreign key).
+    if (!this.seenPlayers.has(claimed.victim)) {
+      this.elog.limited(`claim_unknown:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_unknown_player" }, "warn");
+      return;
+    }
+    // An unknown killer is not refused (the death is real) but is credited to nobody.
+    const d: ResolvedDeath = this.seenPlayers.has(claimed.killer) ? claimed : { ...claimed, killer: 0 };
+    const key = `${d.tick}:${d.victim}:${d.killer}:${d.cause}:${d.bag}`;
+    this.vote(memberId, m, `${d.tick}:${d.victim}`, key, d.tick, () => this.onDeathResolved?.({ ...d }), { victim: d.victim });
+  }
+
+  /** F7: an enemy kill. Rivals are claims about the same enemy (same tick and position) naming a different killer or kind. */
+  onKillClaim(memberId: number, k: ResolvedKill): void {
+    const m = this.admitClaim(memberId, k.tick);
+    if (!m) return;
+    const kk: ResolvedKill = this.seenPlayers.has(k.killer) ? k : { ...k, killer: 0 };
+    const group = `k:${kk.tick}:${kk.x}:${kk.y}`;
+    this.vote(memberId, m, group, `${group}:${kk.killer}:${kk.kind}`, kk.tick, () => this.onKillResolved?.({ ...kk }), { kind: "kill" });
+  }
+
+  /** F7: the round started. One group for the whole room, so a rival start claim at another tick is a dissent. */
+  onRoundStartClaim(memberId: number, r: ResolvedRoundStart): void {
+    const m = this.admitClaim(memberId, r.tick);
+    if (!m) return;
+    if (this.cfg.round !== 1) return void this.badClaim(memberId, m, "claim_no_round");
+    this.vote(memberId, m, "rs", `rs:${r.tick}:${r.active}`, r.tick, () => {
+      this.roundRunning = true;
+      this.onRoundStartResolved?.({ ...r });
+    }, { kind: "round_start" });
+  }
+
+  /**
+   * F7: the round ended. `alive` is whatever the client's sim reported as alive at the end (the sim's own rule, not
+   * recomputed here); it is part of the key, so the majority must agree on the set. Ids the world never saw are refused.
+   */
+  onRoundEndClaim(memberId: number, r: ResolvedRoundEnd): void {
+    const m = this.admitClaim(memberId, r.tick);
+    if (!m) return;
+    if (this.cfg.round !== 1) return void this.badClaim(memberId, m, "claim_no_round");
+    for (const id of r.alive) if (!this.seenPlayers.has(id)) return void this.badClaim(memberId, m, "claim_unknown_player");
+    if (r.win && r.alive.length === 0) return void this.badClaim(memberId, m, "claim_win_nobody_alive"); // a win needs a survivor
+    const alive = [...new Set(r.alive)].sort((a, b) => a - b);
+    this.vote(memberId, m, "re", `re:${r.tick}:${r.win ? 1 : 0}:${r.players}:${alive.join(",")}`, r.tick, () => {
+      this.roundEnded = true;
+      this.roundRunning = false;
+      this.onRoundEndResolved?.({ tick: r.tick, win: r.win, players: r.players, alive });
+    }, { kind: "round_end" });
+  }
+
+  private badClaim(memberId: number, m: Member, reason: string): void {
+    this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason }, "warn");
+  }
+
+  /** Shared admission for every claim kind: the world is live, the voter registered and under its rate, the tick plausible. */
+  private admitClaim(memberId: number, tick: number): Member | null {
     const m = this.members.get(memberId);
-    if (this.resetting || !m || this.kind !== WORLD_GAME) return;
+    if (this.resetting || !m || this.kind !== WORLD_GAME) return null;
     // Only a registered visitor may vote: an anonymous socket is free, a registration is rate limited (D-119).
     if (!m.visitorId) {
       this.elog.limited(`claim_anon:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_anonymous" }, "warn");
-      return;
+      return null;
     }
     const t = this.now();
     if (t - m.claimWindowStart >= CLAIM_RATE_MS) {
@@ -1112,31 +1206,27 @@ export class World {
     }
     if (++m.claimsInWindow > CLAIMS_PER_WINDOW) {
       this.elog.limited(`claim_rate:${memberId}`, 10_000, "input.rate_limited", { world: this.id, conn: memberId, who: this.whoOf(m), limit: CLAIMS_PER_WINDOW, what: "claim" }, "warn");
-      return;
+      return null;
     }
-    // Only players this world has seen join can die or kill: a forged id must never reach player_stats (a foreign key).
-    if (!this.seenPlayers.has(claimed.victim)) {
-      this.elog.limited(`claim_unknown:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_unknown_player" }, "warn");
-      return;
-    }
-    // An unknown killer is not refused (the death is real) but is credited to nobody.
-    const d: ResolvedDeath = this.seenPlayers.has(claimed.killer) ? claimed : { ...claimed, killer: 0 };
     const last = this.clock.lastClosed;
     // A future tick cannot have happened yet; an old one, or one from before this client's replay target, is not a witness.
-    if (d.tick > last || d.tick < last - CLAIM_WINDOW_TICKS || d.tick <= m.minHashTick || d.tick < 1) {
-      this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_tick", tick: d.tick, closed: last }, "warn");
-      return;
+    if (tick > last || tick < last - CLAIM_WINDOW_TICKS || tick <= m.minHashTick || tick < 1) {
+      this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_tick", tick, closed: last }, "warn");
+      return null;
     }
-    const key = `${d.tick}:${d.victim}:${d.killer}:${d.cause}:${d.bag}`;
-    const won = this.resolvedDeaths.get(`${d.tick}:${d.victim}`);
+    return m;
+  }
+
+  private vote(memberId: number, m: Member, group: string, key: string, tick: number, fire: () => void, what: Record<string, string | number>): void {
+    const won = this.resolvedDeaths.get(group);
     if (won !== undefined) {
-      if (won !== key) this.elog.limited("claim_dissent", 10_000, "claim.unresolved", { world: this.id, tick: d.tick, victim: d.victim, reason: "dissent", who: this.whoOf(m) }, "warn");
+      if (won !== key) this.elog.limited("claim_dissent", 10_000, "claim.unresolved", { world: this.id, tick, reason: "dissent", who: this.whoOf(m), ...what }, "warn");
       return;
     }
     let tally = this.claims.get(key);
     if (!tally) {
       if (this.claims.size >= MAX_OPEN_CLAIMS) this.claims.delete(this.claims.keys().next().value!);
-      this.claims.set(key, (tally = { death: { ...d }, votes: new Set(), firstAt: t }));
+      this.claims.set(key, (tally = { group, tick, votes: new Set(), firstAt: this.now(), fire, what }));
     }
     tally.votes.add(memberId); // a Set: the same connection voting again changes nothing
     this.tryResolveClaim(key, tally);
@@ -1154,33 +1244,31 @@ export class World {
     const seen = new Set<number>();
     for (const id of tally.votes) {
       const m = this.members.get(id);
-      if (m && m.visitorId && m.minHashTick < tally.death.tick) seen.add(m.visitorId);
+      if (m && m.visitorId && m.minHashTick < tally.tick) seen.add(m.visitorId);
     }
     return seen.size;
   }
 
   private tryResolveClaim(key: string, tally: ClaimTally): void {
-    const d = tally.death;
-    const need = Math.ceil(this.eligibleAt(d.tick) / 2);
+    const need = Math.ceil(this.eligibleAt(tally.tick) / 2);
     const votes = this.liveVotes(tally);
     if (need < 1 || votes < need) return;
-    // Conflicting claims for the same death mean someone desynced. Only a strictly larger group than every rival wins;
+    // Conflicting claims for the same event mean someone desynced. Only a strictly larger group than every rival wins;
     // a tie waits for the timeout and is then dropped. (With two eligible clients one vote is a majority, so the first
     // claim wins; the dissenter is logged when its claim arrives.)
     let rival = 0;
-    for (const [k, o] of this.claims) if (k !== key && o.death.tick === d.tick && o.death.victim === d.victim) rival = Math.max(rival, this.liveVotes(o));
+    for (const [k, o] of this.claims) if (k !== key && o.group === tally.group) rival = Math.max(rival, this.liveVotes(o));
     if (rival >= votes) return;
-    const pair = `${d.tick}:${d.victim}`;
     for (const [k, o] of this.claims) {
-      if (k !== key && o.death.tick === d.tick && o.death.victim === d.victim) {
+      if (k !== key && o.group === tally.group) {
         this.claims.delete(k);
-        this.elog.limited("claim_conflict", 10_000, "claim.unresolved", { world: this.id, tick: d.tick, victim: d.victim, reason: "conflict", agreeing: votes, disagreeing: o.votes.size }, "warn");
+        this.elog.limited("claim_conflict", 10_000, "claim.unresolved", { world: this.id, tick: tally.tick, reason: "conflict", agreeing: votes, disagreeing: o.votes.size, ...tally.what }, "warn");
       }
     }
     this.claims.delete(key);
-    this.resolvedDeaths.set(pair, key);
+    this.resolvedDeaths.set(tally.group, key);
     if (this.resolvedDeaths.size > MAX_RESOLVED_DEATHS) this.resolvedDeaths.delete(this.resolvedDeaths.keys().next().value!);
-    this.onDeathResolved?.({ ...d });
+    tally.fire();
   }
 
   /** Re-check open claims (members may have left, shrinking the quorum) and drop the ones that never reached it. */
@@ -1191,7 +1279,7 @@ export class World {
       this.tryResolveClaim(key, tally);
       if (this.claims.has(key) && t - tally.firstAt >= CLAIM_WINDOW_MS) {
         this.claims.delete(key);
-        this.elog.limited("claim_unresolved", 10_000, "claim.unresolved", { world: this.id, tick: tally.death.tick, victim: tally.death.victim, votes: tally.votes.size, eligible: this.eligibleAt(tally.death.tick) }, "warn");
+        this.elog.limited("claim_unresolved", 10_000, "claim.unresolved", { world: this.id, tick: tally.tick, votes: tally.votes.size, eligible: this.eligibleAt(tally.tick), ...tally.what }, "warn");
       }
     }
   }

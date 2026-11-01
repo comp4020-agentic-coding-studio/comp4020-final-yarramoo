@@ -29,6 +29,8 @@ export interface RoomRow {
   creatorPlayerId: number | null;
   createdAt: number;
   lastActive: number;
+  /** F7: when a majority said the round ended, else null. */
+  endedAt: number | null;
 }
 
 export interface CreateRoomOpts {
@@ -66,6 +68,7 @@ function rowToRoom(r: {
   creator_player_id: number | null;
   created_at: number;
   last_active: number;
+  ended_at: number | null;
 }): RoomRow {
   return {
     id: r.id,
@@ -77,6 +80,7 @@ function rowToRoom(r: {
     creatorPlayerId: r.creator_player_id,
     createdAt: r.created_at,
     lastActive: r.last_active,
+    endedAt: r.ended_at ?? null,
   };
 }
 
@@ -123,7 +127,7 @@ export class RoomsStore {
           "insert into rooms (code, name, mode, config, visibility, creator_player_id, created_at, last_active) values (?, ?, ?, ?, ?, ?, ?, ?)",
         ).run(code, name, mode, opts.config, visibility, opts.creatorPlayerId, now, now);
         const id = Number(r.lastInsertRowid);
-        return { ok: true, room: { id, code, name, mode, config: opts.config, visibility, creatorPlayerId: opts.creatorPlayerId, createdAt: now, lastActive: now } };
+        return { ok: true, room: { id, code, name, mode, config: opts.config, visibility, creatorPlayerId: opts.creatorPlayerId, createdAt: now, lastActive: now, endedAt: null } };
       } catch (e) {
         // A unique-constraint violation on `code` is the only expected failure here; anything else rethrows.
         if (String(e).includes("UNIQUE") && String(e).includes("code")) continue;
@@ -140,7 +144,7 @@ export class RoomsStore {
   }
 
   getRoomById(id: number): RoomRow | null {
-    const r = this.q("select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active from rooms where id = ?").get(id) as
+    const r = this.q("select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at from rooms where id = ?").get(id) as
       | Parameters<typeof rowToRoom>[0]
       | undefined;
     return r ? rowToRoom(r) : null;
@@ -149,7 +153,7 @@ export class RoomsStore {
   /** Case-insensitive: the plan says "six characters, case-insensitive". */
   getRoomByCode(code: string): RoomRow | null {
     const r = this.q(
-      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active from rooms where upper(code) = upper(?)",
+      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at from rooms where upper(code) = upper(?)",
     ).get(code) as Parameters<typeof rowToRoom>[0] | undefined;
     return r ? rowToRoom(r) : null;
   }
@@ -164,9 +168,14 @@ export class RoomsStore {
     const rows = this.q(
       // `id desc` breaks ties: two rooms created in the same millisecond (Date.now() resolution) would
       // otherwise come back in an arbitrary order (sqlite doesn't guarantee one for equal sort keys).
-      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active from rooms where visibility = 'public' order by last_active desc, id desc limit ?",
+      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at from rooms where visibility = 'public' and ended_at is null order by last_active desc, id desc limit ?",
     ).all(limit) as Parameters<typeof rowToRoom>[0][];
     return rows.map(rowToRoom);
+  }
+
+  /** F7: mark a room's round over (idempotent: the first time wins). */
+  markEnded(id: number): void {
+    this.q("update rooms set ended_at = ? where id = ? and ended_at is null").run(this.now(), id);
   }
 
   /** Count of stored rooms, grouped by mode (admin dashboard). */
