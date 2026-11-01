@@ -1,6 +1,6 @@
 // Owns the sim, the WebSocket and the playout buffer; steps only through closed ticks from the server,
 // and (when it can) renders with WebGL2 into an OffscreenCanvas.
-import { KIND_CAST, KIND_JOIN, KIND_LEAVE, KIND_PAINT, KIND_POS, encodeCast, encodeJoin, encodePaint, encodePos } from "../shared/inputs.ts";
+import { KIND_CAST, KIND_JOIN, KIND_LEAVE, KIND_PAINT, KIND_POS, KIND_READY, encodeCast, encodeJoin, encodePaint, encodePos, encodeReady } from "../shared/inputs.ts";
 import {
   PAINT_PAYLOAD_LEN,
   decodeServer,
@@ -17,7 +17,9 @@ import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
 import {
   ENT_BAG,
   ENT_ENEMY,
+  ENT_READY,
   ENT_ROUND,
+  EV_ROUND_START,
   ENT_PICKUP,
   ENT_PLAYER,
   ENT_PROJECTILE,
@@ -154,6 +156,9 @@ let iAmDead = false;
 let oneLife = false;
 /** The round banner has been posted once (from state or from the event). */
 let roundShown = false;
+/** F6b: the late-arrival check runs once per connection, the first time my player appears in the sim. */
+let lateChecked = false;
+let lateOffer = false;
 /** Last seen y of each enemy and when it was hit (ms), for the squash/stretch and the white flash. Render-only. */
 const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number; kind: number }>();
 /** Last time (ms) a worm rumble played, and the max hp of each enemy kind (render-only table mirroring tuning.rs). */
@@ -301,6 +306,8 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   const sim: Sim = loadSim(wasmBytes);
   sim.init(seed, cfg);
   roundShown = false;
+  lateChecked = false;
+  lateOffer = false;
   names.clear();
   shown.clear();
   avatar = null;
@@ -574,6 +581,18 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     send({ type: "round", win: round.sub === 1 });
   }
 
+  // F6b: the lobby (from the entities view) and the late-arrival offer. Both render-only.
+  let lobby: { running: boolean; left: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null = null;
+  if (round) {
+    const running = (round.health & 1) === 1;
+    lobby = { running, left: round.x, list: running ? [] : ents.filter((e) => e.type === ENT_READY).map((e) => ({ id: e.id, name: nameOf(e.id) ?? "Player", ready: e.active, me: e.id === myId })) };
+    if (!lateChecked && mine && net === "live" && !spectate) {
+      lateChecked = true;
+      lateOffer = running && round.a === 0 && mine.health === 0;
+    }
+    if (round.a === 1) lateOffer = false;
+  }
+
   spellFx(ents, dt, now, rects);
 
   // Camera: the avatar, or for a spectator the first other player; the main thread pans freely otherwise.
@@ -594,7 +613,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   isFollowing = following;
   if (now - lastPlayersPost >= 33) {
     lastPlayersPost = now;
-    send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags,
+    send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer,
       me: spectate || !mine ? null : { health: mine.health, dead, respawnTicks: dead && myDeathTick !== null ? Math.max(0, DEATH_TICKS - (sim.tick() - myDeathTick)) : null } });
   }
   return rects;
@@ -721,6 +740,11 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       fx.burst(e.a / 16, e.b / 16 - 2, dcol, e.c === 4 ? 90 : 22, 0.06);
       if (e.c === 4) fx.burst(e.a / 16, e.b / 16 - 8, [1, 0.8, 0.3], 80, 0.12);
       sfxAt(e.c === 4 ? "bossdeath" : e.c === 1 ? "screech" : e.c === 3 ? "crunch" : "splat", e.a / 16, e.b / 16, 0.6, quiet);
+    } else if (e.kind === EV_ROUND_START) {
+      if (!quiet) {
+        send({ type: "toast", text: "Descend!" });
+        sfxSelf("descend", false);
+      }
     } else if (e.kind === EV_ROUND_END) {
       if (!quiet && !roundShown) {
         roundShown = true;
@@ -965,6 +989,8 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
       myId = DEV_ID;
       myName = "You";
       sim.pushInput(encodeJoin(DEV_ID));
+      // F6b: the dev route must not sit in the Survival lobby: the dev avatar readies at once (the round starts 3 s later).
+      if (m.local.cfg === "survival") sim.pushInput(encodeReady(DEV_ID, 1));
     }
     setNet("live");
     send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null });
@@ -1031,6 +1057,11 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       }
       break;
     }
+    case "ready":
+      if (spectate || !avatar || !avatarReady || net !== "live") break;
+      if (localSim) localSim.pushInput(encodeReady(myId, m.ready ? 1 : 0));
+      else if (ws && ws.readyState === WebSocket.OPEN) ws.send(encodeInput(++inputSeq, KIND_READY, encodeReady(0, m.ready ? 1 : 0).subarray(5)) as BufferSource);
+      break;
     case "sleep":
       localSim?.setSleepEnabled(m.on);
       break;

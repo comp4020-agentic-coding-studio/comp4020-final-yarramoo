@@ -42,6 +42,8 @@ export type ToWorker =
   /** Switch to sending frames to the main thread (render fallback). */
   | { type: "frames" }
   | { type: "devgoto"; spell: number }
+  /** F6b: toggle my lobby ready flag (the worker sends the Ready input; the sim ignores it outside a Survival lobby). */
+  | { type: "ready"; ready: boolean }
   | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number; fillEmpty: boolean };
 
 export type FromWorker =
@@ -85,6 +87,10 @@ export type FromWorker =
       boss: { hp: number; max: number; phase: number } | null;
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
+      /** F6b: the Survival lobby (null when the room has no round). `left` is ticks of countdown left, -1 when none runs. Names are plain. Render-only. */
+      lobby: { running: boolean; left: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null;
+      /** F6b: I arrived after the descent began (the sim made me a dead spectator): offer the choice. */
+      late: boolean;
     }
   /** A sound for the main thread to synthesise (client/sfx.ts). `vol` 0..1 and `pan` -1..1 are already worked out from the camera distance; `mag` 0..1 scales explosions. Never sent during replay. */
   | { type: "sfx"; name: SfxName; vol: number; pan: number; mag: number }

@@ -693,6 +693,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
     lastPlayers = m;
     updateBossBar(m.boss);
+    updateLobby(m.lobby, m.late);
     if (m.following && !overview) {
       camera.x = m.cam.x;
       camera.y = m.cam.y;
@@ -738,6 +739,122 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     el.hidden = false;
     el.dataset.phase = String(b.phase);
     (el.querySelector("b") as HTMLElement).style.width = `${Math.max(0, Math.min(100, (b.hp * 100) / b.max))}%`;
+  }
+
+  // F6b (D-166): the Survival lobby overlay and the late-arrival panel. Names are plain (textContent only).
+  let lobbyEl: HTMLElement | null = null;
+  let lobbyKey = "";
+  let lobbyWasRunning = false;
+  let lateEl: HTMLElement | null = null;
+  const toggleReady = () => {
+    const me = lastPlayers?.lobby?.list.find((p) => p.me);
+    if (me && lastPlayers?.lobby && !lastPlayers.lobby.running) send({ type: "ready", ready: !me.ready });
+  };
+  addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key.toLowerCase() === "r") toggleReady();
+  });
+  function newSurvivalRoom(btn: HTMLButtonElement, err: HTMLElement): void {
+    btn.disabled = true;
+    const b64 = btoa(String.fromCharCode(...encodeConfig(SURVIVAL)));
+    fetch("/api/rooms", { method: "POST", body: JSON.stringify({ name: "Survival", mode: "survival", config: b64, visibility: "public" }) })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(r.status === 429 ? "Too many rooms today." : "Could not create a room.");
+        location.href = `/r/${((await r.json()) as { code: string }).code}`;
+      })
+      .catch((e) => {
+        btn.disabled = false;
+        err.hidden = false;
+        err.textContent = String(e.message ?? e);
+      });
+  }
+  function updateLobby(l: Extract<FromWorker, { type: "players" }>["lobby"], late: boolean): void {
+    if (!l || l.running) {
+      lobbyEl?.remove();
+      lobbyEl = null;
+      lobbyKey = "";
+    }
+    lobbyWasRunning = !!l?.running;
+    // The late-arrival choice: stay as a pure spectator (reload with ?spectate=1, so the dead joiner's connection closes
+    // and no player is added), find another room, or start a new one.
+    if (late && !lateEl && !spectate) {
+      const el = document.createElement("div");
+      el.id = "latePanel";
+      const h = document.createElement("h2");
+      h.textContent = "The descent has begun";
+      const p = document.createElement("p");
+      p.textContent = "This party is already underground. You can watch, or look for another room.";
+      const err = document.createElement("p");
+      err.hidden = true;
+      err.className = "err";
+      const mk = (text: string, f: (b: HTMLButtonElement) => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn";
+        b.textContent = text;
+        b.addEventListener("click", () => f(b));
+        return b;
+      };
+      const row = document.createElement("div");
+      row.append(
+        mk("Spectate", () => {
+          const u = new URL(location.href);
+          u.searchParams.set("spectate", "1");
+          location.href = u.toString();
+        }),
+        mk("Find another room", () => (location.href = "/")),
+        mk("Start a new room", (b) => newSurvivalRoom(b, err)),
+      );
+      el.append(h, p, row, err);
+      stage.append(el);
+      lateEl = el;
+    }
+    if (!late && lateEl) {
+      lateEl.remove();
+      lateEl = null;
+    }
+    if (!l || l.running) return;
+    const waiting = l.list.filter((p) => !p.ready).length;
+    const secs = l.left >= 0 ? Math.ceil(l.left / 60) : -1;
+    const me = l.list.find((p) => p.me);
+    const key = JSON.stringify([l.list.map((p) => [p.id, p.name, p.ready]), secs, !!me]);
+    if (key === lobbyKey && lobbyEl) return;
+    lobbyKey = key;
+    if (!lobbyEl) {
+      lobbyEl = document.createElement("div");
+      lobbyEl.id = "lobby";
+      stage.append(lobbyEl);
+    }
+    const el = lobbyEl;
+    el.replaceChildren();
+    const h = document.createElement("h2");
+    h.textContent = secs >= 0 ? String(secs) : "Survival lobby";
+    h.className = secs >= 0 ? "count" : "";
+    const sub = document.createElement("p");
+    sub.className = "sub";
+    sub.textContent = secs >= 0 ? "Descending..." : waiting > 0 ? `Waiting for ${waiting}` : "Ready up to begin";
+    const about = document.createElement("p");
+    about.textContent = "Co-op, one life: descend together and kill the Deep Mage.";
+    const ul = document.createElement("ul");
+    for (const p of l.list) {
+      const li = document.createElement("li");
+      const tick = document.createElement("span");
+      tick.className = p.ready ? "tick on" : "tick";
+      tick.textContent = p.ready ? "\u2713" : "\u2022";
+      const name = document.createElement("span");
+      name.textContent = p.name + (p.me ? " (you)" : "");
+      li.append(tick, name);
+      ul.append(li);
+    }
+    el.append(h, sub, about, ul);
+    if (me) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn";
+      b.textContent = me.ready ? "Not ready (R)" : "Ready (R)";
+      b.addEventListener("click", toggleReady);
+      el.append(b);
+    }
   }
 
   /** One-life round over (D-160): a banner with a button that makes a fresh Survival room and goes there. */

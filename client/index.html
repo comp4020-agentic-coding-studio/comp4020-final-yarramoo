@@ -83,6 +83,16 @@
     #roundBanner { position: absolute; left: 50%; top: 35%; transform: translate(-50%, -50%); text-align: center; background: rgba(0,0,0,0.78); padding: 18px 28px; border-radius: 10px; color: #fff; z-index: 5; }
     #roundBanner h2 { margin: 0 0 12px; font-size: 26px; }
     #roundBanner p { margin: 8px 0 0; color: #f88; font-size: 13px; }
+    #lobby, #latePanel { position: absolute; left: 50%; top: 32%; transform: translate(-50%, -50%); text-align: center; background: rgba(0,0,0,0.78); padding: 14px 24px; border-radius: 10px; color: #fff; z-index: 5; min-width: 240px; max-width: 90%; }
+    #lobby h2, #latePanel h2 { margin: 0 0 6px; font-size: 22px; }
+    #lobby h2.count { font-size: 56px; line-height: 1; }
+    #lobby p, #latePanel p { margin: 4px 0; font-size: 13px; color: #cfd6e6; }
+    #lobby p.sub { color: #ffe29a; }
+    #lobby ul { list-style: none; margin: 8px 0; padding: 0; text-align: left; font-size: 14px; }
+    #lobby li { display: flex; gap: 8px; padding: 1px 0; }
+    #lobby .tick { width: 1em; color: #7b8294; text-align: center; } #lobby .tick.on { color: #6ee787; }
+    #latePanel p.err { color: #f88; }
+    #latePanel .btn { margin: 6px 4px 0; }
     #toasts { position: absolute; left: 8px; top: 34px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: calc(100% - 120px); }
     #toasts div { font-size: 12px; line-height: 1.2; padding: 3px 7px; border-radius: 4px; background: rgba(11,14,20,.78); color: #fff; align-self: flex-start; overflow-wrap: anywhere; transition: opacity .6s; }
     #toasts div.ach { background: rgba(60,45,8,.88); border: 1px solid #f0b429; color: #ffe29a; }
