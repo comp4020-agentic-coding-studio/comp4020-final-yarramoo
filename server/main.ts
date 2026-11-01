@@ -207,6 +207,9 @@ export function buildHash(wasmPath = WASM_PATH): Buffer {
 
 export interface ServerOptions {
   port?: number;
+  /** A fixed world (sandbox or game) failed its tick: production exits so the platform restarts it, as at boot. Unset in
+   * tests, where the world just stays closed. Rooms never call this: a failed room is dropped and reloads on demand. */
+  onFatal?: (world: number) => void;
   wasmPath?: string;
   clientDir?: string;
   /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
@@ -370,9 +373,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     } catch {
       // the world is already broken; closing it is best effort
     }
-    // The fixed worlds stay registered (a join to a closing world is refused with "server is shutting down" and
-    // the world is skipped by tick); a room is dropped so the next HELLO loads it fresh from the database.
+    // A room is dropped so the next HELLO loads it fresh from the database. A fixed world can't be reloaded in
+    // place, and left closed it would refuse every join until the next deploy, so production restarts the
+    // process (the same "let the platform restart us" as a boot-time verify failure). Its log is already durable.
     if (w.id !== SANDBOX_ID && w.id !== GAME_ID) worlds.delete(w.id);
+    else opts.onFatal?.(w.id);
   }
 
   function totalMembers(): number {
@@ -1368,7 +1373,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     throw e;
   });
   const port = Number(process.env.PORT ?? 8080);
-  s = await startServer({ port });
+  s = await startServer({ port, onFatal: () => void s?.close().finally(() => process.exit(1)) });
   const srv = s;
   // process.minute: health once a minute. The RSS warning is this event at warn level.
   setInterval(() => {

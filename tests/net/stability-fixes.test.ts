@@ -82,7 +82,8 @@ describe("fix 2: database errors in incident handling and a throwing world tick"
   });
 
   it("a world whose tick throws is closed alone; the other worlds keep ticking", async () => {
-    const s = await startServer({ port: 0, dataDir: null, quiet: true });
+    const fatal: number[] = [];
+    const s = await startServer({ port: 0, dataDir: null, quiet: true, onFatal: (w) => fatal.push(w) });
     cleanups.push(() => s.close());
     const sandbox = s.worlds.get(0)!;
     const game = s.worlds.get(1)!;
@@ -96,6 +97,8 @@ describe("fix 2: database errors in incident handling and a throwing world tick"
     await sleep(500);
     expect(sandbox.clock.lastClosed).toBeGreaterThan(before);
     expect(game.closing).toBe(true);
+    // A fixed world can't reload in place, so the server asks to be restarted (production exits on this).
+    expect(fatal).toEqual([1]);
     a.close();
   });
 });
