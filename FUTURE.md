@@ -560,3 +560,22 @@ Give Pebbles a per-cell shade in the shader, so a heap reads as gravel rather th
 
 - **Source:** brief B's worker report, 3 Nov.
 - **Why:** cheap and client-only, and it makes "rock that fell" more obvious.
+
+## Music for the game and the main menu
+
+A music track for the menu and one (or a few) for play, ideally changing with depth: calm at the surface,
+darker in the caves, and a boss theme for the Deep Mage's arena. It needs a mute or volume control next to the
+existing Sound button, and a separate setting from sound effects.
+
+- **Source:** the user, 4 Nov (added to the list while away at work).
+- **Why:** sound is most of a game's feel, and the menu is currently silent. Two cheap options, both
+  client-only (no sim or protocol change):
+  - **Synthesised, like the sound effects:** `client/sfx.ts` already makes every effect with WebAudio and
+    ships no audio files. A small generative sequencer (a few chords and a pentatonic melody, a slow
+    arpeggio) could do the same with zero download. Its mood follows the camera's depth band
+    (`SHALLOW_TOP`/`DEEP_TOP`) and the boss bar. Low risk and fits the existing style.
+  - **Audio files:** composed or licensed loops (CC0 or CC-BY, credited in the README) as compressed `.ogg`
+    or `.mp3` in `client/public/`. Richer sound, but it adds download weight and a licence trail.
+- **Notes:** browsers block audio until the first click or key, so the menu track can only start after an
+  interaction (the existing Sound button already handles that). Respect the mute state in `localStorage`.
+  Crossfade between tracks rather than cutting. Pairs with the "volume slider and ambient beds" entry above.
