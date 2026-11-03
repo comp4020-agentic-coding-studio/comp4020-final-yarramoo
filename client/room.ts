@@ -113,12 +113,12 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     toolBrushBtn.onclick = () => {
       toolMode = "brush";
       applyToolMode();
-      spellBar.hidden = true;
+      setBarHidden(true);
     };
     toolSpellsBtn.onclick = () => {
       toolMode = "spells";
       applyToolMode();
-      spellBar.hidden = !steersAvatar() || !(lastPlayers?.spells ?? false);
+      setBarHidden(!steersAvatar() || !(lastPlayers?.spells ?? false));
     };
   }
 
@@ -187,7 +187,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const modeKey = `${cfg.terrain}-${cfg.avatars}-${cfg.brushes}`;
     const seenKey = HINT_SEEN_PREFIX + modeKey;
     if (localKind === null && !store.get(seenKey)) {
-      const text = cfg.brushes === 1 ? "Paint: pick a material, drag to place it." : avatarCapable ? "Move: WASD/arrows. Cast: click and aim. Dig through caves." : "Paint: pick a material, drag to place it.";
+      const text = cfg.brushes === 1 ? "Paint: pick a material, drag to place it." : avatarCapable ? "Move: WASD/arrows. Cast: click and aim. Pick a spell with 1-0, Q/E or a click. Dig through caves." : "Paint: pick a material, drag to place it.";
       hintTextEl.textContent = text;
       hintEl.hidden = false;
       const dismiss = () => {
@@ -252,10 +252,17 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     return c;
   }
 
+  /** The bar's height is reserved as bottom padding on the stage, so the canvas ends above it. */
+  function setBarHidden(hidden: boolean) {
+    spellBar.hidden = hidden;
+    stage.classList.toggle("has-bar", !hidden);
+  }
+
   function layout(): { w: number; h: number } {
     const dpr = window.devicePixelRatio || 1;
+    const pad = parseFloat(getComputedStyle(stage).paddingBottom) || 0;
     const aw = Math.max(64, stage.clientWidth);
-    const ah = Math.max(64, stage.clientHeight);
+    const ah = Math.max(64, stage.clientHeight - pad);
     const fit = Math.min(aw / camera.vw, ah / camera.vh);
     const k = Math.floor(fit);
     const scale = k >= 1 ? k : fit;
@@ -413,13 +420,27 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       up: held.has("arrowup") || held.has("w") || held.has(" "),
     });
   }
+  /** Digit keys pick slots: 1-9 are slots 1-9, 0 is slot 10, Shift+1 is slot 11, Shift+2 slot 12, and so on.
+   * Read from e.code (a Shift'd digit's e.key is "!"), and -/= stay free for zoom. */
+  function digitSlot(e: KeyboardEvent): number | null {
+    if (e.ctrlKey || e.metaKey || e.altKey) return null;
+    const m = /^Digit([0-9])$/.exec(e.code);
+    if (!m) return null;
+    const n = Number(m[1]);
+    if (e.shiftKey) return n === 0 ? null : 9 + n;
+    return n === 0 ? 9 : n - 1;
+  }
+  function pickSlot(i: number) {
+    selectedSpell = BAR[i];
+    placeDigPreview();
+    renderSpellBar();
+  }
   addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return;
     const k = e.key.toLowerCase();
-    if (castsOnClick() && k >= "1" && k <= String(Math.min(9, BAR.length))) {
-      selectedSpell = BAR[Number(k) - 1];
-      placeDigPreview();
-      renderSpellBar();
+    const slot = digitSlot(e);
+    if (castsOnClick() && slot !== null && slot < BAR.length) {
+      pickSlot(slot);
       return;
     }
     // Q and E step back and forth through the whole bar (the wheel and -/= are zoom, and only nine digits fit).
@@ -651,6 +672,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     setTimeout(() => el.classList.add("fade"), TOAST_MS - 600);
     setTimeout(() => el.remove(), TOAST_MS);
   }
+  /** Shorter tile labels so twelve fit in one row; the full name is the tile's tooltip. */
+  const SHORT_NAMES: Record<string, string> = { "Acid Flask": "Acid", "Oil Flask": "Oil", "Lava Flask": "Lava", "Black Hole": "Hole" };
   const spellBar = document.createElement("div");
   spellBar.id = "spells";
   spellBar.hidden = true;
@@ -658,15 +681,23 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const slotEls = BAR.map((spell, i) => {
     const el = document.createElement("div");
     el.className = "slot";
+    el.title = SPELLS[spell].name;
+    // A click picks the slot. The slots are siblings of the canvas, not children, so the click never reaches
+    // the canvas handler; stopping propagation also keeps it from the hint's dismiss and any window handler.
+    el.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (castsOnClick()) pickSlot(i);
+    });
     const sw = document.createElement("i");
     sw.className = "sw";
     sw.style.background = SPELLS[spell].colour.map((v) => Math.round(v * 255)).reduce((a, v, j) => a + v.toString(16).padStart(2, "0"), "#");
     const key = document.createElement("span");
     key.className = "key";
-    key.textContent = i < 9 ? String(i + 1) : "";
+    key.textContent = i < 9 ? String(i + 1) : i === 9 ? "0" : `\u21e7${i - 9}`;
     const nm = document.createElement("span");
     nm.className = "nm";
-    nm.textContent = SPELLS[spell].name;
+    nm.textContent = SHORT_NAMES[SPELLS[spell].name] ?? SPELLS[spell].name;
     const ch = document.createElement("span");
     ch.className = "ch";
     const cd = document.createElement("div");
@@ -675,13 +706,18 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     spellBar.append(el);
     return { el, ch, cd, spell };
   });
+  const barHint = document.createElement("span");
+  barHint.className = "barhint";
+  barHint.textContent = "Q/E";
+  barHint.title = "Q and E step through the spells";
+  spellBar.append(barHint);
   function renderSpellBar() {
     const v = lastPlayers?.spells ?? null;
     slotEls.forEach((s) => {
       const charges = v ? v.charges[s.spell] : 0;
       s.el.classList.toggle("sel", s.spell === selectedSpell);
       s.el.classList.toggle("empty", charges === 0);
-      s.ch.textContent = charges === INFINITE ? "inf" : String(charges);
+      s.ch.textContent = charges === INFINITE ? "\u221e" : String(charges);
       const left = v ? v.cooldown[s.spell] : 0;
       s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[s.spell].cooldown) * 100))}%`;
     });
@@ -707,7 +743,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     hud.hidden = !steersAvatar();
     // In a dual-tools room (Creative), the spell bar only shows while the switch is set to Spells, so it
     // never competes with the brush panel for the same screen space.
-    spellBar.hidden = !steersAvatar() || !m.spells || (dualTools && toolMode !== "spells");
+    setBarHidden(!steersAvatar() || !m.spells || (dualTools && toolMode !== "spells"));
     renderSpellBar();
     const bars = hud.querySelectorAll<HTMLElement>(".bar i");
     bars[0].style.width = `${Math.round((m.energy / m.energyMax) * 100)}%`;
