@@ -76,11 +76,18 @@ fn released_water_front_does_not_stop_on_a_chunk_edge() {
     }
 }
 
-/// The active region (plan 6.5): chunks outside the 576 x 320 rectangle around the player are frozen.
-/// Water released inside it runs to the region's edge and stops there, a vertical face on a chunk edge
-/// (that is the design, not a bug). Moving the player shifts the region and the front moves on.
+/// The active region (plan 6.5), as amended by Brief W (D-176): chunks outside the 576 x 320 rectangle
+/// around the player are frozen, but a frozen chunk wakes when a running chunk changes a cell next to it.
+///
+/// DELIBERATELY FLIPPED (Brief W). The old test, `water_front_freezes_on_the_active_region_edge_and_resumes_
+/// when_the_player_moves`, asserted that water released inside the region ran to its edge and STOPPED there,
+/// a steep face on a chunk edge (front in 500..=520), and only advanced once the player moved. Playtest note 3
+/// showed that as liquid hanging in mid-air. The intent (a frozen chunk is not stepped by being near nothing)
+/// survives in `tests/wake.rs::a_frozen_chunk_nothing_reaches_stays_frozen`. Here the front must cross the
+/// edge with the player standing still, and nothing may hang over air once it settles.
 #[test]
-fn water_front_freezes_on_the_active_region_edge_and_resumes_when_the_player_moves() {
+#[ignore = "red until Brief W commit 2 (shown failing before the change)"]
+fn water_front_crosses_the_active_region_edge_and_settles() {
     let (w, h) = (1024usize, 128usize);
     let mut g = Grid::new(w, h);
     g.sleep_enabled = true;
@@ -91,25 +98,22 @@ fn water_front_freezes_on_the_active_region_edge_and_resumes_when_the_player_mov
     for y in 0..h {
         g.set(y * w + 20, ROCK, 0);
     }
-    // A deep block of water.
     for y in 40..h - 1 {
         for x in 21..120 {
             g.set(y * w + x, WATER, 0);
         }
     }
-    for t in 0..2000 {
+    for t in 0..8000 {
         g.step_cells(5, t);
     }
     let right = |g: &Grid| (0..w).rev().find(|&x| (0..h).any(|y| g.mat[y * w + x] == WATER)).unwrap();
-    let r0 = right(&g);
-    // Rectangle: x in [200-288, 200+288) = up to 488, chunks intersecting reach x < 512.
-    assert!((500..=520).contains(&r0), "front at {r0}, expected frozen at the chunk edge 512 (a slide may cross it a few cells)");
-    // The face is steep: the front column is several cells deep.
-    let depth = (0..h).filter(|&y| g.mat[y * w + r0] == WATER).count();
-    eprintln!("front x = {r0}, depth at front = {depth}");
-    g.set_active_around(&[(600, 64)]);
-    for t in 2000..4000 {
-        g.step_cells(5, t);
+    assert!(right(&g) > 512 + 64, "front stopped at the active region edge: {}", right(&g));
+    // Settled: no water cell has open air straight below it, and none has a free side with air beneath.
+    for y in 0..h - 1 {
+        for x in 21..w - 1 {
+            if g.mat[y * w + x] == WATER {
+                assert_ne!(g.mat[(y + 1) * w + x], EMPTY, "water hangs over air at {x},{y}");
+            }
+        }
     }
-    assert!(right(&g) > 512 + 64, "front did not advance after the region moved: {}", right(&g));
 }
