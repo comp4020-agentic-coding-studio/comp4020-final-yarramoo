@@ -287,7 +287,7 @@ describe("admission caps (brief item 4)", () => {
   });
 });
 
-describe("R4 fix: a Creative room (avatars and brushes both on) accepts Paint over the real socket path", () => {
+describe("R4 fix: a room with avatars and brushes both on (the old Creative config) accepts Paint over the real socket path", () => {
   // RED (before the fix): server/main.ts's input dispatch treated `World.kind === WORLD_GAME` and "accepts
   // Paint" as mutually exclusive (a pre-existing split from before a room's config could set `avatars` and
   // `brushes` independently). Creative has both, so every Paint input was rejected as "bad_kind_or_length"
@@ -295,7 +295,7 @@ describe("R4 fix: a Creative room (avatars and brushes both on) accepts Paint ov
   // Found by booting the real server and joining a real Creative room during R4, not by any existing test.
   it("Paint is stamped into the tick log, not rejected as bad_kind_or_length", async () => {
     const s = await boot(tmp());
-    const created = await createRoom(s.port, { mode: "creative", cfg: CREATIVE });
+    const created = await createRoom(s.port, { mode: "survival", cfg: CREATIVE });
     const who = await register(s.port, "Painter");
     const a = await connect(s.port, hex, { world: created.id, token: who.token });
     const before = s.stats.rejected;
@@ -307,7 +307,7 @@ describe("R4 fix: a Creative room (avatars and brushes both on) accepts Paint ov
 
   it("Pos and Cast still work in the same Creative room (the avatar half is unaffected by the fix)", async () => {
     const s = await boot(tmp());
-    const created = await createRoom(s.port, { mode: "creative", cfg: CREATIVE });
+    const created = await createRoom(s.port, { mode: "survival", cfg: CREATIVE });
     const who = await register(s.port, "Avatar");
     const a = await connect(s.port, hex, { world: created.id, token: who.token });
     const before = s.stats.rejected;

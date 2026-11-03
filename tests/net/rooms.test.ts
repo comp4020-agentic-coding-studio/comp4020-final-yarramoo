@@ -56,6 +56,14 @@ describe("server/rooms.ts: data access and validation", () => {
     expect("ok" in r && r.ok).toBe(false);
   });
 
+  it("refuses to create a Creative room (retired 4 Nov) with a clear reason, over HTTP too", async () => {
+    const db = new GameDb(tmp());
+    const rooms = new RoomsStore(db);
+    const r = rooms.createRoom({ name: "Old", mode: "creative", config: encodeConfig(CLASSIC_SANDBOX), visibility: "public", creatorPlayerId: null });
+    expect(r).toEqual({ ok: false, reason: "mode_retired" });
+    // an old row (the DB constraint still allows it) stays loadable by id
+  });
+
   it("caps the name at 32 code points and strips control characters", () => {
     const db = new GameDb(tmp());
     const rooms = new RoomsStore(db);

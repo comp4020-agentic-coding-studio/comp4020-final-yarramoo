@@ -477,6 +477,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     held.delete(e.key.toLowerCase());
     if (steersAvatar()) sendKeys();
   });
+  document.addEventListener("visibilitychange", () => {
+    held.clear();
+    send({ type: "hidden", hidden: document.hidden });
+    if (steersAvatar()) sendKeys();
+  });
   addEventListener("blur", () => {
     held.clear();
     if (steersAvatar()) sendKeys();

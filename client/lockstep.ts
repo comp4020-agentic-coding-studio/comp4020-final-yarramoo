@@ -20,7 +20,7 @@ export const MAX_EXTRA = 4;
 export class Lockstep {
   readonly sim: Sim;
   private readonly queue = new Map<number, TickInput[]>();
-  private received = 0;
+  received = 0;
   /** Latest closed tick the server has told us about (WELCOME, then every TICK). */
   latestClosed = 0;
   /** Replay target from WELCOME: until sim.tick() reaches it we are fast-forwarding. */
@@ -152,4 +152,35 @@ export function reactToTick(ls: Lockstep, tick: number, wantSnapshotAt: number):
     out.snapshot = { hash: out.hash ?? ls.sim.stateHash(), data: ls.compressedSnapshot() };
   }
   return out;
+}
+
+/** A live client this many ticks behind (2 s) is not keeping up by stepping 4-8 a frame: it fast-forwards instead. */
+export const CATCHUP_THRESHOLD = 120;
+
+/**
+ * One frame of the replay driver. `catching` is the worker's "catching-up" state. A live client whose backlog has
+ * grown past CATCHUP_THRESHOLD (a tab that was hidden, whose frames stopped but whose socket kept receiving) is
+ * switched to catching-up with the target at the tick received so far, exactly like a fresh connect. Returns the
+ * new state and how many ticks ran.
+ */
+export function driveFrame(
+  ls: Lockstep,
+  catching: boolean,
+  base: number,
+  budgetMs: number,
+  now: () => number = () => performance.now(),
+): { catching: boolean; ran: number; entered: boolean } {
+  let entered = false;
+  if (!catching && ls.buffered > CATCHUP_THRESHOLD) {
+    ls.catchUpTarget = ls.received;
+    catching = true;
+    entered = true;
+  }
+  const before = ls.simTick;
+  if (catching) {
+    ls.fastForward(budgetMs, now);
+    if (!ls.fastForwarding) catching = false;
+    return { catching, ran: ls.simTick - before, entered };
+  }
+  return { catching, ran: ls.run(ls.plan(base)), entered };
 }
