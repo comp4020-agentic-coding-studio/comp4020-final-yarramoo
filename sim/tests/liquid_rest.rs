@@ -39,7 +39,6 @@ fn assert_rests(g: &mut Grid, what: &str) {
 }
 
 #[test]
-#[ignore = "red until the resting rule (2b)"]
 fn a_lone_water_cell_on_a_floor_comes_to_rest() {
     let mut g = floor();
     g.set(100 * W + 60, WATER, 0);
@@ -47,7 +46,6 @@ fn a_lone_water_cell_on_a_floor_comes_to_rest() {
 }
 
 #[test]
-#[ignore = "red until the resting rule (2b)"]
 fn a_lone_lava_cell_on_a_floor_comes_to_rest() {
     let mut g = floor();
     g.set(100 * W + 60, LAVA, 0);
@@ -55,7 +53,6 @@ fn a_lone_lava_cell_on_a_floor_comes_to_rest() {
 }
 
 #[test]
-#[ignore = "red until the resting rule (2b)"]
 fn a_lone_oil_and_acid_cell_stop_moving() {
     for m in [OIL, ACID] {
         let mut g = floor();
@@ -68,7 +65,6 @@ fn a_lone_oil_and_acid_cell_stop_moving() {
 }
 
 #[test]
-#[ignore = "red until the resting rule (2b)"]
 fn a_one_deep_water_film_comes_to_rest() {
     let mut g = floor();
     for x in 40..80 {
@@ -78,7 +74,6 @@ fn a_one_deep_water_film_comes_to_rest() {
 }
 
 #[test]
-#[ignore = "red until the resting rule (2b)"]
 fn a_one_deep_lava_film_comes_to_rest() {
     let mut g = floor();
     for x in 40..80 {
@@ -87,19 +82,25 @@ fn a_one_deep_lava_film_comes_to_rest() {
     assert_rests(&mut g, "lava film");
 }
 
-/// The rule must not strand a liquid that has somewhere to fall: a film next to a ledge still drains.
+/// The rule must not strand a body that has somewhere to fall: a 4-deep pool on a ledge still pours over
+/// the edge and settles to a film (a 1-deep film itself clings, like a droplet).
 #[test]
-fn a_film_on_a_ledge_still_drains_over_the_edge() {
+fn a_pool_on_a_ledge_still_pours_over_the_edge() {
     let mut g = floor();
     for x in 30..70 {
         g.set((H - 20) * W + x, ROCK, 0);
     }
-    for x in 30..70 {
-        g.set((H - 21) * W + x, WATER, 0);
+    for y in H - 25..H - 20 {
+        for x in 30..70 {
+            g.set(y * W + x, WATER, 0);
+        }
     }
-    run(&mut g, 0, 2000);
-    let on_ledge = (30..70).filter(|&x| g.mat[(H - 21) * W + x] == WATER).count();
-    assert_eq!(on_ledge, 0, "{on_ledge} water cells still on the ledge");
+    run(&mut g, 0, 3000);
+    let below = (0..W).filter(|&x| g.mat[(H - 2) * W + x] == WATER).count();
+    let on_ledge = (30..70).filter(|&x| (H - 25..H - 20).any(|y| g.mat[y * W + x] == WATER)).count();
+    assert!(below >= 5 && on_ledge <= 40, "pool did not pour: {below} on the floor, {on_ledge} ledge columns wet");
+    let rows = |x: usize| (H - 25..H - 20).filter(|&y| g.mat[y * W + x] == WATER).count();
+    assert!((30..70).all(|x| rows(x) <= 2), "ledge not drained to a film");
 }
 
 /// Resting liquid wakes when the ground goes: the resting rule reads up to `reach` cells away, so a

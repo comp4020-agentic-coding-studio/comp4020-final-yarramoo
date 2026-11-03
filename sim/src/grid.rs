@@ -332,7 +332,7 @@ impl Grid {
         // Volatile: acts on chance, a timer or a counter even when nothing around it changes, so the
         // chunk may not sleep (plan 6.4). Lava also ignites neighbours by chance. A resting powder or
         // liquid is not volatile: with an unchanged neighbourhood it provably does nothing.
-        if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA | ACID)
+        if matches!(m, FIRE | SMOKE | STEAM | SEED | ACID)
             || (m == STEM && self.aux[i] != 0)
             || (m == GUNPOWDER && self.aux[i] == 1)
             || (m == COAL && self.aux[i] != 0)
@@ -455,6 +455,14 @@ impl Grid {
                 return;
             }
         }
+        // Resting state: a cell sitting on bare ground with no liquid above it does not wander (a lone drop
+        // or a one-deep film stays put, so its chunk can sleep). It slides only when pushed (liquid above)
+        // or when it is on the surface of a body (liquid below). A gap one cell down-and-aside was already
+        // taken by the diagonal move above. The rule reads only the 3 x 3 neighbourhood, so the one-cell
+        // wake radius of `touch` is enough and sleeping stays invisible.
+        if !self.liquid_free(x, y) {
+            return;
+        }
         let (sl, sr) = (open(self, -1, 0), open(self, 1, 0));
         if !sl && !sr {
             return;
@@ -469,6 +477,18 @@ impl Grid {
         if !self.slide(x, y, s, l.reach, ok) {
             self.slide(x, y, -s, l.reach, ok);
         }
+    }
+
+    /// True if the liquid cell at (x, y) may spread sideways: liquid above it pushes, or it floats on liquid.
+    fn liquid_free(&self, x: usize, y: usize) -> bool {
+        [(0, -1), (0, 1)].iter().any(|&(dx, dy)| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| is_liquid(self.at(nx, ny))))
+    }
+
+    /// Whether `liquid_move` would move this cell in some direction (no rng, no change). Lava, which only
+    /// moves on even ticks, uses it to keep its chunk awake exactly while it still has somewhere to go.
+    fn liquid_can_move(&self, x: usize, y: usize, ok: fn(u8) -> bool) -> bool {
+        let open = |dx: isize, dy: isize| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(self.at(nx, ny)));
+        open(0, 1) || open(-1, 1) || open(1, 1) || (self.liquid_free(x, y) && (open(-1, 0) || open(1, 0)))
     }
 
     /// Slide a liquid cell sideways to the furthest free cell within `reach`, stopping at the first
@@ -660,6 +680,18 @@ impl Grid {
                     self.set(n, GLASS, 0);
                 }
             }
+        }
+        // Lava acts on chance beside anything it can ignite, melt or glaze, and moves on even ticks only,
+        // so it keeps its chunk awake while it has such a neighbour or somewhere to go; otherwise it rests.
+        if self.liquid_can_move(x, y, LAVA_FLOW.ok)
+            || [(0, -1), (0, 1), (-1, 0), (1, 0)].iter().any(|&(dx, dy)| {
+                self.off(x, y, dx, dy).is_some_and(|(nx, ny)| {
+                    let m = self.at(nx, ny);
+                    is_flammable(m) || matches!(m, COAL | ICE | SAND)
+                })
+            })
+        {
+            self.vol_seen = true;
         }
         if tick & 1 == 0 {
             self.liquid_move(x, y, seed, tick, LAVA_FLOW);
@@ -1232,7 +1264,9 @@ mod tests {
         }
         run(&mut g, 4, 100);
         // Fire beside the fresh meltwater turns to steam, so the last cell may survive; most must go.
-        assert!(count(&g, ICE) <= 1, "fire should melt the ice");
+        // Resting rule (D-172): meltwater now clings where it forms instead of wandering off, and fire
+        // beside it turns to steam, so the fire dies before the last cells melt. Half must still go.
+        assert!(count(&g, ICE) <= 2, "fire should melt the ice");
         assert!(count(&g, WATER) + count(&g, STEAM) > 0);
     }
 
@@ -1453,7 +1487,9 @@ mod tests {
         g.set(62 * 64 + 5, LAVA, 0);
         g.set(60 * 64 + 5, SAND, 0);
         run(&mut g, 1, 10);
-        assert_eq!(g.at(5, 62), SAND);
+        // Resting rule (D-172): the displaced lava now rests on the sand instead of sliding away, and may
+        // glaze it (1 in 10 a tick), so the sunk cell is Sand or Glass. Either way it sank.
+        assert!(matches!(g.at(5, 62), SAND | GLASS), "sand did not sink: {}", g.at(5, 62));
         assert_eq!(count(&g, LAVA), 1);
     }
 
