@@ -24,6 +24,7 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
   18: "Ice",
   19: "Glass",
   20: "Coal",
+  21: "Pebbles",
 };
 
 /** Spell index to display name. */
@@ -57,4 +58,5 @@ export const MATERIAL_CLASS: readonly MaterialClass[] = [
   "solid", // 18 Ice
   "solid", // 19 Glass
   "solid", // 20 Coal
+  "solid", // 21 Pebbles
 ];

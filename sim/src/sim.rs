@@ -442,7 +442,7 @@ impl Sim {
         let mut best = (w / 2 * POS_ONE + POS_ONE / 2, (h / 2) * POS_ONE);
         for k in 0..16 {
             let col = (w / 2 + first + 7 * k).clamp(3, w - 4);
-            let Some(ground) = (0..h).find(|&y| matches!(g.mat[(y * w + col) as usize], DIRT | ROCK | SAND | BEDROCK)) else {
+            let Some(ground) = (0..h).find(|&y| matches!(g.mat[(y * w + col) as usize], DIRT | ROCK | SAND | PEBBLES | BEDROCK)) else {
                 continue;
             };
             let clear = ground >= HITBOX_H

@@ -21,6 +21,8 @@ pub const GAS: u8 = 17;
 pub const ICE: u8 = 18;
 pub const GLASS: u8 = 19;
 pub const COAL: u8 = 20;
+/// Crumbled rock (falling rock v0): a powder that moves like Sand. Not paintable, structural or flammable.
+pub const PEBBLES: u8 = 21;
 
 /// Materials that `Paint` may place: everything except Bedrock, the world boundary.
 pub fn paintable(m: u8) -> bool {

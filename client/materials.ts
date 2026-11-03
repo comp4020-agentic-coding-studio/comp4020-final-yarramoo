@@ -37,6 +37,7 @@ export const PALETTE_SIZE = 32;
 export function paletteTable(): number[] {
   const t = new Array<number>(PALETTE_SIZE).fill(0xff00ff);
   t[1] = 0x2b2d33; // Bedrock: not paintable, so not in MATERIALS
+  t[21] = 0x8a8178; // Pebbles: only from crumbled rock, so not in MATERIALS
   for (const m of MATERIALS) t[m.id] = m.color;
   return t;
 }

@@ -1,4 +1,4 @@
-//! Falling rock v0: cut-free solid islands crumble to Sand; anchored ones stay.
+//! Falling rock v0: cut-free solid islands crumble to Pebbles; anchored ones stay.
 use sim::grid::Grid;
 use sim::input::{encode_join, encode_pos};
 use sim::materials::*;
@@ -42,14 +42,14 @@ fn freed_block_crumbles_and_falls() {
     cut(&mut g, 102, 110);
     // The block plus the nine column cells above the cut are free; the column below stays anchored.
     assert_eq!(count(&g, 100, 100, 105, 105, ROCK), 0);
-    assert_eq!(count(&g, 100, 100, 105, 105, SAND), 25);
-    assert_eq!(count(&g, 102, 105, 103, 110, SAND), 5);
+    assert_eq!(count(&g, 100, 100, 105, 105, PEBBLES), 25);
+    assert_eq!(count(&g, 102, 105, 103, 110, PEBBLES), 5);
     assert_eq!(count(&g, 102, 111, 103, 120, ROCK), 9);
     assert!(g.island_removed.is_empty());
     for t in 0..200 {
         g.step_cells(1, t);
     }
-    assert_eq!(count(&g, 100, 100, 105, 105, SAND), 0, "sand should have fallen away from the block site");
+    assert_eq!(count(&g, 100, 100, 105, 105, PEBBLES), 0, "pebbles should have fallen away from the block site");
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn block_on_a_long_stalk_falls_when_the_whole_stalk_is_erased() {
     }
     g.crumble_islands();
     assert_eq!(count(&g, 100, 50, 121, 65, ROCK), 0, "block must crumble");
-    assert_eq!(count(&g, 100, 50, 121, 65, SAND), 21 * 15);
+    assert_eq!(count(&g, 100, 50, 121, 65, PEBBLES), 21 * 15);
 }
 
 #[test]
@@ -234,7 +234,7 @@ fn large_dig_that_frees_a_slab_crumbles_it() {
     }
     g.crumble_islands();
     assert_eq!(count(&g, 100, 110, 114, 118, ROCK), 0);
-    assert_eq!(count(&g, 100, 110, 114, 118, SAND), 14 * 8);
+    assert_eq!(count(&g, 100, 110, 114, 118, PEBBLES), 14 * 8);
 }
 
 #[test]

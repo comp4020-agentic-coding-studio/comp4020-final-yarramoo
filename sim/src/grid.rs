@@ -207,7 +207,7 @@ impl Grid {
 
     /// Falling rock v0: for each queued seed flood the 4-connected structural cells. A fill that reaches
     /// `ISLAND_MAX` cells (or the remaining `ISLAND_WORK_MAX` budget), touches Bedrock or the world edge is
-    /// anchored and left alone; any other island crumbles to Sand (Ice to Water). Seeds beyond the budget are
+    /// anchored and left alone; any other island crumbles to Pebbles (Ice to Water). Seeds beyond the budget are
     /// dropped, so the queue is always empty on return (no hidden state). Reads neither `awake` nor `active`.
     pub fn crumble_islands(&mut self) {
         self.island_visits = 0;
@@ -292,7 +292,7 @@ impl Grid {
             for &c in &cells {
                 let c = c as usize;
                 // Direct write, not `set`: the island's own cells must not seed further floods.
-                self.mat[c] = if self.mat[c] == ICE { WATER } else { SAND };
+                self.mat[c] = if self.mat[c] == ICE { WATER } else { PEBBLES };
                 self.aux[c] = 0;
                 self.touch(c);
             }
@@ -372,6 +372,9 @@ impl Grid {
         match m {
             SAND => {
                 self.powder_move(x, y, seed, tick, SALT_SAND_DIAG);
+            }
+            PEBBLES => {
+                self.powder_move(x, y, seed, tick, SALT_PEBBLES_DIAG);
             }
             WATER => self.update_water(x, y, seed, tick),
             OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
@@ -684,7 +687,7 @@ impl Grid {
     }
 
     fn dissolvable(m: u8) -> bool {
-        matches!(m, ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER)
+        matches!(m, ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER)
     }
 
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
@@ -1018,7 +1021,7 @@ impl Grid {
                 }
                 let i = y as usize * self.w + x as usize;
                 match self.mat[i] {
-                    ROCK | DIRT | SAND | WOOD | SEED | STEM | FLOWER | ICE | GLASS | COAL => self.set(i, EMPTY, 0),
+                    ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER | ICE | GLASS | COAL => self.set(i, EMPTY, 0),
                     GUNPOWDER if self.aux[i] != 1 => self.set(i, GUNPOWDER, 1),
                     _ => {}
                 }
