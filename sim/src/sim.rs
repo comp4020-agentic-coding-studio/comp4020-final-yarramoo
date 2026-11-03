@@ -6,7 +6,7 @@ use crate::grid::{is_structural, Grid};
 use crate::hash;
 use crate::input::{decode, Input};
 use crate::materials::*;
-use crate::rng::{rng, SALT_PICKUP_SPELL, SALT_SPAWN_X};
+use crate::rng::{rng, SALT_PAINT_SEED, SALT_PICKUP_SPELL, SALT_SPAWN_X};
 use crate::tuning::*;
 
 const FLOOR_ROWS: usize = 16;
@@ -524,6 +524,11 @@ impl Sim {
                 let i = (y * w + x) as usize;
                 let cur = self.grid.mat[i];
                 if cur == BEDROCK || (fill_empty && !fill_empty_writable(cur)) {
+                    continue;
+                }
+                // Seeds sprinkle: the draw depends on the cell and the tick, not the stamp, so overlapping stamps
+                // of one stroke agree and a drag never thickens the sprinkle.
+                if mat == SEED && !rng(self.seed, self.tick, x as u32, y as u32, SALT_PAINT_SEED).is_multiple_of(PAINT_SEED_ONE_IN) {
                     continue;
                 }
                 if is_structural(mat) {

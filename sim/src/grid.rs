@@ -1686,10 +1686,11 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=COAL).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=COAL).filter(|&m| !matches!(m, BEDROCK | STEM | FLOWER)) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(COAL + 1));
+        // Bedrock is the boundary, Stem and Flower only grow from Seeds, Pebbles only come from crumbled rock.
+        assert!(![BEDROCK, STEM, FLOWER, PEBBLES, PEBBLES + 1].iter().any(|&m| paintable(m)));
     }
 }
 

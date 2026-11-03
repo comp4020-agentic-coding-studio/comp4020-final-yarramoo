@@ -15,8 +15,6 @@ export const MATERIALS: MaterialInfo[] = [
   { id: 2, name: MATERIAL_NAMES[2], color: 0x7d8087 },
   { id: 6, name: MATERIAL_NAMES[6], color: 0xb8803c },
   { id: 7, name: MATERIAL_NAMES[7], color: 0xe8e060 },
-  { id: 8, name: MATERIAL_NAMES[8], color: 0x3f9a3a },
-  { id: 9, name: MATERIAL_NAMES[9], color: 0xe2478a },
   { id: 10, name: MATERIAL_NAMES[10], color: 0xff7a1c },
   { id: 11, name: MATERIAL_NAMES[11], color: 0x6e7078 },
   { id: 12, name: MATERIAL_NAMES[12], color: 0xcfd8e6 },
@@ -37,6 +35,8 @@ export const PALETTE_SIZE = 32;
 export function paletteTable(): number[] {
   const t = new Array<number>(PALETTE_SIZE).fill(0xff00ff);
   t[1] = 0x2b2d33; // Bedrock: not paintable, so not in MATERIALS
+  t[8] = 0x3f9a3a; // Stem and Flower grow from Seeds but cannot be painted, so they are not in MATERIALS
+  t[9] = 0xe2478a;
   t[21] = 0x8a8178; // Pebbles: only from crumbled rock, so not in MATERIALS
   for (const m of MATERIALS) t[m.id] = m.color;
   return t;

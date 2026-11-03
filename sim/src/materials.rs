@@ -24,9 +24,10 @@ pub const COAL: u8 = 20;
 /// Crumbled rock (falling rock v0): a powder that moves like Sand. Not paintable, structural or flammable.
 pub const PEBBLES: u8 = 21;
 
-/// Materials that `Paint` may place: everything except Bedrock, the world boundary.
+/// Materials that `Paint` may place: everything except Bedrock (the world boundary), Stem and Flower (they
+/// only grow from Seeds) and Pebbles (only from crumbled rock).
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=COAL)
+    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL)
 }
 
 pub fn is_gas(m: u8) -> bool {
