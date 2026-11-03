@@ -86,7 +86,6 @@ fn released_water_front_does_not_stop_on_a_chunk_edge() {
 /// survives in `tests/wake.rs::a_frozen_chunk_nothing_reaches_stays_frozen`. Here the front must cross the
 /// edge with the player standing still, and nothing may hang over air once it settles.
 #[test]
-#[ignore = "red until Brief W commit 2 (shown failing before the change)"]
 fn water_front_crosses_the_active_region_edge_and_settles() {
     let (w, h) = (1024usize, 128usize);
     let mut g = Grid::new(w, h);

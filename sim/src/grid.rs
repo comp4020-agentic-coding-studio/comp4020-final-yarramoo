@@ -52,6 +52,12 @@ pub struct Grid {
     pub awake: Vec<bool>,
     /// Scratch, not state: the semantic active set (plan 6.5). Inactive chunks are frozen.
     pub active: Vec<bool>,
+    /// STATE (Brief W, D-176): outside the active set, a chunk with `woken` set runs each tick until a run
+    /// changes nothing and meets no volatile material; a frozen chunk without it does not run. Set when a cell in
+    /// or within one cell of a frozen chunk changes. For an active chunk it records "busy" (still changing or
+    /// volatile after this tick's run), so a chunk the player walks away from mid-flow keeps flowing. Hashed
+    /// (only when some bit is set) and snapshotted. Always all false while every chunk is active (the sandbox).
+    pub woken: Vec<bool>,
     /// Scratch: set by `update_cell` when it sees a volatile material in the chunk being run.
     vol_seen: bool,
     /// Telemetry only: chunks actually run in the last `step_cells`.
@@ -99,6 +105,7 @@ impl Grid {
             sleep_enabled: true,
             awake: vec![true; cw * ch],
             active: vec![true; cw * ch],
+            woken: vec![false; cw * ch],
             vol_seen: false,
             ran_chunks: 0,
             pending: Vec::new(),
@@ -128,7 +135,7 @@ impl Grid {
         let c = self.chunk_of(x, y);
         self.dirty_since_hash[c] = true;
         self.pristine[c] = false;
-        self.awake[c] = true;
+        self.wake(c);
         // Wake the neighbours whose cells can see this one (distance 1, corners included).
         let (lx, ly) = (x % CHUNK, y % CHUNK);
         let (cx, cy) = (c % self.cw, c / self.cw);
@@ -136,7 +143,7 @@ impl Grid {
         let ys = [(ly == 0 && cy > 0, -1isize), (ly == CHUNK - 1 && cy + 1 < self.ch, 1)];
         for &(okx, dx) in &xs {
             if okx {
-                self.awake[(c as isize + dx) as usize] = true;
+                self.wake((c as isize + dx) as usize);
             }
         }
         for &(oky, dy) in &ys {
@@ -144,12 +151,20 @@ impl Grid {
                 continue;
             }
             let row = (c as isize + dy * self.cw as isize) as usize;
-            self.awake[row] = true;
+            self.wake(row);
             for &(okx, dx) in &xs {
                 if okx {
-                    self.awake[(row as isize + dx) as usize] = true;
+                    self.wake((row as isize + dx) as usize);
                 }
             }
+        }
+    }
+
+    /// A cell in or next to chunk `c` changed: it must run next tick, and if it is frozen it is woken (D-176).
+    fn wake(&mut self, c: usize) {
+        self.awake[c] = true;
+        if !self.active[c] {
+            self.woken[c] = true;
         }
     }
 
@@ -174,10 +189,19 @@ impl Grid {
             let (x1, y1) = (x0 + CHUNK as i32, y0 + CHUNK as i32);
             self.active[c] = centres.iter().any(|&(px, py)| x0 < px + hw && x1 > px - hw && y0 < py + hh && y1 > py - hh);
         }
+        if self.active.iter().all(|&a| a) {
+            self.woken.fill(false);
+        }
     }
 
     pub fn set_all_active(&mut self) {
         self.active.fill(true);
+        self.woken.fill(false);
+    }
+
+    /// Telemetry only: chunks currently outside the active set that are woken.
+    pub fn woken_frozen(&self) -> u32 {
+        (0..self.chunk_count()).filter(|&c| self.woken[c] && !self.active[c]).count() as u32
     }
 
     pub fn set(&mut self, i: usize, m: u8, a: u8) {
@@ -319,23 +343,28 @@ impl Grid {
         self.explosions.clear();
         let odd = tick & 1 == 1;
         self.ran_chunks = 0;
+        // Nobody is active: the world is frozen outright (plan 6.5), so there is nothing to carry on.
+        if !self.active.iter().any(|&a| a) {
+            self.woken.fill(false);
+        }
         for cy in (0..self.ch).rev() {
             for ci in 0..self.cw {
                 let cx = if odd { self.cw - 1 - ci } else { ci };
                 let c = cy * self.cw + cx;
-                if !self.active[c] {
+                let frozen = !self.active[c];
+                if frozen && !self.woken[c] {
                     // Frozen, but awake so it runs on its first active tick.
                     self.awake[c] = true;
                     continue;
                 }
-                if self.sleep_enabled {
-                    if !self.awake[c] {
-                        continue;
-                    }
-                    // Quiet unless this run changes a cell here or meets a volatile material.
-                    self.awake[c] = false;
-                    self.vol_seen = false;
+                // A woken frozen chunk runs whatever the sleep switch says, so the switch cannot change results.
+                if self.sleep_enabled && !frozen && !self.awake[c] {
+                    continue;
                 }
+                // Quiet unless this run changes a cell here or meets a volatile material. Cleared with sleeping
+                // off too: `awake` after a run is then the "busy" flag the woken rule reads.
+                self.awake[c] = false;
+                self.vol_seen = false;
                 self.ran_chunks += 1;
                 for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
                     for xi in 0..CHUNK {
@@ -348,7 +377,24 @@ impl Grid {
                 }
             }
         }
+        self.update_woken();
         self.resolve_explosions(seed, tick);
+    }
+
+    /// End of the cell pass (D-176): a frozen woken chunk that is quiet goes back to frozen; an active chunk records
+    /// whether it is busy, which is what lets a flow continue after the player walks away. Chunks neither run nor
+    /// touched keep their bit. Skipped when nothing is frozen (the sandbox keeps `woken` all false).
+    fn update_woken(&mut self) {
+        if self.active.iter().all(|&a| a) {
+            return;
+        }
+        for c in 0..self.chunk_count() {
+            if self.active[c] {
+                self.woken[c] = self.awake[c];
+            } else if self.woken[c] && !self.awake[c] {
+                self.woken[c] = false;
+            }
+        }
     }
 
     fn update_cell(&mut self, x: usize, y: usize, seed: u64, tick: u32) {

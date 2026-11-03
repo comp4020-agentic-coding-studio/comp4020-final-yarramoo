@@ -7,8 +7,8 @@ use crate::tuning::LOBBY_IDLE;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
-/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_started, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. Restore refuses any other version (the game is not live, so no stored state is lost).
-pub const FORMAT_VERSION: u16 = 9;
+/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_started, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. v10 (Brief W) appends the woken-chunk bitset after the chunk records. Restore refuses any other version (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 10;
 const CFG_AT: usize = 4 + 2 + 32 + 8;
 const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
@@ -38,6 +38,7 @@ pub fn write(s: &Sim) -> Vec<u8> {
             }
         }
     }
+    v.extend_from_slice(&crate::hash::pack_woken(&s.grid.woken));
     v
 }
 
@@ -99,7 +100,8 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     o += 4;
     let rec = 2 + 2 * CHUNK_AREA;
     // A crafted count must not wrap the length check on wasm32 (usize is 32-bit there).
-    if n > s.grid.chunk_count() || n.checked_mul(rec).and_then(|x| x.checked_add(o)) != Some(b.len()) {
+    let wlen = s.grid.chunk_count().div_ceil(8);
+    if n > s.grid.chunk_count() || n.checked_mul(rec).and_then(|x| x.checked_add(o)).and_then(|x| x.checked_add(wlen)) != Some(b.len()) {
         return Err(());
     }
     let mut prev: Option<usize> = None;
@@ -124,6 +126,14 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
             }
         }
         s.grid.mark_chunk(c);
+    }
+    // The woken bitset: padding bits must be zero (one canonical encoding).
+    let wb = &b[b.len() - wlen..];
+    for c in 0..s.grid.chunk_count() {
+        s.grid.woken[c] = wb[c / 8] >> (c % 8) & 1 == 1;
+    }
+    if s.grid.chunk_count() % 8 != 0 && wb[wlen - 1] >> (s.grid.chunk_count() % 8) != 0 {
+        return Err(());
     }
     s.tick = tick;
     // A countdown cannot have begun in the snapshot's future, and a room without a round carries no lobby state.

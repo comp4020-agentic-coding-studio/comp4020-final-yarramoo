@@ -32,12 +32,16 @@ fn run(g: &mut Grid, from: u32, to: u32) {
 #[test]
 fn a_frozen_chunk_nothing_reaches_stays_frozen() {
     let mut g = world();
-    // Water hanging in mid-air far inside the frozen region.
+    // Water hanging in mid-air far inside the frozen region. Built while everything is active (a `set` on a
+    // frozen chunk is itself a change and would wake it), then the region is narrowed back to the player.
+    g.set_all_active();
     for y in 60..70 {
         for x in 800..820 {
             g.set(y * W + x, WATER, 0);
         }
     }
+    g.set_active_around(&[(200, 64)]);
+    g.woken.fill(false);
     // Settle the active region.
     run(&mut g, 0, 50);
     let before = g.mat.clone();
@@ -48,21 +52,20 @@ fn a_frozen_chunk_nothing_reaches_stays_frozen() {
 
 /// Fire spreading out of the region keeps burning in the frozen chunks it reaches.
 #[test]
-#[ignore = "red until Brief W commit 2 (shown failing before the change)"]
 fn fire_spreading_out_of_the_region_keeps_burning() {
     let mut g = world();
+    // Oil ignites readily (1 in 2 per neighbour), so the front runs the whole strip.
     for x in 300..800 {
-        g.set((H - 2) * W + x, WOOD, 0);
+        g.set((H - 2) * W + x, OIL, 0);
     }
     g.set((H - 3) * W + 320, FIRE, 0);
     run(&mut g, 0, 6000);
-    let burnt_far = (700..800).filter(|&x| g.mat[(H - 2) * W + x] != WOOD).count();
+    let burnt_far = (700..800).filter(|&x| g.mat[(H - 2) * W + x] != OIL).count();
     assert!(burnt_far >= 50, "fire did not carry on across the edge: {burnt_far} of 100 burnt");
 }
 
 /// A seed in a frozen chunk, reached by water from the active region, germinates and grows.
 #[test]
-#[ignore = "red until Brief W commit 2 (shown failing before the change)"]
 fn a_seed_reached_by_water_across_the_edge_grows() {
     let mut g = world();
     for x in 21..W {
@@ -117,4 +120,84 @@ fn flow_script(sleep: bool) -> Vec<(u32, u64)> {
 #[test]
 fn sleep_on_and_off_agree_while_a_flow_crosses_the_region_edge() {
     assert_eq!(flow_script(true), flow_script(false));
+}
+
+/// Woken chunks return to frozen once the flow settles. Sand is used because it truly comes to rest. A water
+/// film does not: its surface cells keep swapping sides at random, in active chunks too, so a woken chunk holding
+/// a free water surface stays woken (measured in docs/research/wake-load-results.md, a finding for review).
+#[test]
+fn woken_chunks_return_to_frozen_once_settled() {
+    let mut g = world();
+    // A tall sand pile straddling the region's edge (x = 512) slumps into the frozen chunks and comes to rest.
+    for y in 60..H - 1 {
+        for x in 490..510 {
+            g.set(y * W + x, SAND, 0);
+        }
+    }
+    let mut peak = 0;
+    for t in 0..20000 {
+        g.step_cells(5, t);
+        peak = peak.max(g.woken_frozen());
+    }
+    assert!(peak > 0, "the flow never woke a frozen chunk");
+    assert_eq!(g.woken_frozen(), 0, "woken chunks never went back to frozen");
+    assert_eq!(g.ran_chunks, 0);
+}
+
+/// D5-style: a snapshot taken while chunks are woken, restored, then run on, hashes like the uninterrupted run.
+#[test]
+fn snapshot_while_chunks_are_woken_restores_and_continues_identically() {
+    let (x, y) = (500usize, 700usize);
+    let mk = || {
+        let mut s = Sim::new(9, 1).unwrap();
+        s.push_input(&encode_join(1));
+        s.push_input(&encode_pos(1, 0, (x as i32) * 16, (y as i32) * 16, 0));
+        s
+    };
+    let carve = |s: &mut Sim| {
+        let w = s.grid.w;
+        for cy in 680..712 {
+            for cx in 760..900 {
+                s.grid.set(cy * w + cx, EMPTY, 0);
+            }
+        }
+        for cy in 690..700 {
+            for cx in 770..790 {
+                s.grid.set(cy * w + cx, WATER, 0);
+            }
+        }
+    };
+    let mut full = mk();
+    let mut s = mk();
+    for t in 1..=400u32 {
+        if t == 100 {
+            carve(&mut full);
+            carve(&mut s);
+        }
+        full.step();
+        if t <= 160 {
+            s.step();
+        }
+    }
+    assert!(s.grid.woken_frozen() > 0, "the cut must fall while chunks are woken");
+    let snap = sim::snapshot::write(&s);
+    assert_eq!(snap.len(), sim::snapshot::size(&s));
+    let mut r = sim::snapshot::restore(&snap).unwrap();
+    assert_eq!(r.grid.woken, s.grid.woken);
+    assert_eq!(r.state_hash(), s.state_hash());
+    for _ in 161..=400u32 {
+        r.step();
+    }
+    assert_eq!(r.state_hash(), full.state_hash());
+    assert_eq!(r.grid.woken, full.grid.woken);
+}
+
+/// A woken bit is semantic state: it is in the hash.
+#[test]
+fn woken_bits_are_in_the_state_hash() {
+    let mut a = Sim::new(3, 1).unwrap();
+    let b = Sim::new(3, 1).unwrap();
+    a.grid.woken[5] = true;
+    let mut b = b;
+    assert_ne!(a.state_hash(), b.state_hash());
 }

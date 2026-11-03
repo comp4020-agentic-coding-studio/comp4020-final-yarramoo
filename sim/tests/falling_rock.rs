@@ -256,6 +256,14 @@ fn generated_worlds_are_stable_across_seeds_and_sizes() {
             let mut cfg = RoomConfig::survival();
             cfg.size = size;
             let mut s = Sim::new(seed, cfg).unwrap();
+            // Brief W (D-176): generated acid, lava and gunpowder now wake and eat or blow up rock beyond the
+            // player's region, which is those materials working as designed, not terrain collapsing. This test is
+            // about the terrain, so they are removed first.
+            for i in 0..s.grid.mat.len() {
+                if matches!(s.grid.mat[i], sim::materials::ACID | sim::materials::LAVA | sim::materials::GUNPOWDER) {
+                    s.grid.mat[i] = sim::materials::EMPTY;
+                }
+            }
             s.push_input(&encode_join(1));
             s.step();
             let (px, py) = (s.players[0].x, s.players[0].y);
