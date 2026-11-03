@@ -579,3 +579,35 @@ existing Sound button, and a separate setting from sound effects.
 - **Notes:** browsers block audio until the first click or key, so the menu track can only start after an
   interaction (the existing Sound button already handles that). Respect the mute state in `localStorage`.
   Crossfade between tracks rather than cutting. Pairs with the "volume slider and ambient beds" entry above.
+
+## Let surface shimmer freeze, so woken chunks don't accumulate
+
+Woken chunks holding liquid never return to frozen: a free water surface keeps swapping cells, and lava and acid
+are volatile. Over a long session the running chunk count only grows (D-176). A rule that treats pure surface
+shimmer as quiet (part of the hash, since it's semantic outside the active set) would let them settle.
+
+- **Source:** brief W's load test and report, 4 Nov.
+- **Why:** the worst case built is cheap today (1.7 ms p95 native), but a long session with many floods has no
+  ceiling short of the whole grid.
+
+## A bounded falling-rock check with hazards present
+
+`generated_worlds_are_stable_across_seeds_and_sizes` now strips generated acid, lava and gunpowder (D-176), so it
+no longer covers terrain beside them. A second check could keep the hazards and assert that only cells near a
+hazard changed.
+
+- **Source:** review W F5, 4 Nov.
+
+## A server-side "away" state for silent players
+
+A player whose tab is hidden sends nothing (D-177) but still counts for the lobby's ready-up and the active
+region. The server could mark a member with no input for a few minutes as away.
+
+- **Source:** brief F's report, 4 Nov.
+
+## Music: duck under loud effects, a volume slider, avatar depth
+
+Lower the music briefly under explosions; a volume slider instead of on/off; pick the depth mood from the
+avatar rather than the camera, with a calm mood for spectators.
+
+- **Source:** brief J's report, 4 Nov.
