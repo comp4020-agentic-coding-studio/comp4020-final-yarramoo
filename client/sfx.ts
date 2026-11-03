@@ -54,6 +54,10 @@ export function unlock() {
   }
 }
 
+/** The shared context for music.ts: null until the first gesture. Music connects to `destination` directly, so
+ * the sound-effects mute (which acts on `master`) does not silence it. */
+export const getAudio = () => (ctx ? { ctx, destination: ctx.destination, noise: noiseBuf } : null);
+
 /** Test hook: the context state, or null before the first gesture. */
 export const audioState = (): string | null => ctx?.state ?? null;
 

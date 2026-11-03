@@ -10,6 +10,7 @@ import type { FromWorker, ToWorker } from "./protocol.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
+import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
 import { formatAchievement } from "./toasts.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
@@ -154,6 +155,14 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   // Sound: the context may only start from a gesture (phone autoplay rules), so the first pointer or key resumes it.
   for (const ev of ["pointerdown", "keydown"] as const) addEventListener(ev, unlock, { capture: true });
   const muteBtn = $<HTMLButtonElement>("muteBtn");
+  startMusicOnGesture(unlock);
+  muteBtn.after(makeMusicButton(muteBtn.className));
+  let moodState: MoodState = initialMoodState();
+  let roundOutcome: "win" | "lose" | null = null;
+  const updateMood = (y: number, boss: boolean) => {
+    moodState = stepMood(moodState, { y, bossAlive: boss, sandbox: worldKind === 0, round: roundOutcome }, performance.now());
+    setMood(moodState.mood);
+  };
   const showMute = () => {
     muteBtn.textContent = isMuted() ? "Sound off" : "Sound on";
     muteBtn.setAttribute("aria-pressed", String(isMuted()));
@@ -574,6 +583,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         break;
       case "round":
         showRoundBanner(m.win);
+        roundOutcome = m.win ? "win" : "lose";
+        updateMood(camera.y, false);
         break;
       case "achievement": {
         const text = formatAchievement(m.id);
@@ -736,6 +747,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function onPlayers(m: Extract<FromWorker, { type: "players" }>) {
     lastPlayers = m;
     updateBossBar(m.boss);
+    updateMood(m.cam.y, m.boss !== null && m.boss.hp > 0);
     updateLobby(m.lobby, m.late);
     if (m.following && !overview) {
       camera.x = m.cam.x;
