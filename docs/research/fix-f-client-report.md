@@ -35,3 +35,44 @@ with an exponential average (90 ms), walk/idle switch with hysteresis (on 0.12, 
 `tests/net/walk-anim.test.ts`: red on the old code (20.2 frames in a second; a one-frame stall flickered to idle),
 green now. Not verified: I did not open a second real-room session to watch a remote avatar; judged by the unit
 test only. The user should look at it at 1x and 2x.
+
+## 4. Remove Creative
+Menu card, the filter option, `creative.png` removed (`client/menu.ts`). Server: `POST /api/rooms` with
+`mode: "creative"` returns 400 `{"error":"mode_retired"}`; `CREATABLE_MODES` (survival, deathmatch, sandbox) in
+`server/rooms.ts`; `ROOM_MODES` kept (it is also the type of stored rows) and the DB check constraint untouched.
+Old Creative rooms stay loadable (the simpler option, and reversible). Tests: `tests/net/rooms.test.ts` new test red
+before (the room was created), green after. `room-join.test.ts` Paint/Pos tests tested the avatars+brushes config,
+not Creative itself, so they were re-pointed to `mode: "survival"` with the same config (none deleted).
+`tests/net/room.test.ts` keeps `CREATIVE` (shared config hex pin; sim config untouched). The `CREATIVE` constant in
+`shared/room.ts`, the dual-tools code in `room.ts` and `tests/soak/p1-creative.ts` are left (a room config can still
+set avatars+brushes; not clearly dead).
+
+## Architectural decisions for review
+- Catch-up threshold and pause: threshold 120 ticks (2 s) in `driveFrame`; target = tick received so far. Alternatives:
+  a larger threshold (fewer false overlays on a lag spike, but longer crawl), or raising per-frame steps instead of
+  an overlay. Chosen for reuse of the existing, tested fast-forward path; the avatar pauses because `gameFrame`
+  only runs while `net === "live"`. Cost: a 2 s network stall now flashes the overlay and a 12 ms/frame ff budget; a
+  Pos-less gap of that length is visible to others.
+- Hidden tab: only stop Pos/casts (worker `hidden` message), no Leave, no server change. Alternative: send Leave
+  (rejected: resets lobby countdowns on an alt-tab). Cost: a hidden player stays in the lobby/ready set; the
+  server should probably mark players silent for minutes as away (flagged, not built).
+- Per-liquid controller table: `LiquidFeel` in `client/avatar.ts`, keyed on material id 14 (lava) vs water-like
+  default. Alternative: put the numbers in `shared/names.ts`. Cost: a new liquid with its own feel needs a row here
+  (the material-class test in avatar.test.ts does not enforce it).
+- Old Creative rooms: stay loadable; only creation is refused (`mode_retired`). Alternative: fail loading as
+  "room unavailable". Cost: the dead mode label persists in old rows until they expire.
+- Rate of huge backlogs (>20,000): not handled with a snapshot (see item 1c).
+
+## Ideas for FUTURE.md (suggested)
+- Server-side "away" state for players with no input for minutes (lobby ready-up, dashboards).
+- Show "you were away N minutes" instead of the generic catching-up overlay after a hidden tab.
+
+## Verification notes
+- Full `pnpm test:net` at the Creative commit: 354 passed, 1 failed (`claims-live.test.ts` "the killer is awarded
+  first_blood..." - the logged claim.death did not match victim/killer). It fails intermittently on the base commit
+  6968d44 as well (1 of 2 runs there, 1 of 3 on this branch), so it is a pre-existing flake, not from this work. It
+  was NOT investigated: per CLAUDE.md it is a real defect (probably claim ordering/timing) and needs its own look.
+- Screenshot `docs/art/shots/fix-f-lava.png` (looked at): the avatar standing in a lava pool in survival, health bar
+  partly drained. It shows lava contact only; the sink itself is shown by the numbers in item 2.
+- Not verified: remote-avatar walk in a real room on port 8098 (no real server started); the overlay appearing in a
+  real hidden tab (tested at the driveFrame level, not in a browser with a throttled background tab).

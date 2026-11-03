@@ -2,11 +2,11 @@
 // sheet with a share bar, and the name sheet on first join/create. Live preview is deferred (see FUTURE.md
 // and the worker report's "Architectural decisions for review" — not built in this slice, flagged rather than
 // rushed, per the brief's own conditional wording for commit 6).
-import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, CREATIVE, SURVIVAL, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, SURVIVAL, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 interface ModeDef {
-  key: "survival" | "deathmatch" | "creative";
+  key: "survival" | "deathmatch";
   title: string;
   rule: string;
   pvp: boolean;
@@ -30,17 +30,6 @@ const MODES: ModeDef[] = [
     pvp: true,
     icon: "/icons/deathmatch.png",
     cfg: { terrain: 0, size: 1, avatars: 1, damage: 2, spells: 0, brushes: 0, death: 0, respawnSecs: 3, pickupRespawn: 1, round: 0, maxPlayers: 8, enemies: 0 },
-  },
-  {
-    key: "creative",
-    title: "Creative",
-    rule: "Build together. No damage.",
-    pvp: false,
-    icon: "/icons/creative.png",
-    // R4: CREATIVE from shared/room.ts (avatars: 1), not a hand-duplicated literal — this card previously had
-    // avatars: 0, which would have created an avatar-less room indistinguishable from an upgraded sandbox and
-    // never shown the brush/spell-bar toggle R4 built. Found during R4's review, fixed here.
-    cfg: CREATIVE,
   },
 ];
 
@@ -121,7 +110,7 @@ export function startMenu(root: HTMLElement): void {
       </section>
       <div class="cards" id="cards"></div>
       <div class="room-list">
-        <h2>Live rooms <select id="modeFilter"><option value="">all modes</option><option value="survival">Survival</option><option value="deathmatch">Deathmatch</option><option value="creative">Creative</option></select></h2>
+        <h2>Live rooms <select id="modeFilter"><option value="">all modes</option><option value="survival">Survival</option><option value="deathmatch">Deathmatch</option></select></h2>
         <div id="rooms"></div>
       </div>
       <div class="code-box">

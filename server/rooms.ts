@@ -16,6 +16,9 @@ export const MAX_ROOMS_PER_CREATOR_PER_DAY = 3;
 export const DAY_MS = 24 * 60 * 60_000;
 
 export const ROOM_MODES = ["survival", "deathmatch", "creative", "sandbox"] as const;
+/** Modes a new room may be created with. Creative was removed (4 Nov: "just the sandbox is fine"); old Creative
+ * rows stay loadable (the DB check constraint still allows them), they just cannot be made any more. */
+export const CREATABLE_MODES = ["survival", "deathmatch", "sandbox"] as const;
 export type RoomMode = (typeof ROOM_MODES)[number];
 export type RoomVisibility = "public" | "unlisted";
 
@@ -110,7 +113,8 @@ export class RoomsStore {
   createRoom(opts: CreateRoomOpts): CreateRoomResult {
     const name = cleanName(opts.name).slice(0, MAX_ROOM_NAME_CHARS);
     if (name.length === 0) return { ok: false, reason: "bad_name" };
-    if (!ROOM_MODES.includes(opts.mode as RoomMode)) return { ok: false, reason: "bad_mode" };
+    if (opts.mode === "creative") return { ok: false, reason: "mode_retired" };
+    if (!ROOM_MODES.includes(opts.mode as RoomMode) || !(CREATABLE_MODES as readonly string[]).includes(opts.mode)) return { ok: false, reason: "bad_mode" };
     const mode = opts.mode as RoomMode;
     if (opts.visibility !== "public" && opts.visibility !== "unlisted") return { ok: false, reason: "bad_visibility" };
     const visibility = opts.visibility as RoomVisibility;
