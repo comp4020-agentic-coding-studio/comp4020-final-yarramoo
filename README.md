@@ -1,4 +1,4 @@
-# Sandbox
+# Simulta
 
 A shared falling-sand world in the browser. Everyone in it sees the same sand,
 water, fire, lava and plants, live, and what you leave behind stays for the

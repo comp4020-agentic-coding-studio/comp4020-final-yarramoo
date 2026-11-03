@@ -148,6 +148,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   /** Dev route + ?avatar=1: a local avatar (player 1) that can cast and die; painting then goes through window.__devPaint. */
   const devAvatar = localKind !== null && params.get("avatar") === "1";
   if (localKind === null) $("title").textContent = target.name ?? (avatarCapable ? "Game world" : "Sandbox");
+  document.title = `${$("title").textContent} · Simulta`;
   const menuLink = document.getElementById("menuLink");
   if (menuLink) menuLink.setAttribute("href", "/");
 

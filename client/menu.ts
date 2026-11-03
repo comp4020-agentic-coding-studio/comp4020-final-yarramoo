@@ -98,7 +98,7 @@ export function startMenu(root: HTMLElement): void {
   root.innerHTML = `
     <div class="menu">
       <header class="menu-header">
-        <h1>Falling Sand</h1>
+        <h1>Simulta</h1>
         <div class="spacer"></div>
         <button type="button" class="linklike" id="nameBtn"></button>
         <a href="/readme/">README</a>

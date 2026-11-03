@@ -318,8 +318,8 @@ connect();
 `;
 
 function dashboardPage(build: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard</title><style>${CSS}</style></head><body><main>
-<header><h1>Dashboard</h1><span class="muted">build ${esc(build)}</span><span id="uptime" class="muted"></span><span id="conn" class="warn">connecting...</span><a href="/">game</a></header>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Simulta: dashboard</title><style>${CSS}</style></head><body><main>
+<header><h1>Simulta dashboard</h1><span class="muted">build ${esc(build)}</span><span id="uptime" class="muted"></span><span id="conn" class="warn">connecting...</span><a href="/">game</a></header>
 <h2>Worlds</h2><div id="worlds" class="grid"></div>
 <h2>Process</h2><div id="proc" class="card"></div>
 <section id="admin" hidden><h2>Connections (<span id="nconns">0</span>)</h2>
