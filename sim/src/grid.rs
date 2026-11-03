@@ -67,6 +67,8 @@ pub struct Grid {
     /// `crumble_islands` at the end of every tick. Never hashed or snapshotted; empty between ticks.
     pub island_removed: Vec<u32>,
     island_stamp: Vec<u32>,
+    /// Cells already proven anchored in this pass (same stamp scheme as `island_stamp`).
+    island_anchor: Vec<u32>,
     island_tick: u32,
     island_cells: Vec<u32>,
     island_stack: Vec<u32>,
@@ -103,6 +105,7 @@ impl Grid {
             explosions: Vec::new(),
             island_removed: Vec::new(),
             island_stamp: vec![0; w * h],
+            island_anchor: vec![0; w * h],
             island_tick: 0,
             island_cells: Vec::new(),
             island_stack: Vec::new(),
@@ -206,6 +209,7 @@ impl Grid {
         self.island_tick = self.island_tick.wrapping_add(1);
         if self.island_tick == 0 {
             self.island_stamp.fill(0);
+            self.island_anchor.fill(0);
             self.island_tick = 1;
         }
         let stamp = self.island_tick;
@@ -248,13 +252,31 @@ impl Grid {
                     if m == BEDROCK {
                         anchored = true;
                         break;
-                    } else if is_structural(m) && self.island_stamp[j] != stamp {
-                        self.island_stamp[j] = stamp;
-                        self.island_stack.push(j as u32);
+                    } else if is_structural(m) {
+                        if self.island_anchor[j] == stamp {
+                            // Joined to a region an earlier flood in this pass already proved anchored.
+                            anchored = true;
+                            break;
+                        }
+                        if self.island_stamp[j] != stamp {
+                            self.island_stamp[j] = stamp;
+                            self.island_stack.push(j as u32);
+                        }
                     }
                 }
             }
             if anchored {
+                // Everything this flood reached or queued is connected to an anchor. Remember it, or a later
+                // seed's flood would find these cells already stamped, skip them, and mistake the thin rock
+                // strip it is standing on for a free island.
+                for k in 0..self.island_cells.len() {
+                    let c = self.island_cells[k] as usize;
+                    self.island_anchor[c] = stamp;
+                }
+                for k in 0..self.island_stack.len() {
+                    let c = self.island_stack[k] as usize;
+                    self.island_anchor[c] = stamp;
+                }
                 continue;
             }
             self.island_crumbled += 1;
