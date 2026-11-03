@@ -39,6 +39,13 @@ export interface Keys {
   up: boolean;
 }
 
+/** How each liquid feels (cells per tick, 60 Hz). Lava is heavy: slow to wade, a weak swim-up, a stronger pull down. */
+interface LiquidFeel { walk: number; pull: number; swim: number; sink: number; rise: number }
+const WATERISH: LiquidFeel = { walk: 0.55, pull: 0.35, swim: 0.2, sink: 0.7, rise: 0.9 };
+const LAVA_FEEL: LiquidFeel = { walk: 0.3, pull: 0.5, swim: 0.1, sink: 0.3, rise: 0.25 };
+const LAVA_ID = 14;
+export const liquidFeel = (m: number): LiquidFeel => (m === LAVA_ID ? LAVA_FEEL : WATERISH);
+
 export const isGas = (m: number): boolean => MATERIAL_CLASS[m] === "gas";
 export const isLiquid = (m: number): boolean => MATERIAL_CLASS[m] === "liquid";
 export const isSolid = (m: number): boolean => m !== EMPTY && !isGas(m) && !isLiquid(m);
@@ -52,6 +59,8 @@ export class Avatar {
   energy = ENERGY_MAX;
   onGround = false;
   inLiquid = false;
+  /** The liquid (material id) the body is in, 0 when none. Lava wins over a mix. */
+  private liquidId = 0;
   facing = 1;
   private remX = 0;
   private remY = 0;
@@ -93,30 +102,36 @@ export class Avatar {
     return false;
   }
 
-  private liquidAt(g: Grid): boolean {
+  private liquidAt(g: Grid): number {
     // Body centre and feet rows, middle column: enough to tell wading from swimming.
     const cx = Math.floor(this.x);
+    let found = 0;
     for (const dy of [-1, -5]) {
       const cy = Math.floor(this.y + dy);
-      if (cy >= 0 && cy < g.h && cx >= 0 && cx < g.w && isLiquid(g.mat[cy * g.w + cx])) return true;
+      if (cy >= 0 && cy < g.h && cx >= 0 && cx < g.w) {
+        const m = g.mat[cy * g.w + cx];
+        if (isLiquid(m) && (found === 0 || m === LAVA_ID)) found = m;
+      }
     }
-    return false;
+    return found;
   }
 
   /** One 60 Hz tick of the controller. */
   step(k: Keys, g: Grid): void {
-    this.inLiquid = this.liquidAt(g);
+    this.liquidId = this.liquidAt(g);
+    this.inLiquid = this.liquidId !== 0;
+    const feel = liquidFeel(this.liquidId);
     const dir = (k.right ? 1 : 0) - (k.left ? 1 : 0);
     if (dir) this.facing = dir > 0 ? 1 : 0;
-    const walk = this.inLiquid ? WALK * 0.55 : WALK;
+    const walk = this.inLiquid ? WALK * feel.walk : WALK;
     this.vx += (dir * walk - this.vx) * (this.onGround || this.inLiquid ? 0.4 : 0.15);
     if (!dir && Math.abs(this.vx) < 0.02) this.vx = 0;
 
     // Vertical: jump from the ground, levitate while up is held in the air (limited energy), swim in liquid.
     if (this.inLiquid) {
-      this.vy += GRAVITY * 0.35;
-      if (k.up) this.vy -= 0.2;
-      this.vy = Math.max(-0.9, Math.min(0.7, this.vy));
+      this.vy += GRAVITY * feel.pull;
+      if (k.up) this.vy -= feel.swim;
+      this.vy = Math.max(-feel.rise, Math.min(feel.sink, this.vy));
     } else {
       if (k.up && this.onGround) {
         this.vy = -JUMP;

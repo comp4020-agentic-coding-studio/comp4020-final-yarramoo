@@ -18,3 +18,13 @@ budget; reusing it needs a server decision about when to hand out a snapshot, mo
 (b) Server inactivity: recommend (not built) that the server mark a player silent for N minutes (no Pos/keepalive;
 the client sends a keepalive Pos every ~POS_KEEPALIVE_TICKS while standing) as inactive/away, so lobby ready-up
 does not wait on a hidden tab. Server change, flagged only.
+
+## 2. Lava
+Cause (found, not exactly as hypothesised): lava used the water constants. In a real room (survival, avatar painted
+into lava via `__devPaint`) the avatar did sink, but at water's pace and, while up/space was held, swim-up
+(`vy -= 0.2` against a pull of 0.042) rose at up to -0.9 cells/tick, so it bobbed out and floated on top; the "feet
+check" (`dy` -1 and -5 on the middle column) also misses lava less than 2 cells deep. Fix: per-liquid `LiquidFeel`
+table in `client/avatar.ts` (water/oil/acid as before; lava walk 0.3, pull 0.5, swim 0.1, max sink 0.3, max rise 0.25).
+Test (`tests/net/avatar.test.ts`): red first (lava max sink was 0.7, expected < 0.35), now green. Browser check:
+in a 30-radius lava pool the avatar dropped ~8 cells in 1 s and health fell steadily.
+Not done: a thin (<2 cell) lava layer still does not count as "in" liquid; left alone.

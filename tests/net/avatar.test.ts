@@ -100,6 +100,42 @@ describe("avatar controller", () => {
     expect(b.x).toBeGreaterThan(32);
   });
 
+  it("lava is heavier than water: sinks at its own pace, slower walking, weaker swim-up (note 6)", () => {
+    const deep = (m: number) => {
+      const g = world();
+      for (let y = 40; y < 100; y++) for (let x = 160; x < 180; x++) g.mat[y * W + x] = m; // a 60-deep pool
+      return g;
+    };
+    const dive = (m: number, k = idle) => {
+      const a = new Avatar(170, 60);
+      run(a, deep(m), 30, k);
+      return a;
+    };
+    const lava = dive(14);
+    expect(lava.inLiquid).toBe(true);
+    expect(lava.y).toBeGreaterThan(60); // it sinks into lava
+    expect(lava.vy).toBeLessThan(0.35); // ...slowly: a lower top speed than water's 0.7
+    expect(dive(5).vy).toBeGreaterThan(0.6); // water as before
+    // Holding up in lava: a weak swim that does not lift you out like water does.
+    const lift = (m: number) => {
+      const a = new Avatar(170, 90);
+      run(a, deep(m), 60, { ...idle, up: true });
+      return 90 - a.y;
+    };
+    expect(lift(14)).toBeLessThan(lift(5) / 2);
+    // Walking in lava is slower than in water.
+    const wade = (m: number) => {
+      const g = world();
+      for (let y = 90; y < 100; y++) for (let x = 20; x < 120; x++) g.mat[y * W + x] = m;
+      const a = new Avatar(20, 100);
+      a.onGround = true;
+      run(a, g, 60, { ...idle, right: true });
+      return a.x - 20;
+    };
+    expect(wade(14)).toBeLessThan(wade(5) * 0.8);
+    expect(SPEED_LIMIT_OK).toBe(true);
+  });
+
   it("speed never exceeds the limit over a long random run", () => {
     const g = world();
     const a = new Avatar(100, 50);
