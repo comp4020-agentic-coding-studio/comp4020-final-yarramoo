@@ -86,6 +86,11 @@ let cam: Camera = { x: 0, y: 0, vw: 512, vh: 512 };
 let localSim: Sim | null = null;
 const stepTimes: number[] = [];
 let ranChunks = 0;
+/** Debug view: outline the active box (plan 6.5), mirrored from sim/src/tuning.rs and grid.rs (pinned by a net test). */
+let showActiveBox = false;
+const ACTIVE_W = 576;
+const ACTIVE_H = 320;
+const CHUNK = 64;
 
 // Per-connection state; discarded on reconnect (the replay rebuilds it).
 let ws: WebSocket | null = null;
@@ -640,7 +645,55 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer,
       me: spectate || !mine ? null : { health: mine.health, dead, respawnTicks: dead && myDeathTick !== null ? Math.max(0, DEATH_TICKS - (sim.tick() - myDeathTick)) : null } });
   }
+  if (showActiveBox) pushActiveBox(rects, ents, w, h);
   return rects;
+}
+
+/**
+ * Debug view of the sim's active set (`Grid::set_active_around`): every chunk that intersects the
+ * ACTIVE_W x ACTIVE_H rectangle around an active player's official (sim) position steps; every other chunk
+ * is frozen. Frozen chunks are tinted, each player's rectangle is outlined in yellow and the active chunks'
+ * edges in green. Read from `entities()` only, so it shows what the sim does, not the local prediction.
+ */
+function pushActiveBox(rects: Rect[], ents: EntityView[], w: number, h: number): void {
+  const centres = ents.filter((e) => e.type === ENT_PLAYER && e.active).map((e) => ({ x: e.x >> 4, y: e.y >> 4 }));
+  const cw = Math.ceil(w / CHUNK);
+  const ch = Math.ceil(h / CHUNK);
+  const hw = ACTIVE_W / 2;
+  const hh = ACTIVE_H / 2;
+  const x0v = Math.max(0, Math.floor(cam.x / CHUNK));
+  const y0v = Math.max(0, Math.floor(cam.y / CHUNK));
+  const x1v = Math.min(cw - 1, Math.floor((cam.x + cam.vw) / CHUNK));
+  const y1v = Math.min(ch - 1, Math.floor((cam.y + cam.vh) / CHUNK));
+  const active = (cx: number, cy: number) => {
+    if (cx < 0 || cy < 0 || cx >= cw || cy >= ch) return false;
+    const [x0, y0] = [cx * CHUNK, cy * CHUNK];
+    return centres.some((p) => x0 < p.x + hw && x0 + CHUNK > p.x - hw && y0 < p.y + hh && y0 + CHUNK > p.y - hh);
+  };
+  for (let cy = y0v; cy <= y1v; cy++) {
+    for (let cx = x0v; cx <= x1v; cx++) {
+      const [x, y] = [cx * CHUNK, cy * CHUNK];
+      if (!active(cx, cy)) {
+        rects.push({ x, y, w: CHUNK, h: CHUNK, r: 0.1, g: 0.3, b: 1, a: 0.22 });
+        continue;
+      }
+      // Faint chunk grid inside the active area, so a shape that lines up with chunk edges is easy to see.
+      rects.push({ x, y, w: CHUNK, h: 1, r: 1, g: 1, b: 1, a: 0.12 });
+      rects.push({ x, y, w: 1, h: CHUNK, r: 1, g: 1, b: 1, a: 0.12 });
+      // Green edge wherever an active chunk meets a frozen one: the line liquid can cross and stop at.
+      if (!active(cx - 1, cy)) rects.push({ x, y, w: 1, h: CHUNK, r: 0.2, g: 1, b: 0.3, a: 0.9 });
+      if (!active(cx + 1, cy)) rects.push({ x: x + CHUNK - 1, y, w: 1, h: CHUNK, r: 0.2, g: 1, b: 0.3, a: 0.9 });
+      if (!active(cx, cy - 1)) rects.push({ x, y, w: CHUNK, h: 1, r: 0.2, g: 1, b: 0.3, a: 0.9 });
+      if (!active(cx, cy + 1)) rects.push({ x, y: y + CHUNK - 1, w: CHUNK, h: 1, r: 0.2, g: 1, b: 0.3, a: 0.9 });
+    }
+  }
+  for (const p of centres) {
+    const [x, y] = [p.x - hw, p.y - hh];
+    rects.push({ x, y, w: ACTIVE_W, h: 1, r: 1, g: 0.9, b: 0.2, a: 0.8 });
+    rects.push({ x, y: y + ACTIVE_H - 1, w: ACTIVE_W, h: 1, r: 1, g: 0.9, b: 0.2, a: 0.8 });
+    rects.push({ x, y, w: 1, h: ACTIVE_H, r: 1, g: 0.9, b: 0.2, a: 0.8 });
+    rects.push({ x: x + ACTIVE_W - 1, y, w: 1, h: ACTIVE_H, r: 1, g: 0.9, b: 0.2, a: 0.8 });
+  }
 }
 
 const nameOf = (id: number): string | undefined => names.get(id) ?? (id === myId && myName ? myName : undefined);
@@ -1090,6 +1143,9 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "sleep":
       localSim?.setSleepEnabled(m.on);
+      break;
+    case "activebox":
+      showActiveBox = m.on;
       break;
     case "cast":
       onCast(m.spell, m.angle);

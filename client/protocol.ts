@@ -35,6 +35,8 @@ export type ToWorker =
   /** Client-only camera: the world window to draw, in cells. Never an input. */
   /** Dev (local mode only): switch chunk sleeping, to measure what it buys. */
   | { type: "sleep"; on: boolean }
+  /** Debug view: outline the sim's active chunk box (`__activeBox(on)` or `?activebox=1`). Drawing only, never an input. */
+  | { type: "activebox"; on: boolean }
   /** Dev route only: set the boss's hp (`__devBossHp`). */
   | { type: "devbosshp"; hp: number }
   | { type: "camera"; x: number; y: number; vw: number; vh: number }

@@ -1143,6 +1143,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     (window as unknown as Record<string, unknown>).__devMe = () => lastPlayers?.list.find((p) => p.me) ?? null;
   }
   (window as unknown as Record<string, unknown>).__setSleep = (on: boolean) => send({ type: "sleep", on });
+  // Debug view of the sim's active box, in every build: it only draws, from entity positions every client has.
+  (window as unknown as Record<string, unknown>).__activeBox = (on = true) => send({ type: "activebox", on });
+  if (params.get("activebox") === "1") send({ type: "activebox", on: true });
 
   // Who's online and the minimap (game world only). Camera moves only: never an input (invariant 9, D-055).
   const miniEl = document.createElement("div");

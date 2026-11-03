@@ -21,6 +21,14 @@ describe("client mirrors of sim constants", () => {
     expect(hp.length).toBeGreaterThan(0);
     expect(mirror).toEqual(hp);
   });
+  it("worker.ts active-box overlay mirrors ACTIVE_W, ACTIVE_H (tuning.rs) and CHUNK (grid.rs)", () => {
+    const worker = readFileSync(new URL("../../client/worker.ts", import.meta.url), "utf8");
+    const grid = readFileSync(new URL("../../sim/src/grid.rs", import.meta.url), "utf8");
+    const ts = (n: string) => Number(worker.match(new RegExp(`const ${n} = (\\d+);`))![1]);
+    expect(ts("ACTIVE_W")).toBe(Number(rs.match(/pub const ACTIVE_W: i32 = (\d+);/)![1]));
+    expect(ts("ACTIVE_H")).toBe(Number(rs.match(/pub const ACTIVE_H: i32 = (\d+);/)![1]));
+    expect(ts("CHUNK")).toBe(Number(grid.match(/pub const CHUNK: usize = (\d+);/)![1]));
+  });
   it("db.ts snapshot format equals FORMAT_VERSION in snapshot.rs", () => {
     const snap = readFileSync(new URL("../../sim/src/snapshot.rs", import.meta.url), "utf8");
     const db = readFileSync(new URL("../../server/db.ts", import.meta.url), "utf8");
