@@ -513,3 +513,50 @@ research's v1 (a translation-only `Body` entity that falls as one piece) and v2 
 - **Source:** falling rock v0 and its review (`docs/research/review-falling-rock.md`), 1 Nov.
 - **Why:** sand everywhere loses the material identity that makes the sim fun. A collapsed overhang can
   also plug a shaft on the guaranteed path; sand digs, but a gen-time check would be kinder.
+
+## Shared simulation work between players (reviewed, not recommended)
+
+Idea: a client simulates in real time only the chunks near it; far chunks are simulated by whichever player
+is near them, and a client walking towards one asks the server for an up-to-date copy.
+
+- **Source:** the user, 3 Nov, while deciding how to fix liquids freezing at the active region's edge. The
+  session model's critical review, given at the time, recommended against it. Recorded so the reasoning
+  isn't lost.
+- **Why not (for now):**
+  - It ends lockstep: when no two clients hold the same world, hashes can't be compared, and desyncs go
+    undetected.
+  - Skipped chunks still feed simulated ones every tick (a flood crossing in), so neighbours' data would have
+    to stream continuously.
+  - The server never steps the sim (invariant 11), so "an up-to-date chunk" can only come from another
+    client. One bad client could corrupt everyone's world unchecked.
+  - Nobody near a chunk means it either freezes (the original bug) or someone simulates it anyway (no
+    saving).
+  - It's weeks of work: ownership and handover, a chunk protocol, mid-history joins, trust.
+- **What to do instead if load is a problem:** cap the woken chunks per tick, step woken chunks at a lower
+  rate (every 2nd or 4th tick), or cap world size. All keep lockstep. Brief W's load test
+  (`docs/research/wake-load-results.md`) decides whether any of it is needed.
+
+## Dev overlay for chunk sleeping (done for the active box; sleeping still to add)
+
+The active-box overlay (`?activebox=1`) shows the active and frozen chunks. Extending it to tint sleeping
+chunks (and woken ones, after brief W) would show at a glance which chunks are costing CPU.
+
+- **Source:** brief A's worker report, 3 Nov.
+- **Why:** sleeping bugs and load problems are invisible otherwise; the active-box overlay found the liquid
+  walls' cause in minutes.
+
+## A world-sweep test for falling rock
+
+Dig at a grid of sites across several Survival seeds and assert that no Rock ever becomes a powder unless it
+was really cut free.
+
+- **Source:** brief B's worker report, 3 Nov. The probe took about 4 s natively.
+- **Why:** both falling-rock bugs so far (D-165's arena cut, D-174's thin strips) were found by eye, not by
+  a test. A sweep would catch the next one.
+
+## Grain variation for Pebbles
+
+Give Pebbles a per-cell shade in the shader, so a heap reads as gravel rather than flat grey.
+
+- **Source:** brief B's worker report, 3 Nov.
+- **Why:** cheap and client-only, and it makes "rock that fell" more obvious.
