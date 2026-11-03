@@ -1324,3 +1324,22 @@ entry path. The size-S fix has no automated test; the screenshots are its only e
 **Evidence.** D-166, D-168, D-169; `docs/briefs/fun8-lobby.md`; `docs/research/f6b-lobby-worker-report.md`,
 `docs/research/review-f6b.md`; `docs/art/shots/f6b-size-s-drawn-as-sandbox-before.png`,
 `f6b-size-s-countdown-bo.png`, `f6b-size-s-start-ada.png`; commits `4b9140f`..`5fc9634`.
+
+## 32. Liquids that never stopped, and walls that weren't sleeping
+
+**What.** The 3 Nov playtest showed two liquid problems. Lone drops skittered around flat ground forever,
+and water and lava stood in vertical walls on chunk edges. Liquids now have a resting state (D-172): a
+cell slides sideways only when liquid above pushes it or it sits on a body's surface. Lava lakes in quiet
+caves can sleep for the first time.
+
+**The challenge.** The obvious suspect for the walls was chunk sleeping, which would have broken the rule
+that sleeping is invisible. The worker reproduced both candidates natively first. Sleeping on and off gave
+identical grids; a front froze just past the active rectangle and moved on when the player did (D-173). So
+it isn't a bug in the sim's rules but a consequence of the 576 x 320 active region, which is a design choice
+for the user. It is still not fully closed: the walls in the screenshots look closer to the player than the
+region's edge. The same playtest also showed "frozen enemies" that looked like a desync. The server log
+showed every hash check passing and the client 91,384 ticks behind after a background tab, so it was
+catch-up, not divergence. Without the log both would have been misread.
+
+**Evidence.** D-172, D-173; `docs/playtest-2026-11-03.md` notes 3, 4 and 12; `docs/briefs/fix-a-liquids.md`;
+`docs/research/fix-a-liquids-report.md`, `docs/research/review-fix-a.md`; commits `3fbb1f3`..`7b7602b`.

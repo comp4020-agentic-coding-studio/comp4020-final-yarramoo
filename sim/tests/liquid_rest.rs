@@ -103,23 +103,24 @@ fn a_pool_on_a_ledge_still_pours_over_the_edge() {
     assert!((30..70).all(|x| rows(x) <= 2), "ledge not drained to a film");
 }
 
-/// Resting liquid wakes when the ground goes: the resting rule reads up to `reach` cells away, so a
-/// change that far must wake the chunk (and across a chunk edge), or sleeping would be visible.
+/// Resting liquid wakes when the ground beside it goes, across a chunk edge. The drop rests at x = 63 (the
+/// last column of chunk 0) on a shelf; the shelf cell diagonally below it, at x = 64, is in the next chunk.
+/// Removing it must wake chunk 0 (through `touch`'s one-cell radius) so the drop takes the diagonal, with
+/// sleeping on exactly as with it off. The drop must really fall: a test where nothing moves proves nothing.
 #[test]
-fn a_resting_cell_wakes_when_a_gap_opens_within_reach_across_a_chunk_edge() {
+fn a_resting_cell_wakes_when_the_floor_beside_it_goes_across_a_chunk_edge() {
     let run_it = |sleep: bool| {
         let mut g = floor();
         g.sleep_enabled = sleep;
-        // Raised shelf x = 40..=63 and a lone drop on it at the chunk edge; the shelf continues into the
-        // next chunk (x = 64..=70) then ends.
         for x in 40..=70 {
             g.set((H - 2) * W + x, ROCK, 0);
         }
         g.set((H - 3) * W + 63, WATER, 0);
         let t = run(&mut g, 0, 300);
-        // Remove the shelf cell 5 cells to the right of the drop, in the other chunk.
-        g.set((H - 2) * W + 68, EMPTY, 0);
+        assert_eq!(g.mat[(H - 3) * W + 63], WATER, "the drop should be resting where it was put");
+        g.set((H - 2) * W + 64, EMPTY, 0);
         run(&mut g, t, 300);
+        assert_ne!(g.mat[(H - 3) * W + 63], WATER, "the drop never moved after its floor went (sleep {sleep})");
         g.mat
     };
     assert!(run_it(true) == run_it(false), "sleeping changed the result (invariant 8)");
