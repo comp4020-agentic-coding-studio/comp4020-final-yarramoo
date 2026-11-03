@@ -2,7 +2,7 @@
 
 use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX, TERRAIN_SOLID_BOX};
 use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_ROUND_END, EV_ROUND_START, EV_SPAWN};
-use crate::grid::Grid;
+use crate::grid::{is_structural, Grid};
 use crate::hash;
 use crate::input::{decode, Input};
 use crate::materials::*;
@@ -526,7 +526,12 @@ impl Sim {
                 if cur == BEDROCK || (fill_empty && !fill_empty_writable(cur)) {
                     continue;
                 }
-                self.grid.set(i, mat, 0);
+                if is_structural(mat) {
+                    // A hard stroke records no crumble seeds: painted rock may float.
+                    self.grid.set_unseeded(i, mat, 0);
+                } else {
+                    self.grid.set(i, mat, 0);
+                }
             }
         }
     }

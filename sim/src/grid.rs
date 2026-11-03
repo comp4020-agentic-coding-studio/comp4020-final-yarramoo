@@ -189,6 +189,14 @@ impl Grid {
         self.touch(i);
     }
 
+    /// `set` for a paint stroke of a structural material: writes and touches like `set` but records no crumble
+    /// seed, so a painted wall may float (D-174). Paint is an input, so this stays deterministic.
+    pub fn set_unseeded(&mut self, i: usize, m: u8, a: u8) {
+        self.mat[i] = m;
+        self.aux[i] = a;
+        self.touch(i);
+    }
+
     /// Record a removed structural cell (bounded; extras dropped). Seeds are derived later, in
     /// `crumble_islands`, from neighbours that are still solid, so a bulk removal cannot overflow a seed queue.
     fn seed_neighbours(&mut self, i: usize) {
