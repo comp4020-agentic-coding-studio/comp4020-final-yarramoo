@@ -192,6 +192,10 @@ impl Sim {
     /// Damage and death happen inside 5 and 6.
     pub fn step(&mut self) -> u32 {
         self.events.clear();
+        // Review W F1 (D-176): `touch` reads `active` to decide `woken`, and inputs and entities write cells
+        // before the region refresh below. `active` is scratch (a restored grid starts all true), so derive it from
+        // entity state here first, or a client that just restored and one that ran on would disagree on this tick.
+        self.refresh_active();
         let inputs = core::mem::take(&mut self.queue);
         for i in inputs {
             self.apply(i);

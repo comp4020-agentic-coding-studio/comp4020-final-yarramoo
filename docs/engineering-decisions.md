@@ -1343,3 +1343,25 @@ catch-up, not divergence. Without the log both would have been misread.
 
 **Evidence.** D-172, D-173; `docs/playtest-2026-11-03.md` notes 3, 4 and 12; `docs/briefs/fix-a-liquids.md`;
 `docs/research/fix-a-liquids-report.md`, `docs/research/review-fix-a.md`; commits `3fbb1f3`..`7b7602b`.
+
+## 33. Waking the frozen world, and the restore that would have split it
+
+**What.** Liquid that crossed the edge of the active region froze in mid-air (entry 32, D-173). The user chose
+to let frozen chunks wake whenever something reaches them, with no cap, and to measure whether a limit is
+needed (D-176). The load test found no need for one: the worst case built, full-width water and lava on the
+largest world, costs 1.7 ms per step at p95 natively, against a 16.7 ms frame. Fire, growth and reactions now
+carry on outside the player's view, and a flood you walk away from finishes.
+
+**The challenge.** Waking made a scratch flag semantic, which is exactly where lockstep breaks quietly. The
+worker's own snapshot test passed. The independent reviewer, reading cold, found that inputs write cells
+before the active region is refreshed, and that a restored grid starts with every chunk active. So on the first
+tick after a restore, a paint outside the region woke chunks on the running client and not the joining one. The
+first regression test did not fail: the painted "water" overwrote dirt and settled within the tick. Only paint
+in open air, which stays busy, showed the split. Refreshing the region at the start of every step fixed it.
+The user also asked for a design where players share simulation work by distance. The session model reviewed
+it against lockstep and recommended against it (FUTURE.md).
+
+**Evidence.** D-176; `docs/briefs/fix-w-waking.md`; `docs/research/fix-w-waking-report.md`,
+`docs/research/wake-load-results.md`, `docs/research/review-fix-w.md`;
+`sim/tests/wake.rs` (`a_write_outside_the_region_on_the_first_tick_after_restore_matches_the_running_sim`);
+commits `8edde3c`..`76ecdbf` and the merge that follows them.

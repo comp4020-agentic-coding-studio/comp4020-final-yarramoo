@@ -201,3 +201,31 @@ fn woken_bits_are_in_the_state_hash() {
     let mut b = b;
     assert_ne!(a.state_hash(), b.state_hash());
 }
+
+/// Review W F1: `touch` reads the scratch `active` vector to decide `woken`, and inputs are applied before
+/// `refresh_active`. A restored sim starts with `active` all true, a running one holds last tick's region, so a
+/// Paint outside the region on the first tick after a restore woke the chunk on one and not the other: the hashes
+/// diverged for any client joining mid-game. Size-1 world (1024 x 768), player at (200, 100), so x = 900 is frozen.
+#[test]
+fn a_write_outside_the_region_on_the_first_tick_after_restore_matches_the_running_sim() {
+    use sim::config::{RoomConfig, TERRAIN_EMPTY_BOX};
+    use sim::input::encode_paint;
+    // Empty box: the paint at y = 100 is water in open air, so it keeps falling and its chunk stays busy.
+    let cfg = RoomConfig { terrain: TERRAIN_EMPTY_BOX, size: 1, avatars: 1, damage: 0, spells: 1, brushes: 1, death: 0, respawn_secs: 1, pickup_respawn: 1, round: 0, max_players: 8, enemies: 0 };
+    let mut a = Sim::new(4, cfg).unwrap();
+    a.push_input(&encode_join(1));
+    a.push_input(&encode_pos(1, 0, 200 * 16, 100 * 16, 0));
+    for _ in 0..60 {
+        a.step();
+    }
+    assert!(!a.grid.active[a.grid.chunk_of(900, 100)], "x = 900 must be outside the player's region");
+    let mut b = sim::snapshot::restore(&sim::snapshot::write(&a)).unwrap();
+    assert_eq!(a.state_hash(), b.state_hash());
+    let paint = encode_paint(1, WATER, 900, 100, 900, 100, 4);
+    a.push_input(&paint);
+    b.push_input(&paint);
+    a.step();
+    b.step();
+    assert_eq!(a.grid.woken, b.grid.woken, "the first tick after restore woke different chunks");
+    assert_eq!(a.state_hash(), b.state_hash(), "the restored sim diverged on its first tick");
+}
