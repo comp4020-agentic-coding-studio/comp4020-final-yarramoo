@@ -62,14 +62,17 @@
     #hud .bar.hp { margin-bottom: 0; }
     #hud span + .bar + span { display: block; margin-top: 6px; }
     #hud .bar i { display: block; height: 100%; width: 100%; background: #6ea8ff; }
-    #spells { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: calc(100% - 16px); pointer-events: none; }
+    /* One row, opaque tiles. The stage reserves the bar's height below the canvas (room.ts layout subtracts the padding). */
+    #stage.has-bar { padding-bottom: 58px; }
+    #spells { position: absolute; left: 8px; right: 8px; bottom: 6px; display: flex; flex-wrap: nowrap; justify-content: center; align-items: stretch; gap: 3px; overflow-x: auto; scrollbar-width: none; }
     #spells[hidden], #hud[hidden] { display: none; }
-    #spells .slot { position: relative; width: 58px; height: 46px; border: 2px solid var(--line); border-radius: 6px; background: rgba(15,19,27,.82); overflow: hidden; font-size: 11px; padding: 3px 5px; }
-    #spells .slot.sel { border-color: var(--accent); background: rgba(23,32,47,.9); }
-    #spells .slot.empty { opacity: .45; }
-    #spells .key { position: absolute; right: 4px; top: 2px; color: var(--dim); }
-    #spells .nm { display: block; font-weight: 600; }
-    #spells .ch { display: block; color: var(--dim); font-variant-numeric: tabular-nums; }
+    #spells .slot { position: relative; flex: 0 0 auto; width: 62px; height: 46px; border: 2px solid var(--line); border-radius: 6px; background: #0f131b; overflow: hidden; font-size: 11px; padding: 3px 4px; cursor: pointer; user-select: none; }
+    #spells .slot.sel { border-color: var(--accent); background: #17202f; }
+    #spells .slot.empty { opacity: 1; background: #0b0e14; color: var(--dim); }
+    #spells .key { position: absolute; right: 3px; top: 2px; color: var(--dim); font-size: 10px; }
+    #spells .nm { display: block; font-weight: 600; margin-top: 10px; white-space: nowrap; }
+    #spells .ch { display: block; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #spells .barhint { flex: 0 0 auto; align-self: center; color: var(--dim); font-size: 11px; opacity: .7; padding: 0 4px; }
     #spells .cd { position: absolute; left: 0; bottom: 0; width: 100%; height: 0; background: rgba(0,0,0,.55); }
     #spells .sw { position: absolute; left: 0; bottom: 0; width: 100%; height: 3px; border: 0; border-radius: 0; }
     canvas.dim { filter: brightness(.45) saturate(.7); }
@@ -100,7 +103,7 @@
     #toasts div.fade { opacity: 0; }
     #bags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
     #bags span { position: absolute; left: 0; top: 0; font-size: 11px; line-height: 1; padding: 1px 3px; border-radius: 3px; background: rgba(11,14,20,.75); color: #ffd98a; font-variant-numeric: tabular-nums; }
-    @media (max-width: 480px) { #spells { gap: 3px; } #spells .slot { width: 56px; padding: 3px 4px; } #hud { bottom: 58px; } #death { font-size: 16px; } #toasts div { font-size: 11px; } }
+    @media (max-width: 480px) { #spells { justify-content: flex-start; } #hud { bottom: 58px; } #death { font-size: 16px; } #toasts div { font-size: 11px; } }
     #minimap { position: absolute; left: 8px; right: 8px; top: 6px; height: 22px; background: rgba(15,19,27,.82); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; touch-action: none; overflow: hidden; }
     #minimap[hidden], #who[hidden], #whoBtn[hidden] { display: none; }
     #minimap .dot { position: absolute; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #e6e9f0; pointer-events: none; }
