@@ -25,6 +25,8 @@ export type ToWorker =
     }
   /** Held movement keys, for the avatar controller. */
   | { type: "keys"; left: boolean; right: boolean; up: boolean }
+  /** The tab was hidden or shown: while hidden the avatar sends no Pos and no casts (brief F item 1b). */
+  | { type: "hidden"; hidden: boolean }
   /**
    * Cast a spell: the angle is ALREADY quantised to u16 (65536 per turn) by the main thread (invariant 2).
    * The worker owns the cast_seq, the preview ghost and the input.

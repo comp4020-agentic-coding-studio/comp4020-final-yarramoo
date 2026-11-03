@@ -51,7 +51,7 @@ import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushBoss, pushEne
 import { BOMB_RADIUS, DEATH_TICKS, SPELL_WALL, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
-import { Lockstep, knockIsFresh, reactToTick } from "./lockstep.ts";
+import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
 
@@ -139,6 +139,8 @@ const SPELL_COLOURS: Record<number, [number, number, number]> = {
 
 // Casting and animation (M4b). Everything below is cosmetic or an input source; none of it writes sim state.
 let castSeq = 0;
+/** The tab is hidden: no Pos, no casts. Not a Leave (that would reset lobby countdowns for an alt-tab). */
+let tabHidden = false;
 /** Cast preview ghosts: drawn at once from the predicted avatar, removed when the real bolt (same cast_seq) shows up. */
 const ghosts: { seq: number; spell: number; x: number; y: number; vx: number; vy: number; bornMs: number }[] = [];
 const GHOST_MAX_MS = 600;
@@ -475,7 +477,8 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   // While dead the controller is frozen: no steps, no Pos (the sim ignores Pos while dead anyway; this just stops a
   // visible rubber-band). Nothing is ever sent BECAUSE of a death: this only stops sending.
   if (dead) avAcc = 0;
-  if (avatar && avatarReady && mine && !dead) {
+  if (tabHidden) avAcc = 0;
+  if (avatar && avatarReady && mine && !dead && !tabHidden) {
     const grid = { mat: sim.matView(), w, h };
     avAcc += dt;
     const n = Math.min(Math.floor(avAcc / STEP_MS), MAX_FRAME_STEPS);
@@ -901,7 +904,7 @@ function dropGhost(seq: number) {
 
 /** The cast message from the main thread: quantised angle in, an input out, and a ghost drawn now. */
 function onCast(spell: number, angle: number) {
-  if (spectate || !avatar || !avatarReady || net !== "live") return;
+  if (spectate || !avatar || !avatarReady || net !== "live" || tabHidden) return;
   if (!localSim && (!ws || ws.readyState !== WebSocket.OPEN)) return;
   if (iAmDead) return; // the sim would only reject it; nothing is sent because of a death, this only withholds
   const now = performance.now();
@@ -967,25 +970,29 @@ function frame(now: number) {
       send({ type: "frame", mat: m, aux: a, tick: localSim.tick(), rects }, [m.buffer, a.buffer]);
     }
   } else if (ls) {
-    if (net === "catching-up") {
-      ls.fastForward(FF_BUDGET_MS);
+    // A tab that was hidden stays "live" but falls far behind: driveFrame switches it to the fast-forward path
+    // (target = the tick received so far) and the overlay shows. The avatar is paused while catching up because
+    // gameFrame (stepping, Pos) only runs when net is "live".
+    const wasCatching = net === "catching-up";
+    const base = Math.min(Math.floor((acc += dt) / STEP_MS), MAX_FRAME_STEPS);
+    if (wasCatching) acc = 0;
+    else acc -= Math.floor(acc / STEP_MS) * STEP_MS;
+    const t0 = performance.now();
+    const r = driveFrame(ls, wasCatching, base, FF_BUDGET_MS);
+    if (r.entered) {
+      acc = 0;
+      setNet("catching-up");
+    }
+    if (r.catching) {
       statSteps = 0;
-      if (!ls.fastForwarding) {
-        acc = 0;
-        setNet("live");
-        sendLive(); // same moment HASH starts to count (past the replay target); also after a resync or reconnect
-      }
-    } else {
-      acc += dt;
-      const base = Math.min(Math.floor(acc / STEP_MS), MAX_FRAME_STEPS);
-      acc -= Math.floor(acc / STEP_MS) * STEP_MS;
-      const t0 = performance.now();
-      const ran = ls.run(ls.plan(base));
-      if (ran > 0) {
-        stepTimes.push((performance.now() - t0) / ran);
-        if (stepTimes.length > 600) stepTimes.shift();
-      }
-      statSteps += ran;
+    } else if (wasCatching) {
+      acc = 0;
+      setNet("live");
+      sendLive(); // same moment HASH starts to count (past the replay target); also after a resync or reconnect
+    } else if (r.ran > 0) {
+      stepTimes.push((performance.now() - t0) / r.ran);
+      if (stepTimes.length > 600) stepTimes.shift();
+      statSteps += r.ran;
     }
     if (ls && (net !== "catching-up" || now - lastFfDraw >= FF_DRAW_INTERVAL_MS)) {
       if (net === "catching-up") lastFfDraw = now;
@@ -1154,6 +1161,10 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       keys.left = m.left;
       keys.right = m.right;
       keys.up = m.up;
+      break;
+    case "hidden":
+      tabHidden = m.hidden;
+      if (m.hidden) { keys.left = false; keys.right = false; keys.up = false; }
       break;
     case "follow":
       followCam = m.on;
