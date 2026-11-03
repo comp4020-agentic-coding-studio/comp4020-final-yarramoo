@@ -40,3 +40,39 @@ Expectations changed (deliberate, in `grid.rs` unit tests, because the old asser
 - `density_order`: sand sinking through lava now ends as Sand or Glass at the lava's old cell. The displaced
   lava rests on top instead of sliding away, and so touches the sand and may glaze it.
 No tests/determinism expectations needed updating (they compare sim against itself, not golden hashes).
+
+## Commits
+- 3fbb1f3: wall reproductions (`liquid_walls.rs`); sleeping on/off identical, frozen front at the region edge.
+- 2c7fd69: droplet tests, red (5 of 7 failing before the rule; shown ignored until 2b).
+- 8f59cc7: the resting rule, tests un-ignored and green; two unit expectations adjusted (above).
+Gate on 8f59cc7: cargo test, clippy wasm, typecheck, test:determinism (53), test:net (350) all exit 0.
+
+## Not verified
+- No browser check of the walls in a live game world; the cause rests on native tests. The playtest shots
+  showed walls 115-150 cells from the player, which the region (288 x 160 half-extent) should cover, so the
+  user's case may be a player who had just moved or teleported, or a different stall. Worth checking with
+  `__devMe()` before treating note 3 as closed. A third cause in `liquid_move` ordering was not reproduced.
+- Visual feel of the resting rule (a film on flat ground now clings in uneven patches rather than spreading
+  to one cell thick) is untested in the browser.
+
+## Architectural decisions for review
+1. **Resting rule: slide only with liquid directly above or below.** Alternatives: (a) slide only when a
+   same-side neighbour pushes (needs a wider read, and breaks the one-cell wake radius, risking invariant 8);
+   (b) a per-cell "rest" counter in aux (hidden state, snapshot/format cost); (c) probabilistic slide
+   (still keeps chunks awake). Chosen: a 3x3-only read, so `touch`'s one-cell wake radius stays sufficient
+   and D7 holds. Cost: a heap's edge cell with liquid below but nothing above can still slide, and a flat
+   film of 2+ cells clings in uneven columns rather than levelling to 1 cell; a thin puddle will not spread
+   thin on its own. Deep heaps level as before (tests unchanged).
+2. **Lava and acid volatility.** Lava was unconditionally volatile; now it keeps its chunk awake only while
+   it can move or touches something it can ignite/melt/glaze, so a lava lake in a quiet cave sleeps. Cost:
+   the neighbour list in `update_lava` must be kept in step with the reactions in the same function.
+3. **Active region (the cause of the walls): no change made.** Options, with per-tick cost: bigger rectangle
+   (cost scales with area: +50% in each axis is about 2.25x active chunks); a gravity-only band around it
+   (cost is the extra chunks times a cheap pass, no reactions); capped liquid wake-up outside the region
+   (bounded by the cap, needs a deterministic choice of which chunks); wake ahead of movement (a velocity
+   input, more state); client-side dimming of frozen chunks (zero sim cost, hides rather than fixes).
+   A decision for the user.
+
+## FUTURE.md ideas (suggested only)
+- A dev overlay drawing the active rectangle and frozen chunks on the client, to see walls vs region at once.
+- A sim test that scans a settled game world for liquid cells beside Empty on chunk edges, as a regression sensor.
