@@ -233,6 +233,9 @@ export interface PoseState {
   vx: number;
   vy: number;
   walkPhase: number;
+  /** Exponentially averaged |vx| and the walk/idle state with hysteresis (remote players' vx spikes). */
+  sx: number;
+  walking: boolean;
   airMs: number;
   castUntil: number;
   hitUntil: number;
@@ -245,7 +248,7 @@ export interface PoseState {
 }
 
 export function newPoseState(x: number, y: number, facingRight: boolean): PoseState {
-  return { x, y, vx: 0, vy: 0, walkPhase: 0, airMs: 0, castUntil: 0, hitUntil: 0, hitAt: -1e9, castCol: WHITE, facingRight, pose: "idle" };
+  return { x, y, vx: 0, vy: 0, walkPhase: 0, sx: 0, walking: false, airMs: 0, castUntil: 0, hitUntil: 0, hitAt: -1e9, castCol: WHITE, facingRight, pose: "idle" };
 }
 
 /**
@@ -253,6 +256,10 @@ export function newPoseState(x: number, y: number, facingRight: boolean): PoseSt
  * local avatar; for others it is inferred from vertical speed. `thrusting` is the local avatar holding up in
  * the air with energy; for others a long rise stands in for it.
  */
+const WALK_ON = 0.12;
+const WALK_OFF = 0.05;
+const WALK_FRAMES_PER_CELL = 0.2; // 0.75 cells/tick (WALK) * 60 * 0.2 = 9 frames/s (was 0.45: 20 frames/s)
+
 export function updatePose(p: PoseState, x: number, y: number, dt: number, now: number, grounded: boolean | null, thrusting: boolean | null): void {
   const ticks = Math.max(dt / (1000 / 60), 0.25);
   p.vx = (x - p.x) / ticks;
@@ -262,9 +269,13 @@ export function updatePose(p: PoseState, x: number, y: number, dt: number, now: 
   const air = grounded === null ? Math.abs(p.vy) > 0.15 : !grounded;
   p.airMs = air ? p.airMs + dt : 0;
   if (Math.abs(p.vx) > 0.05) p.facingRight = p.vx > 0;
-  if (!air && Math.abs(p.vx) > 0.1) p.walkPhase += Math.abs(p.vx) * ticks * 0.45;
+  // Smooth the measured speed (interpolated remote positions spike), then switch walk/idle with hysteresis so a
+  // brief stall does not flicker to idle. About 9 animation frames/s at WALK.
+  p.sx += (Math.abs(p.vx) - p.sx) * (1 - Math.exp(-dt / 90));
+  if (p.walking ? p.sx < WALK_OFF : p.sx > WALK_ON) p.walking = !p.walking;
+  if (!air && p.walking) p.walkPhase += Math.max(p.sx, WALK_ON) * ticks * WALK_FRAMES_PER_CELL;
   const lev = thrusting ?? (p.airMs > 380 && p.vy < -0.2);
-  p.pose = now < p.hitUntil ? "hit" : now < p.castUntil ? "cast" : air ? (lev ? "levitate" : "jump") : Math.abs(p.vx) > 0.1 ? "walk" : "idle";
+  p.pose = now < p.hitUntil ? "hit" : now < p.castUntil ? "cast" : air ? (lev ? "levitate" : "jump") : p.walking ? "walk" : "idle";
 }
 
 export interface Particle {

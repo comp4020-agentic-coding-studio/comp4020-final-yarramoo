@@ -28,3 +28,10 @@ table in `client/avatar.ts` (water/oil/acid as before; lava walk 0.3, pull 0.5, 
 Test (`tests/net/avatar.test.ts`): red first (lava max sink was 0.7, expected < 0.35), now green. Browser check:
 in a 30-radius lava pool the avatar dropped ~8 cells in 1 s and health fell steadily.
 Not done: a thin (<2 cell) lava layer still does not count as "in" liquid; left alone.
+
+## 3. Walking animation
+`updatePose` (`client/fx.ts`): walkPhase factor 0.45 -> 0.2 per cell (about 9 frames/s at WALK; was 20), |vx| smoothed
+with an exponential average (90 ms), walk/idle switch with hysteresis (on 0.12, off 0.05). Test
+`tests/net/walk-anim.test.ts`: red on the old code (20.2 frames in a second; a one-frame stall flickered to idle),
+green now. Not verified: I did not open a second real-room session to watch a remote avatar; judged by the unit
+test only. The user should look at it at 1x and 2x.
