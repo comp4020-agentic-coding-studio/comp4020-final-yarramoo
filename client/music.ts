@@ -422,3 +422,32 @@ function playNote(c: AudioContext, n: Note, t: number, mood: Mood, dest: AudioNo
   nodes.push(f, g);
   end(stop);
 }
+
+/** A "Music on/off" button. `cls` is the existing button class to reuse; it is returned for the caller to insert. */
+export function makeMusicButton(cls: string): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "musicBtn";
+  b.className = cls;
+  const show = () => {
+    b.textContent = muted ? "Music off" : "Music on";
+    b.setAttribute("aria-pressed", String(muted));
+  };
+  show();
+  b.onclick = () => {
+    startMusic();
+    setMusicMuted(!muted);
+    show();
+  };
+  return b;
+}
+
+/** Start music from the first pointer or key gesture (after sfx.ts has unlocked the context). */
+export function startMusicOnGesture(unlock: () => void) {
+  const go = () => {
+    unlock();
+    startMusic();
+    if (running) for (const ev of ["pointerdown", "keydown"] as const) removeEventListener(ev, go, true);
+  };
+  for (const ev of ["pointerdown", "keydown"] as const) addEventListener(ev, go, { capture: true });
+}

@@ -3,6 +3,8 @@
 // and the worker report's "Architectural decisions for review" — not built in this slice, flagged rather than
 // rushed, per the brief's own conditional wording for commit 6).
 import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, CREATIVE, SURVIVAL, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import { makeMusicButton, setMood, startMusicOnGesture } from "./music.ts";
+import { unlock } from "./sfx.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 interface ModeDef {
@@ -173,6 +175,9 @@ export function startMenu(root: HTMLElement): void {
     card.querySelector('[data-act="new"]')!.addEventListener("click", () => openCreateSheet(mode));
     cardsEl.append(card);
   }
+  setMood("menu");
+  startMusicOnGesture(unlock);
+  root.querySelector(".menu-header .spacer")?.after(makeMusicButton("linklike"));
   const sandboxCard = document.createElement("div");
   sandboxCard.className = "card";
   sandboxCard.innerHTML = `
