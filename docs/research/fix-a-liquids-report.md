@@ -12,3 +12,9 @@ Tests: `sim/tests/liquid_walls.rs`.
   change its rules. Options and costs are under "Architectural decisions for review".
 - Not checked: `liquid_move`/`slide` ordering as a third cause. The sleeping-on/off equality and the front
   reaching the wall show no ordering stall in these setups.
+
+## Slice 2: resting state
+Red evidence (before the rule, `cargo test --release --test liquid_rest`), 5 of 7 fail, the 2 safety tests
+(ledge drains, wake across a chunk edge) pass:
+- `lone water: still moving after 600 ticks`, `lone lava: ...`, `material 15 (oil) still moving ...`,
+  `water film: still moving ...`, `lava film: still moving ...`.
