@@ -52,6 +52,13 @@ pub fn state_hash(g: &mut Grid, tick: u32, cfg: &[u8], entity_bytes: &[u8]) -> u
     if g.woken.iter().any(|&w| w) {
         buf.extend_from_slice(&pack_woken(&g.woken));
     }
+    // Falling islands (format 13): appended only when some island is falling, so a still world hashes as before.
+    if !g.falls.is_empty() {
+        buf.push(0xFA);
+        for &f in &g.falls {
+            buf.extend_from_slice(&f.to_le_bytes());
+        }
+    }
     xxh3_64(&buf)
 }
 

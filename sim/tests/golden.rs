@@ -1,14 +1,14 @@
-//! Brief HF: a golden snapshot (format 12) and a scripted Survival run whose final hash is pinned.
+//! Brief HF: a golden snapshot (format 13) and a scripted Survival run whose final hash is pinned.
 //! A deliberate format or behaviour change regenerates both: `HF_REGEN=1 cargo test --release --test golden -- --nocapture`
-//! rewrites `tests/fixtures/golden-v12.bin` and prints the new pinned hash to paste into `SCRIPTED_HASH`.
+//! rewrites `tests/fixtures/golden-v13.bin` and prints the new pinned hash to paste into `SCRIPTED_HASH`.
 use sim::config::RoomConfig;
 use sim::input::{encode_cast, encode_join, encode_pos, encode_ready};
 use sim::sim::Sim;
 use sim::snapshot;
 use sim::tuning::*;
 
-const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/golden-v12.bin");
-const SCRIPTED_HASH: u64 = 11411789985677673934;
+const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/golden-v13.bin");
+const SCRIPTED_HASH: u64 = 15496269968834513821;
 
 fn cfg_s() -> RoomConfig {
     RoomConfig { size: 0, ..RoomConfig::survival() }
@@ -59,7 +59,7 @@ fn golden_snapshot_bytes_are_reproduced_and_restore_to_the_same_hash() {
         println!("golden written: {} bytes", bytes.len());
     }
     let golden = std::fs::read(GOLDEN).expect("fixture missing: regenerate with HF_REGEN=1");
-    assert!(bytes == golden, "snapshot bytes differ from golden-v12.bin (a deliberate format change regenerates it)");
+    assert!(bytes == golden, "snapshot bytes differ from golden-v13.bin (a deliberate format change regenerates it)");
     let mut r = snapshot::restore(&golden).unwrap();
     assert_eq!(r.state_hash(), s.state_hash());
 }

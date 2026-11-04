@@ -218,6 +218,15 @@ impl Sim {
             self.enemy_hazard_scan();
             self.check_round_end();
         }
+        // Hitboxes a falling island must not be written over: live players and enemies (cells, inclusive).
+        let tick = self.tick;
+        self.grid.fall_blockers.clear();
+        for p in self.players.iter().filter(|p| p.alive(tick)) {
+            self.grid.fall_blockers.push(p.hitbox_cells());
+        }
+        for e in &self.enemies {
+            self.grid.fall_blockers.push(e.hitbox_cells());
+        }
         self.grid.crumble_islands();
         #[cfg(feature = "canary")]
         {
