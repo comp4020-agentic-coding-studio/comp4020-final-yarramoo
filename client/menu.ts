@@ -41,6 +41,7 @@ interface PublicRoom {
   code: string;
   name: string;
   mode: string;
+  players?: number;
 }
 
 const isTouch = () => matchMedia("(pointer: coarse)").matches && innerWidth < 900;
@@ -184,7 +185,7 @@ export function startMenu(root: HTMLElement): void {
 
   (root.querySelector("#heroCreate") as HTMLButtonElement).onclick = () => openCreateSheet(MODES[0]);
 
-  // Room list: polled every 5s from GET /api/rooms (plan: id, code, name, mode, no player names, no live counts yet).
+  // Room list: polled every 5s from GET /api/rooms (plan: id, code, name, mode, no player names; players is a live count).
   const roomsEl = root.querySelector("#rooms") as HTMLDivElement;
   const filterEl = root.querySelector("#modeFilter") as HTMLSelectElement;
   let lastRooms: PublicRoom[] = [];
@@ -207,7 +208,7 @@ export function startMenu(root: HTMLElement): void {
       nm.textContent = r.name; // textContent only, never HTML (CLAUDE.md)
       const mode = document.createElement("span");
       mode.className = "mode";
-      mode.textContent = r.mode;
+      mode.textContent = r.players ? `${r.mode} · ${r.players} playing` : r.mode; // a count only, never names
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn small";

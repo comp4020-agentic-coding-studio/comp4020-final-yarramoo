@@ -822,7 +822,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     });
   }
 
-  /** GET /api/rooms: public rooms only, no player names or live counts (R2b adds counts once joining is real). */
+  /** Connected players (spectators have playerId 0 and are not counted) in a loaded room; 0 for an unloaded one. */
+  function playersIn(id: number): number {
+    const w = worlds.get(id);
+    return w ? [...w.members.values()].filter((m) => m.playerId !== 0).length : 0;
+  }
+
+  /** GET /api/rooms: public rooms only, with a live player count but no player names. */
   function listRoomsRoute(req: IncomingMessage, res: ServerResponse): void {
     if (!rooms) {
       res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ rooms: [] }));
@@ -830,7 +836,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     // Not logged: a client polling the room list every few seconds must not flood the ring (CLAUDE.md).
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rooms: rooms.listPublicRooms().map(publicRoom) }));
+    // Live player count from the in-memory worlds (0 for a room nobody has loaded); busiest first, then most recently active.
+    // listPublicRooms is already last_active desc, and Array.sort is stable, so sorting by players keeps that as the tiebreak.
+    const list = rooms.listPublicRooms().map((r) => ({ ...publicRoom(r), players: playersIn(r.id) }));
+    list.sort((a, b) => b.players - a.players);
+    res.end(JSON.stringify({ rooms: list }));
   }
 
   /** An unloaded Survival room is running if it has logged ticks and has not ended (the round state itself is not stored). */
