@@ -5,6 +5,7 @@
 import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, SURVIVAL, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import { makeMusicButton, setMood, startMusicOnGesture } from "./music.ts";
 import { unlock } from "./sfx.ts";
+import { startMenuPreview, type MenuPreview } from "./menu-preview.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 interface ModeDef {
@@ -40,6 +41,7 @@ interface PublicRoom {
   code: string;
   name: string;
   mode: string;
+  players?: number;
 }
 
 const isTouch = () => matchMedia("(pointer: coarse)").matches && innerWidth < 900;
@@ -96,6 +98,7 @@ async function ensureName(root: HTMLElement): Promise<void> {
 
 export function startMenu(root: HTMLElement): void {
   root.innerHTML = `
+    <canvas id="menuBg" aria-hidden="true"></canvas>
     <div class="menu">
       <header class="menu-header">
         <h1>Simulta</h1>
@@ -126,6 +129,20 @@ export function startMenu(root: HTMLElement): void {
     </div>
     <div class="sheet-backdrop" id="createBackdrop" hidden></div>
   `;
+
+  // The backdrop starts after first paint and fades in; a failure (no WebGL2, no wasm) leaves the plain menu.
+  let preview: MenuPreview | null = null;
+  const bg = root.querySelector("#menuBg") as HTMLCanvasElement;
+  setTimeout(() => {
+    startMenuPreview(bg, isTouch(), matchMedia("(prefers-reduced-motion: reduce)").matches)
+      .then((p) => {
+        preview = p;
+        bg.classList.add("on");
+        preview.setRoom(busiest);
+      })
+      .catch(() => bg.remove());
+  }, 0);
+  let busiest: string | null = null;
 
   const nameBtn = root.querySelector("#nameBtn") as HTMLButtonElement;
   const refreshNameBtn = () => {
@@ -205,7 +222,7 @@ export function startMenu(root: HTMLElement): void {
       nm.textContent = r.name; // textContent only, never HTML (CLAUDE.md)
       const mode = document.createElement("span");
       mode.className = "mode";
-      mode.textContent = r.mode;
+      mode.textContent = r.players ? `${r.mode} · ${r.players} playing` : r.mode;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn small";
@@ -224,6 +241,9 @@ export function startMenu(root: HTMLElement): void {
       const r = await fetch("/api/rooms");
       const j = (await r.json()) as { rooms: PublicRoom[] };
       lastRooms = j.rooms ?? [];
+      // The list is sorted busiest first: the top room is the backdrop if anyone is actually in it.
+      busiest = lastRooms[0] && (lastRooms[0].players ?? 0) > 0 ? lastRooms[0].code : null;
+      preview?.setRoom(busiest);
       renderRooms();
     } catch {
       // A failed poll leaves the last-known list showing rather than clearing it.
