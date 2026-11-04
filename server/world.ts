@@ -219,6 +219,8 @@ export interface WorldOptions {
   warnLogTicks?: number;
   /** Override CATCHUP_HOLD_MAX_MS (tests). */
   catchupHoldMaxMs?: number;
+  /** Dev only (server/devteleport.ts): accept a Pos jump of any size. Never set in production. */
+  devTeleport?: boolean;
   log?: EventLog;
   /** Per-player counters; the world bumps `resyncs`. Optional so a bare World works in unit tests. */
   stats?: PlayerStats;
@@ -337,8 +339,11 @@ export class World {
   /** `tick:victim` of deaths already resolved, so a late or conflicting claim is not counted twice. Oldest first. */
   private readonly resolvedDeaths = new Map<string, string>();
 
+  private readonly devTeleport: boolean;
+
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
+    this.devTeleport = opts.devTeleport === true;
     // A lazily-loaded room (R2b) carries its own config from its `rooms` row; the two fixed worlds keep their
     // R0a presets when none is passed, so their boot path (mk(SANDBOX_ID)/mk(GAME_ID) in server/main.ts) is
     // unchanged. `kind` (the existing WORLD_SANDBOX/WORLD_GAME switch every avatar/Pos/Cast code path already
@@ -768,7 +773,11 @@ export class World {
     // One baseline per life (D-078): a claimed life + 1 starts its own baseline and cannot move the real one.
     let bl = this.lastPosOf.get(m.playerId);
     if (!bl) this.lastPosOf.set(m.playerId, (bl = new PosBaselines()));
-    if (!bl.accept(x, y, life, openTick)) return bad();
+    if (!bl.accept(x, y, life, openTick)) {
+      if (!this.devTeleport) return bad();
+      bl.force(x, y, life, openTick);
+      this.elog.limited(`teleport:${m.id}:${Math.floor(this.now() / 60_000)}`, 60_000, "dev.teleport", { world: this.id, who: this.whoOf(m), tick: openTick });
+    }
     return true;
   }
 

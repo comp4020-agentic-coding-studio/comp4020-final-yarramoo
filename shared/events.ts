@@ -24,6 +24,8 @@ export const EVENT_NAMES = [
   // Input
   "input.summary",
   "pos.rejected",
+  "dev.teleport",
+  "dev.teleport_refused",
   "input.rate_limited",
   "input.rejected",
   // Consistency

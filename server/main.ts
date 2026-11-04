@@ -1,4 +1,5 @@
 // Lockstep server: tick clock, input sequencer, closed-tick broadcast, static client. Never steps the sim.
+import { resolveDevTeleport } from "./devteleport.ts";
 import { createHash } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -231,6 +232,10 @@ export interface ServerOptions {
   verifyTimeoutMs?: number;
   verifierWorkerUrl?: URL;
   quiet?: boolean;
+  /** Dev only: accept a Pos jump of any size (default: env SIMULTA_DEV_TELEPORT=1). Refused under production env. */
+  devTeleport?: boolean;
+  /** The environment the dev-teleport gate reads (tests). Default process.env. */
+  env?: Record<string, string | undefined>;
   /** Extra Origins allowed to POST /api/players (a dev client on another port). Same-origin is always allowed. */
   allowedOrigins?: string[];
   maxConnsPerIp?: number;
@@ -264,6 +269,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const db = dataDir === null ? null : new GameDb(dataDir);
   const verifier = db ? new SnapshotVerifier(wasmPath, { timeoutMs: opts.verifyTimeoutMs, workerUrl: opts.verifierWorkerUrl }) : undefined;
   const playerStats = new PlayerStats(db, log);
+  const tele = resolveDevTeleport(opts.env ?? process.env, opts.devTeleport);
+  if (tele.refused) log.event("dev.teleport_refused", { reason: "production environment" }, "warn");
+  else if (tele.on) log.event("dev.teleport", { note: "enabled for this server" }, "warn");
   const mk = (id: number, cfg?: RoomConfig, seed?: bigint) =>
     new World({
       id,
@@ -277,6 +285,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       maxLogTicks: opts.maxLogTicks,
       warnLogTicks: opts.warnLogTicks,
       catchupHoldMaxMs: opts.catchupHoldMaxMs,
+      devTeleport: tele.on,
       log,
       stats: playerStats,
     });
@@ -761,7 +770,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     const roomWorld = worlds.get(r.id);
-    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, ended: r.endedAt !== null, running: r.endedAt === null && (roomWorld ? roomWorld.roundActive() : roomIsRunning(r)), config: Buffer.from(r.config).toString("base64") }));
+    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, ended: r.endedAt !== null, running: r.endedAt === null && (roomWorld ? roomWorld.roundActive() : roomIsRunning(r)), ...(tele.on ? { devTeleport: true } : {}), config: Buffer.from(r.config).toString("base64") }));
   }
 
   const http: Server = createServer((req, res) => {

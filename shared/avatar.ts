@@ -47,6 +47,12 @@ export class PosBaselines {
   private readonly byLife = new Map<number, { x: number; y: number; tick: number }>();
   private top: number | null = null;
 
+  /** Dev teleport only (server/devteleport.ts): record this Pos as the baseline of its life without the distance check. */
+  force(x: number, y: number, life: number, tick: number): void {
+    this.byLife.set(life, { x, y, tick });
+    if (this.top === null || livesAhead(life, this.top) <= RESPAWN_LIFE_WINDOW) this.top = life;
+  }
+
   accept(x: number, y: number, life: number, tick: number): boolean {
     const b = this.byLife.get(life);
     if (b) {
