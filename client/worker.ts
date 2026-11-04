@@ -56,6 +56,7 @@ import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
+import { MATERIAL_CLASS } from "../shared/names.ts";
 
 const STEP_MS = 1000 / 60;
 const MAX_FRAME_STEPS = 4;
@@ -143,7 +144,8 @@ function postTerrain(mat: Uint8Array, w: number, h: number) {
       for (let j = 0; j < 4; j++) {
         for (let i = 0; i < 4; i++) {
           const m = mat[Math.min(h - 1, Math.floor((r + (j + 0.5) / 4) * bh)) * w + Math.min(w - 1, Math.floor((c + (i + 0.5) / 4) * bw))];
-          if (m === 1 || m === 2 || m === 3 || m === 4 || m === 6 || m === 21) solid++;
+          // The one material table (D-154), so a new solid shows here without another list: Ice, Glass and Coal did not.
+          if (MATERIAL_CLASS[m] === "solid") solid++;
         }
       }
       mask[r * TERRAIN_COLS + c] = solid >= 8 ? 1 : 0;
