@@ -1365,3 +1365,92 @@ it against lockstep and recommended against it (FUTURE.md).
 `docs/research/wake-load-results.md`, `docs/research/review-fix-w.md`;
 `sim/tests/wake.rs` (`a_write_outside_the_region_on_the_first_tick_after_restore_matches_the_running_sim`);
 commits `8edde3c`..`76ecdbf` and the merge that follows them.
+
+## 34. One request that killed the server, after four reviews had read the code
+
+**What.** `POST /api/rooms` with the body `null` took the whole server process down (D-187). `JSON.parse("null")`
+succeeds, and the handler then read `body.name` outside any try. It needed no token and no Origin header. It now
+gets a 400, and anonymous room creation is capped at 10 per IP tag per hour, because the same probe made 150 rooms
+with no limit.
+
+**The challenge.** The hardening run (D-185) had three cold reviewers (client, server, sim) and the security brief
+had a code reader. None of their write-ups names this crash. The next brief sent an adversarial prober at a running
+server instead, and its first finding was that the next `curl` got connection refused. Reading the handler would
+have caught it. Four readers looked at the same code and missed it. One hostile request found it in minutes.
+
+**What changed.** A net test (`tests/net/sec-bodies.test.ts`) posts `null`, `true`, `0`, `[]` and `"x"` and expects a 400 and a live server. The public admin
+token, spectators that never go live and the missing Origin check on the WebSocket upgrade are listed for the user,
+not changed (D-187).
+
+**Evidence.** D-185, D-187; `docs/research/sec-probe.md` (S1), `docs/research/sec-review-code.md`,
+`docs/research/review-hardening-server.md`; commit `3cf93e2`.
+
+## 35. Rooms that die when empty, and why "empty now" is the wrong test at boot
+
+**What.** Rooms used to be unloaded from memory when empty and kept forever in the database. A room someone joined
+is now deleted 2 minutes after its last member leaves, and a room nobody ever joined after 10 minutes (D-188).
+Deletion is one transaction over five tables. Player stats and achievements stay, and the fixed worlds never die.
+
+**The challenge.** The obvious test is "has this room got no members right now?", run at boot. Every room has none
+at boot, so a restart would have deleted every room, including one made 30 s earlier. The worker judged by stored
+times instead. `rooms.first_joined_at` is a new column, backfilled from the tick log and snapshots, and
+`last_active` is stamped on join, on leave and once a minute while occupied. One sweep runs at boot and every
+minute. The cost is that `last_active` can be a minute stale, which only matters if the server dies mid-session.
+Both delete paths go through `deleteRoom`, which refuses while a load is in flight or a member exists, so a join
+that wins the race keeps the room.
+
+**What changed.** Seven net tests were shown red against the old server first. One old test changed meaning: an
+emptied room used to reload fresh and is now unknown.
+
+**Evidence.** D-188; `docs/research/n1-report.md`; `tests/net/room-lifecycle.test.ts`; commits `4a361ff`, `d93730e`.
+
+## 36. The renderer that guessed what kind of world it was drawing
+
+**What.** The N3 skies were drawn over open air. The renderer decided "game world" from a height above 512. Since
+rooms gained sizes (entry 31), a size-S cave room is sandbox-sized, so every cave filled with sky, and small cave
+rooms had no depth tint either. The renderer is now told the terrain (`setWorld(w, h, caves)`) (D-189).
+
+**The challenge.** This is the entry 31 bug again: a size assumption standing in for a fact the server knew. Both
+workers had looked only at size-L dev worlds, and each passed its own check. The session model found it by
+opening a size-S Survival room in two browsers after merging both branches. The cause was the merge, not either
+branch: no single worker had a size-S cave room open. The HANDOVER lesson, to vary the size, had not been written
+into the briefs.
+
+**What changed.** The party-fell depth line now reads "The party reached N m down". The screenshots are the only
+evidence, as in entry 31.
+
+**Evidence.** D-189; `docs/research/n3-report.md` is the sky worker's report; commits `2ba5478` (the merge),
+`28aaae9` (the fix).
+
+## 37. The scripted boss win that could not win, and what the numbers said about balance
+
+**What.** The soak script `pnpm soak:boss-win` drives two real browsers through a Survival boss fight. It needed a
+dev-only teleport (`SIMULTA_DEV_TELEPORT`) that is refused under `NODE_ENV=production` and on Fly (D-186). It never
+wins. Both players die in 3 to 11 s with the boss at 300 to 800 of 800 hp, across about twelve runs and several
+tunings.
+
+**The challenge.** A bot that cannot win could just be a bad bot. The second worker built a damage-cause readout
+and a dodging bot, which cut the players' own-Bomb damage to near zero, and still lost. The measured reason is
+ammunition. The supply pile holds 4 Fire and 2 Bomb pickups, and 40 Fire charges at perfect aim are exactly 800 hp.
+So no real player can win from the pile alone, and the script found a balance problem, not a script problem. The
+report says plainly that it did not win and does not claim a Victory. `BOSS_HP` is unchanged, because the choice
+(more pickups, about 600 hp, or ammunition from the level) is the user's after playing. The readout `__evLog` was
+at first exposed in production builds, and was then gated on the teleport flag.
+
+**Evidence.** D-186; `docs/research/hb-boss-win.md`; `tests/net/dev-teleport.test.ts`; commits `a681bc8`,
+`65717ca`, `7f79246`, `9e6f940`.
+
+## 38. What "a 30-minute session" measured, and the first run that was wrong
+
+**What.** Entry 33 left open whether woken chunks need a cap. The review asked for a 30-minute session with a flood
+every 2 minutes (D-176). `wake_load` scenario 6 shows woken chunks plateauing near 100 of 1536, with steady p95 of
+about 4.4 ms natively, right on the 4 ms line that was set for revisiting the question.
+
+**The challenge.** "30 minutes" is 108,000 simulated ticks, run natively in about 5 minutes of wall-clock time,
+with one scripted player and no browser. The brief did not say so, and the commit that added the scenario said it
+plainly afterwards (`3ac67c8`). Run 1 shared the machine with a worker's builds and showed 10 to 23 ms at minutes
+21 to 26, so it was committed as provisional (`b609005`). A quiet rerun replaced it (`cff4375`). Both tables stay in
+the file, with the loaded one labelled. The result is also not a verdict. At the 2x wasm ratio 4.4 ms is about 9 ms
+in a browser, and a phone at 4x throttle would be at or over the frame budget. Whether to act is the user's call.
+
+**Evidence.** D-176; `docs/research/wake-load-results.md`; commits `b609005`, `3ac67c8`, `cff4375`.
