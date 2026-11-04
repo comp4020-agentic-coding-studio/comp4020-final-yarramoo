@@ -1366,19 +1366,22 @@ it against lockstep and recommended against it (FUTURE.md).
 `sim/tests/wake.rs` (`a_write_outside_the_region_on_the_first_tick_after_restore_matches_the_running_sim`);
 commits `8edde3c`..`76ecdbf` and the merge that follows them.
 
-## 34. One request that killed the server, after four reviews had read the code
+## 34. One request that killed the server, which a reader could have found and none did
 
 **What.** `POST /api/rooms` with the body `null` took the whole server process down (D-187). `JSON.parse("null")`
 succeeds, and the handler then read `body.name` outside any try. It needed no token and no Origin header. It now
 gets a 400, and anonymous room creation is capped at 10 per IP tag per hour, because the same probe made 150 rooms
 with no limit.
 
-**The challenge.** The hardening run (D-185) had three cold reviewers (client, server, sim) and the security brief
-had a code reader. None of their write-ups names this crash. The next brief sent an adversarial prober at a running
-server instead, and its first finding was that the next `curl` got connection refused. Reading the handler would
-have caught it. Four readers looked at the same code and missed it. One hostile request found it in minutes.
+**The challenge.** The hardening run (D-185) had three cold reviewers, but they read only the diff since the 3 Nov
+playtest build, and the room-creation route wasn't in it. The security brief's code reader did read all of `server/`,
+in parallel with the prober, and its write-up doesn't name this crash either (it found the missing creation cap, not
+the `null` body). The prober's first finding was that the next `curl` got connection refused. Reading the handler
+would have caught it; one hostile request found it in minutes. The lesson: a reviewer scoped to a diff can't find a
+bug that predates the diff, and a reader looking for missing checks reads past a missing type check.
 
-**What changed.** A net test (`tests/net/sec-bodies.test.ts`) posts `null`, `true`, `0`, `[]` and `"x"` and expects a 400 and a live server. The public admin
+**What changed.** A net test (`tests/net/sec-bodies.test.ts`) posts `null`, `true`, `0`, `[]` and `"x"` to both JSON
+routes: room creation must answer 400, registration must never answer 5xx, and the server must still be serving. The public admin
 token, spectators that never go live and the missing Origin check on the WebSocket upgrade are listed for the user,
 not changed (D-187).
 
