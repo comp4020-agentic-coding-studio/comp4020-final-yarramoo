@@ -1,3 +1,11 @@
+> **Status (session model, 5 Nov 08:52): WIP, gate not confirmed, do not merge.** Translation-only v1 works in
+> isolated tests (5 of 6; the player-blocking test is `#[ignore]`d and unverified). The golden fixture and the
+> server's snapshot version (13) are not updated. **One real design bug for whoever continues:** the body list was put
+> at the *front* of the entity bytes, but the server reads the player section at a fixed offset
+> (`activePlayersIn`, `server/world.ts`; `sim/src/entities.rs` says "Players stay first" for exactly this). Bodies must
+> go after the players (e.g. next to the heals) or the server misreads every snapshot's active players. Bodies are
+> also invisible in flight (no `ENT_BODY` view, no client drawing).
+
 # x-bodies report: rigid-body falling rock (experiment E1)
 
 Status (in progress): v1 translation-only bodies built on `multa`; rotation not started.
