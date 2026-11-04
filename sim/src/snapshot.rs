@@ -91,6 +91,11 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         if (!s.enemies.is_empty() || !s.heals.is_empty()) && !cfg.has_enemies() {
             return Err(());
         }
+        // A heal never outlives `HEAL_LIFETIME` from now: a larger `expires_at` is hostile (an immortal heal holding a
+        // slot, review E). Compared as a wrapping distance, like every other tick in the sim.
+        if s.heals.iter().any(|k| k.expires_at.wrapping_sub(tick) > crate::tuning::HEAL_LIFETIME) {
+            return Err(());
+        }
         [s.round_over, s.round_started, s.round_result] = [round[0], round[1], round[2]];
         s.lobby_since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
         s.majority_since = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);

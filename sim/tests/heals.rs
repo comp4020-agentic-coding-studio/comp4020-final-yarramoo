@@ -191,7 +191,8 @@ fn the_view_lists_a_heal() {
 fn format_is_eleven_and_a_snapshot_with_heals_runs_on_identically() {
     assert_eq!(snapshot::FORMAT_VERSION, 11);
     let mut s = arena();
-    s.heals = vec![heal(400, 120, 99_999), heal(450, 150, 99_999)];
+    // HEAL_LIFETIME from tick 0: the longest a real drop can live (a restore refuses more, review E).
+    s.heals = vec![heal(400, 120, HEAL_LIFETIME), heal(450, 150, HEAL_LIFETIME)];
     for _ in 0..20 {
         s.step();
     }
@@ -211,7 +212,7 @@ fn format_is_eleven_and_a_snapshot_with_heals_runs_on_identically() {
 #[test]
 fn hostile_heal_bytes_fail_cleanly() {
     let mut s = arena();
-    s.heals = vec![heal(400, 120, 99_999)];
+    s.heals = vec![heal(400, 120, s.tick + HEAL_LIFETIME)];
     let good = snapshot::write(&s);
     assert!(snapshot::restore(&good).is_ok());
     for (x, y, amount) in [(u16::MAX, 5u16, 25u8), (5, u16::MAX, 25), (5, 5, 0), (5, 5, HEALTH_MAX + 1)] {
@@ -251,4 +252,35 @@ fn sleeping_is_invisible_to_falling_heals() {
     assert_eq!(s_on.heals, s_off.heals);
     assert!(s_on.heals[0].y > 50 + 30, "the heal fell");
     assert!(s_on.grid.ran_chunks < s_off.grid.ran_chunks, "sleeping really skipped chunks in the sleeping run");
+}
+
+/// Review E should-fix 1: a heal dropped inside solid ground (an enemy dying in a wall) used to sit in the rock,
+/// where no hitbox can reach it, for its whole lifetime, taking a slot. It now rises to the first open cell within
+/// `HEAL_RISE_MAX`, and is not dropped at all if there is none (buried deep).
+#[test]
+fn a_heal_dropped_in_rock_rises_to_open_air_or_is_not_dropped() {
+    let mut s = arena();
+    // Rock from y = 200 down. A drop at y = 202 is two cells into the rock: it must come out at y = 199.
+    s.drop_heal((450, 202));
+    assert_eq!(s.heals.len(), 1);
+    assert_eq!((s.heals[0].x, s.heals[0].y), (450, 199), "the heal should sit in the first open cell above the rock");
+    // Deep inside the rock, further than HEAL_RISE_MAX from any open cell: nothing is dropped.
+    let mut t = arena();
+    t.drop_heal((450, 200 + HEAL_RISE_MAX as i32 + 20));
+    assert!(t.heals.is_empty(), "a buried heal must not take a slot");
+    // In open air it lands where it was dropped.
+    let mut u = arena();
+    u.drop_heal((450, 150));
+    assert_eq!((u.heals[0].x, u.heals[0].y), (450, 150));
+}
+
+/// Review E note: decode refuses heals in a room without enemies (the sandbox), and a heal past its lifetime cap.
+#[test]
+fn decode_refuses_heals_without_enemies_and_immortal_heals() {
+    let mut t = arena();
+    t.heals = vec![heal(400, 120, t.tick.wrapping_add(HEAL_LIFETIME) + 10_000)];
+    assert!(snapshot::restore(&snapshot::write(&t)).is_err(), "expires_at beyond tick + HEAL_LIFETIME must be refused");
+    let mut c = Sim::new(5, RoomConfig::caves_pvp()).unwrap();
+    c.heals = vec![heal(100, 100, 50)];
+    assert!(snapshot::restore(&snapshot::write(&c)).is_err(), "heals in a room without enemies must be refused");
 }

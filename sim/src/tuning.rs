@@ -143,6 +143,9 @@ pub const HEAL_AMOUNT: u8 = 25;
 pub const HEAL_LIFETIME: u32 = 3600;
 /// At most this many heals exist; a new one past the cap evicts the oldest (index 0).
 pub const MAX_HEALS: usize = 16;
+/// A heal dropped inside solid ground rises at most this many cells to the first open (Empty or gas) cell; past
+/// that it is not dropped (review E: a buried heal could never be reached and held a slot for its whole life).
+pub const HEAL_RISE_MAX: usize = 12;
 
 // ---- pickup spells by depth band (F3) ------------------------------------------------------------------
 

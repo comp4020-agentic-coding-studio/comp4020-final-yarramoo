@@ -671,12 +671,25 @@ impl Sim {
     }
 
     /// Put a heal on the ground at `cell` (Brief E). At `MAX_HEALS` the oldest (index 0) is evicted first.
+    /// A cell inside solid ground (an enemy that died in a wall) moves up to the first open cell within
+    /// `HEAL_RISE_MAX`; with none, nothing is dropped, so a heal nobody could reach never takes a slot (review E).
     pub fn drop_heal(&mut self, cell: (i32, i32)) {
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let x = cell.0.clamp(0, w - 1);
+        let mut y = cell.1.clamp(0, h - 1);
+        let open = |m: u8| m == EMPTY || is_gas(m);
+        let mut rise = 0;
+        while !open(self.grid.mat[(y * w + x) as usize]) {
+            if rise == HEAL_RISE_MAX || y == 0 {
+                return;
+            }
+            y -= 1;
+            rise += 1;
+        }
         if self.heals.len() >= MAX_HEALS {
             self.heals.remove(0);
         }
-        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
-        self.heals.push(Heal { x: cell.0.clamp(0, w - 1) as u16, y: cell.1.clamp(0, h - 1) as u16, amount: HEAL_AMOUNT, expires_at: self.tick.wrapping_add(HEAL_LIFETIME) });
+        self.heals.push(Heal { x: x as u16, y: y as u16, amount: HEAL_AMOUNT, expires_at: self.tick.wrapping_add(HEAL_LIFETIME) });
     }
 
     /// Heals, once a tick, right after bags: expire, fall one cell, then be taken by the lowest-id living player
