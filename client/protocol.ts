@@ -50,6 +50,8 @@ export type ToWorker =
   | { type: "devgoto"; spell: number; /** The server announced dev teleport for this room: act in a real room, not only on the dev route. */ remote?: boolean; /** Stand this many cells from the enemy instead of the default (12; the boss 14 to its right). For the boss it is signed: the offset from its x. */ dist?: number }
   /** F6b: toggle my lobby ready flag (the worker sends the Ready input; the sim ignores it outside a Survival lobby). */
   | { type: "ready"; ready: boolean }
+  /** The mouse has rested at this world point (cells): look up what is under it. Display only, never an input, never sent on. */
+  | { type: "hover"; x: number; y: number }
   | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number; fillEmpty: boolean };
 
 export type FromWorker =
@@ -81,7 +83,9 @@ export type FromWorker =
       type: "players";
       list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean; /** Player colour as 0..255 RGB, for the minimap dot. */ rgb: [number, number, number] }[];
       /** My own health and death countdown (null respawnTicks: unknown, e.g. I joined while dead). Render-only. */
-      me: { health: number; dead: boolean; respawnTicks: number | null } | null;
+      me: { health: number; dead: boolean; respawnTicks: number | null; /** "Killed by a Fire imp" and the like, from my latest EV_DEATH; null when unknown. */ deathText: string | null } | null;
+      /** The deepest any living player has been seen on this client (cells, display only). */
+      deepest: number;
       /** Dropped bags as the entities() view gives them: cell centre in cells and total charges. Render-only. */
       bags: { x: number; y: number; total: number }[];
       cam: { x: number; y: number };
@@ -106,6 +110,8 @@ export type FromWorker =
   | { type: "sfx"; name: SfxName; vol: number; pan: number; mag: number }
   /** A line for the death feed, already formatted from a plain-name death event. */
   | { type: "toast"; text: string }
+  /** Answer to "hover": the label for what is under the resting mouse, or null. Render-only. */
+  | { type: "hover"; text: string | null }
   /** A one-life round ended (`EV_ROUND_END`): `win` false is a loss. Shown as a banner; render-only. */
   | { type: "round"; win: boolean }
   /** The server says this player earned an achievement (by id; the main thread looks the text up). */
