@@ -13,7 +13,7 @@ export interface Verified {
   rawLength: number;
 }
 
-export type CheckResult = { kind: "ok"; v: Verified } | { kind: "refused" } | { kind: "unavailable" };
+export type CheckResult = { kind: "ok"; v: Verified } | { kind: "refused"; stage?: string; error?: string } | { kind: "unavailable"; why?: "timeout" | "crashed" | "closed" };
 const UNAVAILABLE: CheckResult = { kind: "unavailable" };
 
 interface Pending {
@@ -40,13 +40,13 @@ export class SnapshotVerifier {
   private start(): Worker {
     if (this.worker) return this.worker;
     const w = new Worker(this.workerUrl, { workerData: { wasm: this.bytes } });
-    w.on("message", (m: { id: number; ok: boolean; tick?: number; hash?: bigint; rawLength?: number }) => {
+    w.on("message", (m: { id: number; ok: boolean; tick?: number; hash?: bigint; rawLength?: number; stage?: string; error?: string }) => {
       const p = this.pending.get(m.id);
       if (!p) return;
       this.pending.delete(m.id);
       this.holdWhilePending(w);
       // The worker answered: either it restored the snapshot, or this build refused it.
-      p.resolve(m.ok ? { kind: "ok", v: { tick: m.tick!, hash: m.hash!, rawLength: m.rawLength! } } : { kind: "refused" });
+      p.resolve(m.ok ? { kind: "ok", v: { tick: m.tick!, hash: m.hash!, rawLength: m.rawLength! } } : { kind: "refused", stage: m.stage, error: m.error });
     });
     const dead = () => {
       if (this.worker === w) this.worker = null;
@@ -97,7 +97,7 @@ export class SnapshotVerifier {
         if (this.worker === w) this.worker = null;
         for (const [k, p] of this.pending) {
           this.pending.delete(k);
-          p.resolve(UNAVAILABLE);
+          p.resolve({ kind: "unavailable", why: "timeout" });
         }
         void w.terminate();
       }, this.timeoutMs);

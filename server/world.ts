@@ -1441,13 +1441,16 @@ export class World {
     const gen = this.resetGen;
     this.verifying = true;
     void this.verifier
-      .hashOf(u.data, maxSnapshotRawFor(this.cfg))
-      .then((got) => {
+      .check(u.data, maxSnapshotRawFor(this.cfg))
+      .then((r) => {
         if (gen !== this.resetGen) return; // the world was reset while this verified: the snapshot is from the old world
         this.verifying = false;
         this.stats.lastVerifyMs = this.now() - t0;
         if (this.closing || !this.db) return;
-        if (!got) return reject("does not decompress, or the sim refused to restore it");
+        // Say which: a verify that never finished (a timeout on a busy machine) is not a bad snapshot (ship check 5 Nov).
+        if (r.kind === "unavailable") return reject(`verify unavailable (${r.why ?? "worker gone"}) after ${Math.round(this.stats.lastVerifyMs)} ms`);
+        if (r.kind === "refused") return reject(`refused at ${r.stage ?? "?"}: ${r.error ?? "no message"}`);
+        const got = r.v;
         if (got.tick !== tick) return reject("snapshot tick mismatch");
         if (got.hash !== u.hash || got.hash !== truth) return reject("restored hash differs from the claimed and majority hash");
         if (this.snapshot && tick <= this.snapshot.tick) return;

@@ -15,13 +15,17 @@ let sim: Sim | null = null;
 const wasm = workerData.wasm as Uint8Array;
 
 parentPort!.on("message", (job: Job) => {
+  // Which stage failed goes back with the refusal, so `snapshot.rejected` can say why (ship check 5 Nov: every upload
+  // was refused in the image, and one reason string covered a bad frame, a sim refusal and a timeout alike).
+  let stage = "decompress";
   try {
     const raw = decompressSnapshot(job.data, job.maxRaw);
+    stage = "restore";
     sim ??= loadSim(wasm);
     sim.restore(raw);
     const out = { id: job.id, ok: true, tick: sim.tick(), hash: sim.stateHash(), rawLength: raw.length };
     parentPort!.postMessage(out);
-  } catch {
-    parentPort!.postMessage({ id: job.id, ok: false });
+  } catch (e) {
+    parentPort!.postMessage({ id: job.id, ok: false, stage, error: String((e as Error)?.message ?? e).slice(0, 120) });
   }
 });

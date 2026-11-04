@@ -208,11 +208,12 @@ describe("World.reset", () => {
   it("an in-flight verification across a reset does not save the old snapshot", async () => {
     const s = await boot(tmp());
     // A delay hook: hold the verifier's answer until the test releases it, so the reset lands in between.
-    const real = s.verifier!.hashOf.bind(s.verifier!);
+    // Hook `check`, the call the world makes (it used `hashOf` until `snapshot.rejected` learned to say why).
+    const real = s.verifier!.check.bind(s.verifier!);
     let release!: () => void;
     const gate = new Promise<void>((ok) => (release = ok));
     let held = 0;
-    s.verifier!.hashOf = async (...args) => {
+    s.verifier!.check = async (...args) => {
       held++;
       const v = await real(...args); // a good answer: without the guard, every check after this would pass
       await gate;
