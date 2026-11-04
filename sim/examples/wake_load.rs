@@ -143,7 +143,7 @@ fn run(scenario: u32, label: &str) {
     );
 }
 
-/// Scenario 6 (brief HR): a 30-minute session. The player walks the surface (a new x every 2 minutes, across the
+/// Scenario 6 (brief HR): 30 minutes of simulated time (108000 ticks, run as fast as the CPU allows). The player walks the surface (a new x every 2 minutes, across the
 /// world and back), and at each stop drops a flood beside them: 200 x 30 of water, then lava on the next stop. Woken
 /// chunks holding liquid never re-freeze (D-176), so this measures how the running chunk count grows over a long
 /// session with repeated floods. Prints one line per simulated minute.

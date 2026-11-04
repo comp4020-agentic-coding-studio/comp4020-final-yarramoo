@@ -42,6 +42,11 @@ sustained p95 above about 4 ms native.
 
 ## Brief HR: a 30-minute session with repeated floods (4 Nov, provisional)
 
+**30 minutes of simulated time** (108,000 ticks at 60 Hz), run natively as fast as the CPU allows: about 5 minutes
+wall-clock. One scripted player, no browser, no wasm; floods are written into the grid in a single tick. It measures
+how the woken-chunk count and per-tick cost grow with ticks and floods, not a real 30-minute session (memory, an
+open tab, real players).
+
 `cargo run --release --example wake_load 6`: size L, seed 1, one player walking 15 stops across the surface, a
 200 x 30 flood beside them at every stop (every 2 minutes, water and lava alternating). **Run 1 shared the machine
 with a worker's builds and tests, so its times are inflated;** a quiet rerun follows.
