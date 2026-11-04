@@ -29,11 +29,51 @@ uniform vec2 uWorld;
 uniform vec2 uCam;
 uniform vec2 uView;
 uniform vec3 uBands; // x: 1 in a game world, else 0; y: SHALLOW_TOP; z: DEEP_TOP
+uniform usampler2D uSurf; // per column: y of the surface (first solid cell from the top), refreshed a few times a second
+uniform vec2 uSky; // x: sky kind 0..4, y: 1 when motion is allowed (0 under prefers-reduced-motion)
 in vec2 uv;
 out vec4 outColor;
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// The open-air sky behind a cell: a pure function of the screen cell, the kind and the time. Drawn, never simulated.
+vec3 skyColor(vec2 uvp, vec2 cs) {
+  float kind = uSky.x;
+  float t = uTime * uSky.y;
+  float g = uvp.y; // 0 top, 1 bottom
+  if (kind < 0.5 || kind > 3.5) {
+    vec3 col = mix(vec3(0.015, 0.03, 0.10), vec3(0.07, 0.10, 0.22), g);
+    float s = hash(cs);
+    if (s > 0.991) col += vec3(0.55 + 0.45 * sin(t * 0.9 + s * 400.0)) * (kind > 3.5 ? 0.5 : 1.0);
+    if (kind > 3.5) {
+      float band = sin(uvp.x * 6.0 + sin(uvp.x * 2.3 + t * 0.15) * 1.8 + t * 0.1);
+      float m = smoothstep(0.0, 1.0, band * 0.5 + 0.5) * smoothstep(0.65, 0.1, g) * smoothstep(0.0, 0.2, g);
+      col += mix(vec3(0.1, 0.8, 0.45), vec3(0.55, 0.25, 0.85), g * 2.0) * m * 0.55;
+    }
+    return col;
+  }
+  if (kind < 1.5) {
+    vec3 col = mix(vec3(0.36, 0.60, 0.92), vec3(0.74, 0.88, 0.97), g);
+    float d = length((uvp - vec2(0.78, 0.2)) * vec2(1.7, 1.0));
+    col += vec3(1.0, 0.95, 0.75) * (exp(-d * 7.0) * 0.5 + step(d, 0.045));
+    return col;
+  }
+  if (kind < 2.5) {
+    vec3 col = mix(vec3(0.20, 0.20, 0.42), vec3(0.98, 0.52, 0.30), pow(g, 1.6));
+    col = mix(col, vec3(1.0, 0.80, 0.45), smoothstep(0.75, 1.0, g) * 0.6);
+    float d = length((uvp - vec2(0.3, 0.95)) * vec2(1.7, 1.0));
+    col += vec3(1.0, 0.7, 0.3) * exp(-d * 4.0) * 0.5;
+    return col;
+  }
+  vec3 col = mix(vec3(0.27, 0.30, 0.35), vec3(0.46, 0.49, 0.53), g);
+  float cx = floor(cs.x + cs.y * 0.2);
+  float h1 = hash(vec2(cx, 3.0));
+  float yy = cs.y + t * (50.0 + 40.0 * h1) + h1 * 300.0;
+  float seg = mod(yy, 36.0);
+  if (seg < 5.0 && hash(vec2(cx, floor(yy / 36.0))) > 0.75) col += vec3(0.20, 0.22, 0.28) * (1.0 - seg / 6.0);
+  return col;
 }
 
 void main() {
@@ -42,6 +82,9 @@ void main() {
   float a = float(texelFetch(uAux, c, 0).r);
   float h = hash(vec2(c));
   vec3 bg = vec3(0.043, 0.055, 0.078) + vec3(0.02, 0.025, 0.04) * (1.0 - uv.y);
+  // Open air only: in a game world a cell is sky when it is above the first solid cell of its column (caves stay
+  // dark); the sandbox has no ground to speak of, so all of it is sky.
+  if (uBands.x < 0.5 || c.y < int(texelFetch(uSurf, ivec2(c.x, 0), 0).r)) bg = skyColor(uv, floor(uv * uView));
   vec3 col = uPal[m];
   if (m == 0u) {
     outColor = vec4(bg, 1.0);
@@ -139,6 +182,14 @@ export class Renderer {
   private uCam: WebGLUniformLocation | null;
   private uView: WebGLUniformLocation | null;
   private uBands: WebGLUniformLocation | null;
+  private uSky: WebGLUniformLocation | null;
+  private surfTex: WebGLTexture | null = null;
+  private surf = new Uint16Array(0);
+  private surfFrame = 0;
+  private surfX0 = -1;
+  private surfX1 = -1;
+  private sky = 0;
+  private motion = 1;
   private prog: WebGLProgram;
   private rectProg: WebGLProgram;
   private rRect: WebGLUniformLocation | null;
@@ -200,6 +251,8 @@ export class Renderer {
     this.uCam = gl.getUniformLocation(prog, "uCam");
     this.uView = gl.getUniformLocation(prog, "uView");
     this.uBands = gl.getUniformLocation(prog, "uBands");
+    this.uSky = gl.getUniformLocation(prog, "uSky");
+    gl.uniform1i(gl.getUniformLocation(prog, "uSurf"), 2);
     const pal = new Float32Array(96);
     paletteTable().forEach((c, i) => {
       pal[i * 3] = ((c >> 16) & 255) / 255;
@@ -208,6 +261,39 @@ export class Renderer {
     });
     gl.uniform3fv(gl.getUniformLocation(prog, "uPal"), pal);
     this.uTime = gl.getUniformLocation(prog, "uTime");
+  }
+
+  /** Pick the sky (an index into SKY_KINDS) and whether it may move (false under prefers-reduced-motion). */
+  setSky(kind: number, motion = true) {
+    this.sky = kind;
+    this.motion = motion ? 1 : 0;
+    this.gl.useProgram(this.prog);
+    this.gl.uniform2f(this.uSky, kind, this.motion);
+  }
+
+  /**
+   * Refresh the per-column surface heights for the columns on screen. A column's surface is the first cell
+   * from the top that starts a run of 3 solid cells (so a single falling grain does not count). About 100k
+   * byte reads, done 5 times a second or when the window moves sideways: nothing per frame.
+   */
+  private updateSurface(mat: Uint8Array, x0: number, x1: number) {
+    if (this.wh <= SANDBOX_H) return;
+    if (x0 === this.surfX0 && x1 === this.surfX1 && ++this.surfFrame % 12 !== 0) return;
+    const { ww, wh, surf } = this;
+    for (let x = x0; x < x1; x++) {
+      let y = 0;
+      for (; y < wh - 2; y++) {
+        const i = y * ww + x;
+        if (mat[i] !== 0 && mat[i + ww] !== 0 && mat[i + 2 * ww] !== 0) break;
+      }
+      surf[x] = y;
+    }
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.surfTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, 0, x1 - x0, 1, gl.RED_INTEGER, gl.UNSIGNED_SHORT, surf.subarray(x0, x1));
+    this.surfX0 = x0;
+    this.surfX1 = x1;
   }
 
   /** Allocate textures for a world of `w` by `h` cells (a no-op if the size is unchanged). */
@@ -220,6 +306,17 @@ export class Renderer {
     this.auxTex = this.makeTex(1, w, h);
     this.ww = w;
     this.wh = h;
+    if (this.surfTex) gl.deleteTexture(this.surfTex);
+    gl.activeTexture(gl.TEXTURE2);
+    this.surfTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.surfTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16UI, w, 1);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.surf = new Uint16Array(w);
+    this.surfX0 = this.surfX1 = -1;
     gl.uniform2f(this.uWorld, w, h);
     // The sandbox is 512 tall and has no bands: only a taller world gets the depth look.
     gl.uniform3f(this.uBands, h > SANDBOX_H ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
@@ -279,6 +376,7 @@ export class Renderer {
     gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
     gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
     this.lastUploadCells = w * h;
+    this.updateSurface(mat, x0, x1);
     this.present(seconds, cam);
     if (rects.length) this.drawRects(rects, cam);
   }

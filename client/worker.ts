@@ -17,6 +17,7 @@ import {
   encodePing,
   encodeSnapshotUpload,
 } from "../shared/protocol.ts";
+import { resolveSky } from "./sky.ts";
 import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
 import {
   ENT_BAG,
@@ -102,6 +103,8 @@ let ws: WebSocket | null = null;
 let ls: Lockstep | null = null;
 let myId = 0;
 /** The real config bytes from WELCOME, kept for a resync's beginReplay (R3: a real room has no bare "kind"). */
+let skyOverride: string | undefined;
+let skyReduced = false;
 let seedInfo: { seed: bigint; cfg: Uint8Array } | null = null;
 /** The networked room has avatars (its config's `avatars` byte); set in `beginReplay`. Decides the game frame. */
 let netAvatars = false;
@@ -359,6 +362,12 @@ function countPresence(inputs: { kind: number }[]) {
  * room's config never matches either fixed world's, so initing from the bare kind would hand the sim the
  * wrong world entirely. `shared/sim.ts`'s `init` already accepts a `Uint8Array` config directly.
  */
+function applySky(seed: bigint): { sky: number; skyMotion: boolean } {
+  const sky = resolveSky(seed, skyOverride);
+  renderer?.setSky(sky, !skyReduced);
+  return { sky, skyMotion: !skyReduced };
+}
+
 function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBase: number) {
   const sim: Sim = loadSim(wasmBytes);
   sim.init(seed, cfg);
@@ -387,7 +396,7 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   oneLife = rc?.death === 1;
   const kind = rc?.avatars === 1 ? 1 : 0;
   netAvatars = kind === 1;
-  send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc });
+  send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc, ...applySky(seed) });
   renderer?.setWorld(sim.width(), sim.height());
 }
 
@@ -1117,6 +1126,8 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
   worldId = m.worldId;
   myName = m.name;
   spectate = m.spectate;
+  skyOverride = m.sky;
+  skyReduced = !!m.reduced;
   for (let i = 0; i < 32; i++) token[i] = parseInt(m.token.slice(2 * i, 2 * i + 2), 16) || 0;
   if (m.canvas) {
     try {
@@ -1146,7 +1157,7 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
       if (m.local.cfg === "survival") sim.pushInput(encodeReady(DEV_ID, 1));
     }
     setNet("live");
-    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null });
+    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null, ...applySky(BigInt(m.local.seed)) });
     renderer?.setWorld(sim.width(), sim.height());
   } else {
     connect();

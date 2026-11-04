@@ -626,6 +626,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
           camera.y = 230 - GAME_VIEW.h / 2 - 40;
         }
         fallback?.setWorld(worldW, worldH);
+        if (m.sky !== undefined) fallback?.setSky(m.sky, m.skyMotion);
         applyCamera();
         if (localKind !== null) $("title").textContent = "Game world (local, single player)";
         break;
@@ -1221,7 +1222,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       return;
     }
     const { w, h } = layout();
-    const base = { wasmUrl, wsUrl, width: w, height: h, local, worldId, token, name, spectate };
+    const base = { wasmUrl, wsUrl, width: w, height: h, local, worldId, token, name, spectate, sky: import.meta.env.DEV ? params.get("sky") ?? undefined : undefined, reduced: matchMedia("(prefers-reduced-motion: reduce)").matches };
     if ("OffscreenCanvas" in window && "transferControlToOffscreen" in canvas) {
       canvas.width = w;
       canvas.height = h;

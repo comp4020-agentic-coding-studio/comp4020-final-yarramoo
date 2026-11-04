@@ -85,7 +85,7 @@ export function startMenuPreview(host: HTMLElement): { stop(): void } {
     };
     const off = c.transferControlToOffscreen();
     send(
-      { type: "init", wasmUrl: new URL("sim.wasm", document.baseURI).href, wsUrl: "", width: c.width, height: c.height, local: { kind: 0, seed: "7" }, worldId: 0, token: "", name: "", spectate: true, canvas: off },
+      { type: "init", wasmUrl: new URL("sim.wasm", document.baseURI).href, wsUrl: "", width: c.width, height: c.height, local: { kind: 0, seed: "7" }, worldId: 0, token: "", name: "", spectate: true, reduced, canvas: off },
       [off],
     );
     const camY = WORLD - vh, camX = Math.floor((WORLD - vw) / 2);
