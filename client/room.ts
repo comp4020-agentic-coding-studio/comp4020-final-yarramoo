@@ -270,7 +270,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
 
   function layout(): { w: number; h: number } {
     const dpr = window.devicePixelRatio || 1;
-    const pad = parseFloat(getComputedStyle(stage).paddingBottom) || 0;
+    const cs = getComputedStyle(stage);
+    const pad = (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.paddingTop) || 0);
     const aw = Math.max(64, stage.clientWidth);
     const ah = Math.max(64, stage.clientHeight - pad);
     const fit = Math.min(aw / camera.vw, ah / camera.vh);
@@ -664,7 +665,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const hud = document.createElement("div");
   hud.id = "hud";
   hud.hidden = true;
-  hud.innerHTML = '<span>Levitate</span><div class="bar"><i></i></div><span>Health</span><div class="bar hp"><i></i></div>';
+  hud.innerHTML = '<div class="g lev"><span>Levitate</span><div class="bar"><i></i></div></div><div class="g hpg"><span>Health</span><div class="bar hp"><i></i></div></div>';
   stage.append(hud);
   // Death overlay (dims the canvas and counts down), the death toast feed, and bag charge counts. All render-only.
   const deathEl = document.createElement("div");
@@ -1273,6 +1274,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function socialTick(force: boolean) {
     const on = worldKind === 1;
     miniEl.hidden = whoBtn.hidden = !on;
+    if (stage.classList.contains("has-mini") !== on) stage.classList.toggle("has-mini", on);
     if (!on) {
       whoEl.hidden = true;
       return;
