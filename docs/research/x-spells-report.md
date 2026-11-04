@@ -1,3 +1,9 @@
+> **Status (session model, 5 Nov 08:45): RED, do not merge.** `new_spells_are_deterministic_and_sleep_invisible`
+> fails: sleep on and off diverge, which breaks invariant 8 (chunk sleeping must be semantically invisible). The two
+> commits on this branch were made without a green gate, against CLAUDE.md, because the run hit the 08:50 stop. The
+> full cargo suite, clippy, the determinism suite and the golden regeneration were not run. Thermite is bounded per
+> cell but not per tick. Start any follow-up by finding which material breaks sleep invisibility.
+
 # E3 spells: report (branch x-spells)
 
 ## Built
