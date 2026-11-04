@@ -50,7 +50,7 @@ fn mud_is_slower_than_sand_and_dries_beside_fire() {
     assert!(y_of(&g, MUD, 100) < y_of(&g, SAND, 120), "mud falls slower");
     run(&mut g, 400);
     assert_eq!(g.mat[199 * N + 100], MUD);
-    g.set(198 * N + 101, FIRE, 0);
+    g.set(199 * N + 101, FIRE, 0);
     run(&mut g, 5);
     assert_eq!(g.mat[199 * N + 100], DIRT, "dries to dirt");
 }
@@ -97,7 +97,7 @@ fn thermite_needs_a_light_then_burns_through_rock() {
     g.set(189 * N + 100, THERMITE, 0);
     run(&mut g, 200);
     assert_eq!(count(&g, LAVA), 0, "unlit thermite does nothing");
-    g.set(188 * N + 101, FIRE, 0);
+    g.set(189 * N + 101, FIRE, 0);
     run(&mut g, 200);
     assert!(count(&g, LAVA) >= 1, "lit thermite melts rock");
 }
@@ -138,11 +138,12 @@ fn freeze_turns_a_bounded_amount_of_water_to_ice() {
         }
     }
     let before = cells(&s, WATER);
+    let ice0 = cells(&s, ICE);
     cast(&mut s, 12, 0); // along +x, hits the water
     for _ in 0..40 {
         s.step();
     }
-    let ice = cells(&s, ICE);
+    let ice = cells(&s, ICE) - ice0;
     assert!(ice >= 10 && ice <= FREEZE_CAP, "ice {ice}");
     assert!(cells(&s, WATER) + ice <= before + 1000);
     assert_eq!(s.players[0].charges[12], 4);
@@ -167,11 +168,12 @@ fn quake_crumbles_a_bounded_patch_of_rock() {
 #[test]
 fn mudslide_fills_a_bounded_burst_with_mud() {
     let mut s = arena();
+    let m0 = cells(&s, MUD) + cells(&s, DIRT);
     cast(&mut s, 14, 16384);
     for _ in 0..30 {
         s.step();
     }
-    let m = cells(&s, MUD) + cells(&s, DIRT);
+    let m = (cells(&s, MUD) + cells(&s, DIRT)).saturating_sub(m0);
     assert!(m >= 20 && m <= MUD_BURST_CELLS, "mud {m}");
 }
 
