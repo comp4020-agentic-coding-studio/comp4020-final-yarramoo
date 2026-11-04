@@ -54,3 +54,5 @@ export const BOMB_RADIUS = 18;
 /** Dig's capsule: radius and reach in cells (tuning.rs DIG_RADIUS and DIG_REACH). Only the aim preview reads these. */
 export const DIG_RADIUS = 7;
 export const DIG_REACH = 14;
+/** Blast's reach in cells (tuning.rs BLAST_RADIUS_CELLS); its cone has a 45 degree half-angle. Only the aim preview reads it. */
+export const BLAST_RADIUS = 24;

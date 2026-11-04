@@ -7,7 +7,7 @@ import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
-import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle } from "./spells.ts";
+import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
@@ -642,12 +642,21 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   digEl.id = "digPreview";
   digEl.hidden = true;
   stage.append(digEl);
+  // Blast preview: its 45 degree half-angle cone, BLAST_RADIUS cells long, dashed like Dig's (render only).
+  const blastEl = document.createElement("div");
+  blastEl.id = "blastPreview";
+  blastEl.hidden = true;
+  const BR = BLAST_RADIUS;
+  const bc = BR * Math.SQRT1_2;
+  blastEl.innerHTML = `<svg viewBox="${-BR} ${-BR} ${2 * BR} ${2 * BR}" width="100%" height="100%"><path d="M0 0 L${bc.toFixed(2)} ${(-bc).toFixed(2)} A${BR} ${BR} 0 0 1 ${bc.toFixed(2)} ${bc.toFixed(2)} Z" vector-effect="non-scaling-stroke"/></svg>`;
+  stage.append(blastEl);
   let hoverAt: { x: number; y: number } | null = null;
   function placeDigPreview() {
     const me = lastPlayers?.list.find((p) => p.me);
     const pt = castHeld && aimAt ? aimAt : hoverAt;
-    if (!me || me.dead || !pt || selectedSpell !== 6 || !castsOnClick()) {
+    if (!me || me.dead || !pt || (selectedSpell !== 6 && selectedSpell !== 1) || !castsOnClick()) {
       digEl.hidden = true;
+      blastEl.hidden = true;
       return;
     }
     const r = canvas.getBoundingClientRect();
@@ -659,6 +668,17 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const ox = me.x;
     const oy = me.y - 5; // the chest, where the sim aims from
     const len = Math.hypot(wx - ox, wy - oy) || 1;
+    if (selectedSpell === 1) {
+      digEl.hidden = true;
+      blastEl.hidden = false;
+      blastEl.style.width = `${2 * BR * sx}px`;
+      blastEl.style.height = `${2 * BR * sy}px`;
+      blastEl.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(wy - oy, wx - ox)}rad)`;
+      blastEl.style.left = `${r.left - sr.left + (ox - camera.x) * sx}px`;
+      blastEl.style.top = `${r.top - sr.top + (oy - camera.y) * sy}px`;
+      return;
+    }
+    blastEl.hidden = true;
     // A capsule: the segment from the chest DIG_REACH along the aim, thickened by DIG_RADIUS. Drawn as a rounded
     // rectangle centred on the segment's midpoint and turned to the aim.
     const cx = ox + ((wx - ox) / len) * (DIG_REACH / 2);

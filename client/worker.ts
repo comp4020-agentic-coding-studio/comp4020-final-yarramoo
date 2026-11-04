@@ -568,7 +568,14 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     const bc = PLAYER_COLOURS[e.id % PLAYER_COLOURS.length];
     const body: [number, number, number] = hf > 0 ? [bc[0] + (1 - bc[0]) * hf, bc[1] + (1 - bc[1]) * hf, bc[2] + (1 - bc[2]) * hf] : bc;
     if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, body, ps.castCol, now / 16.7);
-    if (isMe && e.health > 0) rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
+    if (isMe && e.health > 0) {
+      rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
+      // A small white chevron above the head marks me among the others (the sprite is 10 rows tall from the feet).
+      const mx = Math.round(px) - 1;
+      const my = Math.round(py) - 14;
+      rects.push({ x: mx, y: my, w: 3, h: 1, r: 1, g: 1, b: 1, a: 0.9 });
+      rects.push({ x: mx + 1, y: my + 1, w: 1, h: 1, r: 1, g: 1, b: 1, a: 0.9 });
+    }
   }
   for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
   for (const id of poses.keys()) if (!seen.has(id) && !(id === myId && avatar)) poses.delete(id);
@@ -582,6 +589,9 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     const pulse = 0.75 + 0.25 * Math.sin(now / 250 + e.id);
     const x0 = Math.floor(cx) - 1;
     const y0 = Math.floor(cy) - 2 - (Math.sin(now / 400 + e.id) > 0.3 ? 1 : 0);
+    // A soft two-step halo (7x7 then 5x5, low alpha) so a 3 px pickup is findable at 1x.
+    rects.push({ x: x0 - 2, y: y0 - 2, w: 7, h: 7, r: c[0], g: c[1], b: c[2], a: 0.12 * pulse });
+    rects.push({ x: x0 - 1, y: y0 - 1, w: 5, h: 5, r: c[0], g: c[1], b: c[2], a: 0.22 * pulse });
     rects.push({ x: x0, y: y0, w: 3, h: 3, r: c[0] * pulse, g: c[1] * pulse, b: c[2] * pulse });
     rects.push({ x: x0 + 1, y: y0 + 1, w: 1, h: 1, r: 1, g: 1, b: 1 });
   }
