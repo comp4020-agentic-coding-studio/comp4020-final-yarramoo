@@ -16,6 +16,10 @@ export type ToWorker =
       local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean; /** Dev: `survival` starts the local sim from the SURVIVAL preset (enemies on). */ cfg?: string };
       /** Which server world/room to join: 0 sandbox, 1 game, or any real room id from GET /api/rooms/:code (R3). */
       worldId: number;
+      /** Dev only: force a sky kind (`?sky=rain`). Otherwise the sky comes from the room seed. */
+      sky?: string;
+      /** prefers-reduced-motion: the sky holds still. */
+      reduced?: boolean;
       /** The player token, 64 hex characters, or "" (spectators and the sandbox send none). */
       token: string;
       /** This player's own display name, for the label above their avatar. */
@@ -56,7 +60,7 @@ export type FromWorker =
   | { type: "ready"; path: "worker-webgl2" | "main-thread-fallback" }
   | { type: "render-failed"; error: string }
   /** `kind` is just "has avatars" (0/1), for the existing render checks. `cfg` is the real decoded room config (R3), null only for a config the server rejects (never for a real WELCOME). */
-  | { type: "world"; width: number; height: number; kind: number; cfg: RoomConfig | null }
+  | { type: "world"; width: number; height: number; kind: number; cfg: RoomConfig | null; /** Sky kind index and whether it moves, for the main-thread fallback renderer. */ sky?: number; skyMotion?: boolean }
   | { type: "frame"; mat: Uint8Array; aux: Uint8Array; tick: number; rects: Rect[] }
   | { type: "stats"; tick: number; stepsPerSec: number; buffered: number; stepP50: number; stepP95: number; ranChunks: number; uploadCells: number }
   | {
