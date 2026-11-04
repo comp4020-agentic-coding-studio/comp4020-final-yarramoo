@@ -21,6 +21,7 @@
     "soak:capacity": "node tests/soak/capacity.ts",
     "soak:capacity-rooms": "node tests/soak/capacity-rooms.ts",
     "soak:p1": "node tests/soak/p1.ts",
+    "soak:boss-win": "node tests/soak/boss-win.ts",
     "build:client:only": "vite build --config client/vite.config.ts"
   },
   "devDependencies": {
