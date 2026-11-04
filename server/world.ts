@@ -77,6 +77,14 @@ export const MAX_CHUNKS_RECORDED = 64;
  * no one playing, so this only ever delays an empty room; a hostile client costs at most this per connection.
  */
 export const CATCHUP_HOLD_MAX_MS = 120_000;
+/**
+ * S2: a member that has not gone live (LIVE or a valid HASH) is closed once it has sent no frame for this long
+ * ("never_live"). A catching-up client pings every 2 s, so one that is really replaying keeps `lastHeard` fresh and
+ * is never closed by this; a socket that says HELLO and then nothing is. Set to the catch-up hold's maximum.
+ */
+export const JOIN_DEADLINE_MS = 120_000;
+/** A member still not live this many deadlines after it began catching up is closed even if it keeps pinging. */
+export const JOIN_HARD_MULTIPLE = 4;
 /** F7: at most this many resyncs per member per RESYNC_BUDGET_MS; past it the socket is closed with CLOSE_OUT_OF_SYNC. */
 export const RESYNC_BUDGET = 3;
 export const RESYNC_BUDGET_MS = 60_000;
@@ -219,6 +227,8 @@ export interface WorldOptions {
   warnLogTicks?: number;
   /** Override CATCHUP_HOLD_MAX_MS (tests). */
   catchupHoldMaxMs?: number;
+  /** Override JOIN_DEADLINE_MS (tests). */
+  joinDeadlineMs?: number;
   /** Dev only (server/devteleport.ts): accept a Pos jump of any size. Never set in production. */
   devTeleport?: boolean;
   log?: EventLog;
@@ -299,6 +309,7 @@ export class World {
   private readonly maxLogTicks: number;
   private readonly warnLogTicks: number;
   private readonly holdMaxMs: number;
+  private readonly joinDeadlineMs: number;
   private heldSince: number | null = null;
   /** Which of the two log-length warnings (0 none, 1 warn level, 2 cap) have fired since the log last shrank. */
   private logWarned = 0;
@@ -360,6 +371,7 @@ export class World {
     this.maxLogTicks = opts.maxLogTicks ?? MAX_LOG_TICKS;
     this.warnLogTicks = opts.warnLogTicks ?? WARN_LOG_TICKS;
     this.holdMaxMs = opts.catchupHoldMaxMs ?? CATCHUP_HOLD_MAX_MS;
+    this.joinDeadlineMs = opts.joinDeadlineMs ?? JOIN_DEADLINE_MS;
     this.elog = opts.log ?? new EventLog({ quiet: true });
     this.pstats = opts.stats;
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
@@ -787,6 +799,21 @@ export class World {
     if (m) m.lastHeard = this.now();
   }
 
+  /** S2: close members that never became live: silent past the deadline, or still not live after JOIN_HARD_MULTIPLE of them. */
+  private reapNeverLive(t: number): void {
+    for (const m of this.members.values()) {
+      if (m.live) continue;
+      if (t - m.lastHeard < this.joinDeadlineMs && t - m.catchupSince < this.joinDeadlineMs * JOIN_HARD_MULTIPLE) continue;
+      this.elog.limited(`never_live:${m.id}`, 10_000, "leave", { world: this.id, who: this.whoOf(m), reason: "never_live" }, "warn");
+      try {
+        m.peer.close(CLOSE_SILENT, "never became live");
+      } catch {
+        // already gone
+      }
+      this.dropped.push(m.id);
+    }
+  }
+
   /** Close members that are live (past their replay) but have sent nothing for LIVENESS_MS; they leave through `leave`. */
   private reapSilent(t: number): void {
     for (const m of this.members.values()) {
@@ -826,6 +853,10 @@ export class World {
     const stalled = this.lastTickAt >= 0 && nowT - this.lastTickAt > TICK_STALL_MS;
     this.lastTickAt = nowT;
     if (stalled) for (const m of this.members.values()) m.lastHeard = nowT;
+    // Before the drain below, so the members it closes are left this tick. A world held for a replaying member is
+    // exactly where a silent socket sits, and a held clock returns early below, so reaping after the drain queued
+    // them in `dropped` without ever calling `leave`: the slot stayed held (session model, quiet rerun, 5 Nov).
+    if (!stalled) this.reapNeverLive(nowT);
     // A member whose send failed is left at once, not only at the next tick close, which a held clock never reaches.
     while (this.dropped.length) this.leave(this.dropped.shift()!);
     if (this.heldSince !== null) this.evaluateHold(); // the safety valve's deadline

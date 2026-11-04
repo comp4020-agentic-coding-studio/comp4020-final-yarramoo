@@ -236,6 +236,8 @@ export interface ServerOptions {
   warnLogTicks?: number;
   /** Override World's CATCHUP_HOLD_MAX_MS (tests). */
   catchupHoldMaxMs?: number;
+  /** Override World's JOIN_DEADLINE_MS (tests). */
+  joinDeadlineMs?: number;
   /** Override the snapshot-verification timeout (tests). */
   verifyTimeoutMs?: number;
   verifierWorkerUrl?: URL;
@@ -301,6 +303,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       maxLogTicks: opts.maxLogTicks,
       warnLogTicks: opts.warnLogTicks,
       catchupHoldMaxMs: opts.catchupHoldMaxMs,
+      joinDeadlineMs: opts.joinDeadlineMs,
       devTeleport: tele.on,
       log,
       stats: playerStats,
