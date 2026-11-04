@@ -224,6 +224,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   let worldW = SANDBOX;
   let worldH = SANDBOX;
   let worldKind = 0;
+  /** Cave terrain, from the worker's `world` message (the fallback renderer needs it; size S is sandbox-sized). */
+  let worldCaves: boolean | undefined;
   let overview = false;
   /** Game-world zoom: 1, 2 or 3 times closer, as whole divisors of the 480 x 270 view so pixels stay crisp. Client-only. */
   let zoom = 1;
@@ -591,7 +593,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     canvas.height = h;
     try {
       fallback = new Renderer(canvas);
-      fallback.setWorld(worldW, worldH);
+      fallback.setWorld(worldW, worldH, worldCaves);
       fallback.setCamera(camera);
     } catch (e) {
       note.hidden = false;
@@ -625,7 +627,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
           camera.x = worldW / 2 - GAME_VIEW.w / 2;
           camera.y = 230 - GAME_VIEW.h / 2 - 40;
         }
-        fallback?.setWorld(worldW, worldH);
+        worldCaves = m.caves;
+        fallback?.setWorld(worldW, worldH, m.caves);
         if (m.sky !== undefined) fallback?.setSky(m.sky, m.skyMotion);
         applyCamera();
         if (localKind !== null) $("title").textContent = "Game world (local, single player)";
@@ -1031,7 +1034,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const depth = document.createElement("p");
     depth.className = "sub";
     depth.id = "roundDepth";
-    depth.textContent = lastDeepest > 0 ? `Deepest reached: ${lastDeepest} cells (deepest of the players your client saw)` : "";
+    depth.textContent = lastDeepest > 0 ? `The party reached ${lastDeepest} m down` : "";
     depth.hidden = !depth.textContent;
     const { row, err } = exitPanel();
     el.append(h, depth, row, err);

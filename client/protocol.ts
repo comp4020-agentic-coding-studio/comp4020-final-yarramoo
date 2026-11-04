@@ -62,7 +62,7 @@ export type FromWorker =
   | { type: "ready"; path: "worker-webgl2" | "main-thread-fallback" }
   | { type: "render-failed"; error: string }
   /** `kind` is just "has avatars" (0/1), for the existing render checks. `cfg` is the real decoded room config (R3), null only for a config the server rejects (never for a real WELCOME). */
-  | { type: "world"; width: number; height: number; kind: number; cfg: RoomConfig | null; /** Sky kind index and whether it moves, for the main-thread fallback renderer. */ sky?: number; skyMotion?: boolean }
+  | { type: "world"; width: number; height: number; kind: number; cfg: RoomConfig | null; /** Cave terrain (sky above ground only, depth bands). */ caves?: boolean; /** Sky kind index and whether it moves, for the main-thread fallback renderer. */ sky?: number; skyMotion?: boolean }
   | { type: "frame"; mat: Uint8Array; aux: Uint8Array; tick: number; rects: Rect[] }
   | { type: "stats"; tick: number; stepsPerSec: number; buffered: number; stepP50: number; stepP95: number; ranChunks: number; uploadCells: number }
   | {

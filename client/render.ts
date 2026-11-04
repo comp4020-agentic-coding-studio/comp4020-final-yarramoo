@@ -197,6 +197,8 @@ export class Renderer {
   private rView: WebGLUniformLocation | null;
   private rCol: WebGLUniformLocation | null;
   private cam: Camera = { x: 0, y: 0, vw: 1, vh: 1 };
+  /** Cave terrain: sky only above the surface, depth bands on. Otherwise every empty cell is sky. */
+  private caves = false;
   /** Size of the world the textures are allocated for (0 until `setWorld`). */
   private ww = 0;
   private wh = 0;
@@ -277,7 +279,7 @@ export class Renderer {
    * byte reads, done 5 times a second or when the window moves sideways: nothing per frame.
    */
   private updateSurface(mat: Uint8Array, x0: number, x1: number) {
-    if (this.wh <= SANDBOX_H) return;
+    if (!this.caves) return;
     if (x0 === this.surfX0 && x1 === this.surfX1 && ++this.surfFrame % 12 !== 0) return;
     const { ww, wh, surf } = this;
     for (let x = x0; x < x1; x++) {
@@ -297,7 +299,14 @@ export class Renderer {
   }
 
   /** Allocate textures for a world of `w` by `h` cells (a no-op if the size is unchanged). */
-  setWorld(w: number, h: number) {
+  /** `caves`: the world has cave terrain (a surface, bands, sky only above ground). Defaults to the old height
+   * guess (taller than the sandbox), which is wrong for a size-S cave room: callers that know the config pass it. */
+  setWorld(w: number, h: number, caves = h > SANDBOX_H) {
+    if (caves !== this.caves) {
+      this.caves = caves;
+      this.surfX0 = this.surfX1 = -1;
+      if (this.ww) this.gl.uniform3f(this.uBands, caves ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
+    }
     if (w === this.ww && h === this.wh) return;
     const gl = this.gl;
     gl.deleteTexture(this.matTex);
@@ -319,7 +328,7 @@ export class Renderer {
     this.surfX0 = this.surfX1 = -1;
     gl.uniform2f(this.uWorld, w, h);
     // The sandbox is 512 tall and has no bands: only a taller world gets the depth look.
-    gl.uniform3f(this.uBands, h > SANDBOX_H ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
+    gl.uniform3f(this.uBands, this.caves ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
   }
 
   private makeTex(unit: number, w: number, h: number): WebGLTexture {

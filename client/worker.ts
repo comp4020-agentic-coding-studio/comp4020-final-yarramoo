@@ -396,8 +396,8 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   oneLife = rc?.death === 1;
   const kind = rc?.avatars === 1 ? 1 : 0;
   netAvatars = kind === 1;
-  send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc, ...applySky(seed) });
-  renderer?.setWorld(sim.width(), sim.height());
+  send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc, caves: rc?.terrain === 0, ...applySky(seed) });
+  renderer?.setWorld(sim.width(), sim.height(), rc?.terrain === 0);
 }
 
 function connect() {
@@ -1157,8 +1157,8 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
       if (m.local.cfg === "survival") sim.pushInput(encodeReady(DEV_ID, 1));
     }
     setNet("live");
-    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null, ...applySky(BigInt(m.local.seed)) });
-    renderer?.setWorld(sim.width(), sim.height());
+    send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null, caves: m.local.kind !== 0, ...applySky(BigInt(m.local.seed)) });
+    renderer?.setWorld(sim.width(), sim.height(), m.local.kind !== 0);
   } else {
     connect();
   }
