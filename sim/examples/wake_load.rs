@@ -1,5 +1,6 @@
 #![allow(clippy::disallowed_methods)] // dev timing tool, not part of the sim
-//! Brief W load test: `cargo run --release --example wake_load [scenario]` (scenario 1..5, default all).
+//! Brief W load test: `cargo run --release --example wake_load [scenario]` (scenario 1..5, default all; 6 is
+//! brief HR's 30-minute session with repeated floods, run only on its own).
 //! Size-L Survival world, one player at the surface, 18000 ticks (5 minutes). Disturbance at tick 600; stats
 //! cover ticks 600.. so the baseline is measured over the same window. Prints step p50/p95/max (ms, native),
 //! chunks run per tick (mean, peak), peak woken frozen chunks and the tick the last woken chunk froze.
@@ -142,8 +143,67 @@ fn run(scenario: u32, label: &str) {
     );
 }
 
+/// Scenario 6 (brief HR): a 30-minute session. The player walks the surface (a new x every 2 minutes, across the
+/// world and back), and at each stop drops a flood beside them: 200 x 30 of water, then lava on the next stop. Woken
+/// chunks holding liquid never re-freeze (D-176), so this measures how the running chunk count grows over a long
+/// session with repeated floods. Prints one line per simulated minute.
+fn long_session() {
+    const MINUTES: u32 = 30;
+    const STOP: u32 = 2 * 60 * 60;
+    let mut cfg = RoomConfig::survival();
+    cfg.size = 2;
+    let mut s = Sim::new(1, cfg).unwrap();
+    s.push_input(&encode_join(1));
+    let stops = [300usize, 700, 1100, 1500, 1750, 1300, 900, 500, 250, 650, 1050, 1450, 1800, 1200, 800];
+    let mut px = stops[0];
+    let mut times: Vec<f64> = Vec::new();
+    let mut ran: Vec<u32> = Vec::new();
+    let mut peak_woken = 0u32;
+    println!("6 long session: {MINUTES} min, a flood every 2 min at the player (water, then lava), size L seed 1");
+    for t in 0..MINUTES * 3600 {
+        if t % STOP == 0 {
+            let k = (t / STOP) as usize;
+            px = stops[k % stops.len()];
+            let py = surface(&s, px);
+            let m = if k.is_multiple_of(2) { WATER } else { LAVA };
+            let n = fill(&mut s, px.saturating_sub(100), px + 100, py.saturating_sub(40), py.saturating_sub(10), m);
+            println!("  t={:>6} stop {k:>2} at x={px:>4}: {n} {} cells", t, if m == WATER { "water" } else { "lava" });
+        }
+        if t % 60 == 0 {
+            let py = surface(&s, px);
+            s.push_input(&encode_pos(1, 0, (px as i32) * 16, ((py as i32) - 4) * 16, 0));
+        }
+        let t0 = Instant::now();
+        s.step();
+        times.push(t0.elapsed().as_secs_f64() * 1000.0);
+        ran.push(s.grid.ran_chunks);
+        let wk = s.grid.woken_frozen();
+        peak_woken = peak_woken.max(wk);
+        if (t + 1) % 3600 == 0 {
+            let mean = ran.iter().map(|&r| u64::from(r)).sum::<u64>() as f64 / ran.len() as f64;
+            println!(
+                "  minute {:>2}: step p50 {:.2} p95 {:.2} max {:.2} ms | chunks run mean {:.1} peak {} | woken now {} peak {}",
+                (t + 1) / 3600,
+                pct(&times, 0.5),
+                pct(&times, 0.95),
+                times.iter().cloned().fold(0.0, f64::max),
+                mean,
+                ran.iter().max().unwrap(),
+                wk,
+                peak_woken
+            );
+            times.clear();
+            ran.clear();
+        }
+    }
+}
+
 fn main() {
     let only: Option<u32> = std::env::args().nth(1).and_then(|a| a.parse().ok());
+    if only == Some(6) {
+        long_session();
+        return;
+    }
     let names = ["", "1 baseline (no disturbance)", "2 surface flood", "3 forest fire", "4 lava in a cave", "5 worst: full-width water + lava"];
     for k in 1..=5u32 {
         if only.is_none_or(|o| o == k) {
