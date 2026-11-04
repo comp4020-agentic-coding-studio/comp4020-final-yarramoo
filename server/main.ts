@@ -93,6 +93,8 @@ export const ROOM_LOAD_MEMORY_CAP_BYTES = 200 * 1024 * 1024;
  * uniform value for every mode in this slice — the mode-specific archive/delete timing (plan: Creative's 1h/7d,
  * Deathmatch/Survival delete-on-empty) is a deferred follow-up, not built here. */
 export const ROOM_UNLOAD_MS = 2 * 60_000;
+/** Rooms one IP may create in a sliding hour (security probe S2). */
+export const ROOM_CREATES_PER_IP_HOUR = 10;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -232,6 +234,8 @@ export interface ServerOptions {
   verifyTimeoutMs?: number;
   verifierWorkerUrl?: URL;
   quiet?: boolean;
+  /** Override ROOM_CREATES_PER_IP_HOUR (tests that create many rooms from one address). */
+  roomCreatesPerIpHour?: number;
   /** Dev only: accept a Pos jump of any size (default: env SIMULTA_DEV_TELEPORT=1). Refused under production env. */
   devTeleport?: boolean;
   /** The environment the dev-teleport gate reads (tests). Default process.env. */
@@ -681,6 +685,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   const publicRoom = (r: RoomRow) => ({ id: r.id, code: r.code, name: r.name, mode: r.mode });
 
+  /** Security probe S2: creation is anonymous, so the per-creator daily cap never applies. Cap it per IP tag instead:
+   * at most ROOM_CREATES_PER_IP_HOUR in a sliding hour. The map is bounded; at the bound the oldest tag is dropped. */
+  const roomCreates = new Map<string, number[]>();
+  function roomCreateAllowed(ipTag: string, nowMs: number): boolean {
+    const recent = (roomCreates.get(ipTag) ?? []).filter((t) => nowMs - t < 3_600_000);
+    if (recent.length >= (opts.roomCreatesPerIpHour ?? ROOM_CREATES_PER_IP_HOUR)) {
+      roomCreates.set(ipTag, recent);
+      return false;
+    }
+    recent.push(nowMs);
+    roomCreates.delete(ipTag);
+    roomCreates.set(ipTag, recent);
+    if (roomCreates.size > 4096) roomCreates.delete(roomCreates.keys().next().value!);
+    return true;
+  }
+
   /** POST /api/rooms: create a room (R2a — the row only; R2b makes it joinable). */
   function createRoomRoute(req: IncomingMessage, res: ServerResponse): void {
     const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
@@ -711,6 +731,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       } catch {
         res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad_body" }));
+        return;
+      }
+      // Security probe S1: `null` (or `[]`, `1`) parses fine, and reading a field off `null` below threw outside any try,
+      // which took the whole process down. Anything that isn't a plain object is a bad body.
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad_body" }));
+        return;
+      }
+      if (!roomCreateAllowed(ipTag, Date.now())) {
+        log.limited(`room_create:${ipTag}`, 10_000, "room.create_rejected", { reason: "ip_rate_limited", ip_tag: ipTag }, "warn");
+        res.writeHead(429, { "content-type": "application/json" }).end(JSON.stringify({ error: "rate_limited" }));
         return;
       }
       let configBytes: Uint8Array;
