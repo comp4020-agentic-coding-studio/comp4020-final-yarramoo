@@ -1,5 +1,6 @@
 // Death-feed text. Pure: the worker passes in a plain-name lookup (never `name#id`), render-only (invariant 9).
 import { achievementById } from "../shared/achievements.ts";
+import { SPELL_NAMES } from "../shared/names.ts";
 import { CAUSE_ACID, CAUSE_FIRE, CAUSE_GUNPOWDER, CAUSE_LAVA } from "../shared/sim.ts";
 
 export interface DeathInfo {
@@ -57,4 +58,30 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
 export function formatAchievement(id: string): string | null {
   const a = achievementById(id);
   return a ? `Achievement: ${a.name} \u00b7 ${a.description}` : null;
+}
+
+/** Enemy kinds by index (sim ENEMY_STATS order), singular display names. */
+export const ENEMY_NAMES = ["Slime", "Fire imp", "Acid slime", "Worm", "Deep Mage"];
+const CAUSE_ENEMY_BASE = 40;
+
+/**
+ * The player's own death line: "Killed by a Fire imp", "Your own Bomb", "Burned in lava". `cause` is EV_DEATH.b, `killer` EV_DEATH.a
+ * (0 when nobody is credited). Plain names only. Never returns "undefined".
+ */
+export function youDiedText(cause: number, killer: number, me: number, nameOf: (id: number) => string | undefined): string {
+  const other = killer !== 0 && killer !== me ? nameOf(killer) || UNKNOWN_NAME : null;
+  if (cause >= CAUSE_ENEMY_BASE && cause < CAUSE_ENEMY_BASE + ENEMY_NAMES.length) {
+    const n = ENEMY_NAMES[cause - CAUSE_ENEMY_BASE];
+    return n === "Deep Mage" ? "Killed by the Deep Mage" : `Killed by ${/^[AEIOU]/.test(n) ? "an" : "a"} ${n}`;
+  }
+  if (cause >= 0 && cause < SPELL_NAMES.length) {
+    if (other) return `Killed by ${other}'s ${SPELL_NAMES[cause]}`;
+    return killer === me && killer !== 0 ? `Your own ${SPELL_NAMES[cause]}` : `Killed by a ${SPELL_NAMES[cause]}`;
+  }
+  const by = other ? ` (${other})` : "";
+  if (cause === CAUSE_FIRE) return `Burned to death${by}`;
+  if (cause === CAUSE_LAVA) return `Burned in lava${by}`;
+  if (cause === CAUSE_GUNPOWDER) return `Blown up by gunpowder${by}`;
+  if (cause === CAUSE_ACID) return `Dissolved in acid${by}`;
+  return other ? `Killed by ${other}` : "You died";
 }

@@ -63,3 +63,25 @@ describe("formatAchievement", () => {
     expect(formatAchievement("<img src=x onerror=alert(1)>")).toBeNull();
   });
 });
+
+import { NUM_ENEMY_KINDS, NUM_SPELLS } from "../../shared/sim.ts";
+import { ENEMY_NAMES, youDiedText } from "../../client/toasts.ts";
+
+describe("youDiedText", () => {
+  const t = (cause: number, killer = 0) => youDiedText(cause, killer, 1, nameOf);
+  it("has text for every spell, CAUSE_*, and enemy kind, never undefined", () => {
+    for (let c = 0; c < NUM_SPELLS; c++) expect(t(c)).not.toMatch(/undefined/);
+    for (const c of [CAUSE_FIRE, CAUSE_LAVA, CAUSE_GUNPOWDER, CAUSE_ACID, 0, 99]) expect(t(c, 2)).not.toMatch(/undefined|#/);
+    expect(ENEMY_NAMES.length).toBe(NUM_ENEMY_KINDS);
+    for (let k = 0; k < NUM_ENEMY_KINDS; k++) expect(t(40 + k)).toMatch(/^Killed by (a|an|the) /);
+  });
+  it("wording", () => {
+    expect(t(41)).toBe("Killed by a Fire imp");
+    expect(t(42)).toBe("Killed by an Acid slime");
+    expect(t(44)).toBe("Killed by the Deep Mage");
+    expect(t(5, 1)).toBe("Your own Bomb");
+    expect(t(5, 2)).toBe("Killed by Bo's Bomb");
+    expect(t(CAUSE_LAVA)).toBe("Burned in lava");
+    expect(t(200)).toBe("You died");
+  });
+});
