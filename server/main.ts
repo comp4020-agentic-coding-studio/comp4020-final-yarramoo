@@ -93,6 +93,10 @@ export const ROOM_LOAD_MEMORY_CAP_BYTES = 200 * 1024 * 1024;
  * uniform value for every mode in this slice — the mode-specific archive/delete timing (plan: Creative's 1h/7d,
  * Deathmatch/Survival delete-on-empty) is a deferred follow-up, not built here. */
 export const ROOM_UNLOAD_MS = 2 * 60_000;
+/** N1: a room nobody has ever joined is deleted this long after creation (a just-shared link survives until the friend arrives). */
+export const ROOM_NEVER_JOINED_MS = 10 * 60_000;
+/** N1: how often the room sweep runs (touches occupied rooms, deletes abandoned ones). */
+export const ROOM_SWEEP_MS = 60_000;
 /** Rooms one IP may create in a sliding hour (security probe S2). */
 export const ROOM_CREATES_PER_IP_HOUR = 10;
 
@@ -208,6 +212,8 @@ export interface RunningServer {
   recentAchievements(limit?: number): { who: string; achievement: string; world: number | null; tick: number | null; at: number }[];
   /** Per-world and process figures. `resetLag` also restarts the event-loop histogram (process.minute does). */
   summary(opts?: { resetLag?: boolean }): ServerSummary;
+  /** N1: run the room sweep now (what the minute timer and boot run). Returns the room ids it deleted. */
+  sweepRooms(): number[];
   close(): Promise<void>;
 }
 
@@ -250,6 +256,12 @@ export interface ServerOptions {
   adminToken?: string;
   /** Override ROOM_UNLOAD_MS (tests: a short timer to exercise unload-after-empty without waiting 2 minutes). */
   roomUnloadMs?: number;
+  /** N1: override ROOM_NEVER_JOINED_MS. */
+  roomNeverJoinedMs?: number;
+  /** N1: override ROOM_SWEEP_MS. */
+  roomSweepMs?: number;
+  /** N1: wall clock (ms) for room lifecycle times; tests inject one. Default Date.now. */
+  now?: () => number;
   /** Override ROOM_LOAD_MEMORY_CAP_BYTES (tests: force the memory-cap-refused path without a real cgroup). */
   roomLoadMemoryCapBytes?: number;
   /** Override MAX_MEMBERS_SOFT/MAX_MEMBERS_HARD (tests: exercise the member cap without 32 real connections). */
@@ -301,7 +313,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   // R2a built the table and HTTP API; R2b (here) wires rooms into the socket path: HELLO with a room id loads
   // its World on demand (getOrLoadRoom below). A memory-only server (dataDir: null, tests only) has nowhere to
   // store rooms, so both the HTTP routes and HELLO's room lookup degrade to "unknown room" rather than crash.
-  const rooms = db ? new RoomsStore(db) : null;
+  const wallNow = opts.now ?? Date.now;
+  const rooms = db ? new RoomsStore(db, { now: wallNow }) : null;
   if (db) {
     // Real, pre-existing bug this slice surfaces (not introduced by R2a, which never let anything join a room):
     // `rooms.id` is `integer primary key` with no gap reserved for the two fixed world ids, so sqlite hands out
@@ -359,12 +372,50 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const ms = opts.roomUnloadMs ?? ROOM_UNLOAD_MS;
     const t = setTimeout(() => {
       roomUnloadTimers.delete(w.id);
-      if (w.playerCount > 0 || worlds.get(w.id) !== w) return; // rejoined, or already replaced/unloaded
-      w.shutdown(); // closes the open tick and flushes pending ticks before the World is freed (no lost play)
-      worlds.delete(w.id);
-      log.event("room.unloaded", { world: w.id });
+      if (w.playerCount > 0 || w.closing || worlds.get(w.id) !== w) return; // rejoined, or already replaced/unloaded
+      // N1: nobody has been in it for the grace period, so the room dies (a memory-only server just unloads it).
+      if (rooms) deleteRoom(w.id, "empty");
+      else {
+        w.shutdown();
+        worlds.delete(w.id);
+        log.event("room.unloaded", { world: w.id });
+      }
     }, ms);
     roomUnloadTimers.set(w.id, t);
+  }
+
+  /**
+   * N1: delete a room: unload its World (closing the open tick first), then drop its rows in one transaction. Skipped
+   * while a load is in flight or anyone is a member, so a join landing between a trigger and this call wins; once the
+   * rows are gone, a later HELLO finds no row and is refused as an unknown room (nothing is resurrected).
+   */
+  function deleteRoom(id: number, reason: "empty" | "never_joined"): boolean {
+    if (!rooms || id === SANDBOX_ID || id === GAME_ID || loadingRooms.has(id)) return false;
+    const w = worlds.get(id);
+    if (w && w.playerCount > 0) return false;
+    const row = rooms.getRoomById(id);
+    if (!row) return false;
+    cancelUnload(id);
+    if (w) {
+      w.shutdown(); // flushes pending ticks; `closing` stops any in-flight snapshot verify from saving afterwards
+      worlds.delete(id);
+      tickSamples.delete(id);
+    }
+    rooms.deleteRoom(id);
+    log.event("room.deleted", { world: id, code: row.code, mode: row.mode, reason });
+    return true;
+  }
+
+  /** N1: refresh `last_active` of occupied rooms, then delete rooms past their grace period by stored time. Boot runs it too. */
+  function sweepRooms(): number[] {
+    if (!rooms) return [];
+    const t = wallNow();
+    for (const w of worlds.values()) if (w.id !== SANDBOX_ID && w.id !== GAME_ID && w.playerCount > 0) rooms.touch(w.id, t);
+    const gone: number[] = [];
+    for (const r of rooms.staleRooms(t, opts.roomUnloadMs ?? ROOM_UNLOAD_MS, opts.roomNeverJoinedMs ?? ROOM_NEVER_JOINED_MS)) {
+      if (deleteRoom(r.id, r.reason)) gone.push(r.id);
+    }
+    return gone;
   }
 
   /** A HELLO that reaches `getOrLoadRoom` and gets a `World` back, but is then rejected by a check that only
@@ -1157,6 +1208,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           // this must not run any earlier, or a rejected join here could cancel a legitimate pending unload)
           const visitorId = who === "unknown" ? 0 : who.id;
           const visitorName = who === "unknown" ? "" : who.name;
+          rooms?.markJoined(w.id, wallNow()); // N1: it has been joined (never_joined no longer applies) and is active now
           const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
           const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
           joined = me;
@@ -1203,6 +1255,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               const rest = j.counts.takeWindow();
               if (rest) log.event("input.summary", { ...summaryFields(entry, rest), final: true });
               // A room (not the two fixed worlds) that just lost its last member starts its unload timer.
+              rooms?.touch(w.id, wallNow()); // N1: this was the last moment this member was in it
               if (w.playerCount === 0) scheduleUnload(w);
             },
           };
@@ -1353,6 +1406,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       }
     }
   }, TIMER_MS);
+  // N1: the same sweep at boot (stored times only: a server that just booted has no members anywhere) and each minute.
+  sweepRooms();
+  const roomSweepTimer = setInterval(() => sweepRooms(), opts.roomSweepMs ?? ROOM_SWEEP_MS);
+  roomSweepTimer.unref();
   let closed: Promise<void> | null = null;
   const sum = (m: ReadonlyMap<string, number>) => {
     let n = 0;
@@ -1450,6 +1507,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return out;
     },
     /** Shutdown (plan 9.3): stop inputs, close the open tick, flush tick_log, close the DB. Safe to call twice. */
+    sweepRooms,
     close: () =>
       (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
@@ -1457,6 +1515,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         clearInterval(statsTimer);
         clearInterval(pingTimer);
         clearInterval(sampleTimer);
+        clearInterval(roomSweepTimer);
         for (const t of roomUnloadTimers.values()) clearTimeout(t);
         roomUnloadTimers.clear();
         loopLag.disable();
@@ -1464,6 +1523,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });
         // Finish every session first (leave events, play_ms), then flush stats, then close the DB.
         for (const l of [...live.values()]) l.finish(1001);
+        for (const t of roomUnloadTimers.values()) clearTimeout(t); // finish() just armed some; the DB closes below
+        roomUnloadTimers.clear();
         for (const w of worlds.values()) w.shutdown();
         playerStats.flush();
         db?.close();

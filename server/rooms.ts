@@ -154,6 +154,46 @@ export class RoomsStore {
     return r ? rowToRoom(r) : null;
   }
 
+  /** N1: a member is in the room now. `last_active` becomes "the last moment anyone was in it". */
+  touch(id: number, nowMs: number): void {
+    this.q("update rooms set last_active = ? where id = ?").run(nowMs, id);
+  }
+
+  /** N1: the first member arrived (kept forever; decides never_joined vs empty). */
+  markJoined(id: number, nowMs: number): void {
+    this.q("update rooms set last_active = ?, first_joined_at = coalesce(first_joined_at, ?) where id = ?").run(nowMs, nowMs, id);
+  }
+
+  /**
+   * N1: real rooms (ids above the two reserved fixed-world rows) past their grace period by the STORED times: never
+   * joined and created more than `neverMs` ago, or joined and `last_active` more than `unloadMs` ago.
+   */
+  staleRooms(nowMs: number, unloadMs: number, neverMs: number): { id: number; mode: string; reason: "empty" | "never_joined" }[] {
+    const rows = this.q(
+      `select id, mode, first_joined_at from rooms where id > 1 and
+         ((first_joined_at is null and created_at < ?) or (first_joined_at is not null and last_active < ?))`,
+    ).all(nowMs - neverMs, nowMs - unloadMs) as { id: number; mode: string; first_joined_at: number | null }[];
+    return rows.map((r) => ({ id: r.id, mode: r.mode, reason: r.first_joined_at === null ? "never_joined" : "empty" }));
+  }
+
+  /** N1: delete a room and everything keyed by it in one transaction. Player stats and achievements stay. */
+  deleteRoom(id: number): boolean {
+    if (id <= 1) return false; // the fixed worlds' rows never die
+    this.db.exec("BEGIN");
+    try {
+      this.q("delete from snapshots where world_id = ?").run(id);
+      this.q("delete from tick_log where world_id = ?").run(id);
+      this.q("delete from desync_incidents where world_id = ?").run(id);
+      this.q("delete from worlds where id = ?").run(id);
+      const n = Number(this.q("delete from rooms where id = ?").run(id).changes);
+      this.db.exec("COMMIT");
+      return n > 0;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
   /** Case-insensitive: the plan says "six characters, case-insensitive". */
   getRoomByCode(code: string): RoomRow | null {
     const r = this.q(

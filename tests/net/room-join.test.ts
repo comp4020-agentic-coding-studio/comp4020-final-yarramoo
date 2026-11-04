@@ -195,17 +195,14 @@ describe("two-client room agreement: both get the same WELCOME config and their 
 });
 
 describe("unload when empty (brief item 3: uniform 2-minute timer, shortened here for the test)", () => {
-  it("unloads a room after the last member leaves and the timer fires, then reloads it fresh on a later join", async () => {
+  it("deletes a room after the last member leaves and the timer fires (N1: it used to reload fresh; now its code stops resolving)", async () => {
     const s = await boot(tmp(), { roomUnloadMs: 200 });
     const created = await createRoom(s.port);
     const a = await connect(s.port, hex, { world: created.id });
     expect(s.worlds.has(created.id)).toBe(true);
     a.close();
-    await waitFor(() => !s.worlds.has(created.id), 3000, "room unloaded after empty timeout");
-    // A later join by the same id loads it fresh again (through RoomsStore, not a stale in-memory World).
-    const b = await connect(s.port, hex, { world: created.id });
-    expect(s.worlds.has(created.id)).toBe(true);
-    b.close();
+    await waitFor(() => !s.worlds.has(created.id), 3000, "room deleted after empty timeout");
+    await expect(connect(s.port, hex, { world: created.id })).rejects.toThrow(/unknown room/);
   });
 
   it("a join before the timer fires cancels the unload (the room stays hot)", async () => {

@@ -97,6 +97,13 @@ const MIGRATIONS: string[] = [
   `,
   // F7: a Survival room whose round a majority of clients reported over. It leaves the public list and GET /api/rooms/:code says so.
   `alter table rooms add column ended_at integer;`,
+  // N1: a room dies when nobody has been in it for a while. first_joined_at is null until a member first joins (a room
+  // nobody ever joined gets 10 minutes; a played one 2 minutes after last_active). Rooms that already hold play are
+  // backfilled so they are judged as played, not as never joined.
+  `
+  alter table rooms add column first_joined_at integer;
+  update rooms set first_joined_at = last_active where id in (select world_id from tick_log union select world_id from snapshots);
+  `,
 ];
 
 /** Incident rows kept (the newest). */
