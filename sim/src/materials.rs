@@ -23,11 +23,18 @@ pub const GLASS: u8 = 19;
 pub const COAL: u8 = 20;
 /// Crumbled rock (falling rock v0): a powder that moves like Sand. Not paintable, structural or flammable.
 pub const PEBBLES: u8 = 21;
+/// Experiment E3 materials. Mud: a slow powder that dries to Dirt beside Fire or Lava. Salt: a powder that melts Ice and
+/// is spent dissolving into Water. Snow: a light powder that melts near heat and packs to Ice under weight. Thermite:
+/// a powder that, once lit by Fire or Lava, turns adjacent Rock, Dirt, Glass, Ice, Coal and Wood to Lava.
+pub const MUD: u8 = 22;
+pub const SALT: u8 = 23;
+pub const SNOW: u8 = 24;
+pub const THERMITE: u8 = 25;
 
 /// Materials that `Paint` may place: everything except Bedrock (the world boundary), Stem and Flower (they
 /// only grow from Seeds) and Pebbles (only from crumbled rock).
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL)
+    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL | MUD..=THERMITE)
 }
 
 pub fn is_gas(m: u8) -> bool {

@@ -25,14 +25,18 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
   19: "Glass",
   20: "Coal",
   21: "Pebbles",
+  22: "Mud",
+  23: "Salt",
+  24: "Snow",
+  25: "Thermite",
 };
 
-/** Mirrors `sim/src/materials.rs` `paintable`: Paint may place Erase (0), Rock to Seed (2-7) and Fire to Coal (10-20);
+/** Mirrors `sim/src/materials.rs` `paintable`: Paint may place Erase (0), Rock to Seed (2-7) and Fire to Coal (10-20) and Mud to Thermite (22-25);
  * never Bedrock, Stem, Flower or Pebbles. The server counts paint stats only for these (hardening review server F1). */
-export const isPaintable = (m: number): boolean => m === 0 || (m >= 2 && m <= 7) || (m >= 10 && m <= 20);
+export const isPaintable = (m: number): boolean => m === 0 || (m >= 2 && m <= 7) || (m >= 10 && m <= 20) || (m >= 22 && m <= 25);
 
 /** Spell index to display name. */
-export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig", "Acid Flask", "Oil Flask", "Wall", "Lava Flask", "Black Hole"];
+export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig", "Acid Flask", "Oil Flask", "Wall", "Lava Flask", "Black Hole", "Freeze", "Quake", "Mudslide"];
 
 /**
  * How the avatar controller treats each material id (one list, so a new material is one line). "gas" never
@@ -63,4 +67,8 @@ export const MATERIAL_CLASS: readonly MaterialClass[] = [
   "solid", // 19 Glass
   "solid", // 20 Coal
   "solid", // 21 Pebbles
+  "solid", // 22 Mud
+  "solid", // 23 Salt
+  "solid", // 24 Snow
+  "solid", // 25 Thermite
 ];

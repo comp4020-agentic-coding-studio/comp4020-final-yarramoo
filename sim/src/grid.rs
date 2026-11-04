@@ -422,6 +422,10 @@ impl Grid {
             PEBBLES => {
                 self.powder_move(x, y, seed, tick, SALT_PEBBLES_DIAG);
             }
+            MUD => self.update_mud(x, y, seed, tick),
+            SALT => self.update_salt(x, y, seed, tick),
+            SNOW => self.update_snow(x, y, seed, tick),
+            THERMITE => self.update_thermite(x, y, seed, tick),
             WATER => self.update_water(x, y, seed, tick),
             OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
             ACID => self.update_acid(x, y, seed, tick),
@@ -658,6 +662,112 @@ impl Grid {
                 return;
             }
         }
+    }
+
+    fn has_neighbour(&self, x: usize, y: usize, pred: fn(u8) -> bool) -> bool {
+        self.find_neighbour(x, y, pred).is_some()
+    }
+
+    fn is_heat(m: u8) -> bool {
+        matches!(m, FIRE | LAVA)
+    }
+
+    /// Mud (E3): a thick powder that only moves on every third tick, and dries to Dirt beside Fire or Lava.
+    fn update_mud(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        if self.has_neighbour(x, y, Self::is_heat) {
+            self.vol_seen = true;
+            self.set(y * self.w + x, DIRT, 0);
+            return;
+        }
+        if tick % 3 == 0 {
+            self.powder_move(x, y, seed, tick, SALT_MUD_MOVE);
+        } else if self.powder_can_move(x, y) {
+            self.vol_seen = true; // waiting for its turn: the chunk must not sleep through it
+        }
+    }
+
+    fn powder_can_move(&self, x: usize, y: usize) -> bool {
+        [(0, 1), (-1, 1), (1, 1)].iter().any(|&(dx, dy)| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| Self::powder_ok(self.at(nx, ny))))
+    }
+
+    /// Salt (E3): a powder. Beside Ice it melts the ice to Water (and is spent, 1 in 4 per tick); beside Water it
+    /// dissolves into more Water (1 in 8). A roll, so it keeps its chunk awake while it has such a neighbour.
+    fn update_salt(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if let Some((nx, ny)) = self.find_neighbour(x, y, |m| m == ICE) {
+            self.vol_seen = true;
+            if rng(seed, tick, x as u32, y as u32, SALT_SALT_MELT) % 4 == 0 {
+                self.set(ny * self.w + nx, WATER, 0);
+                self.set(i, EMPTY, 0);
+                return;
+            }
+        } else if self.has_neighbour(x, y, |m| m == WATER) {
+            self.vol_seen = true;
+            if rng(seed, tick, x as u32, y as u32, SALT_SALT_MELT) % 8 == 0 {
+                self.set(i, WATER, 0);
+                return;
+            }
+        }
+        self.powder_move(x, y, seed, tick, SALT_SALT_DIAG);
+    }
+
+    /// Snow (E3): a light powder, falls on even ticks only. Melts to Water beside Fire or Lava; a resting flake with
+    /// Snow in the three cells above it packs into spent Ice (1 in 16 per tick).
+    fn update_snow(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.has_neighbour(x, y, Self::is_heat) {
+            self.vol_seen = true;
+            self.set(i, WATER, 0);
+            return;
+        }
+        if tick & 1 == 0 && self.powder_move(x, y, seed, tick, SALT_SNOW_DIAG) {
+            return;
+        }
+        if self.powder_can_move(x, y) {
+            self.vol_seen = true;
+            return;
+        }
+        if y >= 3 && (1..=3).all(|k| self.at(x, y - k) == SNOW) {
+            self.vol_seen = true;
+            if rng(seed, tick, x as u32, y as u32, SALT_SNOW_PACK) % 16 == 0 {
+                self.set(i, ICE, 1);
+            }
+        }
+    }
+
+    /// Thermite (E3): a powder. Unlit (`aux` 0) it lights beside Fire or Lava. Lit, it burns `THERMITE_BURN` ticks and
+    /// turns each Rock, Dirt, Glass, Ice, Coal, Wood or Sand neighbour to Lava (1 in 3 per neighbour per tick) and
+    /// Water neighbours to Steam; spent, it becomes Fire.
+    fn update_thermite(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.aux[i] == 0 {
+            if self.has_neighbour(x, y, Self::is_heat) {
+                self.vol_seen = true;
+                self.aux[i] = crate::tuning::THERMITE_BURN;
+                self.touch(i);
+            } else {
+                self.powder_move(x, y, seed, tick, SALT_THERMITE_DIAG);
+            }
+            return;
+        }
+        self.vol_seen = true;
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
+            let m = self.at(nx, ny);
+            let n = ny * self.w + nx;
+            if matches!(m, ROCK | DIRT | GLASS | ICE | COAL | WOOD | SAND) && rng(seed, tick, nx as u32, ny as u32, SALT_THERMITE_EAT) % 3 == 0 {
+                self.set(n, LAVA, 0);
+            } else if m == WATER {
+                self.set(n, STEAM, 0);
+            }
+        }
+        if self.aux[i] <= 1 {
+            self.set(i, FIRE, 0);
+            return;
+        }
+        self.aux[i] -= 1;
+        self.touch(i);
+        self.powder_move(x, y, seed, tick, SALT_THERMITE_DIAG);
     }
 
     /// Ice: static. `aux` is its freezing budget plus one (0 = fresh, becomes `ICE_COLD + 1`; 1 = spent).

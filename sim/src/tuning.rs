@@ -1,13 +1,14 @@
 //! Gameplay constants (plan 6.6, 6.7). All integers; one place so balance changes never touch logic.
 
+/// E3 spells: 12 Freeze, 13 Quake, 14 Mudslide.
 /// Spell ids: 0 Push, 1 Blast, 2 Water, 3 Rose seed, 4 Fire bolt, 5 Bomb, 6 Dig, 7 Acid Flask, 8 Oil Flask, 9 Wall, 10 Lava Flask, 11 Black Hole (plan 6.7; appended so ids stay stable). Teleport (12) was skipped, see docs/research/f3-worker-report.md.
-pub const NUM_SPELLS: usize = 12;
+pub const NUM_SPELLS: usize = 15;
 /// Infinite charges (the starter spells).
 pub const INFINITE: u16 = u16::MAX;
 /// Charges a player starts with, per spell: Push and Blast are infinite.
-pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0, INFINITE, 0, 0, 0, 0, 0];
+pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0, INFINITE, 0, 0, 0, 0, 0, 0, 0, 0];
 /// Charges one pickup of each spell grants (plan 6.7).
-pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5, 0, 8, 10, 10, 4, 2];
+pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5, 0, 8, 10, 10, 4, 2, 8, 4, 6];
 /// Ticks before a collected pickup is available again (plan 14: 60 s).
 pub const PICKUP_RESPAWN: u32 = 3600;
 
@@ -51,13 +52,13 @@ pub const ENEMY_OWNER: u32 = 0x8000_0000;
 pub const MAX_ENEMY_PROJECTILES: usize = 16;
 
 /// Spells the sim implements; a disabled spell's cast is refused.
-pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true, true, true, true, true, true];
+pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true; NUM_SPELLS];
 /// Ticks between casts of the same spell.
-pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18, 25, 20, 45, 60, 120];
+pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18, 25, 20, 45, 60, 120, 30, 90, 30];
 /// Launch speed, 1/256 cell per tick (Push 5 cells a tick; Water and Rose are lobbed slower).
-pub const SPEED: [i32; NUM_SPELLS] = [1280, 0, 768, 768, 896, 640, 0, 768, 768, 0, 768, 384];
+pub const SPEED: [i32; NUM_SPELLS] = [1280, 0, 768, 768, 896, 640, 0, 768, 768, 0, 768, 384, 896, 0, 768];
 /// Downward acceleration, 1/256 cell per tick per tick.
-pub const GRAVITY_Q8: [i32; NUM_SPELLS] = [0, 0, 10, 10, 4, 20, 0, 10, 10, 0, 10, 0];
+pub const GRAVITY_Q8: [i32; NUM_SPELLS] = [0, 0, 10, 10, 4, 20, 0, 10, 10, 0, 10, 0, 4, 0, 10];
 /// Knockback impulses in 1/16 cell per tick (plan 6.7).
 pub const KNOCK_PUSH: i32 = 64;
 pub const KNOCK_BLAST: i32 = 96;
@@ -124,7 +125,7 @@ pub const MAX_BOMB_EXPLOSIONS_PER_TICK: u32 = 8;
 
 /// A bag holds every finite spell: index k is spell `BAG_SPELL_IDS[k]` (the ids that start with 0 charges).
 /// Push, Blast and Dig are infinite and never bagged.
-pub const BAG_SPELL_IDS: [usize; 9] = [2, 3, 4, 5, 7, 8, 9, 10, 11];
+pub const BAG_SPELL_IDS: [usize; 12] = [2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14];
 pub const BAG_SPELLS: usize = BAG_SPELL_IDS.len();
 /// Ticks a bag lasts: 90 s at 60 ticks a second.
 pub const BAG_LIFETIME: u32 = 5400;
@@ -152,8 +153,8 @@ pub const HEAL_RISE_MAX: usize = 12;
 /// Spells a pickup spot can give, `(spell id, weight)`, by band (0 shallow, 1 deep). Chosen per spot by
 /// counter-based rng (`SALT_PICKUP_SPELL`); the deep rarities (Black Hole) weigh half the others.
 pub const PICKUP_TABLE: [&[(u8, u32)]; 2] = [
-    &[(2, 2), (3, 2), (7, 2), (8, 2), (9, 2)],
-    &[(4, 2), (5, 2), (10, 2), (11, 1)],
+    &[(2, 2), (3, 2), (7, 2), (8, 2), (9, 2), (12, 2), (14, 2)],
+    &[(4, 2), (5, 2), (10, 2), (11, 1), (13, 1)],
 ];
 
 // ---- enemies (F4, docs/research/enemies-design.md) ------------------------------------------------------
@@ -376,3 +377,17 @@ pub const ROUND_TAIL_BYTES: usize = 12;
 /// A too-long stroke is TRUNCATED from (x0, y0) along the same line, not dropped: the player still sees paint
 /// where the stroke began, and the following segments (which start at their own anchors) carry on.
 pub const MAX_PAINT_STROKE: i32 = 128;
+
+// ---- E3 spells and materials ---------------------------------------------------------------------------
+
+/// Freeze: on impact, Water within `FREEZE_R2` (squared cells) of the impact becomes Ice, at most `FREEZE_CAP` cells.
+pub const FREEZE_R2: i32 = 49;
+pub const FREEZE_CAP: usize = 80;
+/// Quake: a disc of `QUAKE_R` cells, `QUAKE_REACH` cells along the aim; each Rock or Dirt cell in it crumbles to Pebbles
+/// on a 1-in-2 roll. At most (2r+1)^2 = 121 cells examined.
+pub const QUAKE_R: i32 = 5;
+pub const QUAKE_REACH: i32 = 9;
+/// Mudslide: a flask of Mud, same burst shape as the other flasks.
+pub const MUD_BURST_CELLS: usize = 70;
+/// Thermite burns this many ticks once lit, melting neighbours to Lava on a 1-in-3 roll per neighbour per tick.
+pub const THERMITE_BURN: u8 = 40;

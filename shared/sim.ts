@@ -88,7 +88,7 @@ export const ENT_ROUND = 6;
 export const ENT_READY = 7;
 /** A heal on the ground (Brief E): `id` = index, `a` = amount, x and y the cell centre in 1/16 cell. */
 export const ENT_HEAL = 8;
-export const NUM_SPELLS = 12;
+export const NUM_SPELLS = 15;
 export interface EntityView {
   type: number;
   id: number;

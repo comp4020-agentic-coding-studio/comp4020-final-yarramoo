@@ -3,7 +3,7 @@
 
 use crate::entities::*;
 use crate::materials::*;
-use crate::rng::{rng, SALT_BURST};
+use crate::rng::{rng, SALT_BURST, SALT_QUAKE};
 use crate::sim::Sim;
 use crate::trig::{dir, TRIG_ONE};
 use crate::tuning::*;
@@ -20,6 +20,9 @@ pub const OIL_FLASK: u8 = 8;
 pub const WALL: u8 = 9;
 pub const LAVA_FLASK: u8 = 10;
 pub const BLACK_HOLE: u8 = 11;
+pub const FREEZE: u8 = 12;
+pub const QUAKE: u8 = 13;
+pub const MUDSLIDE: u8 = 14;
 
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
@@ -86,6 +89,7 @@ impl Sim {
         } else if spell != BLAST
             && spell != DIG
             && spell != WALL
+            && spell != QUAKE
             && (self.projectiles.len() >= MAX_PROJECTILES
                 || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER
                 || (spell == BLACK_HOLE
@@ -112,6 +116,9 @@ impl Sim {
         }
         if spell == WALL {
             return self.wall_cast(px, py, angle);
+        }
+        if spell == QUAKE {
+            return self.quake_cast(px, py, angle);
         }
         let (c, sn) = dir(angle);
         let v = SPEED[s];
@@ -209,6 +216,47 @@ impl Sim {
         let off = DIG_REACH * POS_ONE;
         let (bx, by) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
         self.grid.dig(cx >> POS_SHIFT, cy >> POS_SHIFT, bx, by, DIG_RADIUS);
+    }
+
+    /// Quake: crumble a bounded disc of Rock and Dirt to Pebbles, `QUAKE_REACH` cells along the aim. No projectile.
+    /// Goes through `Grid::set`, so a roof left without support crumbles by the normal island rules.
+    fn quake_cast(&mut self, cx: i32, cy: i32, angle: u16) {
+        let (c, sn) = dir(angle);
+        let off = QUAKE_REACH * POS_ONE;
+        let (mx, my) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let (seed, tick) = (self.seed, self.tick);
+        for dy in -QUAKE_R..=QUAKE_R {
+            for dx in -QUAKE_R..=QUAKE_R {
+                let (x, y) = (mx + dx, my + dy);
+                if dx * dx + dy * dy > QUAKE_R * QUAKE_R || x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                if matches!(self.grid.mat[i], ROCK | DIRT) && rng(seed, tick, x as u32, y as u32, SALT_QUAKE) & 1 == 0 {
+                    self.grid.set(i, PEBBLES, 0);
+                }
+            }
+        }
+    }
+
+    /// Freeze impact: Water in the disc becomes Ice (aux 1 = spent, so it does not chain-freeze a lake), capped.
+    fn freeze_burst(&mut self, at: (i32, i32)) {
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let mut left = FREEZE_CAP;
+        for dy in -7..=7i32 {
+            for dx in -7..=7i32 {
+                let (x, y) = (at.0 + dx, at.1 + dy);
+                if left == 0 || dx * dx + dy * dy > FREEZE_R2 || x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                if self.grid.mat[i] == WATER {
+                    self.grid.set(i, ICE, 1);
+                    left -= 1;
+                }
+            }
+        }
     }
 
     /// Wall: a rock slab `WALL_THICK` x `WALL_LEN` cells, perpendicular to the aim, centred `WALL_REACH` cells along
@@ -434,6 +482,8 @@ impl Sim {
             ACID_FLASK => self.burst(at, ACID, ACID_BURST_CELLS, false),
             OIL_FLASK => self.burst(at, OIL, OIL_BURST_CELLS, false),
             LAVA_FLASK => self.burst(at, LAVA, LAVA_BURST_CELLS, true),
+            MUDSLIDE => self.burst(at, MUD, MUD_BURST_CELLS, false),
+            FREEZE => self.freeze_burst(at),
             ROSE => self.burst_seeds(at),
             FIRE_BOLT => {
                 self.ignite(at);

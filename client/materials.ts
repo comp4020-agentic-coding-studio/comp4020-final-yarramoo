@@ -26,6 +26,10 @@ export const MATERIALS: MaterialInfo[] = [
   { id: 18, name: MATERIAL_NAMES[18], color: 0xa8e4f0 },
   { id: 19, name: MATERIAL_NAMES[19], color: 0xb4c4d4 },
   { id: 20, name: MATERIAL_NAMES[20], color: 0x1a1d28 },
+  { id: 22, name: MATERIAL_NAMES[22], color: 0x5a3d26 },
+  { id: 23, name: MATERIAL_NAMES[23], color: 0xf2efe8 },
+  { id: 24, name: MATERIAL_NAMES[24], color: 0xf4f8ff },
+  { id: 25, name: MATERIAL_NAMES[25], color: 0xc4561e },
   { id: 0, name: MATERIAL_NAMES[0], color: 0x0b0e14 },
 ];
 
