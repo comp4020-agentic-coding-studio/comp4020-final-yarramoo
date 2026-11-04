@@ -816,6 +816,12 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     placeBags(m);
     (window as unknown as { __players: unknown }).__players = m.list;
     (window as unknown as { __boss: unknown }).__boss = m.boss; // read-only, for the soak script
+    if (m.evlog.length) {
+      const w = window as unknown as { __evLog?: unknown[] };
+      const log = (w.__evLog ??= []);
+      for (const e of m.evlog) log.push(e);
+      if (log.length > 400) log.splice(0, log.length - 400);
+    }
     (window as unknown as { __spells: unknown }).__spells = { selected: selectedSpell, ...m.spells };
   }
 

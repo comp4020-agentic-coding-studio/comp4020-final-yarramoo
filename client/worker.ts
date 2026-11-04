@@ -177,6 +177,8 @@ const fx = new Particles();
 const poses = new Map<number, PoseState>();
 /** Events from applied ticks waiting for the next frame, which knows where everyone is drawn. Bounded. */
 let pendingEvents: SimEvent[] = [];
+/** Render-side copy of the damage-relevant events, posted with the players list for the soak script (`__evLog`). Never read back. */
+let evLogOut: { k: number; p: number; a: number; b: number; c: number }[] = [];
 let avatarLife = -1;
 /** Sim tick of my latest EV_DEATH, for the respawn countdown only (UI; the sim owns the real deadline). Null: unknown. */
 let myDeathTick: number | null = null;
@@ -692,7 +694,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   isFollowing = following;
   if (now - lastPlayersPost >= 33) {
     lastPlayersPost = now;
-    send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer,
+    send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer, evlog: evLogOut.splice(0),
       me: spectate || !mine ? null : { health: mine.health, dead, respawnTicks: dead && myDeathTick !== null ? Math.max(0, DEATH_TICKS - (sim.tick() - myDeathTick)) : null } });
   }
   if (now - lastTerrainPost >= 1000) {
@@ -789,6 +791,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
   const quiet = net === "catching-up" || !!ls?.fastForwarding;
   sfxBudget = 24;
   for (const e of evs) {
+    if ((e.kind === EV_EXPLODE || e.kind === EV_DEATH || (e.kind === EV_KNOCK && e.player === myId)) && evLogOut.length < 100) evLogOut.push({ k: e.kind, p: e.player, a: e.a, b: e.b, c: e.c });
     if (e.kind === EV_CAST) {
       const c = chestOf(e.player);
       const col = SPELLS[e.a]?.colour ?? [1, 1, 1];

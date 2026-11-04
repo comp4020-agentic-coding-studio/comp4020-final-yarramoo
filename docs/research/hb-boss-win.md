@@ -1,5 +1,21 @@
 # HB: a scripted boss win in a real room
 
+## HB2 update (careful bot): still no Victory; the limit is ammunition, not only dodging
+**Step 1, what kills them** (new damage-cause readout in `tests/soak/boss-win.ts`, fed by the read-only `__evLog` of Explode events and the boss HUD; two runs of the old script at 14 to 30 cells, Fire+Bomb):
+| run | Ana | Bo |
+|---|---|---|
+| 1 | contact (boss within 16 cells) 23, bolt/lava/other 6 | bolt/lava/other 76, contact 3, own Bomb 2 |
+| 2 | contact 22, own Bomb 21, other 13, another player's Bomb 1 | bolt/lava/other 73, contact 2, own Bomb 1 |
+The lead (a player's own Bomb hurts them) is **partly true but minor**: 21 of about 200 hp in one run, 1 to 2 in the others. The bulk is the boss's Fire bolts (20 each, one a second) plus contact (the boss closes to 14 cells and shoves for 20). The supply tour itself costs 24 to 43 hp per player (bolts while grabbing pickups at the start). "bolt/lava/other" lumps Fire bolt and lava ring together; the sim does not give a damage event, only deaths.
+
+**What the bot does now**: starts the fight at 40 to 45 cells (beyond contact; Bombs only from 30+ cells, aimed with the boss's own lob formula), the two players on opposite sides of the boss, and hops to a random new distance (at least 6 cells from the last) every 250 to 400 ms so the aimed bolt misses. Supply tour shortened to 8 visits. Bomb and Fire both used.
+**Runs** (boss hp left / time of fight / damage taken): dist 40 hop 400 ms 295 (9.2 s); 60/300 ms 680; 75/300 ms 560 (11.3 s); 40/300 ms 145 (9.8 s, best); 45/250 ms: 337, 395, 299 (8.4 to 9.4 s). Players still die after 8 to 11 s; all three 45-cell runs had the boss at 300 to 400 of 800. Own Bomb damage is now 0 to 1; the remaining damage is bolts (about 54 to 96 per player), plus the boss's own Bomb lob in phase 2.
+**Why it does not win**: the supply pile holds only 4 Fire and 2 Bomb pickups, shared by two players (each ends with 10 to 30 Fire charges, 0 to 15 Bomb). A Fire hit is 20, so all 40 Fire charges at 100% accuracy are exactly 800 hp; with misses the pile **cannot** kill the boss, and Blast does 8 per 90 ticks. The script reaches 400 to 650 damage before it dies or runs dry. Victory needs ammunition beyond the pile (bags from dead players, other spells, imps' heals) or a player surviving longer. Not reached in ~45 tool calls; screenshots not taken for a win.
+**Balance reading (report only)**: for two careful players, 800 hp looks **too much for the supply as stocked**: the stocked damage is about the boss's hp even with perfect aim. Either raise the pile (e.g. 6 Fire, 3 Bomb) or lower hp toward 600, or let players bring ammunition from the level. The user decides after playing.
+**Architectural decisions for review (HB2)**: `window.__evLog` (client/room.ts, fed by the worker's `evlog` field on the `players` message) holds Explode, Death and my Knock events, capped at 400, for the soak script. It is read-only (nothing reads it back, invariant 9) and cheap in production (one small array per 33 ms post), but it does exist in production builds; if that is unwanted, gate it on the dev-teleport flag later.
+
+---
+
 **Outcome: the plumbing works; the script does not yet win.** In every run (about 12) the two players died after
 taking 220 to 330 hp off the boss (800 hp), so the "Victory" checks never ran true. Findings below are measured, not
 guessed. `pnpm soak:boss-win` exits 1 and prints which checks failed.

@@ -13,12 +13,16 @@ import { encodeConfig, SURVIVAL } from "../../shared/room.ts";
 
 const PORT = Number(process.env.PORT ?? 8103);
 const MAX_S = Number(process.env.MAX_S ?? 300);
-const TELE_DIST = Number(process.env.TELE_DIST ?? 20);
+const TELE_DIST = Number(process.env.TELE_DIST ?? 40);
+const HOP_MS = Number(process.env.HOP_MS ?? 400);
 const TELE_EVERY_S = Number(process.env.TELE_EVERY_S ?? 8);
-const KIT = process.env.KIT ?? 'fire'; // spells used on the boss: 'fire' (Fire, then Blast) or 'fire,bomb' (a Bomb's blast reaches the caster at close range)
+const KIT = process.env.KIT ?? 'fire,bomb'; // spells used on the boss: 'fire' (Fire, then Blast) or 'fire,bomb' (a Bomb's blast reaches the caster at close range)
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-interface View { me: { x: number; y: number; health: number; dead: boolean } | null; others: { x: number; y: number; health: number }[]; view: { x: number; y: number; vw: number; vh: number } | null; box: { x: number; y: number; w: number; h: number }; charges: number[]; cooldown: number[]; selected: number; boss: { x: number; y: number; hp: number } | null }
+interface View { me: { x: number; y: number; health: number; dead: boolean } | null; others: { x: number; y: number; health: number }[]; view: { x: number; y: number; vw: number; vh: number } | null; box: { x: number; y: number; w: number; h: number }; charges: number[]; cooldown: number[]; selected: number; boss: { x: number; y: number; hp: number } | null; ev: Ev[] }
+interface Ev { k: number; p: number; a: number; b: number; c: number }
+const EV_EXPLODE = 8, ENEMY_OWNER = 0x80000000;
+const BOMB_REACH = 27; // BOMB_RADIUS * 3 / 2 (D-179)
 const read = (page: Page): Promise<View | null> =>
   page.evaluate(() => {
     const w = window as any;
@@ -34,6 +38,7 @@ const read = (page: Page): Promise<View | null> =>
       cooldown: w.__spells?.cooldown ?? [],
       selected: w.__spells?.selected ?? 0,
       boss: w.__boss ? { x: w.__boss.x, y: w.__boss.y, hp: w.__boss.hp } : null,
+      ev: (w.__evLog ?? []).splice(0) as Ev[],
     };
   }).catch(() => null);
 const bossHp = (page: Page): Promise<{ hp: number; max: number; phase: number } | null> =>
@@ -78,11 +83,33 @@ async function main(): Promise<void> {
     checks.hooksPresent = hasGoto.every(Boolean);
     if (!checks.hooksPresent) throw new Error("__devGoto missing in a real room");
 
+    const dmg: Record<string, number>[] = [{}, {}];
+    const tourDmg: Record<string, number>[] = [{}, {}];
+    const ownIds: number[] = [0, 0];
+    for (let i = 0; i < 2; i++) ownIds[i] = await pages[i].evaluate(() => ((window as any).__players ?? []).find((p: any) => p.me)?.id ?? 0);
+    const lastHp: (number | null)[] = [null, null];
+    const dropLog: unknown[] = [];
+    let inTour = true;
+    // Cause of an hp drop: an explosion whose reach covered me since the last sample (own Bomb, the boss's Bomb, another player's), else a bolt, lava or contact (told apart by the boss's distance).
+    const track = (i: number, v: View | null): void => {
+      const h = v?.me?.health ?? null;
+      if (v?.me && h !== null && lastHp[i] !== null && h < lastHp[i]!) {
+        const near = v.ev.filter((e) => e.k === EV_EXPLODE && Math.hypot(e.a - v.me!.x, e.b - (v.me!.y - 5)) < BOMB_REACH);
+        let cause = "bolt/lava/contact";
+        if (near.length) cause = near.some((e) => e.p === ownIds[i]) ? "own Bomb" : near.some((e) => (e.p & ENEMY_OWNER) !== 0) ? "boss/imp Bomb" : "other player's Bomb";
+        else if (v.boss && Math.hypot(v.boss.x - v.me.x, v.boss.y - v.me.y) < 16) cause = "contact (boss within 16)";
+        if (!inTour) dropLog.push({ i, t: Math.round(performance.now() / 100) / 10, lost: lastHp[i]! - h, me: [Math.round(v.me.x), Math.round(v.me.y)], boss: v.boss ? [Math.round(v.boss.x), Math.round(v.boss.y)] : null, ex: v.ev.filter((e) => e.k === EV_EXPLODE).length });
+        const into = inTour ? tourDmg : dmg;
+        into[i][cause] = (into[i][cause] ?? 0) + (lastHp[i]! - h);
+      }
+      if (h !== null) lastHp[i] = h;
+    };
     // Supply pile: Fire (4) then Bomb (5), a few visits each; then beside the boss.
     const tourHp: (number | null)[] = [];
     await Promise.all(pages.map(async (p, i) => {
-      for (const sp of [4, 4, 4, 4, 5, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5]) {
+      for (const sp of [4, 4, 4, 4, 5, 5, 4, 5]) {
         await p.evaluate((s) => (window as any).__devGoto(s), sp);
+        track(i, await read(p));
         await sleep(450);
       }
       tourHp[i] = (await read(p))?.me?.health ?? null;
@@ -93,11 +120,14 @@ async function main(): Promise<void> {
     const fightStart = performance.now();
     const hpTrace: { t: number; ana: number | null; bo: number | null; boss: number | null }[] = [];
     const casts = [0, 0];
+
     const bySpell: Record<string, number> = {};
     let healsSeen = 0;
-    const lastHp: (number | null)[] = [null, null];
+    inTour = false;
     let nextTele = 0;
     const held = [false, false];
+    let hop = 0;
+    const lastD = [0, 0];
     let side = 1; // +1: right of the boss (aim -x), -1: left (aim +x). Alternating on each teleport dodges aimed bolts.
     let won = false;
     while (performance.now() - fightStart < MAX_S * 1000) {
@@ -106,31 +136,44 @@ async function main(): Promise<void> {
       const boss = views[0]?.boss ?? null;
       hpTrace.push({ t: Math.round((now - fightStart) / 100) / 10, ana: views[0]?.me?.health ?? null, bo: views[1]?.me?.health ?? null, boss: boss?.hp ?? null });
       for (let i = 0; i < 2; i++) {
-        const h = views[i]?.me?.health ?? null;
+        const v = views[i];
+        const h = v?.me?.health ?? null;
+        track(i, v);
         if (h !== null && lastHp[i] !== null && h > lastHp[i]! && h - lastHp[i]! >= 20) healsSeen++;
         lastHp[i] = h;
       }
       const text = await bodyText(pages[0]);
       if (text.includes("Victory") || text.includes("The party fell")) { won = text.includes("Victory"); break; }
       if (now >= nextTele) {
-        side = -side;
-        for (const p of pages) await p.evaluate((d) => (window as any).__devGotoEnemy(4, d), side * TELE_DIST);
-        nextTele = now + TELE_EVERY_S * 1000;
-        await sleep(1300); // the camera follows the avatar smoothly; aim is computed from it, so let it catch up
-        continue;
+        // Dodge: the boss aims at where I stood when it fired, and its bolt takes ~15 ticks at 40 cells, so a new spot every
+        // HOP_MS (never within 6 cells of the last) makes it miss. Players hop to opposite sides on the first hop.
+        hop++;
+        for (let i = 0; i < 2; i++) {
+          let d = TELE_DIST + Math.round((Math.random() * 2 - 1) * 10);
+          while (Math.abs(d - lastD[i]) < 6) d = TELE_DIST + Math.round((Math.random() * 2 - 1) * 10);
+          lastD[i] = d;
+          const sgn = i === 0 ? 1 : -1;
+          await pages[i].evaluate(([k, dd]) => (window as any).__devGotoEnemy(k, dd), [4, sgn * d]);
+        }
+        nextTele = now + HOP_MS;
+        if (hop === 1) { await sleep(1300); continue; }
       }
       for (let i = 0; i < 2; i++) {
         const v = views[i];
         if (!v?.me || v.me.dead || !v.view) continue;
         // Prefer Bomb when it has charges and is off cooldown, else Fire, else Blast (slot keys: Blast 2, Fire 6, Bomb 7).
         const ch = v.charges, cd = v.cooldown;
-        const spell = KIT.includes('bomb') && (ch[5] ?? 0) > 0 && (cd[5] ?? 0) === 0 ? 5 : (ch[4] ?? 0) > 0 && (cd[4] ?? 0) === 0 ? 4 : 1;
+        const farEnough = !v.boss || Math.hypot(v.boss.x - v.me.x, v.boss.y - v.me.y) >= 30;
+        const spell = KIT.includes('bomb') && farEnough && (ch[5] ?? 0) > 0 && (cd[5] ?? 0) === 0 ? 5 : (ch[4] ?? 0) > 0 && (cd[4] ?? 0) === 0 ? 4 : 1;
         const slot = { 1: "2", 4: "6", 5: "7" }[spell as 1 | 4 | 5]!;
         await pages[i].keyboard.press(slot);
         // __devGotoEnemy(4) stands me 14 cells to the boss's right, so aim along -x: pointer 40 cells left of my chest.
         // Aim at the boss itself (its feet centre, a little up its 14-cell body), read from the page's boss HUD.
-        const tx = v.boss ? v.boss.x : v.me.x - side * 40;
-        const ty = v.boss ? v.boss.y - 6 : v.me.y - 5;
+        const tx = v.boss ? v.boss.x : v.me.x - (i === 0 ? 1 : -1) * 40;
+        const dist = v.boss ? Math.hypot(v.boss.x - v.me.x, v.boss.y - v.me.y) : 40;
+        // Bomb arcs (gravity 20/256, speed 2.5 cells a tick): aim above by the boss's own lob formula. Fire barely drops.
+        const lift = spell === 5 ? dist * dist / 620 + dist / 6 : dist * dist / 3000;
+        const ty = v.boss ? v.boss.y - 6 - lift : v.me.y - 5;
         const sx = v.box.x + ((tx - v.view.x) / v.view.vw) * v.box.w;
         const sy = v.box.y + ((ty - v.view.y) / v.view.vh) * v.box.h;
         if (!held[i]) { await pages[i].mouse.down(); held[i] = true; }
@@ -160,6 +203,10 @@ async function main(): Promise<void> {
     summary.setupSecs = Math.round((t1 - t0) / 100) / 10;
     summary.won = won;
     summary.casts = casts;
+    summary.damageByCause = { ana: dmg[0], bo: dmg[1] };
+    summary.tourDamageByCause = { ana: tourDmg[0], bo: tourDmg[1] };
+    summary.dropLog = dropLog;
+    summary.bossHpEnd = hpTrace[hpTrace.length - 1]?.boss;
     summary.bySpell = bySpell;
     summary.healsPickedUpObserved = healsSeen;
     summary.hashFails = w?.hashFails;

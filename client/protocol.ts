@@ -97,6 +97,8 @@ export type FromWorker =
       lobby: { running: boolean; left: number; /** Ticks until the majority timeout starts the round without the unready, -1 when no majority. */ majorityLeft: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null;
       /** F6b: I arrived after the descent began (the sim made me a dead spectator): offer the choice. */
       late: boolean;
+      /** Damage-relevant events since the last post (Explode: owner, cell x, y, radius; Knock on me: attacker; Death), for scripts. Read-only. */
+      evlog: { k: number; p: number; a: number; b: number; c: number }[];
     }
   /** About 1 Hz: a coarse solid/empty mask of the world for the minimap silhouette, `cols` x `rows`, row-major, 1 = solid. Render-only. */
   | { type: "terrain"; cols: number; rows: number; mask: Uint8Array }
