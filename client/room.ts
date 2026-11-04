@@ -815,8 +815,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     else if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
     placeBags(m);
     (window as unknown as { __players: unknown }).__players = m.list;
-    (window as unknown as { __boss: unknown }).__boss = m.boss; // read-only, for the soak script
-    if (m.evlog.length) {
+    // Read-only values for the boss-win soak script, only on a server that announced dev teleport (never production).
+    if (target.devTeleport) (window as unknown as { __boss: unknown }).__boss = m.boss;
+    if (target.devTeleport && m.evlog.length) {
       const w = window as unknown as { __evLog?: unknown[] };
       const log = (w.__evLog ??= []);
       for (const e of m.evlog) log.push(e);
