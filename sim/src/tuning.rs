@@ -376,3 +376,12 @@ pub const ROUND_TAIL_BYTES: usize = 12;
 /// A too-long stroke is TRUNCATED from (x0, y0) along the same line, not dropped: the player still sees paint
 /// where the stroke began, and the following segments (which start at their own anchors) carry on.
 pub const MAX_PAINT_STROKE: i32 = 128;
+
+/// Rigid bodies (experiment x-bodies): a lifted island falls as one piece. Every client steps every body in an
+/// active chunk, so all are bounded: at most `MAX_BODIES` bodies of at most `ISLAND_MAX` cells inside a
+/// `BODY_BBOX_MAX` square (so a cell offset fits a u8 and a body fits the snapshot check), at most `MAX_SUBSTEPS` rows a tick.
+pub const MAX_BODIES: usize = 8;
+pub const BODY_BBOX_MAX: usize = 64;
+/// Gravity and terminal speed in 1/16 cell per tick (so terminal is 6 cells a tick, under `MAX_SUBSTEPS`).
+pub const BODY_GRAVITY: i32 = 2;
+pub const BODY_MAX_VY: i32 = 6 * POS_ONE;

@@ -2,6 +2,7 @@
 #![deny(clippy::float_arithmetic)]
 #![allow(clippy::result_unit_err)]
 
+pub mod bodies;
 pub mod config;
 pub mod enemy;
 pub mod entities;

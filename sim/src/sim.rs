@@ -46,6 +46,8 @@ pub struct Sim {
     pub bags: Vec<Bag>,
     /// Heals dropped by killed enemies, in spawn order (Survival only). State: hashed and snapshotted.
     pub heals: Vec<Heal>,
+    /// Rigid bodies (experiment x-bodies): lifted islands in flight, in lift order. State: hashed and snapshotted.
+    pub bodies: Vec<crate::bodies::Body>,
     /// Enemies, sorted by id (Survival only). State: hashed and snapshotted. Placed by the generator, never spawned later.
     pub enemies: Vec<Enemy>,
     /// Scratch: cells examined by enemy collision this tick (the work count the report measures). Not state.
@@ -83,7 +85,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), enemies, round_over: 0, round_running: 0, boss_killed: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), bodies: Vec::new(), enemies, round_over: 0, round_running: 0, boss_killed: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -218,7 +220,10 @@ impl Sim {
             self.enemy_hazard_scan();
             self.check_round_end();
         }
+        self.grid.lift_mode = self.cfg.has_players();
+        self.grid.body_room = MAX_BODIES - self.bodies.len();
         self.grid.crumble_islands();
+        self.adopt_lifted();
         #[cfg(feature = "canary")]
         {
             // Test D10: the only host import. Must make the build fail the zero-imports check.
@@ -466,6 +471,7 @@ impl Sim {
     /// Plan 6.2 step 2: pickups (players move only through Pos inputs). Players by id, pickups by id,
     /// so two players on one pickup resolve to the lower id.
     fn update_entities(&mut self) {
+        self.update_bodies();
         self.update_projectiles();
         self.update_enemies();
         let tick = self.tick;
@@ -555,7 +561,9 @@ impl Sim {
         if !self.cfg.has_players() {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, &self.heals, self.round_tail())
+        let mut v = crate::bodies::encode(&self.bodies);
+        v.extend(entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, &self.heals, self.round_tail()));
+        v
     }
 
     pub fn state_hash(&mut self) -> u64 {

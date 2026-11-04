@@ -82,6 +82,13 @@ pub struct Grid {
     pub island_visits: u32,
     /// Telemetry only: islands crumbled since construction (never hashed).
     pub island_crumbled: u32,
+    /// Scratch config (rigid bodies, experiment x-bodies): when true a free island that fits `BODY_BBOX_MAX` is lifted
+    /// out of the grid into `lifted` instead of crumbling. Set by `Sim::step` from the room config, so it is never state.
+    pub lift_mode: bool,
+    /// How many more islands this tick may lift (the bodies list has this much room). Set by `Sim::step`.
+    pub body_room: usize,
+    /// Islands lifted this tick, cells sorted by flat index: (index, mat, aux). Drained by `Sim` right after.
+    pub lifted: Vec<Vec<(u32, u8, u8)>>,
 }
 
 /// Explosions resolved per tick. Bounds the per-tick cost of a chain (D-022).
@@ -118,6 +125,9 @@ impl Grid {
             island_stack: Vec::new(),
             island_visits: 0,
             island_crumbled: 0,
+            lift_mode: false,
+            body_room: 0,
+            lifted: Vec::new(),
         }
     }
 
@@ -312,7 +322,32 @@ impl Grid {
                 continue;
             }
             self.island_crumbled += 1;
-            let cells = core::mem::take(&mut self.island_cells);
+            let mut cells = core::mem::take(&mut self.island_cells);
+            if self.lift_mode && self.lifted.len() < self.body_room {
+                let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+                for &c in &cells {
+                    let (x, y) = (c as usize % w, c as usize / w);
+                    x0 = x0.min(x);
+                    x1 = x1.max(x);
+                    y0 = y0.min(y);
+                    y1 = y1.max(y);
+                }
+                if x1 - x0 < crate::tuning::BODY_BBOX_MAX && y1 - y0 < crate::tuning::BODY_BBOX_MAX {
+                    cells.sort_unstable();
+                    let mut v = Vec::with_capacity(cells.len());
+                    for &c in &cells {
+                        let c = c as usize;
+                        v.push((c as u32, self.mat[c], self.aux[c]));
+                        // Direct write, not `set`: lifting must not seed further floods.
+                        self.mat[c] = EMPTY;
+                        self.aux[c] = 0;
+                        self.touch(c);
+                    }
+                    self.lifted.push(v);
+                    self.island_cells = cells;
+                    continue;
+                }
+            }
             for &c in &cells {
                 let c = c as usize;
                 // Direct write, not `set`: the island's own cells must not seed further floods.

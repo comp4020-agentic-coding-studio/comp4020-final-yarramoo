@@ -436,12 +436,12 @@ fn with_version(snap: &[u8], v: u16) -> Vec<u8> {
 
 #[test]
 fn format_is_twelve_and_a_game_snapshot_round_trips_with_bags() {
-    assert_eq!(snapshot::FORMAT_VERSION, 12);
+    assert_eq!(snapshot::FORMAT_VERSION, 13);
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 15, 0, 0, 5]);
     kill(&mut s, 1);
     let snap = snapshot::write(&s);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 12);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 13);
     let mut r = snapshot::restore(&snap).unwrap();
     assert_eq!(r.bags, s.bags);
     assert_eq!(r.state_hash(), s.state_hash());
@@ -455,7 +455,7 @@ fn other_formats_are_refused_for_sandbox_and_game() {
     push(&mut sb, sim::input::encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let snap = snapshot::write(&sb);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 12);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 13);
     assert!(snapshot::restore(&snap).is_ok());
     let gsnap = snapshot::write(&boxed(&[1]));
     assert!(snapshot::restore(&gsnap).is_ok());
