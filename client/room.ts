@@ -54,6 +54,7 @@ export async function resolveRoomTarget(pathname: string): Promise<RoomTarget> {
 export async function startRoom(target: RoomTarget): Promise<void> {
   const stage = $("stage");
   const info = $("info");
+  const debugUi = new URLSearchParams(location.search).get("debug") === "1" || new URLSearchParams(location.search).has("stats");
   const note = $("note");
   const catchupCard = $("catchup");
   const catchupSamples: Sample[] = [];
@@ -165,8 +166,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     setMood(moodState.mood);
   };
   const showMute = () => {
-    muteBtn.textContent = isMuted() ? "Sound off" : "Sound on";
-    muteBtn.setAttribute("aria-pressed", String(isMuted()));
+    const off = isMuted();
+    const label = off ? "Sound off, click to unmute" : "Sound on, click to mute";
+    // A speaker (with waves when on, a cross when muted), inline SVG: no image files.
+    muteBtn.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h3l4-3v10L5 10H2z"/>${off ? '<path d="M11 6l4 4M15 6l-4 4"/>' : '<path d="M11.5 5.5a3.5 3.5 0 0 1 0 5M13 3.5a6 6 0 0 1 0 9"/>'}</svg>Sound`;
+    muteBtn.setAttribute("aria-pressed", String(off));
+    muteBtn.setAttribute("aria-label", label);
+    muteBtn.title = label;
   };
   showMute();
   muteBtn.onclick = () => {
@@ -1076,11 +1082,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const n = lastNet;
     if (!n) return;
     let status: string;
+    let dotClass = "dot";
     switch (n.state) {
-      case "connecting": status = "connecting"; break;
-      case "reconnecting": status = "reconnecting"; break;
-      case "catching-up": status = n.resyncs ? "resyncing" : "catching up"; break;
+      case "connecting": status = "connecting"; dotClass += " wait"; break;
+      case "reconnecting": status = "reconnecting"; dotClass += " wait"; break;
+      case "catching-up": status = n.resyncs ? "resyncing" : "catching up"; dotClass += " wait"; break;
       case "rejected":
+        dotClass += " bad";
         status = n.reason.includes("reload") ? "new version, reload" : n.reason;
         if (n.reason.includes("unknown token")) {
           // The server's database was reset: this token means nothing now. Register again.
@@ -1088,13 +1096,20 @@ export async function startRoom(target: RoomTarget): Promise<void> {
           location.reload();
         }
         break;
-      default: status = `live · ${n.players} player${n.players === 1 ? "" : "s"}`;
+      default: status = "Connected";
     }
-    info.textContent = `${status}${lastStats && n.state === "live" ? ` · tick ${lastStats.tick}` : ""}${
-      lastStats && (localKind !== null || params.has("stats"))
-        ? ` · step p50 ${lastStats.stepP50.toFixed(2)} p95 ${lastStats.stepP95.toFixed(2)} ms · ${lastStats.ranChunks} chunks · ${Math.round(lastStats.uploadCells / 1000)}k cells uploaded`
-        : ""
-    }`;
+    // Players see a coloured dot (the text is its tooltip); the tick, step times and chunks are for developers (?debug=1, or the older ?stats).
+    const dot = document.createElement("span");
+    dot.className = dotClass;
+    dot.title = status[0].toUpperCase() + status.slice(1);
+    dot.setAttribute("aria-label", dot.title);
+    info.replaceChildren(dot);
+    if (lastStats && debugUi) {
+      const dbg = document.createElement("span");
+      dbg.className = "dbg";
+      dbg.textContent = `${n.players} player${n.players === 1 ? "" : "s"} · tick ${lastStats.tick} · step p50 ${lastStats.stepP50.toFixed(2)} p95 ${lastStats.stepP95.toFixed(2)} ms · ${lastStats.ranChunks} chunks · ${Math.round(lastStats.uploadCells / 1000)}k cells uploaded`;
+      info.append(dbg);
+    }
     (window as unknown as { __stats: unknown }).__stats = lastStats;
     note.hidden = n.state !== "rejected" && !(n.state === "reconnecting");
     if (!note.hidden) note.textContent = n.state === "rejected" ? status : "Connection lost, reconnecting and replaying the world...";

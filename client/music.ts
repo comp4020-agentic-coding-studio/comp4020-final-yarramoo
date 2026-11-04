@@ -430,8 +430,12 @@ export function makeMusicButton(cls: string): HTMLButtonElement {
   b.id = "musicBtn";
   b.className = cls;
   const show = () => {
-    b.textContent = muted ? "Music off" : "Music on";
+    const label = muted ? "Music off, click to turn on" : "Music on, click to turn off";
+    // A note, with a slash through it when off. Inline SVG, no image files.
+    b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 12V3l7-1.5V10"/><circle cx="4.5" cy="12" r="1.7"/><circle cx="11.5" cy="10" r="1.7"/>${muted ? '<path d="M2 2l12 12"/>' : ""}</svg>Music`;
     b.setAttribute("aria-pressed", String(muted));
+    b.setAttribute("aria-label", label);
+    b.title = label;
   };
   show();
   b.onclick = () => {

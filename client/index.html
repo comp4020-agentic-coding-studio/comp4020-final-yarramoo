@@ -12,7 +12,13 @@
     body { display: flex; flex-direction: column; }
     header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
     header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-    header .readme { color: var(--accent); font-size: 12px; text-decoration: none; }
+    header .readme { text-decoration: none; display: inline-block; }
+    .share-btn svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .share-btn[aria-pressed="true"] { color: var(--dim); }
+    #info .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #3ddc84; vertical-align: -1px; }
+    #info .dot.wait { background: #f0b429; }
+    #info .dot.bad { background: #e5484d; }
+    #info .dbg { margin-left: 10px; }
     header .info { margin-left: auto; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
     main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0; }
     #stage { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
@@ -211,9 +217,9 @@
       <a class="menu-link" id="menuLink" href="/">&larr; Menu</a>
       <h1 id="title">Game world</h1>
       <button type="button" id="shareBtn" class="share-btn" hidden>Share</button>
-      <button type="button" id="muteBtn" class="share-btn" aria-pressed="false">Sound on</button>
-      <a class="readme" href="/readme/">README</a>
-      <span class="info" id="info">starting</span>
+      <button type="button" id="muteBtn" class="share-btn" aria-pressed="false" aria-label="Sound on, click to mute" title="Sound on, click to mute"></button>
+      <a class="readme share-btn" href="/readme/">README</a>
+      <span class="info" id="info" role="status"><span class="dot wait" title="Starting"></span></span>
     </header>
     <main><div id="stage"></div></main>
     <div id="join" hidden>
