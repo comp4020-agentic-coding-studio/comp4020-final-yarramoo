@@ -39,3 +39,24 @@ over a long session woken chunks can only accumulate, not drain. Two cheap optio
 built): (a) let a woken chunk freeze when its only activity is a liquid surface swap with no net change in a
 window (needs a hash-visible rule); (b) cap woken chunks to a few hundred. Revisit if a real playtest shows a
 sustained p95 above about 4 ms native.
+
+## Brief HR: a 30-minute session with repeated floods (4 Nov, provisional)
+
+`cargo run --release --example wake_load 6`: size L, seed 1, one player walking 15 stops across the surface, a
+200 x 30 flood beside them at every stop (every 2 minutes, water and lava alternating). **Run 1 shared the machine
+with a worker's builds and tests, so its times are inflated;** a quiet rerun follows.
+
+| Minutes | woken now | chunks run mean / peak | step p50 / p95 ms (native) |
+|---|---|---|---|
+| 1-2 | 8-9 | 21-25 / 57 | 0.8-1.1 / 1.2-2.4 |
+| 7-8 | 56-74 | 73-78 / 100 | 3.0-3.6 / 5.7-8.6 |
+| 15-16 | 60-64 | 78-92 / 121 | 2.8-3.2 / 3.6-4.5 |
+| 21-26 (heaviest machine load) | 74-101 | 93-117 / 144 | 10.7-14.1 / 18-23 |
+| 29-30 | 84-99 | 101-111 / 137 | 4.5-5.2 / 6.2-12.6 |
+
+- **Woken chunks plateau, they don't grow without bound:** peak 119, then 80-100, of 1536. Each flood wakes a
+  patch; part of it re-freezes as the water drains into caves, and the liquid that stays keeps its chunks awake.
+- **The steady cost does cross the threshold this report set** ("revisit if sustained p95 above about 4 ms
+  native"): the second half runs about 4x the chunks of the first, with p95 6-12 ms even setting aside the
+  loaded minutes. At the 2x wasm ratio above that is 12-24 ms in a browser, at or over the 16.7 ms frame.
+- Not decided here: D-176 (no cap) is the user's call. See the quiet rerun below for the numbers to decide on.
