@@ -29,13 +29,17 @@ export const SPELLS: SpellInfo[] = [
   { name: SPELL_NAMES[9], colour: [0.55, 0.55, 0.6], cooldown: 45, speed: 0, gravity: 0, enabled: true },
   { name: SPELL_NAMES[10], colour: [1, 0.35, 0.05], cooldown: 60, speed: 768 / 256, gravity: 10 / 256, enabled: true },
   { name: SPELL_NAMES[11], colour: [0.35, 0.1, 0.6], cooldown: 120, speed: 384 / 256, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[12], colour: [0.6, 0.9, 1], cooldown: 30, speed: 896 / 256, gravity: 4 / 256, enabled: true },
+  { name: SPELL_NAMES[13], colour: [0.6, 0.45, 0.3], cooldown: 90, speed: 0, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[14], colour: [0.4, 0.27, 0.15], cooldown: 30, speed: 768 / 256, gravity: 10 / 256, enabled: true },
 ];
 if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with the sim");
 
 /** Spell slots on the bar, in bar order (keys 1-9, then Q/E or the wheel to cycle). */
-export const BAR: number[] = [0, 1, 6, 2, 3, 4, 5, 7, 8, 9, 10, 11];
+export const BAR: number[] = [0, 1, 6, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14];
 /** Spell id of Wall (index into SPELLS / SPELL_NAMES). */
 export const SPELL_WALL = SPELL_NAMES.indexOf("Wall");
+export const SPELL_QUAKE = SPELL_NAMES.indexOf("Quake");
 export const INFINITE = 0xffff;
 
 /** Aim angle as the sim wants it: u16, 65536 per turn, 0 along +x, growing towards +y (down the screen). */

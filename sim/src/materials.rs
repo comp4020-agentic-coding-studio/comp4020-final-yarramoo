@@ -29,11 +29,18 @@ pub const BRICK: u8 = 22;
 pub const MOSS: u8 = 23;
 /// Static, not structural, flammable (the grotto's giant mushroom caps). Paintable.
 pub const MUSHROOM: u8 = 24;
+/// Experiment E3 materials. Mud: a slow powder that dries to Dirt beside Fire or Lava. Salt: a powder that melts Ice and
+/// is spent dissolving into Water. Snow: a light powder that melts near heat and packs to Ice under weight. Thermite:
+/// a powder that, once lit by Fire or Lava, turns adjacent Rock, Dirt, Glass, Ice, Coal and Wood to Lava.
+pub const MUD: u8 = 25;
+pub const SALT: u8 = 26;
+pub const SNOW: u8 = 27;
+pub const THERMITE: u8 = 28;
 
 /// Materials that `Paint` may place: everything except Bedrock (the world boundary), Stem and Flower (they
 /// only grow from Seeds) and Pebbles (only from crumbled rock).
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL | BRICK..=MUSHROOM)
+    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL | BRICK..=MUSHROOM | MUD..=THERMITE)
 }
 
 pub fn is_gas(m: u8) -> bool {
