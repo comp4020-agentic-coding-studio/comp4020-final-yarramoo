@@ -611,3 +611,32 @@ Lower the music briefly under explosions; a volume slider instead of on/off; pic
 avatar rather than the camera, with a calm mood for spectators.
 
 - **Source:** brief J's report, 4 Nov.
+
+## Shallow lava should count as "in" lava
+
+The avatar controller only checks rows -1 and -5 of the body's middle column (`client/avatar.ts` `liquidAt`), so
+lava less than 2 cells deep doesn't slow or sink the player.
+
+- **Source:** brief F's report (playtest note 6), 4 Nov. Left alone in that slice.
+
+## Identify the cyan bracket from playtest note 12
+
+The hollow light-cyan bracket in `docs/art/playtest-2026-11-03/cant-pick-up.png` was never identified. The
+"can't pick up" itself was explained by catch-up (D-177), so it may be Ice or Glass cells. Check the cell's
+material if it shows up again.
+
+- **Source:** playtest note 12, 3 Nov.
+
+## A fresh snapshot instead of replaying a huge backlog
+
+A client more than about 20,000 ticks behind could ask for a snapshot rather than fast-forward through the
+whole log. It needs a server decision about when to hand one out (the resync path exists).
+
+- **Source:** brief F, item 1(c), skipped as more than a few lines, 4 Nov.
+
+## HUD leftovers from the UI review
+
+A small bar above your own avatar while it takes damage or levitates; picking 2x or 3x scale (or a wider
+`GAME_VIEW`) by window size to cut the side margins; collapsing zero-count consumables until first found.
+
+- **Source:** the UI review (playtest note 10) and brief H1's report, 4 Nov.
