@@ -36,7 +36,7 @@ fn rock_arena(px: i32) -> Sim {
     }
     s.push_input(&encode_join(1));
     s.step();
-    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
+    s.round_running = 1; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s.players[0].x = px * PX;
     s.players[0].y = 260 * PX;
     s
@@ -233,7 +233,7 @@ fn a_generated_worm_on_seed_1_wakes_and_tunnels_toward_a_player_beside_it() {
     s.enemies = vec![e.clone()];
     s.push_input(&encode_join(1));
     s.step();
-    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
+    s.round_running = 1; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     let (cx, cy) = (e.x >> 4, (e.y - 2 * PX) >> 4);
     // the player stands in a carved pocket 30 cells to the right of the worm (positions read from the sim)
     let w = s.grid.w as i32;

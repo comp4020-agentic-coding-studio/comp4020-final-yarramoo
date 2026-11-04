@@ -7,8 +7,8 @@ use crate::tuning::LOBBY_IDLE;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
-/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_started, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. v10 (Brief W) appends the woken-chunk bitset after the chunk records. v11 (Brief E) adds the heal section (count, then heals) between the enemies and the round tail. Restore refuses any other version (the game is not live, so no stored state is lost).
-pub const FORMAT_VERSION: u16 = 11;
+/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_running, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. v10 (Brief W) appends the woken-chunk bitset after the chunk records. v11 (Brief E) adds the heal section (count, then heals) between the enemies and the round tail. v12 (Brief HF) names the packed fields: the round tail is `over, running, boss_killed, result, lobby_since, majority_since` (12 bytes), and each enemy record ends with `phase u8, summons u16` (boss phase and summon counter, zero for other kinds; `state` keeps bits 0-1 and `hop_until` only the next hop). Restore refuses any other version (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 12;
 const CFG_AT: usize = 4 + 2 + 32 + 8;
 const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
@@ -96,9 +96,9 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         if s.heals.iter().any(|k| k.expires_at.wrapping_sub(tick) > crate::tuning::HEAL_LIFETIME) {
             return Err(());
         }
-        [s.round_over, s.round_started, s.round_result] = [round[0], round[1], round[2]];
-        s.lobby_since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
-        s.majority_since = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);
+        [s.round_over, s.round_running, s.boss_killed, s.round_result] = [round[0], round[1], round[2], round[3]];
+        s.lobby_since = u32::from_le_bytes([round[4], round[5], round[6], round[7]]);
+        s.majority_since = u32::from_le_bytes([round[8], round[9], round[10], round[11]]);
     }
     o = eend;
     let n = u32_at(o) as usize;

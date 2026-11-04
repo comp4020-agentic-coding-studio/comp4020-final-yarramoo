@@ -23,7 +23,7 @@ fn ready(s: &mut Sim, id: u32, r: u8) {
 }
 
 fn started(s: &Sim) -> bool {
-    s.round_started & ROUND_RUNNING != 0
+    s.round_running != 0
 }
 
 fn starts(s: &Sim) -> usize {
@@ -276,19 +276,19 @@ fn a_joiner_during_the_lobby_is_alive_and_the_start_event_fires_once() {
 }
 
 #[test]
-fn round_started_bit_one_still_wins_the_round_after_a_lobby_start() {
+fn boss_killed_still_wins_the_round_after_a_lobby_start() {
     let mut s = real();
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     join(&mut s, 1);
     ready(&mut s, 1, 1);
     run(&mut s, 200);
     assert!(started(&s));
-    assert_eq!(s.round_started, ROUND_RUNNING);
+    assert_eq!((s.round_running, s.boss_killed), (1, 0));
     let i = s.enemies.iter().position(|e| e.kind == ENEMY_BOSS).unwrap();
     s.enemies[i].hp = 1;
     s.damage_enemy(i, 1, 1);
     s.reap_enemies();
-    assert_eq!(s.round_started, ROUND_RUNNING | ROUND_BOSS_KILLED);
+    assert_eq!((s.round_running, s.boss_killed), (1, 1));
     s.step();
     assert_eq!((s.round_over, s.round_result), (1, 1));
 }
@@ -371,21 +371,21 @@ fn hostile_snapshots_with_bad_phase_or_ready_values_are_refused() {
     assert_eq!(b[ready_at], 1);
     b[ready_at] = 2;
     assert!(snapshot::restore(&b).is_err(), "ready 2");
-    // round_started above 3
+    // round_running above 1
     let l = e.len();
     let mut b = good.clone();
-    b[at + l - 10] = 4;
-    assert!(snapshot::restore(&b).is_err(), "phase bits 4");
+    b[at + l - 11] = 2;
+    assert!(snapshot::restore(&b).is_err(), "round_running 2");
     // round_over above 1
     let mut b = good.clone();
-    b[at + l - 11] = 2;
+    b[at + l - 12] = 2;
     assert!(snapshot::restore(&b).is_err(), "round_over 2");
     // a countdown start that lies in the future of the snapshot tick, or while the round is running, is nonsense
     let mut b = good.clone();
     b[at + l - 8..at + l - 4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(snapshot::restore(&b).is_ok(), "idle is a valid lobby_since");
     let mut b = good.clone();
-    b[at + l - 10] = ROUND_RUNNING; // running, yet lobby_since still set
+    b[at + l - 11] = 1; // running, yet lobby_since still set
     assert!(snapshot::restore(&b).is_err(), "running with a live countdown");
 }
 
@@ -415,7 +415,7 @@ fn the_view_carries_the_phase_ready_flags_and_countdown() {
     run(&mut s, 200);
     let v = view(&s);
     assert!(v.iter().all(|o| o[0] != ENT_READY), "no ready records once running");
-    assert_eq!(v.iter().find(|o| o[0] == ENT_ROUND).unwrap()[17] & ROUND_RUNNING, ROUND_RUNNING);
+    assert_eq!(v.iter().find(|o| o[0] == ENT_ROUND).unwrap()[17] & 1, 1);
 }
 
 #[test]
@@ -438,11 +438,12 @@ fn hostile_snapshot_with_a_countdown_in_the_future_or_a_boss_bit_without_running
     assert!(snapshot::restore(&b).is_err(), "majority_since in the future");
     // the boss bit without RUNNING
     let mut b = good.clone();
-    b[at + l - 10] = ROUND_BOSS_KILLED;
+    b[at + l - 10] = 1;
     assert!(snapshot::restore(&b).is_err(), "boss bit while still in the lobby");
     // the same bytes with RUNNING set and the countdowns idle are fine
     let mut b = good.clone();
-    b[at + l - 10] = ROUND_RUNNING | ROUND_BOSS_KILLED;
+    b[at + l - 11] = 1;
+    b[at + l - 10] = 1;
     b[at + l - 8..at + l].copy_from_slice(&[0xff; 8]);
     assert!(snapshot::restore(&b).is_ok());
 }
@@ -456,9 +457,9 @@ fn a_world_explosion_cannot_hurt_the_boss_in_the_lobby() {
     s.damage_enemy(i, 500, 0);
     s.reap_enemies();
     assert_eq!(s.enemies.iter().find(|e| e.kind == ENEMY_BOSS).map(|e| e.hp), Some(hp));
-    assert_eq!(s.round_started, 0);
+    assert_eq!(s.round_running, 0);
     // once running, the same call hurts
-    s.round_started = ROUND_RUNNING;
+    s.round_running = 1;
     s.damage_enemy(i, 500, 0);
     assert_eq!(s.enemies[i].hp, hp - 500);
 }

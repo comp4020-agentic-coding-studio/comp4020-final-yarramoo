@@ -73,13 +73,13 @@ describe("server's snapshot entity parser matches the sim", () => {
     const nb = e.getUint32(o, true);
     const bagAt = o + 4;
     o += 4 + nb * BAG;
-    // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then the round tail (over, started, result, lobby_since u32) closes the block.
-    const ENEMY = 35;
+    // F4: an enemies section (u32 count, ENEMY_BYTES 38 each) then the round tail (over, running, boss_killed, result, lobby_since u32) closes the block.
+    const ENEMY = 38;
     const ne = e.getUint32(o, true);
     o += 4 + ne * ENEMY;
     // Brief E: a heals section (u32 count, HEAL_BYTES 9 each) follows the enemies, before the round tail.
     const nh = e.getUint32(o, true);
-    o += 4 + nh * 9 + 11;
+    o += 4 + nh * 9 + 12;
     expect([np, nj, nb, ne, nh]).toEqual([1, 0, 1, 0, 0]); // a non-Survival world has no enemies or heals
     expect(nk).toBeGreaterThan(0);
     expect(o).toBe(elen);

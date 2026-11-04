@@ -26,7 +26,7 @@ fn arena() -> Sim {
     }
     s.push_input(&encode_join(1));
     s.step();
-    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
+    s.round_running = 1; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s.players[0].x = 500 * PX;
     s.players[0].y = 200 * PX;
     s

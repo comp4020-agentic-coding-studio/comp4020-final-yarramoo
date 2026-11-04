@@ -21,7 +21,7 @@ fn run(s: &mut Sim, n: u32) {
     }
 }
 fn running(s: &Sim) -> bool {
-    s.round_started & ROUND_RUNNING != 0
+    s.round_running != 0
 }
 
 /// Three players, two ready: a strict majority. Returns the sim just after the tick the second Ready applied.

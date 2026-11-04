@@ -54,8 +54,10 @@ pub struct Sim {
     pub arena: Option<crate::gen::Arena>,
     /// 1 once the one-life round has ended (`EV_ROUND_END` fired). State: hashed and snapshotted.
     pub round_over: u8,
-    /// 1 once the first enemy kill or the first player death has happened in a one-life round (D-161). State.
-    pub round_started: u8,
+    /// 1 once the lobby countdown has completed and the one-life round is running (F6b, D-166). State.
+    pub round_running: u8,
+    /// 1 once the boss has died (the Survival win, D-158). State.
+    pub boss_killed: u8,
     /// 1 if the round ended in a win, 0 for a loss (meaningful once `round_over` is 1). State.
     pub round_result: u8,
     /// F6b (D-166): the tick the lobby countdown began (every active player ready), or `LOBBY_IDLE`. State.
@@ -81,7 +83,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), enemies, round_over: 0, round_running: 0, boss_killed: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -126,7 +128,7 @@ impl Sim {
                     // It gets the highest placed id (so ids stay sorted); `stepping_set` steps it first, so id order never starves it.
                     if let Some(a) = &arena {
                         let mut boss = Enemy::new(v.len() as u16, ENEMY_BOSS, a.cx * POS_ONE + POS_ONE / 2, (a.floor_y - BOSS_HOVER) * POS_ONE);
-                        boss.state = 1 << 2;
+                        boss.phase = 1;
                         v.push(boss);
                     }
                     v
@@ -251,10 +253,10 @@ impl Sim {
         }
     }
 
-    /// F6b (D-166): a one-life room is in its lobby until the countdown completes (`ROUND_RUNNING`). In the lobby
+    /// F6b (D-166): a one-life room is in its lobby until the countdown completes (`round_running`). In the lobby
     /// nothing hurts, enemies and pickups are inert and spells cannot be cast; players may still move.
     pub fn in_lobby(&self) -> bool {
-        self.cfg.round == 1 && self.round_started & ROUND_RUNNING == 0 && self.round_over == 0
+        self.cfg.round == 1 && self.round_running == 0 && self.round_over == 0
     }
 
     /// Runs after the tick's inputs. Two countdowns, both pure state:
@@ -297,7 +299,7 @@ impl Sim {
     }
 
     fn start_round(&mut self, active: u32) {
-        self.round_started |= ROUND_RUNNING;
+        self.round_running = 1;
         self.lobby_since = LOBBY_IDLE;
         self.majority_since = LOBBY_IDLE;
         for k in 0..self.players.len() {
@@ -319,15 +321,15 @@ impl Sim {
 
     pub fn round_tail(&self) -> [u8; ROUND_TAIL_BYTES] {
         let (l, m) = (self.lobby_since.to_le_bytes(), self.majority_since.to_le_bytes());
-        [self.round_over, self.round_started, self.round_result, l[0], l[1], l[2], l[3], m[0], m[1], m[2], m[3]]
+        [self.round_over, self.round_running, self.boss_killed, self.round_result, l[0], l[1], l[2], l[3], m[0], m[1], m[2], m[3]]
     }
 
-    /// D-158: the boss's death wins the round. `reap_enemies` sets bit 1 of the hashed `round_started` byte when a boss
-    /// dies (no new field, no format bump; bit 0 stays the D-161 first-kill flag). A restored snapshot,
+    /// D-158: the boss's death wins the round. `reap_enemies` sets the hashed `boss_killed` field when a boss
+    /// dies. A restored snapshot,
     /// including one taken after the win, therefore says the same thing. A win and the last player's death on the same
     /// tick count as a win: `check_round_end` lets `won` take precedence over `lost`.
     fn round_won(&self) -> bool {
-        self.round_started & ROUND_BOSS_KILLED != 0
+        self.boss_killed != 0
     }
 
     /// Plan 6.5 active set. Sandbox: every chunk. Game world: chunks that intersect the 576 x 320

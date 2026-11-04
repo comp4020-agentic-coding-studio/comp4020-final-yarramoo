@@ -14,7 +14,7 @@ fn fight() -> Sim {
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();
-    s.round_started |= ROUND_RUNNING; // F6b: these tests are about the fight; the lobby has its own tests
+    s.round_running = 1; // F6b: these tests are about the fight; the lobby has its own tests
     let a = s.arena.unwrap();
     s.players[0].x = (a.cx + 20) * PX;
     s.players[0].y = (a.floor_y - 14) * PX;
@@ -42,7 +42,7 @@ fn run(s: &mut Sim, ticks: u32) -> Vec<Event> {
 }
 
 fn phase(s: &Sim) -> u8 {
-    s.enemies[bi(s)].state >> 2
+    s.enemies[bi(s)].phase
 }
 
 #[test]
@@ -99,10 +99,10 @@ fn phase_two_summons_imps_up_to_four_alive_with_sorted_unique_ids() {
     assert!(max_alive >= 2, "summoned {max_alive}");
     assert!(max_alive <= BOSS_SUMMONS_ALIVE, "{max_alive} alive");
     let b = s.enemies[bi(&s)].clone();
-    assert!(b.hop_until >= 3, "counter {}", b.hop_until);
+    assert!(b.summons >= 3, "counter {}", b.summons);
     // every summon id is above the boss id and below id + 1 + counter: never reused
     for e in s.enemies.iter().filter(|e| e.kind == ENEMY_IMP) {
-        assert!(e.id > b.id && u32::from(e.id) <= u32::from(b.id) + b.hop_until);
+        assert!(e.id > b.id && u32::from(e.id) <= u32::from(b.id) + u32::from(b.summons));
     }
     // the snapshot round trip keeps ids and counter
     let r = snapshot::restore(&snapshot::write(&s)).unwrap();
@@ -185,7 +185,7 @@ fn boss_work_is_bounded_in_phase_three_with_summons_alive() {
         s.enemies.push(Enemy::new(b + 1 + k, ENEMY_IMP, (a.cx - 10 + 6 * i32::from(k)) * PX, (a.cy - 10) * PX));
     }
     let i = bi(&s);
-    s.enemies[i].hop_until = 4;
+    s.enemies[i].summons = 4;
     let worst = worst_work(&mut s, 1500);
     std::fs::write("/tmp/f6-boss-work.txt", format!("worst per-tick enemy_work with the boss in phase 3 and 4 summons: {worst}\n")).unwrap();
     assert!(worst > 0 && worst <= BOSS_WORK_BOUND, "work {worst}");
@@ -204,7 +204,7 @@ fn with_four_summons_alive_no_fifth_is_ever_summoned() {
         s.enemies.push(Enemy::new(b + 1 + k, ENEMY_IMP, (a.cx - 12 + 8 * i32::from(k)) * PX, (a.cy - 12) * PX));
     }
     let i = bi(&s);
-    s.enemies[i].hop_until = 4;
+    s.enemies[i].summons = 4;
     for _ in 0..(5 * BOSS_SUMMON_TICKS) {
         s.step();
         s.players[0].health = HEALTH_MAX;
@@ -213,5 +213,5 @@ fn with_four_summons_alive_no_fifth_is_ever_summoned() {
         }
         assert!(s.enemies.iter().filter(|e| e.kind == ENEMY_IMP).count() <= BOSS_SUMMONS_ALIVE);
     }
-    assert_eq!(s.enemies[bi(&s)].hop_until, 4, "no summon was made while four lived");
+    assert_eq!(s.enemies[bi(&s)].summons, 4, "no summon was made while four lived");
 }

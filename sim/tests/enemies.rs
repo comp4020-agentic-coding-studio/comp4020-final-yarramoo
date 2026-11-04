@@ -15,7 +15,7 @@ fn join(s: &mut Sim, id: u32) {
 
 #[test]
 fn enemy_bytes_are_fixed_width_and_round_trip_through_a_snapshot() {
-    assert_eq!(ENEMY_BYTES, 35);
+    assert_eq!(ENEMY_BYTES, 38);
     let mut s = survival();
     join(&mut s, 1);
     s.step();
@@ -73,13 +73,21 @@ fn hostile_enemy_bytes_fail_cleanly() {
     let mut o = e.clone();
     o[at + 4 + 3..at + 4 + 7].copy_from_slice(&(5000 * 16i32).to_le_bytes());
     assert!(try_decode(&o).is_err(), "x outside the world");
+    // a non-boss with a phase or a summon count is refused (the last three bytes of the record are phase u8, summons u16)
+    let rec_end = at + 4 + ENEMY_BYTES;
+    let mut ph = e.clone();
+    ph[rec_end - 3] = 1;
+    assert!(try_decode(&ph).is_err(), "slime with a phase");
+    let mut sm = e.clone();
+    sm[rec_end - 2] = 1;
+    assert!(try_decode(&sm).is_err(), "slime with summons");
     let mut z = e.clone();
     let hp_at = at + 4 + 2 + 1 + 4 + 4 + 2 + 2;
     z[hp_at..hp_at + 2].copy_from_slice(&0u16.to_le_bytes());
     assert!(try_decode(&z).is_err(), "dead enemy in state");
     let mut r = e.clone();
     let l = r.len();
-    r[l - ROUND_TAIL_BYTES + 2] = 2; // round_result (the tail is over, started, result, lobby_since u32)
+    r[l - ROUND_TAIL_BYTES + 3] = 2; // round_result (the tail is over, running, boss_killed, result, lobby_since u32)
     assert!(try_decode(&r).is_err(), "round_over 2");
     // a full MAX_ENEMIES is accepted
     s.enemies = (0..MAX_ENEMIES as u16).map(|i| Enemy::new(i, ENEMY_SLIME, 50 * 16, 60 * 16)).collect();

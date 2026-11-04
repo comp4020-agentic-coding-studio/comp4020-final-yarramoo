@@ -356,11 +356,6 @@ pub const BOSS_LEASH_MARGIN: i32 = 8;
 pub const MAX_ENEMY_ID: u32 = 4096;
 /// The boss starts with its feet this many cells above the arena floor.
 pub const BOSS_HOVER: i32 = 8;
-/// Bit 1 of `round_started`: the boss has died (the Survival win). Bit 0 is `ROUND_RUNNING`.
-pub const ROUND_BOSS_KILLED: u8 = 2;
-/// Bit 0 of `round_started` (F6b, D-166): the lobby countdown completed and the descent is running. Before it, a
-/// one-life room is in the lobby.
-pub const ROUND_RUNNING: u8 = 1;
 /// F6b: ticks every active player must stay ready before the round starts (3 s at `TICK_HZ` 60).
 pub const LOBBY_COUNTDOWN_TICKS: u32 = 180;
 /// `Sim::lobby_since` while no countdown is running.
@@ -368,8 +363,8 @@ pub const LOBBY_IDLE: u32 = u32::MAX;
 /// F6b fix pass (S3): once a strict majority of the active players is ready, this many ticks (30 s) later the round
 /// starts anyway and everyone not ready becomes a spectator. A shorter all-ready countdown still wins when it comes first.
 pub const LOBBY_MAJORITY_TICKS: u32 = 1800;
-/// Bytes of the round tail in the entity encoding: over, started, result, `lobby_since` u32 LE, `majority_since` u32 LE.
-pub const ROUND_TAIL_BYTES: usize = 11;
+/// Bytes of the round tail in the entity encoding: over, running, boss_killed, result, `lobby_since` u32 LE, `majority_since` u32 LE.
+pub const ROUND_TAIL_BYTES: usize = 12;
 
 /// Longest Paint stroke one input may draw, in cells along the longer axis (Chebyshev length). A stroke is a run of
 /// disc stamps, one per cell of length, so this bounds the work every client does for one input: at most

@@ -113,7 +113,7 @@ impl Sim {
     /// Phase 2+: on ticks where `(tick + id) % BOSS_SUMMON_TICKS == 150`, up to `BOSS_SUMMON_PER_CAST` imps appear in
     /// rng-chosen EMPTY 5 x 4 pockets inside the arena (`BOSS_SUMMON_TRIES` tries each, 20 cells read per try), while
     /// fewer than `BOSS_SUMMONS_ALIVE` summoned imps live, the room has space, and the fight total is under
-    /// `BOSS_SUMMONS_TOTAL`. Ids: `boss id + 1 + summons so far` (the counter is the boss's `hop_until`, which only
+    /// `BOSS_SUMMONS_TOTAL`. Ids: `boss id + 1 + summons so far` (the counter is the boss's `summons`, which only
     /// grows), so they are unique forever, above every placed id, and appended in order.
     fn boss_summon(&mut self, e: &mut Enemy, id32: u32) {
         let Some(a) = self.arena else { return };
@@ -123,7 +123,7 @@ impl Sim {
         let w = self.grid.w as i32;
         for n in 0..BOSS_SUMMON_PER_CAST as u32 {
             let alive = self.enemies.iter().filter(|o| o.kind == ENEMY_IMP && o.id > e.id).count();
-            if alive >= BOSS_SUMMONS_ALIVE || self.enemies.len() >= MAX_ENEMIES || e.hop_until >= BOSS_SUMMONS_TOTAL {
+            if alive >= BOSS_SUMMONS_ALIVE || self.enemies.len() >= MAX_ENEMIES || u32::from(e.summons) >= BOSS_SUMMONS_TOTAL {
                 return;
             }
             let hw = a.floor_half_width();
@@ -134,8 +134,8 @@ impl Sim {
                 self.enemy_work += 20;
                 let free = (x - 2..=x + 2).all(|bx| (y - 4..y).all(|by| a.contains(bx, by, -2) && self.grid.mat[(by * w + bx) as usize] == EMPTY));
                 if free {
-                    let id = e.id + 1 + e.hop_until as u16;
-                    e.hop_until += 1;
+                    let id = e.id + 1 + e.summons;
+                    e.summons += 1;
                     self.enemies.push(Enemy::new(id, ENEMY_IMP, x * POS_ONE + POS_ONE / 2, y * POS_ONE));
                     break;
                 }
@@ -181,11 +181,11 @@ impl Sim {
         // The phase follows hp (thirds of the maximum) and only ever rises: each rise emits `EV_ENEMY_PHASE`.
         let max = u32::from(st.hp);
         let want: u8 = if u32::from(e.hp) * 3 > max * 2 { 1 } else if u32::from(e.hp) * 3 > max { 2 } else { 3 };
-        if want > e.state >> 2 {
-            e.state = (e.state & 0b11) | (want << 2);
+        if want > e.phase {
+            e.phase = want;
             self.events.push(Event { kind: EV_ENEMY_PHASE, player: 0, a: i32::from(e.id), b: i32::from(want), c: 0 });
         }
-        let phase = e.state >> 2;
+        let phase = e.phase;
         let bob = if (tick / 32).is_multiple_of(2) { 1 } else { -1 };
         let speed = if phase >= 3 { BOSS_SPEED * 3 / 2 } else { BOSS_SPEED };
         let (mut wx, mut wy) = (0, bob);
@@ -372,7 +372,6 @@ impl Sim {
         }
         if e.kind == ENEMY_BOSS {
             self.boss_ai(&mut e, st, targets);
-            let phase = e.state & 0b1100;
             let (ox, oy) = (e.x, e.y);
             self.integrate(&mut e, st, false);
             // The hard leash: a move whose centre ends outside the ellipse is undone (knockback can be 8 cells a tick).
@@ -384,7 +383,6 @@ impl Sim {
                     e.vy = 0;
                 }
             }
-            e.state = (e.state & 0b11) | phase;
             self.enemy_contact(&mut e, st);
             self.enemies[i] = e;
             return;
@@ -603,7 +601,7 @@ impl Sim {
             self.drop_heal(at);
         }
         if boss_died {
-            self.round_started |= ROUND_BOSS_KILLED;
+            self.boss_killed = 1;
         }
         // An acid slime bursts into at most `ACID_DEATH_CELLS` ACID cells (Empty cells only), in id order.
         for at in bursts {

@@ -22,7 +22,7 @@ fn fight(dx: i32) -> Sim {
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();
-    s.round_started |= ROUND_RUNNING; // F6b: these tests are about the fight; the lobby has its own tests
+    s.round_running = 1; // F6b: these tests are about the fight; the lobby has its own tests
     let a = s.arena.unwrap();
     s.players[0].x = (a.cx + dx) * PX;
     // in the air above the pillars (the player does not fall without a client), so the line is clear
@@ -135,9 +135,9 @@ fn a_boss_snapshot_round_trips_and_hostile_ones_are_refused() {
         snapshot::restore(&snapshot::write(&t)).is_err()
     };
     let bi = |t: &Sim| t.enemies.iter().position(|e| e.kind == ENEMY_BOSS).unwrap();
-    assert!(bad(&|t| { let i = bi(t); t.enemies[i].state = 0; }), "phase 0");
-    assert!(bad(&|t| { let i = bi(t); t.enemies[i].state = 4 << 2; }), "phase 4");
-    assert!(bad(&|t| { let i = bi(t); t.enemies[i].hop_until = 100_000; }), "summon counter");
+    assert!(bad(&|t| { let i = bi(t); t.enemies[i].phase = 0; }), "phase 0");
+    assert!(bad(&|t| { let i = bi(t); t.enemies[i].phase = 4; }), "phase 4");
+    assert!(bad(&|t| { let i = bi(t); t.enemies[i].summons = 41; }), "summon counter");
     assert!(bad(&|t| { let i = bi(t); t.enemies[i].hp = BOSS_HP + 1; }), "hp above max");
     assert!(bad(&|t| { t.enemies[0].kind = 9; }), "kind 9");
 }

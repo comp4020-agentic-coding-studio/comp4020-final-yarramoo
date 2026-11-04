@@ -14,7 +14,7 @@ fn room(players: &[u32]) -> Sim {
         s.push_input(&encode_join(id));
     }
     s.step();
-    s.round_started |= ROUND_RUNNING; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
+    s.round_running = 1; // F6b: this test is about the running round, not the lobby (tests/lobby.rs)
     s
 }
 
@@ -155,7 +155,7 @@ fn a_late_joiner_spectates_once_the_round_has_started_or_ended() {
     // F6b (D-166): the round starts when the lobby countdown completes, not at the first kill or death. Before it, a
     // joiner is alive (a friend arriving in the lobby); a first kill or death alone no longer makes a late joiner dead.
     let mut s = room(&[1]);
-    s.round_started = 0; // back to the lobby
+    s.round_running = 0; // back to the lobby
     s.push_input(&encode_join(2));
     s.step();
     assert!(s.players[1].health > 0, "a friend joining in the lobby is alive");
@@ -163,12 +163,12 @@ fn a_late_joiner_spectates_once_the_round_has_started_or_ended() {
     s.enemies[0].hp = 1;
     s.damage_enemy(0, 1, 1);
     s.reap_enemies();
-    assert_eq!(s.round_started, 0, "a kill no longer starts the round (D-161 replaced)");
+    assert_eq!(s.round_running, 0, "a kill no longer starts the round (D-161 replaced)");
     s.push_input(&encode_join(4));
     s.step();
     assert!(s.players.iter().find(|p| p.id == 4).unwrap().health > 0, "still the lobby");
     // once running: a joiner is dead
-    s.round_started = ROUND_RUNNING;
+    s.round_running = 1;
     s.push_input(&encode_join(3));
     s.step();
     let p3 = s.players.iter().find(|p| p.id == 3).unwrap();
@@ -202,9 +202,9 @@ fn the_round_state_is_in_the_view_the_snapshot_and_the_hash() {
     assert_eq!((o[0], o[5], o[6], u16::from_le_bytes([o[15], o[16]]), o[17]), (ENT_ROUND, 1, 0, 1, 1));
     let h = s.state_hash();
     let r = sim::snapshot::restore(&sim::snapshot::write(&s)).unwrap();
-    assert_eq!((r.round_over, r.round_started, r.round_result), (1, 1, 0));
+    assert_eq!((r.round_over, r.round_running, r.round_result), (1, 1, 0));
     let mut r2 = sim::snapshot::restore(&sim::snapshot::write(&s)).unwrap();
-    r2.round_started = 0;
+    r2.round_running = 0;
     assert_ne!(r2.state_hash(), h);
 }
 

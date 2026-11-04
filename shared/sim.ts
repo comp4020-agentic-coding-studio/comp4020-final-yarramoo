@@ -82,7 +82,7 @@ export const ENT_PROJECTILE = 3;
 export const ENT_BAG = 4;
 /** An enemy: `id`, `sub` = kind, x and y in 1/16 cell (feet centre / feet line), `a` = hp, `health` = state | facing << 7. */
 export const ENT_ENEMY = 5;
-/** The one-life round state (round 1 rooms only): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started. */
+/** The one-life round state (round 1 rooms only): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = running (bit 0) | boss_killed << 1. */
 export const ENT_ROUND = 6;
 /** F6b: a player's lobby ready flag: `id` = player, `active` = ready. Only present while the lobby is open. */
 export const ENT_READY = 7;

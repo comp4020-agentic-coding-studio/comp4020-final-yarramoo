@@ -199,9 +199,13 @@ pub struct Enemy {
     pub vy: i16,
     pub hp: u16,
     pub facing: u8,
-    /// Bit 0: hunting a player. Bit 1: airborne (render hint, set every stepped tick). Boss only: bits 2..3 hold the
-    /// phase (1..=3); its `hop_until` counts the imps it has summoned (the next summon's id is `id + 1 + that`).
+    /// Bit 0: hunting a player. Bit 1: airborne (render hint, set every stepped tick). Bits 2..7 are always 0.
     pub state: u8,
+    /// Boss only (1..=3, rises with hp thirds); 0 for every other kind. Hashed and snapshotted.
+    pub phase: u8,
+    /// Boss only: imps summoned so far, at most `BOSS_SUMMONS_TOTAL` (40, so u8 would fit; u16 keeps headroom if the
+    /// total is raised). The next summon's id is `id + 1 + summons`. 0 for every other kind.
+    pub summons: u16,
     /// Contact damage is available when `tick >= cooldown_until`.
     pub cooldown_until: u32,
     /// The next hop is allowed when `tick >= hop_until`.
@@ -210,11 +214,11 @@ pub struct Enemy {
     pub last_hit_tick: u32,
 }
 
-pub const ENEMY_BYTES: usize = 2 + 1 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 4 + 4 + 4 + 4;
+pub const ENEMY_BYTES: usize = 2 + 1 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 4 + 4 + 4 + 4 + 1 + 2;
 
 impl Enemy {
     pub fn new(id: u16, kind: u8, x: i32, y: i32) -> Enemy {
-        Enemy { id, kind, x, y, vx: 0, vy: 0, hp: ENEMY_STATS[usize::from(kind)].hp, facing: 0, state: 0, cooldown_until: 0, hop_until: 0, last_hit_by: 0, last_hit_tick: 0 }
+        Enemy { id, kind, x, y, vx: 0, vy: 0, hp: ENEMY_STATS[usize::from(kind)].hp, facing: 0, state: 0, phase: 0, summons: 0, cooldown_until: 0, hop_until: 0, last_hit_by: 0, last_hit_tick: 0 }
     }
 
     /// Cells overlapped by the hitbox: (x0, y0, x1, y1), inclusive. Width is odd-centred like the player's.
@@ -238,12 +242,14 @@ impl Enemy {
         v.extend_from_slice(&self.hop_until.to_le_bytes());
         v.extend_from_slice(&self.last_hit_by.to_le_bytes());
         v.extend_from_slice(&self.last_hit_tick.to_le_bytes());
+        v.push(self.phase);
+        v.extend_from_slice(&self.summons.to_le_bytes());
     }
 }
 
 /// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
 /// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order), n_enemies u32, enemies (by id), n_heals u32, heals (spawn order),
-/// round tail (`ROUND_TAIL_BYTES`: over, started, result u8, `lobby_since` u32)`. Players stay first:
+/// round tail (`ROUND_TAIL_BYTES`: over, running, boss_killed, result u8, `lobby_since` u32)`. Players stay first:
 /// the server reads the player section at a fixed offset (`activePlayersIn`).
 pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], heals: &[Heal], round: [u8; ROUND_TAIL_BYTES]) -> Vec<u8> {
     let mut v = Vec::with_capacity(
@@ -458,18 +464,21 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         e.facing = r.u8().ok_or(())?;
         e.state = r.u8().ok_or(())?;
         let boss = kind == ENEMY_BOSS;
-        let state_ok = if boss { (1..=3).contains(&(e.state >> 2)) && e.state < 16 } else { e.state <= 3 };
-        if e.facing > 1 || !state_ok || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
+        if e.facing > 1 || e.state > 3 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
             return Err(());
         }
         e.cooldown_until = r.u32().ok_or(())?;
         e.hop_until = r.u32().ok_or(())?;
-        // The boss's summon counter is bounded, so a summon's id (`id + 1 + counter`) stays far inside u16.
-        if boss && (e.hop_until > BOSS_SUMMONS_TOTAL || u32::from(id) + 1 + e.hop_until >= MAX_ENEMY_ID) {
-            return Err(());
-        }
         e.last_hit_by = r.u32().ok_or(())?;
         e.last_hit_tick = r.u32().ok_or(())?;
+        e.phase = r.u8().ok_or(())?;
+        e.summons = r.u16().ok_or(())?;
+        // Only the boss has a phase (1..=3) and a summon counter; the counter is bounded, so a summon's id
+        // (`id + 1 + summons`) stays far inside u16.
+        let named_ok = if boss { (1..=3).contains(&e.phase) && u32::from(e.summons) <= BOSS_SUMMONS_TOTAL && u32::from(id) + 1 + u32::from(e.summons) < MAX_ENEMY_ID } else { e.phase == 0 && e.summons == 0 };
+        if !named_ok {
+            return Err(());
+        }
         if e.x < 0 || e.y < 0 || (e.x >> POS_SHIFT) as usize >= w || (e.y >> POS_SHIFT) as usize > h {
             return Err(());
         }
@@ -490,10 +499,10 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
     for x in round.iter_mut() {
         *x = r.u8().ok_or(())?;
     }
-    let since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
-    let majority = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);
-    // A running round has no countdown; the boss bit means the round ran.
-    if round[0] > 1 || round[1] > 3 || round[2] > 1 || (round[1] & ROUND_RUNNING != 0 && (since != LOBBY_IDLE || majority != LOBBY_IDLE)) || (round[1] & ROUND_BOSS_KILLED != 0 && round[1] & ROUND_RUNNING == 0) {
+    let since = u32::from_le_bytes([round[4], round[5], round[6], round[7]]);
+    let majority = u32::from_le_bytes([round[8], round[9], round[10], round[11]]);
+    // A running round has no countdown; a killed boss means the round ran.
+    if round[0] > 1 || round[1] > 1 || round[2] > 1 || round[3] > 1 || (round[1] != 0 && (since != LOBBY_IDLE || majority != LOBBY_IDLE)) || (round[2] != 0 && round[1] == 0) {
         return Err(());
     }
     Ok((players, projectiles, bags, enemies, heals, round))
@@ -621,15 +630,16 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
         put(ENT_HEAL, i as u32, true, 0, i32::from(h.x) * POS_ONE + POS_ONE / 2, i32::from(h.y) * POS_ONE + POS_ONE / 2, u16::from(h.amount), 0);
     }
     for e in enemies {
-        put(ENT_ENEMY, u32::from(e.id), true, e.kind, e.x, e.y, e.hp, e.state | (e.facing << 7));
+        // The view byte keeps its old shape for the client: state bits 0..1, the boss phase in bits 2..3, facing in bit 7.
+        put(ENT_ENEMY, u32::from(e.id), true, e.kind, e.x, e.y, e.hp, e.state | (e.phase << 2) | (e.facing << 7));
     }
     if round_on {
-        let since = u32::from_le_bytes([round[3], round[4], round[5], round[6]]);
+        let since = u32::from_le_bytes([round[4], round[5], round[6], round[7]]);
         let left = if since == LOBBY_IDLE { -1 } else { since.saturating_add(LOBBY_COUNTDOWN_TICKS).saturating_sub(tick).min(LOBBY_COUNTDOWN_TICKS) as i32 };
-        let mj = u32::from_le_bytes([round[7], round[8], round[9], round[10]]);
+        let mj = u32::from_le_bytes([round[8], round[9], round[10], round[11]]);
         let mleft = if mj == LOBBY_IDLE { -1 } else { mj.saturating_add(LOBBY_MAJORITY_TICKS).saturating_sub(tick).min(LOBBY_MAJORITY_TICKS) as i32 };
-        put(ENT_ROUND, 0, true, round[2], left, mleft, u16::from(round[0]), round[1]);
-        if round[1] & ROUND_RUNNING == 0 {
+        put(ENT_ROUND, 0, true, round[3], left, mleft, u16::from(round[0]), round[1] | (round[2] << 1));
+        if round[1] == 0 {
             for p in players {
                 put(ENT_READY, p.id, p.ready == 1, 0, 0, 0, 0, 0);
             }

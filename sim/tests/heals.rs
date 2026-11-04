@@ -26,7 +26,7 @@ fn arena() -> Sim {
     s.push_input(&encode_join(1));
     s.push_input(&encode_join(2));
     s.step();
-    s.round_started |= ROUND_RUNNING;
+    s.round_running = 1;
     s.players[0].x = 500 * PX;
     s.players[0].y = 200 * PX; // feet line 200: standing on the rock, hitbox rows 190..=199
     s.players[1].x = 320 * PX;
@@ -188,8 +188,8 @@ fn the_view_lists_a_heal() {
 }
 
 #[test]
-fn format_is_eleven_and_a_snapshot_with_heals_runs_on_identically() {
-    assert_eq!(snapshot::FORMAT_VERSION, 11);
+fn format_is_twelve_and_a_snapshot_with_heals_runs_on_identically() {
+    assert_eq!(snapshot::FORMAT_VERSION, 12);
     let mut s = arena();
     // HEAL_LIFETIME from tick 0: the longest a real drop can live (a restore refuses more, review E).
     s.heals = vec![heal(400, 120, HEAL_LIFETIME), heal(450, 150, HEAL_LIFETIME)];
@@ -231,7 +231,7 @@ fn sleep_run(sleep: bool) -> (Vec<u64>, Sim) {
     s.enemies.clear();
     s.push_input(&encode_join(1));
     s.step();
-    s.round_started |= ROUND_RUNNING;
+    s.round_running = 1;
     let (px, py) = (s.players[0].x >> POS_SHIFT, s.players[0].y >> POS_SHIFT);
     s.heals = vec![heal(100, 50, 99_999), heal((px + 30) as u16, (py - 120) as u16, 99_999)];
     let mut hs = vec![];
