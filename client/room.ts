@@ -162,7 +162,10 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   startMusicOnGesture(unlock);
   muteBtn.after(makeMusicButton(muteBtn.className));
   let moodState: MoodState = initialMoodState();
+  let hoverWanted = false;
+  let hoverShow: (text: string | null) => void = () => {};
   let roundOutcome: "win" | "lose" | null = null;
+  let lastDeepest = 0;
   const updateMood = (y: number, boss: boolean) => {
     moodState = stepMood(moodState, { y, bossAlive: boss, sandbox: worldKind === 0, round: roundOutcome }, performance.now());
     setMood(moodState.mood);
@@ -424,6 +427,47 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     };
     c.addEventListener("pointerup", end);
     c.addEventListener("pointercancel", end);
+
+    // Hover names (display only): after ~200 ms of rest, ask the worker what is under the mouse and show it near the cursor.
+    // Mouse only; hidden while a button or key is held, on leave, and whenever the mouse moves again.
+    if (!matchMedia("(pointer: coarse)").matches) {
+      const tip = document.createElement("div");
+      tip.id = "hoverTip";
+      tip.hidden = true;
+      stage.append(tip);
+      let timer = 0;
+      let at = { x: 0, y: 0, cx: 0, cy: 0 };
+      const hide = () => {
+        clearTimeout(timer);
+        tip.hidden = true;
+        hoverWanted = false;
+      };
+      c.addEventListener("pointermove", (e) => {
+        if (e.pointerType === "touch") return;
+        hide();
+        if (down || panning || e.buttons !== 0 || held.size > 0) return;
+        const p = toCell(e);
+        at = { x: p.x, y: p.y, cx: e.clientX, cy: e.clientY };
+        timer = window.setTimeout(() => {
+          hoverWanted = true;
+          send({ type: "hover", x: at.x, y: at.y });
+        }, 200);
+      });
+      c.addEventListener("pointerleave", hide);
+      c.addEventListener("pointerdown", hide);
+      addEventListener("keydown", hide);
+      hoverShow = (text) => {
+        if (!hoverWanted || !text) {
+          tip.hidden = true;
+          return;
+        }
+        const sr = stage.getBoundingClientRect();
+        tip.textContent = text;
+        tip.style.left = `${Math.round(at.cx - sr.left + 14)}px`;
+        tip.style.top = `${Math.round(at.cy - sr.top + 16)}px`;
+        tip.hidden = false;
+      };
+    }
   }
 
   // Keyboard pan (arrows / WASD, Shift for faster); Tab or O toggles the whole-world overview (game worlds).
@@ -596,6 +640,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         break;
       case "toast":
         addToast(m.text);
+        break;
+      case "hover":
+        hoverShow(m.text);
         break;
       case "round":
         showRoundBanner(m.win);
@@ -772,7 +819,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       const charges = v ? v.charges[s.spell] : 0;
       s.el.classList.toggle("sel", s.spell === selectedSpell);
       s.el.classList.toggle("empty", charges === 0);
-      s.el.title = charges === 0 ? `${SPELLS[s.spell].name}: none yet. Found in caves.` : SPELLS[s.spell].name;
+      s.el.title = charges === 0 ? `${SPELLS[s.spell].name}: no charges. Find pickups in the caves.` : SPELLS[s.spell].name;
       s.ch.textContent = charges === INFINITE ? "\u221e" : String(charges);
       const left = v ? v.cooldown[s.spell] : 0;
       s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[s.spell].cooldown) * 100))}%`;
@@ -811,8 +858,10 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     // Once the round is over its banner says it all; the death notice would sit under it.
     deathEl.hidden = !dead || !!document.getElementById("roundBanner");
     canvas.classList.toggle("dim", dead);
-    if (dead && cfg.death === 1) deathEl.textContent = "You died. Spectating";
-    else if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
+    lastDeepest = m.deepest;
+    const cause = m.me?.deathText ?? "You died";
+    if (dead && cfg.death === 1) deathEl.textContent = `${cause}. Spectating`;
+    else if (dead) deathEl.textContent = m.me?.respawnTicks == null ? `${cause}: respawning` : `${cause}: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
     placeBags(m);
     (window as unknown as { __players: unknown }).__players = m.list;
     // Read-only values for the boss-win soak script, only on a server that announced dev teleport (never production).
@@ -871,6 +920,31 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         err.textContent = String(e.message ?? e);
       });
   }
+  /** The three ways out of a finished or joined-too-late Survival room, shared by the late-join panel and the round banner. */
+  function exitPanel(): { row: HTMLElement; err: HTMLElement } {
+    const err = document.createElement("p");
+    err.hidden = true;
+    err.className = "err";
+    const mk = (text: string, f: (b: HTMLButtonElement) => void) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn";
+      b.textContent = text;
+      b.addEventListener("click", () => f(b));
+      return b;
+    };
+    const row = document.createElement("div");
+    row.append(
+      mk("Spectate", () => {
+        const u = new URL(location.href);
+        u.searchParams.set("spectate", "1");
+        location.href = u.toString();
+      }),
+      mk("Find another room", () => (location.href = "/")),
+      mk("Start a new room", (b) => newSurvivalRoom(b, err)),
+    );
+    return { row, err };
+  }
   function updateLobby(l: Extract<FromWorker, { type: "players" }>["lobby"], late: boolean): void {
     if (!l || l.running) {
       lobbyEl?.remove();
@@ -887,27 +961,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       h.textContent = "The descent has begun";
       const p = document.createElement("p");
       p.textContent = "This party is already underground. You can watch, or look for another room.";
-      const err = document.createElement("p");
-      err.hidden = true;
-      err.className = "err";
-      const mk = (text: string, f: (b: HTMLButtonElement) => void) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "btn";
-        b.textContent = text;
-        b.addEventListener("click", () => f(b));
-        return b;
-      };
-      const row = document.createElement("div");
-      row.append(
-        mk("Spectate", () => {
-          const u = new URL(location.href);
-          u.searchParams.set("spectate", "1");
-          location.href = u.toString();
-        }),
-        mk("Find another room", () => (location.href = "/")),
-        mk("Start a new room", (b) => newSurvivalRoom(b, err)),
-      );
+      const { row, err } = exitPanel();
       el.append(h, p, row, err);
       stage.append(el);
       lateEl = el;
@@ -937,7 +991,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     h.className = secs >= 0 ? "count" : "";
     const sub = document.createElement("p");
     sub.className = "sub";
-    sub.textContent = secs >= 0 ? "Descending..." : waiting > 0 ? `Waiting for ${waiting}` : "Ready up to begin";
+    sub.textContent = secs >= 0 ? "Descending..." : waiting > 0 ? `${l.list.length - waiting} of ${l.list.length} ready` : "Ready up to begin";
     const maj = document.createElement("p");
     maj.className = "sub";
     maj.textContent = majSecs >= 0 && secs < 0 ? `Starting in ${majSecs} s without ${slow.join(", ")}` : "";
@@ -973,28 +1027,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     el.id = "roundBanner";
     const h = document.createElement("h2");
     h.textContent = win ? "Victory" : "The party fell";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn";
-    btn.textContent = "New room";
-    const err = document.createElement("p");
-    err.hidden = true;
-    btn.addEventListener("click", () => {
-      btn.disabled = true;
-      const b64 = btoa(String.fromCharCode(...encodeConfig(SURVIVAL)));
-      fetch("/api/rooms", { method: "POST", body: JSON.stringify({ name: "Survival", mode: "survival", config: b64, visibility: "public" }) })
-        .then(async (r) => {
-          if (!r.ok) throw new Error(r.status === 429 ? "Too many rooms today." : "Could not create a room.");
-          const j = (await r.json()) as { code: string };
-          location.href = `/r/${j.code}`;
-        })
-        .catch((e) => {
-          btn.disabled = false;
-          err.hidden = false;
-          err.textContent = String(e.message ?? e);
-        });
-    });
-    el.append(h, btn, err);
+    const depth = document.createElement("p");
+    depth.className = "sub";
+    depth.id = "roundDepth";
+    depth.textContent = lastDeepest > 0 ? `Deepest reached: ${lastDeepest} cells (deepest of the players your client saw)` : "";
+    depth.hidden = !depth.textContent;
+    const { row, err } = exitPanel();
+    el.append(h, depth, row, err);
     stage.append(el);
   }
 
@@ -1042,6 +1081,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const seen = new Set<number>();
     const cx = camera.x + camera.vw / 2;
     const cy = camera.y + camera.vh / 2;
+    const placed: { x: number; y: number }[] = []; // screen spots already taken this pass, to stack overlapping labels upward
     for (const p of m.list) {
       seen.add(p.id);
       let el = labelEls.get(p.id);
@@ -1073,7 +1113,14 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         fill.style.background = healthColour(f);
       }
       const x = r.left - sr.left + (p.x - camera.x) * sx;
-      const y = r.top - sr.top + (p.y - 10 - 2 - camera.y) * sy;
+      let y = r.top - sr.top + (p.y - 10 - 2 - camera.y) * sy;
+      // Two avatars on the same spot: lift the later label above the earlier ones (display only).
+      for (let tries = 0; tries < 8; tries++) {
+        const hit = placed.find((q) => Math.abs(q.x - x) < 56 && Math.abs(q.y - y) < 15);
+        if (!hit) break;
+        y = hit.y - 15;
+      }
+      placed.push({ x, y });
       el.style.display = x < -40 || x > sr.width + 40 || y < -20 || y > sr.height + 20 ? "none" : "";
       el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
       // Far labels fade so a crowded screen stays readable; yours and near ones stay solid.

@@ -51,7 +51,8 @@ import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "..
 import type { SfxName } from "./sfx.ts";
 import { Particles, newPoseState, pushBag, pushHeal, pushBolt, pushBomb, pushBoss, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELL_WALL, SPELLS } from "./spells.ts";
-import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
+import { lookupHover } from "./hover.ts";
+import { UNKNOWN_NAME, formatDeath, youDiedText } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
@@ -182,6 +183,9 @@ let evLogOut: { k: number; p: number; a: number; b: number; c: number }[] = [];
 let avatarLife = -1;
 /** Sim tick of my latest EV_DEATH, for the respawn countdown only (UI; the sim owns the real deadline). Null: unknown. */
 let myDeathTick: number | null = null;
+/** Text for my latest death ("Killed by a Fire imp"), and the deepest y any player has been seen at (cells). Display only. */
+let myDeathText: string | null = null;
+let deepestSeen = 0;
 /** Screen shake: whole-cell camera offsets until this time. Render-only. */
 let shakeUntil = 0;
 let shakeMag = 0;
@@ -560,6 +564,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
         py = s.y;
       }
     }
+    if (e.health > 0 && py > deepestSeen) deepestSeen = py;
     list.push({ id: e.id, name: nameOf(e.id) ?? UNKNOWN_NAME, x: px, y: py, me: e.id === myId, health: e.health, dead: e.health === 0, rgb: PLAYER_COLOURS[e.id % PLAYER_COLOURS.length].map((v) => Math.round(v * 255)) as [number, number, number] });
     let ps = poses.get(e.id);
     if (!ps) poses.set(e.id, (ps = newPoseState(px, py, (isMe ? avatar!.facing : e.sub) === 1)));
@@ -695,7 +700,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   if (now - lastPlayersPost >= 33) {
     lastPlayersPost = now;
     send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer, evlog: evLogOut.splice(0),
-      me: spectate || !mine ? null : { health: mine.health, dead, respawnTicks: dead && myDeathTick !== null ? Math.max(0, DEATH_TICKS - (sim.tick() - myDeathTick)) : null } });
+      me: spectate || !mine ? null : { health: mine.health, dead, respawnTicks: dead && myDeathTick !== null ? Math.max(0, DEATH_TICKS - (sim.tick() - myDeathTick)) : null, deathText: dead ? myDeathText : null }, deepest: Math.floor(deepestSeen) });
   }
   if (now - lastTerrainPost >= 1000) {
     lastTerrainPost = now;
@@ -851,6 +856,7 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       if (inView && mag >= 1) shake(now, Math.min(4, Math.round(mag)), 200 + 20 * Math.min(10, e.c));
     } else if (e.kind === EV_DEATH) {
       send({ type: "toast", text: formatDeath({ victim: e.player, killer: e.a, cause: e.b, bagDropped: e.c === 1 }, nameOf) });
+      if (e.player === myId) myDeathText = youDiedText(e.b, e.a, myId, nameOf);
       const c = chestOf(e.player);
       if (c) {
         fx.burst(c.x, c.y, [0.9, 0.2, 0.2], 18, 0.04);
@@ -1184,6 +1190,13 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
     case "pointer":
       onPointer(m);
       break;
+    case "hover": {
+      // Display only: look up on request (the main thread asks once the mouse rests), never per frame, never during catch-up.
+      const gsim = localSim ?? ls?.sim ?? null;
+      const busy = net === "catching-up" || !!ls?.fastForwarding || !gsim;
+      send({ type: "hover", text: busy ? null : lookupHover(m.x, m.y, gsim.entities(), gsim.matView(), gsim.width(), gsim.height(), nameOf) });
+      break;
+    }
     case "camera":
       // While the worker steers the camera it keeps its own position; the main thread still sets the view size.
       cam = isFollowing ? { ...cam, vw: m.vw, vh: m.vh } : { x: m.x, y: m.y, vw: m.vw, vh: m.vh };

@@ -150,7 +150,7 @@ export function startMenu(root: HTMLElement): void {
     card.innerHTML = `
       <h3><img src="${mode.icon}" alt="" onerror="this.style.display='none'" />${mode.title}</h3>
       <div class="rule">${mode.rule}</div>
-      <span class="badge ${mode.pvp ? "pvp" : "safe"}">${mode.pvp ? "PvP" : "No damage"}</span>
+      <span class="badge ${mode.pvp ? "pvp" : "safe"}">${mode.pvp ? "PvP" : "Co-op"}</span>
       ${touchLocked ? `<div style="font-size:11px;color:var(--dim)">Desktop to play</div>` : ""}
       <div class="actions">
         <button type="button" class="btn secondary small" data-act="browse">Browse</button>
