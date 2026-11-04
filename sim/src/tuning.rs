@@ -306,7 +306,7 @@ pub const PAINT_SEED_ONE_IN: u32 = 16;
 pub const MAX_ISLAND_REMOVED: usize = 8192;
 pub const ISLAND_MAX: usize = 400;
 pub const ISLAND_WORK_MAX: usize = 4000;
-/// Falling rock v0.5 (D-189): a free island of at most this many cells falls as itself, one cell per tick; larger
+/// Falling rock v0.5 (D-190): a free island of at most this many cells falls as itself, one cell per tick; larger
 /// ones crumble. A generated tree is about 80 cells. At most `FALL_MAX_ISLANDS` fall at once (state, hashed), so a
 /// tick moves at most 16 x 120 = 1920 cells and floods at most 16 x 121 cells before the seed pass.
 pub const FALL_ISLAND_MAX: usize = 120;

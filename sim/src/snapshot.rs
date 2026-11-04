@@ -121,6 +121,7 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     }
     for k in 0..fnum {
         let f = u32_at(fat + 1 + 4 * k) as usize;
+        // A falling seed lies on a structural cell, but the chunk records are not copied in yet: check below.
         if f >= w * h {
             return Err(());
         }
@@ -155,6 +156,10 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         s.grid.woken[c] = wb[c / 8] >> (c % 8) & 1 == 1;
     }
     if s.grid.chunk_count() % 8 != 0 && wb[wlen - 1] >> (s.grid.chunk_count() % 8) != 0 {
+        return Err(());
+    }
+    // Every falling seed must sit on a structural cell (a crafted list cannot make the sim read nonsense).
+    if s.grid.falls.iter().any(|&f| !crate::grid::is_structural(s.grid.mat[f as usize])) {
         return Err(());
     }
     s.tick = tick;

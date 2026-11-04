@@ -93,6 +93,8 @@ pub struct Grid {
     pub island_crumbled: u32,
     /// Telemetry only: cells moved by falling islands since construction (never hashed).
     pub island_fallen: u32,
+    /// Scratch: the last `flood` stopped because it hit its cell limit (not because it touched an anchor).
+    island_limited: bool,
     /// STATE (falling rock v0.5, snapshot format 13, hashed): one cell index in each island that is falling now,
     /// in the order they were found. Re-flooded every tick; at most `FALL_MAX_ISLANDS`.
     pub falls: Vec<u32>,
@@ -136,6 +138,7 @@ impl Grid {
             island_visits: 0,
             island_crumbled: 0,
             island_fallen: 0,
+            island_limited: false,
             falls: Vec::new(),
             fall_blockers: Vec::new(),
         }
@@ -268,11 +271,13 @@ impl Grid {
         self.island_stamp[s] = stamp;
         self.island_stack.push(s as u32);
         let mut anchored = false;
+        self.island_limited = false;
         while let Some(c) = self.island_stack.pop() {
             let c = c as usize;
             self.island_visits += 1;
             self.island_cells.push(c as u32);
             if self.island_cells.len() >= limit {
+                self.island_limited = true;
                 anchored = true;
                 break;
             }
@@ -329,7 +334,9 @@ impl Grid {
             if self.island_stamp[below] == stamp {
                 continue;
             }
-            if material_class(self.mat[below]) == CLASS_SOLID {
+            // Review N4 F2: only structural material and Bedrock stop a fall. A powder (Sand, Pebbles, Seed) is
+            // displaced upward like a liquid, so an island can never rest on something that later moves away.
+            if is_structural(self.mat[below]) || self.mat[below] == BEDROCK {
                 return Fall::Terrain;
             }
             let (bx, by) = ((below % w) as i32, (below / w) as i32);
@@ -370,6 +377,15 @@ impl Grid {
                 continue; // dug away, or already moved with another seed's island this tick
             }
             if self.flood(s, stamp, FALL_ISLAND_MAX + 1) {
+                if self.island_limited {
+                    // Review N4 F1: free but now too big (two falling islands met): crumble, as a new one would.
+                    // The limit may also mean the flood is big AND anchored; only a sub-cap flood is trusted as
+                    // anchored, so a big one is re-judged with the full seed-pass cap.
+                    let st2 = self.next_stamp();
+                    if !self.flood(s, st2, ISLAND_MAX) {
+                        self.crumble_cells();
+                    }
+                }
                 continue; // landed on, or joined to, something anchored
             }
             match self.fall_one(stamp) {
@@ -391,6 +407,20 @@ impl Grid {
         self.island_visits = 0;
         self.find_islands();
         self.fall_step();
+    }
+
+    /// Crumble the island in `island_cells` to Pebbles (Ice to Water).
+    fn crumble_cells(&mut self) {
+        self.island_crumbled += 1;
+        let cells = core::mem::take(&mut self.island_cells);
+        for &c in &cells {
+            let c = c as usize;
+            // Direct write, not `set`: the island's own cells must not seed further floods.
+            self.mat[c] = if self.mat[c] == ICE { WATER } else { PEBBLES };
+            self.aux[c] = 0;
+            self.touch(c);
+        }
+        self.island_cells = cells;
     }
 
     /// The seed pass of `crumble_islands`: new free islands start falling (registered, moved by `fall_step` in
@@ -430,16 +460,7 @@ impl Grid {
                     self.falls.push(s as u32);
                     continue;
                 }
-                self.island_crumbled += 1;
-                let cells = core::mem::take(&mut self.island_cells);
-                for &c in &cells {
-                    let c = c as usize;
-                    // Direct write, not `set`: the island's own cells must not seed further floods.
-                    self.mat[c] = if self.mat[c] == ICE { WATER } else { PEBBLES };
-                    self.aux[c] = 0;
-                    self.touch(c);
-                }
-                self.island_cells = cells;
+                self.crumble_cells();
             }
         }
         self.island_removed = removed;

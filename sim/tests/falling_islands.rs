@@ -1,4 +1,4 @@
-//! Falling rock v0.5 (D-189): a small free island falls as itself, one cell per tick; large ones crumble.
+//! Falling rock v0.5 (D-190): a small free island falls as itself, one cell per tick; large ones crumble.
 use sim::grid::{is_structural, Grid};
 use sim::input::{encode_join, encode_pos};
 use sim::materials::*;
@@ -428,4 +428,59 @@ fn oracle_free(mat: &[u8], w: usize, h: usize) -> Vec<usize> {
         }
     }
     free
+}
+
+// ---- review N4 fixes (F1, F2, F6) ----
+
+#[test]
+fn two_falling_slabs_that_merge_past_the_cap_crumble_instead_of_hanging() {
+    let mut g = Grid::new(N, N);
+    fill(&mut g, 0, 200, N, 210, ROCK);
+    fill(&mut g, 100, 100, 110, 107, ROCK); // A: 10 x 7 = 70
+    fill(&mut g, 105, 107, 106, 200, ROCK);
+    fill(&mut g, 110, 80, 120, 87, ROCK); // B: 70, higher, beside A's column of rows
+    fill(&mut g, 115, 87, 116, 200, ROCK);
+    g.fall_blockers.push((100, 107, 109, 107)); // A waits (as above a player)
+    for y in 107..112 {
+        g.set(y * N + 105, EMPTY, 0);
+    }
+    for y in 87..150 {
+        g.set(y * N + 115, EMPTY, 0);
+    }
+    g.crumble_islands();
+    assert_eq!(g.falls.len(), 2);
+    settle(&mut g, 60);
+    // B has met A: 140 free cells, over the cap, so they crumble like any big free island.
+    assert!(g.falls.is_empty());
+    assert_eq!(count(&g, 0, 0, N, 112, ROCK), 0, "no free rock may hang in mid-air");
+    assert_eq!(count(&g, 0, 0, N, N, PEBBLES), 140 + 0, "crumbled to pebbles");
+}
+
+#[test]
+fn an_island_resting_on_sand_is_not_left_floating_when_the_sand_goes() {
+    let mut g = hung(4, 4, ROCK);
+    fill(&mut g, 90, 190, 110, 200, SAND); // a sand pile on the floor
+    for y in 104..150 {
+        g.set(y * N + 100, EMPTY, 0);
+    }
+    g.crumble_islands();
+    settle(&mut g, 200);
+    // Whatever the sand does, the block must end on the floor (y 196..200 region), not hang above it.
+    let lowest = (0..N).rev().find(|&y| (96..108).any(|x| g.mat[y * N + x] == ROCK && y < 200)).unwrap();
+    assert!(lowest >= 198, "block hangs at row {lowest}");
+}
+
+#[test]
+fn restore_refuses_a_falling_seed_that_is_out_of_range_or_not_rock() {
+    let s = sim_with_player(true);
+    let wlen = s.grid.chunk_count().div_ceil(8);
+    let base = sim::snapshot::write(&s);
+    let n = base.len();
+    for seed in [(s.grid.w * s.grid.h) as u32, 0u32, 123_456u32] {
+        let mut b = base[..n - wlen - 1].to_vec();
+        b.push(1);
+        b.extend_from_slice(&seed.to_le_bytes());
+        b.extend_from_slice(&base[n - wlen..]);
+        assert!(sim::snapshot::restore(&b).is_err(), "seed {seed} accepted");
+    }
 }
