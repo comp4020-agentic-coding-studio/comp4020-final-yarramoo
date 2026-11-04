@@ -60,3 +60,23 @@ with a worker's builds and tests, so its times are inflated;** a quiet rerun fol
   native"): the second half runs about 4x the chunks of the first, with p95 6-12 ms even setting aside the
   loaded minutes. At the 2x wasm ratio above that is 12-24 ms in a browser, at or over the 16.7 ms frame.
 - Not decided here: D-176 (no cap) is the user's call. See the quiet rerun below for the numbers to decide on.
+
+### Quiet rerun (nothing else running)
+
+Chunk counts are identical to run 1, tick for tick (the sim is deterministic), so only the times differ: run 1's
+were the machine's load, not the sim.
+
+| Minutes | woken now | chunks run mean / peak | step p50 / p95 ms (native) | max ms |
+|---|---|---|---|---|
+| 1-6 | 8-31 | 21-45 / 72 | 0.5-1.2 / 0.7-1.6 | 2-4 |
+| 7-12 | 52-74 | 68-93 / 122 | 1.9-2.5 / 2.7-4.5 | 11-113 (the tick a flood lands) |
+| 13-18 | 60-65 | 73-92 / 121 | 2.2-2.9 / 2.7-3.7 | 4-11 |
+| 19-24 | 70-101 | 87-117 / 144 | 3.1-3.8 / 4.2-4.8 | 6-69 |
+| 25-30 | 81-99 | 93-111 / 143 | 3.0-3.6 / 3.7-4.6 | 6-71 |
+
+**Reading.** After 15 floods in 30 minutes, the steady cost is about 3.3 ms p50 and 4.4 ms p95 native, right on the
+"about 4 ms" revisit line, not far past it. At the 2x wasm ratio that is about 9 ms p95 in a browser, half the 16.7 ms
+frame; a phone at 4x throttle would be at or over it. The spikes (up to about 110 ms native) are the tick a 6000-cell
+flood is dropped in, which this scenario does by writing cells directly; a real flood arrives over many ticks.
+Woken chunks plateau near 100 of 1536 rather than growing without bound. **Whether to act is the user's call
+(D-176).** The cheapest options, unchanged: let surface shimmer freeze, step woken chunks every second tick, or a cap.
