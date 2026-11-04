@@ -1,4 +1,4 @@
-> **Status (session model, 5 Nov 08:52): WIP, gate not confirmed, do not merge.** Translation-only v1 works in
+> **Status (session model, 5 Nov 08:57): WIP, gate RED (`config_state` failed; see /tmp/xb-gate.txt at the time), do not merge.** Translation-only v1 works in
 > isolated tests (5 of 6; the player-blocking test is `#[ignore]`d and unverified). The golden fixture and the
 > server's snapshot version (13) are not updated. **One real design bug for whoever continues:** the body list was put
 > at the *front* of the entity bytes, but the server reads the player section at a fixed offset
