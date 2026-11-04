@@ -481,11 +481,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     // The hard cap is a defensive second ceiling: in normal operation the soft cap below always fires first.
     // Hitting it without having hit the soft cap first would itself be a bug worth the louder log level.
     if (total >= hard) {
-      log.event("register.refused", { reason: "cap", scope: "members_hard", total }, "error");
+      log.limited("cap:members_hard", 10_000, "register.refused", { reason: "cap", scope: "members_hard", total }, "error");
       return "server busy";
     }
     if (total >= soft) {
-      log.event("register.refused", { reason: "cap", scope: "members_soft", total }, "warn");
+      log.limited("cap:members_soft", 10_000, "register.refused", { reason: "cap", scope: "members_soft", total }, "warn");
       return "server busy";
     }
     return null;
@@ -512,12 +512,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const maxSlots = opts.maxLoadedRooms ?? MAX_LOADED_ROOMS;
     const maxL = opts.maxLoadedLRooms ?? MAX_LOADED_L_ROOMS;
     if (slots + weight > maxSlots || (cfg.size === 2 && lRooms + 1 > maxL)) {
-      log.event("register.refused", { reason: "cap", scope: "loaded_rooms", slots, lRooms, world: id }, "warn");
+      log.limited("cap:loaded_rooms", 10_000, "register.refused", { reason: "cap", scope: "loaded_rooms", slots, lRooms, world: id }, "warn");
       return "cap";
     }
     const mem = cgroupMemoryBytes();
     if (mem !== undefined && mem >= (opts.roomLoadMemoryCapBytes ?? ROOM_LOAD_MEMORY_CAP_BYTES)) {
-      log.event("register.refused", { reason: "cap", scope: "memory", cgroup_mb: Math.round(mem / 1048576), world: id }, "warn");
+      log.limited("cap:memory", 10_000, "register.refused", { reason: "cap", scope: "memory", cgroup_mb: Math.round(mem / 1048576), world: id }, "warn");
       return "cap";
     }
     const p = (async () => {
@@ -856,6 +856,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   const http: Server = createServer((req, res) => {
+    // One place for every HTTP response (static, API, dashboard, readme); writeHead merges these in.
+    // Only frame-ancestors in the CSP: a script-src/default-src would risk the wasm and the module worker.
+    res.setHeader("x-content-type-options", "nosniff");
+    res.setHeader("referrer-policy", "same-origin");
+    res.setHeader("content-security-policy", "frame-ancestors 'self'");
     let path: string;
     try {
       path = decodeURIComponent((req.url ?? "/").split("?")[0]);
@@ -874,7 +879,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       const origin = req.headers.origin;
       if (origin !== undefined && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}` && !allowedOrigins.has(origin)) {
         stats.originRefused++;
-        log.event("register.refused", { reason: "origin", origin: origin.slice(0, 80) }, "warn");
+        const tag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+        log.limited(`reg_origin:${tag}`, 10_000, "register.refused", { reason: "origin", origin: origin.slice(0, 80), ip_tag: tag }, "warn");
         res.writeHead(403).end("cross-origin registration refused");
         return;
       }
@@ -901,7 +907,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         }
         const r = identity.register(name, performance.now());
         if (!r) {
-          log.event("register.refused", { reason: identity.count >= MAX_REGISTERED ? "cap" : "rate" }, "warn");
+          log.limited("register:refused", 10_000, "register.refused", { reason: identity.count >= MAX_REGISTERED ? "cap" : "rate" }, "warn");
           res.writeHead(429).end();
           return;
         }
@@ -990,6 +996,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     // Fly sets Fly-Client-IP (and replaces any client-supplied one); elsewhere it is the socket address.
     const ip = String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?");
+    // A browser always sends Origin on a WebSocket upgrade, so a page on another site is refused (sec-probe S3).
+    // A missing Origin is a non-browser client (a script, the test helpers), which a drive-by page cannot forge, so it stays allowed.
+    if (!originOk(req)) {
+      stats.originRefused++;
+      log.limited(`ws_origin:${log.ipTag(ip)}`, 10_000, "register.refused", { reason: "origin", scope: "ws", ip_tag: log.ipTag(ip), origin: String(req.headers.origin).slice(0, 80) }, "warn");
+      socket.write("HTTP/1.1 403 Forbidden\r\nconnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     if ((connsByIp.get(ip) ?? 0) >= maxPerIp) {
       stats.capRefused++;
       log.limited(`cap:${log.ipTag(ip)}`, 10_000, "register.refused", { reason: "cap", scope: "ws_per_ip", ip_tag: log.ipTag(ip) }, "warn");
@@ -1012,7 +1027,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   function reject(ws: WebSocket, reason: string, fields: { world?: number; ipTag?: string } = {}) {
     stats.rejected++;
-    log.event("hello.rejected", { reason, world: fields.world, ip_tag: fields.ipTag }, "warn");
+    log.limited(`hello_rej:${fields.ipTag ?? "?"}:${reason}`, 10_000, "hello.rejected", { reason, world: fields.world, ip_tag: fields.ipTag }, "warn");
     ws.send(encodeReject(reason), () => ws.close(1008, "rejected"));
   }
 
@@ -1173,7 +1188,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
           if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
             stats.capRefused++;
-            log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
+            log.limited(`cap:world_members:${w.id}`, 10_000, "register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
             discardIfFreshlyLoaded(w, wasWarm);
             return rej("world is full; try again later", msg.worldId);
           }
