@@ -47,7 +47,7 @@ export type ToWorker =
   | { type: "resize"; width: number; height: number }
   /** Switch to sending frames to the main thread (render fallback). */
   | { type: "frames" }
-  | { type: "devgoto"; spell: number }
+  | { type: "devgoto"; spell: number; /** The server announced dev teleport for this room: act in a real room, not only on the dev route. */ remote?: boolean; /** Stand this many cells from the enemy instead of the default (12; the boss 14 to its right). For the boss it is signed: the offset from its x. */ dist?: number }
   /** F6b: toggle my lobby ready flag (the worker sends the Ready input; the sim ignores it outside a Survival lobby). */
   | { type: "ready"; ready: boolean }
   | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number; fillEmpty: boolean };
@@ -90,7 +90,7 @@ export type FromWorker =
       energy: number;
       energyMax: number;
       /** The Deep Mage while it is in the entities view (hp, max hp, phase 1..3), else null. Render-only. */
-      boss: { hp: number; max: number; phase: number } | null;
+      boss: { hp: number; max: number; phase: number; x: number; y: number } | null;
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
       /** F6b: the Survival lobby (null when the room has no round). `left` is ticks of countdown left, -1 when none runs. Names are plain. Render-only. */

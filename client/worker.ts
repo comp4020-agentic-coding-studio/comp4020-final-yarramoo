@@ -207,7 +207,7 @@ let lastRumble = 0;
 /** Enemy owners with a bolt in flight last frame, so each new bolt crackles once (pruned every frame). */
 let enemyBoltSeen = new Set<number>();
 let bossPhase = 0;
-let bossHud: { hp: number; max: number; phase: number } | null = null;
+let bossHud: { hp: number; max: number; phase: number; x: number; y: number } | null = null;
 const ENEMY_MAX_HP = [20, 30, 60, 90, 800];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
@@ -640,7 +640,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
         if (bossPhase !== 0) { sfxAt("roar", ex, ey, 1, net === "catching-up" || !!ls?.fastForwarding); fx.burst(ex, ey - 8, [1, 0.5, 0.2], 40, 0.1); }
         bossPhase = phase;
       }
-      bossHud = { hp: e.a, max: ENEMY_MAX_HP[4], phase };
+      bossHud = { hp: e.a, max: ENEMY_MAX_HP[4], phase, x: ex, y: ey };
       pushBoss(rects, ex, ey, phase, now - es.hitAt < 120, now);
       continue;
     }
@@ -1161,14 +1161,17 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
     case "devgoto":
       // Dev route only (stripped from production builds): put the local controller on the nearest deep pickup of
       // this spell. The avatar then reports it through the normal Pos path, as tools/inputgen-m5.ts does (D-114).
-      if (import.meta.env.DEV && localSim && avatar) {
+      // A real room too, when the server said dev teleport is on (GET /api/rooms/:code): the avatar's Pos then jumps
+      // and the server's gate (server/devteleport.ts) decides; on any other server the Pos is rejected as a teleport.
+      const gsim = localSim ?? ls?.sim ?? null;
+      if (gsim && avatar && (import.meta.env.DEV || m.remote)) {
         // spell -1: the nearest enemy instead (dev only, `__devGotoEnemy`).
         // spell <= -2: the nearest enemy of kind (-2 - spell), standing at its height (an imp hovers in open air).
-        const list = localSim.entities().filter((e) => (m.spell < 0 ? e.type === ENT_ENEMY && (m.spell === -1 || e.sub === -2 - m.spell) : e.type === ENT_PICKUP && e.sub === m.spell && e.active));
-        const me = localSim.entities().find((e) => e.type === ENT_PLAYER && e.id === myId);
+        const list = gsim.entities().filter((e) => (m.spell < 0 ? e.type === ENT_ENEMY && (m.spell === -1 || e.sub === -2 - m.spell) : e.type === ENT_PICKUP && e.sub === m.spell && e.active));
+        const me = gsim.entities().find((e) => e.type === ENT_PLAYER && e.id === myId);
         list.sort((a, b) => Math.abs(a.x - (me?.x ?? 0)) + Math.abs(a.y - (me?.y ?? 0)) - (Math.abs(b.x - (me?.x ?? 0)) + Math.abs(b.y - (me?.y ?? 0))));
         // The boss (kind 4): 14 cells beside it, at its height (feet y minus 7 puts the avatar's feet at its centre line), in open arena air.
-        if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell === -6 ? -14 : m.spell < 0 ? 12 : 0), list[0].y / 16 - (m.spell === -3 ? 4 : m.spell === -6 ? 2 : 0));
+        if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell === -6 ? -(m.dist ?? 14) : m.spell < 0 ? (m.dist ?? 12) : 0), list[0].y / 16 - (m.spell === -3 ? 4 : m.spell === -6 ? 2 : 0));
       }
       break;
     case "pace":

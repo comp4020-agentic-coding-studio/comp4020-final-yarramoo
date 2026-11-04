@@ -28,6 +28,8 @@ export interface RoomTarget {
   code: string | null;
   /** F7: from GET /api/rooms/:code. A running or ended Survival room shows the late panel before any join (no dead record is left behind). */
   late?: boolean;
+  /** From GET /api/rooms/:code when the server runs with SIMULTA_DEV_TELEPORT (never in production): enables `__devGoto` here. */
+  devTeleport?: boolean;
 }
 
 /** Resolve what to join from the current path: /sandbox (id 0), /game (id 1, back-compat for the old cave-world
@@ -42,10 +44,10 @@ export async function resolveRoomTarget(pathname: string): Promise<RoomTarget> {
     const code = m[1];
     const res = await fetch(`/api/rooms/${code}`);
     if (!res.ok) throw new Error("No room has that code.");
-    const j = (await res.json()) as { id: number; code: string; name: string; mode: string; visibility: string; config: string; running?: boolean; ended?: boolean };
+    const j = (await res.json()) as { id: number; code: string; name: string; mode: string; visibility: string; config: string; running?: boolean; ended?: boolean; devTeleport?: boolean };
     const cfg = decodeConfig(Uint8Array.from(atob(j.config), (c) => c.charCodeAt(0)));
     if (!cfg) throw new Error("That room's config looked wrong.");
-    return { worldId: j.id, cfg, name: j.name, code: j.code, late: cfg.round === 1 && !!(j.running || j.ended) };
+    return { worldId: j.id, cfg, name: j.name, code: j.code, late: cfg.round === 1 && !!(j.running || j.ended), devTeleport: j.devTeleport === true };
   }
   // Fallback: an unrecognised room-ish path still joins the sandbox rather than failing outright.
   return { worldId: 0, cfg: CLASSIC_SANDBOX, name: null, code: null };
@@ -813,6 +815,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     else if (dead) deathEl.textContent = m.me?.respawnTicks == null ? "You died: respawning" : `You died: respawning in ${Math.ceil(m.me.respawnTicks / 60)} s`;
     placeBags(m);
     (window as unknown as { __players: unknown }).__players = m.list;
+    (window as unknown as { __boss: unknown }).__boss = m.boss; // read-only, for the soak script
     (window as unknown as { __spells: unknown }).__spells = { selected: selectedSpell, ...m.spells };
   }
 
@@ -1228,6 +1231,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     send({ type: "pointer", kind: "down", x, y, mat, radius: r, fillEmpty: false });
     send({ type: "pointer", kind: "up", x, y, mat, radius: r, fillEmpty: false });
   };
+  if (target.devTeleport) {
+    // Real room on a server that announced dev teleport (brief HB). Same hooks; the server still checks every Pos.
+    (window as unknown as Record<string, unknown>).__devGoto = (spell: number) => send({ type: "devgoto", spell, remote: true });
+    (window as unknown as Record<string, unknown>).__devGotoEnemy = (kind?: number, dist?: number) => send({ type: "devgoto", spell: kind === undefined ? -1 : -2 - kind, remote: true, dist });
+  }
   if (import.meta.env.DEV) {
     // Dev route only: walk the local avatar onto the nearest pickup (any spell in the pickup tables) to see those visuals.
     (window as unknown as Record<string, unknown>).__devGoto = (spell: number) => {
