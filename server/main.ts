@@ -731,6 +731,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   /** GET /api/rooms: public rooms only, no player names or live counts (R2b adds counts once joining is real). */
+  /** Connected players (spectators have playerId 0 and are not counted) in a loaded room; 0 for an unloaded one. */
+  function playersIn(id: number): number {
+    const w = worlds.get(id);
+    return w ? [...w.members.values()].filter((m) => m.playerId !== 0).length : 0;
+  }
+
   function listRoomsRoute(req: IncomingMessage, res: ServerResponse): void {
     if (!rooms) {
       res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ rooms: [] }));
@@ -738,7 +744,27 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     // Not logged: a client polling the room list every few seconds must not flood the ring (CLAUDE.md).
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rooms: rooms.listPublicRooms().map(publicRoom) }));
+    // Live player count from the in-memory worlds (0 for a room nobody has loaded); busiest first, then most recently active.
+    // listPublicRooms is already last_active desc, and Array.sort is stable, so sorting by players keeps that as the tiebreak.
+    const list = rooms.listPublicRooms().map((r) => ({ ...publicRoom(r), players: playersIn(r.id) }));
+    list.sort((a, b) => b.players - a.players);
+    res.end(JSON.stringify({ rooms: list }));
+  }
+
+  /**
+   * GET /api/rooms/:code/preview: the room's latest verified snapshot, compressed as uploaded, for the menu's
+   * read-only backdrop. A plain HTTP read: the viewer never joins the world, so it is not in Who, not a member
+   * (capacity, ready-up) and cannot keep the room loaded. 404 when the room is unloaded or has no snapshot yet.
+   */
+  function previewRoute(res: ServerResponse, code: string): void {
+    const r = rooms?.getRoomByCode(code);
+    const w = r ? worlds.get(r.id) : undefined;
+    if (!r || r.visibility !== "public" || !w?.snapshot) {
+      res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "no_preview" }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/octet-stream", "cache-control": "no-store", "x-room-config": Buffer.from(r.config).toString("base64"), "x-snapshot-tick": String(w.snapshot.tick), "access-control-expose-headers": "x-room-config, x-snapshot-tick" });
+    res.end(w.snapshot.data);
   }
 
   /** An unloaded Survival room is running if it has logged ticks and has not ended (the round state itself is not stored). */
@@ -839,6 +865,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         return;
       }
       const code = path.slice("/api/rooms/".length);
+      if (/^[A-Za-z0-9]{1,6}\/preview$/.test(code)) {
+        previewRoute(res, code.slice(0, -"/preview".length));
+        return;
+      }
       if (!/^[A-Za-z0-9]{1,6}$/.test(code)) {
         res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not_found" }));
         return;
