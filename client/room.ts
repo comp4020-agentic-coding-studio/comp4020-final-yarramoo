@@ -699,6 +699,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   spellBar.id = "spells";
   spellBar.hidden = true;
   stage.append(spellBar);
+  /** Push, Blast and Dig come first on the bar and never run out: they are the tools, the rest are consumables. */
+  const INFINITE_TOOLS = 3;
   const slotEls = BAR.map((spell, i) => {
     const el = document.createElement("div");
     el.className = "slot";
@@ -724,6 +726,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const cd = document.createElement("div");
     cd.className = "cd";
     el.append(cd, sw, key, nm, ch);
+    if (i === INFINITE_TOOLS - 1) el.classList.add("last-tool"); // a gap after the infinite tools
     spellBar.append(el);
     return { el, ch, cd, spell };
   });
@@ -738,6 +741,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       const charges = v ? v.charges[s.spell] : 0;
       s.el.classList.toggle("sel", s.spell === selectedSpell);
       s.el.classList.toggle("empty", charges === 0);
+      s.el.title = charges === 0 ? `${SPELLS[s.spell].name}: none yet. Found in caves.` : SPELLS[s.spell].name;
       s.ch.textContent = charges === INFINITE ? "\u221e" : String(charges);
       const left = v ? v.cooldown[s.spell] : 0;
       s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[s.spell].cooldown) * 100))}%`;
