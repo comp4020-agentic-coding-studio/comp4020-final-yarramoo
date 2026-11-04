@@ -164,7 +164,9 @@ pub const ENEMY_IMP: u8 = 1;
 pub const ENEMY_ACID_SLIME: u8 = 2;
 pub const ENEMY_WORM: u8 = 3;
 pub const ENEMY_BOSS: u8 = 4;
-pub const NUM_ENEMY_KINDS: usize = 5;
+pub const ENEMY_WISP: u8 = 5;
+pub const ENEMY_FROST: u8 = 6;
+pub const NUM_ENEMY_KINDS: usize = 7;
 /// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
 /// F5 raised this from 48: at size L the generator places 25 slimes + 8 imps + 10 acid slimes + 8 worms = 51.
 pub const MAX_ENEMIES: usize = 64;
@@ -201,6 +203,10 @@ pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
     EnemyStats { hp: 90, w: 5, h: 4, contact_damage: 20, contact_cooldown: 40, immune: 0, weak: 0 },
     // The Deep Mage (F6): a big flier that makes the lava ring, so immune to fire and lava; contact shove 20.
     EnemyStats { hp: 800, w: 11, h: 14, contact_damage: 20, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: 0 },
+    // Lava wisp (X2): a slow flier that leaves a capped trail of Lava; immune to fire and lava, hurt by water.
+    EnemyStats { hp: 40, w: 5, h: 4, contact_damage: 10, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: WEAK_WATER },
+    // Frost sprite (X2): a flier that leaves a capped trail of Ice; fire and lava hurt it at the shared rate.
+    EnemyStats { hp: 30, w: 5, h: 4, contact_damage: 6, contact_cooldown: 40, immune: 0, weak: 0 },
 ];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
@@ -376,3 +382,21 @@ pub const ROUND_TAIL_BYTES: usize = 12;
 /// A too-long stroke is TRUNCATED from (x0, y0) along the same line, not dropped: the player still sees paint
 /// where the stroke began, and the following segments (which start at their own anchors) carry on.
 pub const MAX_PAINT_STROKE: i32 = 128;
+
+// ---- lava wisp and frost sprite (X2, docs/research/x-enemies-report.md) --------------------------------
+
+pub const ENEMY_WISPS_L: i32 = 6;
+pub const ENEMY_WISPS_MIN: i32 = 2;
+pub const ENEMY_FROSTS_L: i32 = 6;
+pub const ENEMY_FROSTS_MIN: i32 = 2;
+/// Both fly like the imp but slower and never fire; while hunting (state bit 0) each drops one trail cell (Lava / Ice)
+/// into the Empty cell at its centre when `(tick + id) % WISP_TRAIL_EVERY == 0`.
+pub const WISP_SPEED: i32 = 2;
+pub const WISP_AGGRO_CELLS: i32 = 120;
+pub const WISP_NEAR_CELLS: i32 = 6;
+pub const WISP_TRAIL_EVERY: u32 = 24;
+/// Bounds on the trail: at most `WISP_TRAIL_PER_TICK` cells written per tick whatever the number of wisps, and none
+/// while the (2 * `WISP_TRAIL_RADIUS` + 1)^2 box around the centre already holds `WISP_TRAIL_LOCAL_MAX` cells of it.
+pub const WISP_TRAIL_PER_TICK: u32 = 1;
+pub const WISP_TRAIL_RADIUS: i32 = 4;
+pub const WISP_TRAIL_LOCAL_MAX: u32 = 5;

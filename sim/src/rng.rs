@@ -152,3 +152,8 @@ mod tests {
         assert_eq!(mix(1), 0x5692161d100b05e5);
     }
 }
+
+pub const SALT_GEN_WISP_X: u32 = 258;
+pub const SALT_GEN_WISP_Y: u32 = 259;
+pub const SALT_GEN_FROST_X: u32 = 260;
+pub const SALT_GEN_FROST_Y: u32 = 261;
