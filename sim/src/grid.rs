@@ -11,6 +11,9 @@ pub fn is_structural(m: u8) -> bool {
 }
 
 pub const CHUNK: usize = 64;
+/// log2(CHUNK): chunk arithmetic uses shifts and masks.
+const CHUNK_SHIFT: usize = 6;
+const _: () = assert!(1 << CHUNK_SHIFT == CHUNK);
 /// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
 #[derive(Clone, Copy)]
 pub struct Liquid {
@@ -126,7 +129,7 @@ impl Grid {
     }
 
     pub fn chunk_of(&self, x: usize, y: usize) -> usize {
-        (y / CHUNK) * self.cw + x / CHUNK
+        (y >> CHUNK_SHIFT) * self.cw + (x >> CHUNK_SHIFT)
     }
 
     /// Record that the cell at flat index `i` changed.
@@ -137,8 +140,8 @@ impl Grid {
         self.pristine[c] = false;
         self.wake(c);
         // Wake the neighbours whose cells can see this one (distance 1, corners included).
-        let (lx, ly) = (x % CHUNK, y % CHUNK);
-        let (cx, cy) = (c % self.cw, c / self.cw);
+        let (lx, ly) = (x & (CHUNK - 1), y & (CHUNK - 1));
+        let (cx, cy) = (x >> CHUNK_SHIFT, y >> CHUNK_SHIFT);
         let xs = [(lx == 0 && cx > 0, -1isize), (lx == CHUNK - 1 && cx + 1 < self.cw, 1)];
         let ys = [(ly == 0 && cy > 0, -1isize), (ly == CHUNK - 1 && cy + 1 < self.ch, 1)];
         for &(okx, dx) in &xs {

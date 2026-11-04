@@ -26,9 +26,19 @@ struct Global(UnsafeCell<Option<Sim>>);
 unsafe impl Sync for Global {}
 static G: Global = Global(UnsafeCell::new(None));
 
+/// Snapshot bytes built by `snapshot_size`, kept for the `snapshot_write` that follows it. Any other export
+/// goes through `with`, which drops it, so it can never outlive a state change.
+struct SnapCache(UnsafeCell<Option<Vec<u8>>>);
+// SAFETY: as `Global`.
+unsafe impl Sync for SnapCache {}
+static SNAP: SnapCache = SnapCache(UnsafeCell::new(None));
+
 fn with<R>(f: impl FnOnce(&mut Sim) -> R) -> Option<R> {
     // SAFETY: single-threaded; no re-entrancy (no host imports call back in).
-    unsafe { (*G.0.get()).as_mut().map(f) }
+    unsafe {
+        *SNAP.0.get() = None;
+        (*G.0.get()).as_mut().map(f)
+    }
 }
 
 unsafe fn slice<'a>(ptr: u32, len: u32) -> &'a [u8] {
@@ -53,7 +63,10 @@ pub extern "C" fn init(seed_lo: u32, seed_hi: u32, cfg_ptr: u32, cfg_len: u32) -
     match Sim::new(seed, cfg) {
         Some(s) => {
             // SAFETY: see `with`.
-            unsafe { *G.0.get() = Some(s) };
+            unsafe {
+                *SNAP.0.get() = None;
+                *G.0.get() = Some(s);
+            }
             0
         }
         None => -1,
@@ -115,18 +128,36 @@ pub extern "C" fn chunk_hashes(out_ptr: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn snapshot_size() -> u32 {
-    with(|s| snapshot::size(s) as u32).unwrap_or(0)
+    // SAFETY: single-threaded, no re-entrancy.
+    unsafe {
+        *SNAP.0.get() = None;
+        match (*G.0.get()).as_ref() {
+            Some(s) => {
+                let v = snapshot::write(s);
+                let n = v.len() as u32;
+                *SNAP.0.get() = Some(v);
+                n
+            }
+            None => 0,
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn snapshot_write(out_ptr: u32) -> u32 {
-    with(|s| {
-        let v = snapshot::write(s);
-        // SAFETY: caller allocated `snapshot_size()` bytes.
-        unsafe { out_slice(out_ptr, v.len()) }.copy_from_slice(&v);
-        v.len() as u32
-    })
-    .unwrap_or(0)
+    // SAFETY: single-threaded, no re-entrancy. The cache is only ever the bytes of the current state: every
+    // other export clears it before touching the sim.
+    let cached = unsafe { (*SNAP.0.get()).take() };
+    let v = match cached {
+        Some(v) => v,
+        None => match unsafe { (*G.0.get()).as_ref() } {
+            Some(s) => snapshot::write(s),
+            None => return 0,
+        },
+    };
+    // SAFETY: caller allocated `snapshot_size()` bytes.
+    unsafe { out_slice(out_ptr, v.len()) }.copy_from_slice(&v);
+    v.len() as u32
 }
 
 #[no_mangle]
@@ -134,7 +165,10 @@ pub extern "C" fn restore(ptr: u32, len: u32) -> i32 {
     // SAFETY: caller guarantees the range is valid linear memory.
     let b = unsafe { slice(ptr, len) };
     // SAFETY: see `with`.
-    let old = unsafe { (*G.0.get()).take() };
+    let old = unsafe {
+        *SNAP.0.get() = None;
+        (*G.0.get()).take()
+    };
     let prev = old.as_ref().and_then(|o| o.base.as_ref());
     match snapshot::restore_with(b, prev) {
         Ok(mut s) => {
