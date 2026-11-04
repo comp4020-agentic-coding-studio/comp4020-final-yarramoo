@@ -27,6 +27,10 @@ export const MATERIAL_NAMES: Readonly<Record<number, string>> = {
   21: "Pebbles",
 };
 
+/** Mirrors `sim/src/materials.rs` `paintable`: Paint may place Erase (0), Rock to Seed (2-7) and Fire to Coal (10-20);
+ * never Bedrock, Stem, Flower or Pebbles. The server counts paint stats only for these (hardening review server F1). */
+export const isPaintable = (m: number): boolean => m === 0 || (m >= 2 && m <= 7) || (m >= 10 && m <= 20);
+
 /** Spell index to display name. */
 export const SPELL_NAMES: readonly string[] = ["Push", "Blast", "Water", "Rose", "Fire", "Bomb", "Dig", "Acid Flask", "Oil Flask", "Wall", "Lava Flask", "Black Hole"];
 

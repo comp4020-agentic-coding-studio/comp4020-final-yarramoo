@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEEP_TOP, SHALLOW_TOP } from "../../shared/stats.ts";
-import { DEPTH_HOLD_MS, MAX_MUSIC_VOICES, MOODS, degreeToMidi, initialMoodState, makeRng, maxOverlap, planBar, stepMood, type Mood, type MoodInput, type MoodState } from "../../client/music.ts";
+import { DEPTH_HOLD_MS, MAX_MUSIC_VOICES, MOODS, degreeToMidi, moodToSwitch, initialMoodState, makeRng, maxOverlap, planBar, stepMood, type Mood, type MoodInput, type MoodState } from "../../client/music.ts";
 
 const moods = Object.keys(MOODS) as Mood[];
 const base: MoodInput = { y: 100, bossAlive: false, sandbox: false, round: null };
@@ -82,5 +82,18 @@ describe("stepMood", () => {
     sb = run(sb, { ...base, sandbox: true, y: DEEP_TOP + 50 }, 0);
     sb = run(sb, { ...base, sandbox: true, y: DEEP_TOP + 50 }, 99999);
     expect(sb.mood).toBe("surface");
+  });
+});
+
+describe("moodToSwitch (hardening review client F1)", () => {
+  it("a finished sting is not restarted by the room asking for it again", () => {
+    // The sting played its bar and the engine fell back to "menu"; the room still asks for "victory" every message.
+    expect(moodToSwitch("victory", "menu", "victory")).toBeNull();
+    expect(moodToSwitch("defeat", "menu", "defeat")).toBeNull();
+  });
+  it("a sting that has not played yet starts, and ordinary moods still switch", () => {
+    expect(moodToSwitch("victory", "deep", null)).toBe("victory");
+    expect(moodToSwitch("deep", "surface", null)).toBe("deep");
+    expect(moodToSwitch("deep", "deep", null)).toBeNull();
   });
 });

@@ -267,6 +267,8 @@ let nextBarTime = 0;
 let barIndex = 0;
 let engineMood: Mood | null = null;
 let stingPlanned = false;
+/** The sting that has played its bar (the room keeps asking for it every players message). */
+let stingDone: Mood | null = null;
 let live = 0;
 let scheduled = 0;
 let rng = makeRng(0x9e3779b1);
@@ -308,10 +310,19 @@ export function stopMusic() {
   debug();
 }
 
+/** Which mood a request should switch the engine to, or null to keep playing what it plays. */
+export function moodToSwitch(mood: Mood, engine: Mood | null, stingDone: Mood | null): Mood | null {
+  // A sting plays once: after its bar the engine falls back to "menu", and the room's repeated request must not restart it.
+  if (mood === stingDone) return null;
+  return mood !== engine ? mood : null;
+}
+
 /** Ask for a mood; takes effect now if the engine runs, else when it starts. */
 export function setMood(mood: Mood) {
+  if (mood === stingDone) return; // keep the calm fallback, also across a music off/on (startMusic plays `wanted`)
   wanted = mood;
-  if (running && mood !== engineMood) switchMood(mood);
+  const next = moodToSwitch(mood, engineMood, stingDone);
+  if (running && next) switchMood(next);
 }
 
 function switchMood(mood: Mood) {
@@ -351,7 +362,7 @@ function tick() {
       // After the sting's bar, fall back to calm; its notes still ring out on their own bus.
       stingPlanned = true;
       const me = engineMood;
-      setTimeout(() => { if (engineMood === me) { wanted = "menu"; switchMood("menu"); } }, Math.max(0, (nextBarTime - a.ctx.currentTime) * 1000));
+      setTimeout(() => { if (engineMood === me) { wanted = "menu"; stingDone = me; switchMood("menu"); } }, Math.max(0, (nextBarTime - a.ctx.currentTime) * 1000));
       break;
     }
   }

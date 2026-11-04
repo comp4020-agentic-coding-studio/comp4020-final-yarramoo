@@ -526,6 +526,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function send(m: ToWorker, transfer: Transferable[] = []) {
     worker.postMessage(m, transfer);
   }
+  // Hardening review client F3: the worker assumes a visible tab, and visibilitychange only fires on a change, so
+  // a room opened in a background tab would send Pos and casts until it was first shown.
+  if (document.hidden) send({ type: "hidden", hidden: true });
 
   let fallback: Renderer | null = null;
   let path = "";

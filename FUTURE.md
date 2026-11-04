@@ -640,3 +640,21 @@ A small bar above your own avatar while it takes damage or levitates; picking 2x
 `GAME_VIEW`) by window size to cut the side margins; collapsing zero-count consumables until first found.
 
 - **Source:** the UI review (playtest note 10) and brief H1's report, 4 Nov.
+
+## The live menu, and a read-only spectator connection
+
+The `menu-live` branch (brief HM, unmerged; D-184) adds live player counts and a busiest-first sort to
+`GET /api/rooms`, and shows the busiest room's stored snapshot behind the menu. A real live view needs a spectator
+connection that isn't a member: not in Who, the ready-up or capacity, never holding the clock or keeping a room
+loaded, and fed the log tail instead of the whole log.
+
+- **Source:** brief HM's live worker (`docs/research/hm-live-report.md` on `menu-live`), 4 Nov.
+- **Why:** the counts are worth having in the room list on their own (cherry-pick `9b7ff00` minus the preview
+  route). A true spectator would also serve phones (D-011) and the showcase.
+
+## Menu backdrop polish
+
+Fatter water streams, pause the scene while a sheet is open, reset by restoring a start snapshot instead of
+restarting the worker, and a second scene for variety.
+
+- **Source:** brief HM's local worker report, 4 Nov.

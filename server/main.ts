@@ -50,6 +50,7 @@ import {
   STAT_SESSIONS,
   ENEMY_KIND_BOSS,
 } from "../shared/stats.ts";
+import { isPaintable } from "../shared/names.ts";
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
@@ -1244,8 +1245,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               // F6b: the lobby ready toggle, Survival rooms only. The player id is stamped from the connection, never the client's.
               joined.counts.ready();
             } else if (w.cfg.brushes === 1 && msg.kind === KIND_PAINT && msg.payload.length === PAINT_PAYLOAD_LEN) {
-              joined.counts.paint(materialKey(msg.payload[0]));
-              playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+              // Only materials the sim will paint become stat keys: any other byte is refused by the sim, and counting
+              // it first would add up to 256 junk keys per player (hardening review server F1).
+              if (isPaintable(msg.payload[0])) {
+                joined.counts.paint(materialKey(msg.payload[0]));
+                playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+              }
             } else {
               return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
             }
@@ -1254,8 +1259,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
           if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
-          joined.counts.paint(materialKey(msg.payload[0]));
-          playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+          if (isPaintable(msg.payload[0])) {
+            joined.counts.paint(materialKey(msg.payload[0]));
+            playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+          }
           // The player id is ours, never the client's.
           if (!w.stampClient({ player: joined.playerId, kind: msg.kind, payload: msg.payload })) dropHeld(w, joined.conn);
           return;

@@ -72,6 +72,19 @@ describe("flush failures", () => {
 });
 
 describe("player stats", () => {
+  it("counts only materials the sim will paint (hardening review server F1)", async () => {
+    const s = await boot(null);
+    const me = await register(s.port, "Junk");
+    const sb = await connect(s.port, hex, { world: 0, token: me.token });
+    sb.paint(4, 100, 50, 140, 50, 6); // Sand: counted
+    for (const m of [1, 8, 9, 21, 22, 200]) sb.paint(m, 100, 60, 140, 60, 6); // Bedrock, Stem, Flower, Pebbles, unknown: refused by the sim
+    await waitFor(() => (s.playerStats.get(me.id)?.paints_sand ?? 0) === 1, 3000, "the sand paint");
+    await sleep(150);
+    const keys = Object.keys(s.playerStats.get(me.id) ?? {}).filter((k) => k.startsWith("paints_"));
+    expect(keys).toEqual(["paints_sand"]);
+    sb.close();
+  });
+
   it("counts casts, paints and depth, flushes at shutdown, and a reload adds to the totals", async () => {
     const dir = tmp();
     const s1 = await boot(dir);
