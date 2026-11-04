@@ -5,6 +5,7 @@
 import { CONFIG_BYTES, CONFIG_FIELDS, CLASSIC_SANDBOX, SURVIVAL, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import { makeMusicButton, setMood, startMusicOnGesture } from "./music.ts";
 import { unlock } from "./sfx.ts";
+import { startMenuPreview } from "./menu-preview.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 interface ModeDef {
@@ -96,6 +97,7 @@ async function ensureName(root: HTMLElement): Promise<void> {
 
 export function startMenu(root: HTMLElement): void {
   root.innerHTML = `
+    <div class="preview-bg" id="previewBg" aria-hidden="true"></div>
     <div class="menu">
       <header class="menu-header">
         <h1>Simulta</h1>
@@ -357,4 +359,11 @@ export function startMenu(root: HTMLElement): void {
   // Phone-first layout: the CSS handles the column breakpoint; nothing else is needed here.
   void CLASSIC_SANDBOX; // referenced for completeness of the room.ts/menu.ts config contract, no-op here
   void SIZE_DIMS;
+}
+
+/** Start the backdrop after the menu has painted, so wasm never blocks first paint. */
+export function startMenuBackdrop(root: HTMLElement): void {
+  const host = root.querySelector("#previewBg") as HTMLElement | null;
+  if (!host) return;
+  requestAnimationFrame(() => setTimeout(() => startMenuPreview(host), 0));
 }
