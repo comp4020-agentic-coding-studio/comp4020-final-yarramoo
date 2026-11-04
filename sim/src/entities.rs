@@ -163,6 +163,29 @@ impl Bag {
     }
 }
 
+/// A heal dropped by a killed enemy (Brief E). State: hashed and snapshotted, kept in spawn order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Heal {
+    /// The cell the heal occupies.
+    pub x: u16,
+    pub y: u16,
+    /// Hit points restored (1..=`HEALTH_MAX`).
+    pub amount: u8,
+    /// Removed when `tick >= expires_at`.
+    pub expires_at: u32,
+}
+
+pub const HEAL_BYTES: usize = 2 + 2 + 1 + 4;
+
+impl Heal {
+    fn write(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.x.to_le_bytes());
+        v.extend_from_slice(&self.y.to_le_bytes());
+        v.push(self.amount);
+        v.extend_from_slice(&self.expires_at.to_le_bytes());
+    }
+}
+
 /// A generator-placed enemy (F4). State: hashed and snapshotted, sorted by id (ids come from the generator in
 /// placement order, so no id counter exists). `x`, `y`: 1/16 cell, feet centre and feet line, like a player.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,16 +242,17 @@ impl Enemy {
 }
 
 /// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
-/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order), n_enemies u32, enemies (by id),
+/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order), n_enemies u32, enemies (by id), n_heals u32, heals (spawn order),
 /// round tail (`ROUND_TAIL_BYTES`: over, started, result u8, `lobby_since` u32)`. Players stay first:
 /// the server reads the player section at a fixed offset (`activePlayersIn`).
-pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round: [u8; ROUND_TAIL_BYTES]) -> Vec<u8> {
+pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], heals: &[Heal], round: [u8; ROUND_TAIL_BYTES]) -> Vec<u8> {
     let mut v = Vec::with_capacity(
         16 + players.len() * PLAYER_BYTES
             + pickups.len() * PICKUP_BYTES
             + projectiles.len() * PROJECTILE_BYTES
             + bags.len() * BAG_BYTES
             + ROUND_TAIL_BYTES
+            + heals.len() * HEAL_BYTES
             + enemies.len() * ENEMY_BYTES,
     );
     v.extend_from_slice(&(players.len() as u32).to_le_bytes());
@@ -250,6 +274,10 @@ pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile]
     v.extend_from_slice(&(enemies.len() as u32).to_le_bytes());
     for e in enemies {
         e.write(&mut v);
+    }
+    v.extend_from_slice(&(heals.len() as u32).to_le_bytes());
+    for h in heals {
+        h.write(&mut v);
     }
     v.extend_from_slice(&round);
     v
@@ -281,7 +309,7 @@ impl R<'_> {
 /// Decode entity bytes against the freshly generated `pickups` (their identity must match; only
 /// `respawn_at` and `charges` are taken from the bytes). Hostile input fails cleanly, never panics.
 /// `w`, `h` are the world's size in cells: a bag outside it is refused.
-pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>, Vec<Enemy>, [u8; ROUND_TAIL_BYTES]);
+pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>, Vec<Enemy>, Vec<Heal>, [u8; ROUND_TAIL_BYTES]);
 
 pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<Decoded, ()> {
     let mut r = R(b, 0);
@@ -314,7 +342,16 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         return Err(());
     }
     let ne = u32::from_le_bytes(b[en_at as usize..en_at as usize + 4].try_into().map_err(|_| ())?) as usize;
-    if ne > MAX_ENEMIES || en_at + 4 + (ne as u64) * (ENEMY_BYTES as u64) + ROUND_TAIL_BYTES as u64 != b.len() as u64 {
+    if ne > MAX_ENEMIES {
+        return Err(());
+    }
+    // The heal count follows the enemies; it then fixes the exact total length (heals, then the round tail).
+    let heal_at = en_at + 4 + (ne as u64) * (ENEMY_BYTES as u64);
+    if (b.len() as u64) < heal_at + 4 {
+        return Err(());
+    }
+    let nh = u32::from_le_bytes(b[heal_at as usize..heal_at as usize + 4].try_into().map_err(|_| ())?) as usize;
+    if nh > MAX_HEALS || heal_at + 4 + (nh as u64) * (HEAL_BYTES as u64) + ROUND_TAIL_BYTES as u64 != b.len() as u64 {
         return Err(());
     }
     let mut players: Vec<Player> = Vec::with_capacity(np);
@@ -438,6 +475,17 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         }
         enemies.push(e);
     }
+    if r.u32().ok_or(())? as usize != nh {
+        return Err(());
+    }
+    let mut heals = Vec::with_capacity(nh);
+    for _ in 0..nh {
+        let (x, y, amount) = (r.u16().ok_or(())?, r.u16().ok_or(())?, r.u8().ok_or(())?);
+        if usize::from(x) >= w || usize::from(y) >= h || amount == 0 || amount > HEALTH_MAX {
+            return Err(());
+        }
+        heals.push(Heal { x, y, amount, expires_at: r.u32().ok_or(())? });
+    }
     let mut round = [0u8; ROUND_TAIL_BYTES];
     for x in round.iter_mut() {
         *x = r.u8().ok_or(())?;
@@ -448,7 +496,7 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
     if round[0] > 1 || round[1] > 3 || round[2] > 1 || (round[1] & ROUND_RUNNING != 0 && (since != LOBBY_IDLE || majority != LOBBY_IDLE)) || (round[1] & ROUND_BOSS_KILLED != 0 && round[1] & ROUND_RUNNING == 0) {
         return Err(());
     }
-    Ok((players, projectiles, bags, enemies, round))
+    Ok((players, projectiles, bags, enemies, heals, round))
 }
 
 // ---- render-only views (plan 6.11; invariant 9: nothing read from these may become an input) ----------
@@ -482,6 +530,8 @@ pub const EV_ROUND_END: u8 = 13;
 pub const EV_ENEMY_PHASE: u8 = 14;
 /// F6b: the lobby countdown completed and the round is running (a = players). Fires once.
 pub const EV_ROUND_START: u8 = 15;
+/// A heal was taken (Brief E): `player` = taker, a = hit points actually gained, b, c = the heal's cell x, y.
+pub const EV_HEAL: u8 = 16;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;
@@ -521,12 +571,14 @@ pub const ENT_ENEMY: u8 = 5;
 pub const ENT_ROUND: u8 = 6;
 /// F6b: a player's lobby ready flag (lobby phase only): `id` = player, `active` = ready.
 pub const ENT_READY: u8 = 7;
+/// A heal on the ground (Brief E): `id` = index, `active` = 1, x, y = the cell centre in 1/16 cell, `a` = amount.
+pub const ENT_HEAL: u8 = 8;
 /// Entity record: `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`.
 pub const ENTITY_BYTES: usize = 18;
 
 #[allow(clippy::too_many_arguments)] // one slice per entity list, as `encode`
 /// Entity views for the renderer, players then pickups, written into `out` (at most `max` records).
-pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], round: [u8; ROUND_TAIL_BYTES], round_on: bool, tick: u32, out: &mut [u8], max: usize) -> usize {
+pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], heals: &[Heal], round: [u8; ROUND_TAIL_BYTES], round_on: bool, tick: u32, out: &mut [u8], max: usize) -> usize {
     let mut n = 0;
     let mut put = |t: u8, id: u32, active: bool, sub: u8, x: i32, y: i32, a: u16, health: u8| {
         if n >= max || (n + 1) * ENTITY_BYTES > out.len() {
@@ -564,6 +616,9 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
     }
     for (i, b) in bags.iter().enumerate() {
         put(ENT_BAG, i as u32, true, 0, i32::from(b.x) * POS_ONE + POS_ONE / 2, i32::from(b.y) * POS_ONE + POS_ONE / 2, b.total(), 0);
+    }
+    for (i, h) in heals.iter().enumerate() {
+        put(ENT_HEAL, i as u32, true, 0, i32::from(h.x) * POS_ONE + POS_ONE / 2, i32::from(h.y) * POS_ONE + POS_ONE / 2, u16::from(h.amount), 0);
     }
     for e in enemies {
         put(ENT_ENEMY, u32::from(e.id), true, e.kind, e.x, e.y, e.hp, e.state | (e.facing << 7));

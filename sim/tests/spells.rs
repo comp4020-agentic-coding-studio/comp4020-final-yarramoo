@@ -356,7 +356,7 @@ fn hostile_projectile_sections_are_refused() {
     // enemy section (count u32 + round_over u8 x 3 = 7 bytes, F4) end the section.
     let elen_at = 70; // format 4 header
     let elen = u32::from_le_bytes(good[elen_at..elen_at + 4].try_into().unwrap()) as usize;
-    let count_at = elen_at + 4 + elen - 4 - ROUND_TAIL_BYTES - 4 - PROJECTILE_BYTES - 4;
+    let count_at = elen_at + 4 + elen - 4 - 4 - ROUND_TAIL_BYTES - 4 - PROJECTILE_BYTES - 4; // Brief E: the empty heal count sits before the tail
     let mut bad = good.clone();
     bad[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(snapshot::restore(&bad).is_err());
@@ -391,7 +391,7 @@ fn views_carry_bolts_and_spell_state() {
     push(&mut s, encode_cast(1, 0, RIGHT, 5));
     s.step();
     let mut out = vec![0u8; 80 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, [0; ROUND_TAIL_BYTES], false, s.tick, &mut out, 80);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &[], [0; ROUND_TAIL_BYTES], false, s.tick, &mut out, 80);
     let last = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
     assert_eq!((last[0], u32::from_le_bytes(last[1..5].try_into().unwrap()), last[6]), (ENT_PROJECTILE, 1, 0));
     assert_eq!(u16::from_le_bytes(last[15..17].try_into().unwrap()), 5);

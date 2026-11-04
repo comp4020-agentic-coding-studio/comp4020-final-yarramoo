@@ -44,6 +44,8 @@ export const EV_ENEMY_DEATH = 12;
 export const EV_ROUND_END = 13;
 /** F6b: the lobby countdown completed; the round is running. */
 export const EV_ROUND_START = 15;
+/** Heal taken (Brief E): `player` = taker, a = hit points gained, b and c = the heal's cell x, y. */
+export const EV_HEAL = 16;
 /** Cause of a death (`EV_DEATH.b`): a spell id 0..NUM_SPELLS is that spell, then these. */
 export const CAUSE_FIRE = 32;
 export const CAUSE_LAVA = 33;
@@ -84,6 +86,8 @@ export const ENT_ENEMY = 5;
 export const ENT_ROUND = 6;
 /** F6b: a player's lobby ready flag: `id` = player, `active` = ready. Only present while the lobby is open. */
 export const ENT_READY = 7;
+/** A heal on the ground (Brief E): `id` = index, `a` = amount, x and y the cell centre in 1/16 cell. */
+export const ENT_HEAL = 8;
 export const NUM_SPELLS = 12;
 export interface EntityView {
   type: number;

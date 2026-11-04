@@ -55,7 +55,7 @@ fn hostile_enemy_bytes_fail_cleanly() {
     let pk = s.pickups.clone();
     let try_decode = |b: &[u8]| decode(b, &mut pk.clone(), 1024, 768);
     assert!(try_decode(&e).is_ok());
-    let at = e.len() - ROUND_TAIL_BYTES - ENEMY_BYTES - 4;
+    let at = e.len() - ROUND_TAIL_BYTES - 4 - ENEMY_BYTES - 4; // the (empty) heal count u32 sits between the enemies and the tail
     let mut c = e.clone();
     c[at..at + 4].copy_from_slice(&(MAX_ENEMIES as u32 + 1).to_le_bytes());
     assert!(try_decode(&c).is_err(), "count over the cap");
@@ -110,7 +110,7 @@ fn the_entities_view_lists_enemies_after_the_players() {
     e.facing = 1;
     s.enemies = vec![e];
     let mut out = vec![0u8; 4000 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, [0; ROUND_TAIL_BYTES], false, s.tick, &mut out, 4000);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &[], [0; ROUND_TAIL_BYTES], false, s.tick, &mut out, 4000);
     let o = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
     assert_eq!(o[0], ENT_ENEMY);
     assert_eq!(u32::from_le_bytes(o[1..5].try_into().unwrap()), 4);

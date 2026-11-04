@@ -197,7 +197,7 @@ fn the_round_state_is_in_the_view_the_snapshot_and_the_hash() {
     kill(&mut s, 0);
     s.step();
     let mut out = vec![0u8; 100 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, s.round_tail(), true, s.tick, &mut out, 100);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &s.heals, s.round_tail(), true, s.tick, &mut out, 100);
     let o = &out[(n - 1) * ENTITY_BYTES..n * ENTITY_BYTES];
     assert_eq!((o[0], o[5], o[6], u16::from_le_bytes([o[15], o[16]]), o[17]), (ENT_ROUND, 1, 0, 1, 1));
     let h = s.state_hash();

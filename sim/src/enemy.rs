@@ -7,7 +7,7 @@
 
 use crate::entities::*;
 use crate::materials::*;
-use crate::rng::{rng, SALT_BOSS_RING, SALT_BOSS_SUMMON, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
+use crate::rng::{rng, SALT_HEAL_DROP, SALT_BOSS_RING, SALT_BOSS_SUMMON, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
 use crate::sim::Sim;
 use crate::spells::{isqrt, BOMB, FIRE_BOLT};
 use crate::tuning::*;
@@ -577,6 +577,8 @@ impl Sim {
         let mut dead = Vec::new();
         let mut bursts = Vec::new();
         let mut boss_died = false;
+        let (seed, drops_heals) = (self.seed, self.cfg.has_enemies());
+        let mut heal_at = Vec::new();
         self.enemies.retain(|e| {
             if e.hp != 0 {
                 return true;
@@ -588,10 +590,18 @@ impl Sim {
             if e.kind == ENEMY_ACID_SLIME {
                 bursts.push((e.x >> POS_SHIFT, (e.y >> POS_SHIFT) - 2));
             }
+            // Brief E: a heal drops one cell above the feet, on a counter-based 1-in-N draw (the boss always).
+            let (cx, cy) = (e.x >> POS_SHIFT, e.y >> POS_SHIFT);
+            if drops_heals && (e.kind == ENEMY_BOSS || rng(seed, tick, cx as u32, cy as u32, SALT_HEAL_DROP).is_multiple_of(HEAL_DROP_ONE_IN)) {
+                heal_at.push((cx, cy - 1));
+            }
             dead.push(Event { kind: EV_ENEMY_DEATH, player: if credited { e.last_hit_by } else { 0 }, a: e.x, b: e.y, c: i32::from(e.kind) });
             false
         });
         self.events.extend(dead);
+        for at in heal_at {
+            self.drop_heal(at);
+        }
         if boss_died {
             self.round_started |= ROUND_BOSS_KILLED;
         }

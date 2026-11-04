@@ -133,6 +133,17 @@ pub const MAX_BAGS: usize = 64;
 /// A drop within this many cells (Chebyshev: `max(|dx|, |dy|)`) of an existing bag merges into it.
 pub const BAG_MERGE_CELLS: i32 = 8;
 
+// ---- heal pickups (Brief E) ------------------------------------------------------------------------------
+
+/// A killed enemy drops a heal when `rng(seed, tick, x, y, SALT_HEAL_DROP) % HEAL_DROP_ONE_IN == 0`; the boss always does.
+pub const HEAL_DROP_ONE_IN: u32 = 3;
+/// Hit points a heal restores (capped at `HEALTH_MAX`).
+pub const HEAL_AMOUNT: u8 = 25;
+/// Ticks a heal lasts: 60 s at 60 ticks a second.
+pub const HEAL_LIFETIME: u32 = 3600;
+/// At most this many heals exist; a new one past the cap evicts the oldest (index 0).
+pub const MAX_HEALS: usize = 16;
+
 // ---- pickup spells by depth band (F3) ------------------------------------------------------------------
 
 /// Spells a pickup spot can give, `(spell id, weight)`, by band (0 shallow, 1 deep). Chosen per spot by

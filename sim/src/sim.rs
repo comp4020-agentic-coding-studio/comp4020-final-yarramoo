@@ -1,7 +1,7 @@
 //! The simulation instance: grid + tick + queued inputs.
 
 use crate::config::{IntoRoom, RoomConfig, CONFIG_BYTES, TERRAIN_CAVES, TERRAIN_EMPTY_BOX, TERRAIN_SOLID_BOX};
-use crate::entities::{self, Bag, Enemy, Event, Pickup, Player, Projectile, EV_PICKUP, EV_ROUND_END, EV_ROUND_START, EV_SPAWN};
+use crate::entities::{self, Bag, Enemy, Event, Heal, Pickup, Player, Projectile, EV_PICKUP, EV_ROUND_END, EV_ROUND_START, EV_SPAWN};
 use crate::grid::{is_structural, Grid};
 use crate::hash;
 use crate::input::{decode, Input};
@@ -44,6 +44,8 @@ pub struct Sim {
     pub projectiles: Vec<Projectile>,
     /// Dropped bags, in spawn order (game worlds only; the sandbox has none). State: hashed and snapshotted.
     pub bags: Vec<Bag>,
+    /// Heals dropped by killed enemies, in spawn order (Survival only). State: hashed and snapshotted.
+    pub heals: Vec<Heal>,
     /// Enemies, sorted by id (Survival only). State: hashed and snapshotted. Placed by the generator, never spawned later.
     pub enemies: Vec<Enemy>,
     /// Scratch: cells examined by enemy collision this tick (the work count the report measures). Not state.
@@ -79,7 +81,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), enemies, round_over: 0, round_started: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -475,6 +477,7 @@ impl Sim {
             }
         }
         self.update_bags();
+        self.update_heals();
         if self.pickups.is_empty() || self.in_lobby() {
             return;
         }
@@ -550,7 +553,7 @@ impl Sim {
         if !self.cfg.has_players() {
             return Vec::new(); // the sandbox has no entities, and its hashes stay what they were
         }
-        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, self.round_tail())
+        entities::encode(&self.players, &self.pickups, &self.projectiles, &self.bags, &self.enemies, &self.heals, self.round_tail())
     }
 
     pub fn state_hash(&mut self) -> u64 {

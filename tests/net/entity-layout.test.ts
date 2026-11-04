@@ -31,7 +31,7 @@ describe("server's snapshot entity parser matches the sim", () => {
   // The entity section is players, pickups, projectiles, bags, each behind a u32 count (sim/src/entities.rs). The
   // server reads only the player section, which must stay first; this pins where the bag section begins, using a
   // real sim that has a dead player and a bag, so a reordering shows up here and not in production.
-  it("sections are ordered players, pickups, projectiles, bags, enemies, round bytes, with the bag a dead player dropped", () => {
+  it("sections are ordered players, pickups, projectiles, bags, enemies, heals, round bytes, with the bag a dead player dropped", () => {
     const sim = loadSim(wasmBytes);
     sim.init(5n, 1);
     sim.pushInput(encodeJoin(3));
@@ -76,8 +76,11 @@ describe("server's snapshot entity parser matches the sim", () => {
     // F4: an enemies section (u32 count, ENEMY_BYTES 35 each) then the round tail (over, started, result, lobby_since u32) closes the block.
     const ENEMY = 35;
     const ne = e.getUint32(o, true);
-    o += 4 + ne * ENEMY + 11;
-    expect([np, nj, nb, ne]).toEqual([1, 0, 1, 0]); // a non-Survival world has no enemies
+    o += 4 + ne * ENEMY;
+    // Brief E: a heals section (u32 count, HEAL_BYTES 9 each) follows the enemies, before the round tail.
+    const nh = e.getUint32(o, true);
+    o += 4 + nh * 9 + 11;
+    expect([np, nj, nb, ne, nh]).toEqual([1, 0, 1, 0, 0]); // a non-Survival world has no enemies or heals
     expect(nk).toBeGreaterThan(0);
     expect(o).toBe(elen);
     // The bag is the one the view reports: x, y are its cell, then the charges (just the pickup's grant).

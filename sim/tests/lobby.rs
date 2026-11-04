@@ -398,7 +398,7 @@ fn the_view_carries_the_phase_ready_flags_and_countdown() {
     s.step();
     let view = |s: &Sim| {
         let mut out = vec![0u8; 400 * ENTITY_BYTES];
-        let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, s.round_tail(), true, s.tick, &mut out, 400);
+        let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &s.heals, s.round_tail(), true, s.tick, &mut out, 400);
         (0..n).map(|i| out[i * ENTITY_BYTES..(i + 1) * ENTITY_BYTES].to_vec()).collect::<Vec<_>>()
     };
     let v = view(&s);

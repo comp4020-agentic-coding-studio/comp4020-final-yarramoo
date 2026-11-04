@@ -670,6 +670,55 @@ impl Sim {
         }
     }
 
+    /// Put a heal on the ground at `cell` (Brief E). At `MAX_HEALS` the oldest (index 0) is evicted first.
+    pub fn drop_heal(&mut self, cell: (i32, i32)) {
+        if self.heals.len() >= MAX_HEALS {
+            self.heals.remove(0);
+        }
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        self.heals.push(Heal { x: cell.0.clamp(0, w - 1) as u16, y: cell.1.clamp(0, h - 1) as u16, amount: HEAL_AMOUNT, expires_at: self.tick.wrapping_add(HEAL_LIFETIME) });
+    }
+
+    /// Heals, once a tick, right after bags: expire, fall one cell, then be taken by the lowest-id living player
+    /// below full health whose hitbox covers the cell (a full-health player leaves it for a teammate).
+    /// At most `MAX_HEALS` of them, a few cell reads each.
+    ///
+    /// Sleep invisibility, as for bags: the fall only reads the cell below and never writes a cell, a sleeping
+    /// chunk's cells are unchanged this tick, and the heal's own state lives in `Sim.heals`, outside the grid.
+    pub(crate) fn update_heals(&mut self) {
+        if self.heals.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        self.heals.retain(|h| tick < h.expires_at);
+        let (w, h) = (self.grid.w, self.grid.h);
+        for k in self.heals.iter_mut() {
+            let (x, y) = (usize::from(k.x), usize::from(k.y));
+            if y + 1 < h {
+                let m = self.grid.mat[(y + 1) * w + x];
+                if m == EMPTY || is_gas(m) {
+                    k.y += 1;
+                }
+            }
+        }
+        for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            let mut i = 0;
+            while i < self.heals.len() && p.health < HEALTH_MAX {
+                let k = &self.heals[i];
+                let (hx, hy) = (i32::from(k.x), i32::from(k.y));
+                if hx < x0 || hx > x1 || hy < y0 || hy > y1 {
+                    i += 1;
+                    continue;
+                }
+                let k = self.heals.remove(i);
+                let gained = k.amount.min(HEALTH_MAX - p.health);
+                p.health += gained;
+                self.events.push(Event { kind: EV_HEAL, player: p.id, a: i32::from(gained), b: hx, c: hy });
+            }
+        }
+    }
+
     /// An explosion of radius `r` cells at (`cx`, `cy`): `EV_EXPLODE` once, then for each alive player in id
     /// order, linear damage (`EXPLOSION_DAMAGE_MAX` at the centre, 0 at `r`) and knockback within 1.5 r.
     /// A non-zero `owner` becomes the victim's last hitter unless the victim is the owner (gunpowder passes 0,

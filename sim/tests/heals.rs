@@ -1,6 +1,4 @@
 //! Brief E: heal drops from killed enemies. Drop rule, fall, pickup, expiry, cap, event, view, snapshot, sleep.
-// Commit 1 of the brief: red tests, gated off until the Heal entity exists (commit 2 removes this line).
-#![cfg(any())]
 use sim::config::RoomConfig;
 use sim::entities::*;
 use sim::input::encode_join;
@@ -49,7 +47,7 @@ fn dying(s: &mut Sim, kind: u8, x: i32) {
 
 /// The documented draw, recomputed here from the enemy's cell.
 fn passes(seed: u64, tick: u32, x: i32) -> bool {
-    rng(seed, tick, x as u32, 200, SALT_HEAL_DROP) % HEAL_DROP_ONE_IN == 0
+    rng(seed, tick, x as u32, 200, SALT_HEAL_DROP) .is_multiple_of(HEAL_DROP_ONE_IN)
 }
 
 #[test]
