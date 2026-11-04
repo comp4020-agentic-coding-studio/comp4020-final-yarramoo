@@ -218,7 +218,7 @@ let lastRumble = 0;
 let enemyBoltSeen = new Set<number>();
 let bossPhase = 0;
 let bossHud: { hp: number; max: number; phase: number; x: number; y: number } | null = null;
-const ENEMY_MAX_HP = [20, 30, 60, 90, 800];
+const ENEMY_MAX_HP = [20, 30, 60, 90, 800, 40, 30];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
 let lastFxAt = 0;

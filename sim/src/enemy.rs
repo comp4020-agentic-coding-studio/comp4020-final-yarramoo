@@ -110,6 +110,62 @@ impl Sim {
         e.vy += (wy - i32::from(e.vy)).signum() as i16;
     }
 
+    /// Lava wisp and Frost sprite (X2): a slow flier. Hunts the nearest player within `WISP_AGGRO_CELLS`, closing to
+    /// `WISP_NEAR_CELLS` (contact is its attack), else bobs. While hunting it leaves a trail cell (Lava for the wisp,
+    /// Ice for the sprite) in the Empty cell at its centre every `WISP_TRAIL_EVERY` ticks, within the per-tick budget
+    /// `trail` shared by all of them, and not into a box that already holds `WISP_TRAIL_LOCAL_MAX` cells of it.
+    fn wisp_ai(&mut self, e: &mut Enemy, st: EnemyStats, targets: &[Target], trail: &mut u32) {
+        let tick = self.tick;
+        let mid = st.h * POS_ONE / 2;
+        let mut best: Option<(i64, i32, i32)> = None;
+        for &(_, px, py) in targets {
+            let (dx, dy) = (px - e.x, py - CHEST * POS_ONE - (e.y - mid));
+            let d2 = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+            if best.is_none_or(|(b, _, _)| d2 < b) {
+                best = Some((d2, dx, dy));
+            }
+        }
+        let bob = if (tick / 32).is_multiple_of(2) { 1 } else { -1 };
+        let aggro = i64::from(WISP_AGGRO_CELLS * POS_ONE);
+        let (mut wx, mut wy) = (0, bob);
+        e.state &= !1;
+        if let Some((d2, dx, dy)) = best.filter(|&(d2, _, _)| d2 <= aggro * aggro) {
+            e.state |= 1;
+            if d2 > i64::from(WISP_NEAR_CELLS * POS_ONE) * i64::from(WISP_NEAR_CELLS * POS_ONE) {
+                if dx.abs() * 2 > dy.abs() {
+                    wx = dx.signum() * WISP_SPEED;
+                }
+                if dy.abs() * 2 > dx.abs() {
+                    wy = dy.signum() * WISP_SPEED;
+                }
+            }
+            if dx != 0 {
+                e.facing = u8::from(dx > 0);
+            }
+        }
+        e.vx += (wx - i32::from(e.vx)).signum() as i16;
+        e.vy += (wy - i32::from(e.vy)).signum() as i16;
+        if e.state & 1 == 1 && *trail > 0 && tick.wrapping_add(u32::from(e.id)).is_multiple_of(WISP_TRAIL_EVERY) {
+            let m = if e.kind == ENEMY_WISP { LAVA } else { ICE };
+            let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+            let (cx, cy) = (e.x >> POS_SHIFT, (e.y - mid) >> POS_SHIFT);
+            if cx >= 0 && cy >= 0 && cx < w && cy < h && self.grid.mat[(cy * w + cx) as usize] == EMPTY {
+                let r = WISP_TRAIL_RADIUS;
+                let mut near = 0u32;
+                for y in (cy - r).max(0)..=(cy + r).min(h - 1) {
+                    for x in (cx - r).max(0)..=(cx + r).min(w - 1) {
+                        near += u32::from(self.grid.mat[(y * w + x) as usize] == m);
+                    }
+                }
+                self.enemy_work += ((2 * r + 1) * (2 * r + 1)) as u32;
+                if near < WISP_TRAIL_LOCAL_MAX {
+                    self.grid.set((cy * w + cx) as usize, m, 0);
+                    *trail -= 1;
+                }
+            }
+        }
+    }
+
     /// Phase 2+: on ticks where `(tick + id) % BOSS_SUMMON_TICKS == 150`, up to `BOSS_SUMMON_PER_CAST` imps appear in
     /// rng-chosen EMPTY 5 x 4 pockets inside the arena (`BOSS_SUMMON_TRIES` tries each, 20 cells read per try), while
     /// fewer than `BOSS_SUMMONS_ALIVE` summoned imps live, the room has space, and the fight total is under
@@ -337,12 +393,13 @@ impl Sim {
         }
         let targets = self.alive_targets();
         let mut trail = ACID_TRAIL_PER_TICK;
+        let mut wisp_trail = WISP_TRAIL_PER_TICK;
         for i in self.stepping_set(&targets) {
-            self.step_enemy(i, &targets, &mut trail);
+            self.step_enemy(i, &targets, &mut trail, &mut wisp_trail);
         }
     }
 
-    fn step_enemy(&mut self, i: usize, targets: &[Target], trail: &mut u32) {
+    fn step_enemy(&mut self, i: usize, targets: &[Target], trail: &mut u32, wisp_trail: &mut u32) {
         let tick = self.tick;
         let mut e = self.enemies[i].clone();
         let st = ENEMY_STATS[usize::from(e.kind)];
@@ -367,6 +424,13 @@ impl Sim {
         if e.kind == ENEMY_IMP {
             self.imp_ai(&mut e, st, targets);
             self.integrate(&mut e, st, false);
+            self.enemies[i] = e;
+            return;
+        }
+        if e.kind == ENEMY_WISP || e.kind == ENEMY_FROST {
+            self.wisp_ai(&mut e, st, targets, wisp_trail);
+            self.integrate(&mut e, st, false);
+            self.enemy_contact(&mut e, st);
             self.enemies[i] = e;
             return;
         }

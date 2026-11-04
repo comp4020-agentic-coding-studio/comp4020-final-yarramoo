@@ -64,9 +64,13 @@ const IMP_COL: Record<string, [number, number, number]> = { r: [0.9, 0.3, 0.12],
 const ACID_IDLE = [".ggggg.", "glllggg", "ggegegg", "dddddd.", ".a..a.."];
 const ACID_SQUASH = ["ggggggg", "ggegegg", "dddddda"];
 const ACID_COL: Record<string, [number, number, number]> = { g: [0.35, 0.55, 0.1], l: [0.6, 0.8, 0.2], d: [0.18, 0.3, 0.06], e: [0.95, 0.95, 0.2], a: [0.7, 1, 0.2] };
+const WISP = [".o.y.o.", "ooyyyoo", "oyeyeyo", ".ooyoo.", "..o.o.."];
+const WISP_COL: Record<string, [number, number, number]> = { o: [1, 0.35, 0.05], y: [1, 0.8, 0.2], e: [1, 1, 0.9] };
+const FROST = ["..i.i..", ".iwwwi.", "iwewewi", ".iwwwi.", "..i.i.."];
+const FROST_COL: Record<string, [number, number, number]> = { i: [0.45, 0.8, 1], w: [0.85, 0.96, 1], e: [0.1, 0.2, 0.5] };
 const WORM = [".ppppp.", "pppppdp", "pepepdp", "pttpppp", ".ddppd."];
 const WORM_COL: Record<string, [number, number, number]> = { p: [0.85, 0.5, 0.5], d: [0.55, 0.3, 0.32], t: [1, 1, 0.9], e: [0.1, 0.05, 0.05] };
-const HIT_COL: Record<string, [number, number, number]> = Object.fromEntries("rowyegldatp".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
+const HIT_COL: Record<string, [number, number, number]> = Object.fromEntries("rowyegldatpi".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
 
 // The Deep Mage (24 wide, 26 tall incl. staff): h hood, f face glow, r robe, R robe shade, s sleeve, t staff, g staff gem.
 const BOSS = [
@@ -120,6 +124,9 @@ export function pushEnemy(rects: Rect[], kind: number, px: number, py: number, a
   if (kind === 1) {
     rows = Math.floor(now / 140) % 2 === 0 ? IMP_A : IMP_B;
     pal = IMP_COL;
+  } else if (kind === 5 || kind === 6) {
+    rows = kind === 5 ? WISP : FROST;
+    pal = kind === 5 ? WISP_COL : FROST_COL;
   } else if (kind === 2) {
     rows = air === "ground" ? ACID_IDLE : ACID_SQUASH;
     pal = ACID_COL;

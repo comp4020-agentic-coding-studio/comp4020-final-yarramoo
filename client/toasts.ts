@@ -46,7 +46,7 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
     text = k ? `${k} dissolved ${v} in acid` : `${v} dissolved in acid`;
   } else if (d.cause >= 40 && d.cause < 48) {
     // 40 + enemy kind: 0 slime, 1 imp, 2 acid slime, 3 worm, 4 the Deep Mage.
-    const how = ["was slain by a slime", "was burned by an imp", "was dissolved by an acid slime", "was eaten by a worm", "was struck down by the Deep Mage"][d.cause - 40];
+    const how = ["was slain by a slime", "was burned by an imp", "was dissolved by an acid slime", "was eaten by a worm", "was struck down by the Deep Mage", "was scorched by a lava wisp", "was frozen by a frost sprite"][d.cause - 40];
     text = `${v} ${how ?? "was slain by a monster"}`;
   } else {
     text = `${v} died`;
@@ -61,7 +61,7 @@ export function formatAchievement(id: string): string | null {
 }
 
 /** Enemy kinds by index (sim ENEMY_STATS order), singular display names. */
-export const ENEMY_NAMES = ["Slime", "Fire imp", "Acid slime", "Worm", "Deep Mage"];
+export const ENEMY_NAMES = ["Slime", "Fire imp", "Acid slime", "Worm", "Deep Mage", "Lava wisp", "Frost sprite"];
 const CAUSE_ENEMY_BASE = 40;
 
 /**

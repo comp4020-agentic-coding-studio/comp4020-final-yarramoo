@@ -139,6 +139,12 @@ pub const SALT_GEN_ICICLE: u32 = 265;
 pub const SALT_GEN_MOSS: u32 = 266;
 pub const SALT_GEN_MUSH: u32 = 267;
 pub const SALT_GEN_MINE: u32 = 268;
+/// X2 enemy placement: wisp / frost-sprite x and y in the band fallback, and the biome-anchored picks (anchor cell, offsets).
+pub const SALT_GEN_WISP_X: u32 = 270;
+pub const SALT_GEN_WISP_Y: u32 = 271;
+pub const SALT_GEN_FROST_X: u32 = 272;
+pub const SALT_GEN_FROST_Y: u32 = 273;
+pub const SALT_GEN_BIOME_ENEMY: u32 = 274;
 
 #[cfg(test)]
 mod tests {

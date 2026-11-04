@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_WISP, ENEMY_WISPS_L, ENEMY_WISPS_MIN, ENEMY_FROST, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
@@ -548,7 +548,13 @@ pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], arena: Option<&A
     let want = scale_count(w, h, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.shallow_top + 20, (sc.deep_top - 40).max(sc.shallow_top + 60));
     floor_spots(g, seed, pickups, &mut all, ENEMY_SLIME, want, (y_lo, y_hi), (SALT_GEN_ENEMY_X, SALT_GEN_ENEMY_Y), arena);
-    imp_spots(g, seed, &sc, pickups, &mut all, arena);
+    let rows = ((sc.shallow_top + sc.deep_top) / 2, sc.deep_top + 100);
+    imp_spots(g, seed, pickups, &mut all, arena, (ENEMY_IMP, scale_count(w, h, ENEMY_IMPS_L, ENEMY_IMPS_MIN) as usize, rows, (SALT_GEN_IMP_X, SALT_GEN_IMP_Y)));
+    // X2: lava wisps in the deep band, frost sprites in the shallow one.
+    let rows = (sc.deep_top + 40, (sc.repair_depth - 20).max(sc.deep_top + 80));
+    imp_spots(g, seed, pickups, &mut all, arena, (ENEMY_WISP, scale_count(w, h, ENEMY_WISPS_L, ENEMY_WISPS_MIN) as usize, rows, (SALT_GEN_WISP_X, SALT_GEN_WISP_Y)));
+    let rows = (sc.shallow_top + 60, (sc.shallow_top + sc.deep_top) / 2);
+    imp_spots(g, seed, pickups, &mut all, arena, (ENEMY_FROST, scale_count(w, h, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN) as usize, rows, (SALT_GEN_FROST_X, SALT_GEN_FROST_Y)));
     worm_spots(g, seed, &sc, pickups, &mut all, arena);
     let want = scale_count(w, h, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.deep_top + 20, (sc.repair_depth - 20).max(sc.deep_top + 60));
@@ -631,17 +637,16 @@ fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut
 /// Fire imps (F5): open air in the lower shallow band and the top of the deep band, inside a 13 x 13 pocket of Empty
 /// cells (so it never spawns in liquid, gas or against a wall), off the pickups and the spawn column, and apart from
 /// every other enemy. `(x, y)` is the feet cell; the 5x4 body stands above it.
-fn imp_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, arena: Option<&Arena>) {
+fn imp_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, arena: Option<&Arena>, spec: (u8, usize, (i32, i32), (u32, u32))) {
     let (w, h) = (g.w as i32, g.h as i32);
-    let want = scale_count(w, h, ENEMY_IMPS_L, ENEMY_IMPS_MIN) as usize;
-    let (y_lo, y_hi) = ((sc.shallow_top + sc.deep_top) / 2, sc.deep_top + 100);
+    let (kind, want, (y_lo, y_hi), (salt_x, salt_y)) = spec;
     let mut placed = 0usize;
     for k in 0..6000u32 {
         if placed >= want {
             break;
         }
-        let x = 40 + (rng(seed, 0, k, 0, SALT_GEN_IMP_X) % (w - 80) as u32) as i32;
-        let y = y_lo + (rng(seed, 0, k, 0, SALT_GEN_IMP_Y) % (y_hi - y_lo).max(1) as u32) as i32;
+        let x = 40 + (rng(seed, 0, k, 0, salt_x) % (w - 80) as u32) as i32;
+        let y = y_lo + (rng(seed, 0, k, 0, salt_y) % (y_hi - y_lo).max(1) as u32) as i32;
         if y + 7 >= h || (0..13).any(|i| (0..13).any(|j| g.mat[((y - 6 + j) * w + x - 6 + i) as usize] != EMPTY)) {
             continue;
         }
@@ -654,7 +659,7 @@ fn imp_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut 
         if all.iter().any(|&(ox, oy, _)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - y).abs() < 20) {
             continue;
         }
-        all.push((x as u16, y as u16, ENEMY_IMP));
+        all.push((x as u16, y as u16, kind));
         placed += 1;
     }
 }
