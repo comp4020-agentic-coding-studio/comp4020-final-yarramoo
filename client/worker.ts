@@ -20,6 +20,8 @@ import {
 import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
 import {
   ENT_BAG,
+  ENT_HEAL,
+  EV_HEAL,
   ENT_ENEMY,
   ENT_READY,
   ENT_ROUND,
@@ -47,7 +49,7 @@ import {
 } from "../shared/sim.ts";
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
 import type { SfxName } from "./sfx.ts";
-import { Particles, newPoseState, pushBag, pushBolt, pushBomb, pushBoss, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
+import { Particles, newPoseState, pushBag, pushHeal, pushBolt, pushBomb, pushBoss, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELL_WALL, SPELLS } from "./spells.ts";
 import { UNKNOWN_NAME, formatDeath } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
@@ -572,6 +574,15 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     pushBag(rects, cx, cy, now);
   }
 
+  // Heals dropped by killed enemies (Brief E): render-only, drawn from the entity view.
+  for (const e of ents) {
+    if (e.type !== ENT_HEAL) continue;
+    const cx = e.x / 16;
+    const cy = e.y / 16;
+    if (cx < cam.x - 8 || cx > cam.x + cam.vw + 8 || cy < cam.y - 8 || cy > cam.y + cam.vh + 8) continue;
+    pushHeal(rects, cx, cy, now);
+  }
+
   // Enemies: a slime sprite per ENT_ENEMY, hp bar when hurt. Render-only (invariants 1 and 9).
   const liveEnemies = new Set<number>();
   for (const e of ents) {
@@ -834,6 +845,12 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       fx.pickup(e.a + 0.5, e.b + 0.5);
       if (e.player === myId) sfxSelf("bag", quiet);
       else sfxAt("bag", e.a + 0.5, e.b + 0.5, 0.5, quiet);
+    } else if (e.kind === EV_HEAL) {
+      fx.burst(e.b + 0.5, e.c - 1, [1, 0.3, 0.35], 10, 0.03);
+      if (e.player === myId) {
+        sfxSelf("heal", quiet);
+        if (!quiet) send({ type: "toast", text: `+${e.a} health` });
+      } else sfxAt("heal", e.b + 0.5, e.c + 0.5, 0.4, quiet);
     } else if (e.kind === EV_PICKUP) {
       if (e.player === myId) sfxSelf("pickup", quiet);
     }

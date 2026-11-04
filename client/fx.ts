@@ -146,6 +146,17 @@ export function pushBag(rects: Rect[], cx: number, cy: number, now: number): voi
   if (Math.floor(now / 160 + cx) % 9 === 0) rects.push({ x: x0 + 3, y: y0 + 1, w: 1, h: 1, r: 1, g: 1, b: 0.85 });
 }
 
+/** A heal resting on the cell (cx, cy): a red cross about 3 x 3 cells with a gentle pulse, so it reads at 1x zoom. `now` is ms, cosmetic only. */
+export function pushHeal(rects: Rect[], cx: number, cy: number, now: number): void {
+  const pulse = 0.7 + 0.3 * Math.sin(now / 220 + cx * 0.5);
+  const x0 = Math.floor(cx) - 1;
+  const y0 = Math.floor(cy) - 2;
+  const c = { r: 1 * pulse, g: 0.18 * pulse, b: 0.2 * pulse };
+  rects.push({ x: x0 + 1, y: y0, w: 1, h: 3, ...c });
+  rects.push({ x: x0, y: y0 + 1, w: 3, h: 1, ...c });
+  rects.push({ x: x0 + 1, y: y0 + 1, w: 1, h: 1, r: 1, g: 0.85, b: 0.85 });
+}
+
 /** A bomb in flight: round shaded body, a short fuse and a flickering spark tip. */
 export function pushBomb(rects: Rect[], x: number, y: number, now: number): void {
   const x0 = Math.round(x) - 2;
