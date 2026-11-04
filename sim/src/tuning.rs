@@ -164,7 +164,8 @@ pub const ENEMY_IMP: u8 = 1;
 pub const ENEMY_ACID_SLIME: u8 = 2;
 pub const ENEMY_WORM: u8 = 3;
 pub const ENEMY_BOSS: u8 = 4;
-pub const NUM_ENEMY_KINDS: usize = 5;
+pub const ENEMY_COLOSSUS: u8 = 5;
+pub const NUM_ENEMY_KINDS: usize = 6;
 /// At most this many enemies exist (decode refuses more), and at most this many step per tick (lowest ids first).
 /// F5 raised this from 48: at size L the generator places 25 slimes + 8 imps + 10 acid slimes + 8 worms = 51.
 pub const MAX_ENEMIES: usize = 64;
@@ -201,6 +202,8 @@ pub const ENEMY_STATS: [EnemyStats; NUM_ENEMY_KINDS] = [
     EnemyStats { hp: 90, w: 5, h: 4, contact_damage: 20, contact_cooldown: 40, immune: 0, weak: 0 },
     // The Deep Mage (F6): a big flier that makes the lava ring, so immune to fire and lava; contact shove 20.
     EnemyStats { hp: 800, w: 11, h: 14, contact_damage: 20, contact_cooldown: 40, immune: IMMUNE_FIRE | IMMUNE_LAVA, weak: 0 },
+    // X-boss: the Sand Colossus. Its hp is its mass (`COLOSSUS_HP`, must equal this row). Water turns its sand to mud.
+    EnemyStats { hp: 600, w: 11, h: 12, contact_damage: 20, contact_cooldown: 40, immune: 0, weak: WEAK_WATER },
 ];
 /// Enemy damage causes carried by `EV_DEATH`: `CAUSE_ENEMY_BASE + kind` (the environmental range above ends at 35).
 pub const CAUSE_ENEMY_BASE: u8 = 40;
@@ -376,3 +379,29 @@ pub const ROUND_TAIL_BYTES: usize = 12;
 /// A too-long stroke is TRUNCATED from (x0, y0) along the same line, not dropped: the player still sees paint
 /// where the stroke began, and the following segments (which start at their own anchors) carry on.
 pub const MAX_PAINT_STROKE: i32 = 128;
+
+// ---- the Sand Colossus (experiment x-boss) -----------------------------------------------------------------
+
+/// Size L Survival rooms (`RoomConfig::size == 2`) get the Colossus instead of the Deep Mage.
+pub const COLOSSUS_SIZE: u8 = 2;
+pub const COLOSSUS_HP: u16 = 600;
+/// Walk speed (1/16 cell per tick) while grounded and hunting; aggro range in cells.
+pub const COLOSSUS_SPEED: i32 = 3;
+pub const COLOSSUS_AGGRO_CELLS: i32 = 200;
+/// Shedding: one SAND cell per `COLOSSUS_SHED_PER_HP` hp lost, at most `COLOSSUS_SHED_MAX` cells per tick (the rest
+/// of the loss is forgotten, not carried).
+pub const COLOSSUS_SHED_PER_HP: u16 = 2;
+pub const COLOSSUS_SHED_MAX: u16 = 24;
+/// Re-forming: every `COLOSSUS_REFORM_EVERY` ticks (offset by id) it removes up to `COLOSSUS_REFORM_CELLS` SAND cells
+/// within `COLOSSUS_REFORM_R` of its centre (bottom rows first) and regains 1 hp each, up to its maximum.
+/// Scan cost per pass: (2R+1)^2 = 361 cells.
+pub const COLOSSUS_REFORM_EVERY: u32 = 8;
+pub const COLOSSUS_REFORM_CELLS: u32 = 2;
+pub const COLOSSUS_REFORM_R: i32 = 9;
+/// Phase 2+: a sand shower of `COLOSSUS_SHOWER_CELLS` cells above the nearest player, every `COLOSSUS_SHOWER_TICKS`
+/// (phase 3: `COLOSSUS_SHOWER_TICKS_3`), costing the Colossus that many hp (never lethal).
+pub const COLOSSUS_SHOWER_TICKS: u32 = 180;
+pub const COLOSSUS_SHOWER_TICKS_3: u32 = 120;
+pub const COLOSSUS_SHOWER_CELLS: u32 = 10;
+pub const COLOSSUS_SHOWER_RANGE: i32 = 100;
+pub const COLOSSUS_SHOWER_HEIGHT: i32 = 26;

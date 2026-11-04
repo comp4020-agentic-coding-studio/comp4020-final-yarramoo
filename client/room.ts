@@ -893,6 +893,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       stage.append(el);
     }
     el.hidden = false;
+    const nm = el.querySelector(".n");
+    if (nm) nm.textContent = b.max === 600 ? "The Sand Colossus" : "The Deep Mage";
     el.dataset.phase = String(b.phase);
     (el.querySelector("b") as HTMLElement).style.width = `${Math.max(0, Math.min(100, (b.hp * 100) / b.max))}%`;
   }

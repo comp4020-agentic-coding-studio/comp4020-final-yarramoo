@@ -4,9 +4,9 @@ import { MATERIAL_NAMES, SPELL_NAMES } from "../shared/names.ts";
 import { ENT_BAG, ENT_ENEMY, ENT_HEAL, ENT_PICKUP, ENT_PLAYER, type EntityView } from "../shared/sim.ts";
 import { ENEMY_NAMES } from "./toasts.ts";
 
-const ENEMY_MAX_HP = [20, 30, 60, 90, 800];
+const ENEMY_MAX_HP = [20, 30, 60, 90, 800, 600];
 /** Half-width and height (cells) of an enemy's hit box above its feet line, by kind. The Deep Mage is big. */
-const ENEMY_BOX: [number, number][] = [[4, 6], [4, 9], [5, 7], [5, 5], [12, 24]];
+const ENEMY_BOX: [number, number][] = [[4, 6], [4, 9], [5, 7], [5, 5], [12, 24], [6, 13]];
 const SLACK = 1.5;
 
 /** The label for the world point (x, y in cells), or null for nothing worth naming. */

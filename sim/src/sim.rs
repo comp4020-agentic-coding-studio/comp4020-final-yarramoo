@@ -127,7 +127,14 @@ impl Sim {
                     // F6: exactly one boss per Survival world, at the arena centre, hovering `BOSS_HOVER` cells above the floor.
                     // It gets the highest placed id (so ids stay sorted); `stepping_set` steps it first, so id order never starves it.
                     if let Some(a) = &arena {
-                        let mut boss = Enemy::new(v.len() as u16, ENEMY_BOSS, a.cx * POS_ONE + POS_ONE / 2, (a.floor_y - BOSS_HOVER) * POS_ONE);
+                        let mut boss = if cfg.size == COLOSSUS_SIZE {
+                            // X-boss: size L gets the Sand Colossus, standing on the floor; `summons` holds its last-seen hp.
+                            let mut c = Enemy::new(v.len() as u16, ENEMY_COLOSSUS, a.cx * POS_ONE + POS_ONE / 2, a.floor_y * POS_ONE);
+                            c.summons = c.hp;
+                            c
+                        } else {
+                            Enemy::new(v.len() as u16, ENEMY_BOSS, a.cx * POS_ONE + POS_ONE / 2, (a.floor_y - BOSS_HOVER) * POS_ONE)
+                        };
                         boss.phase = 1;
                         v.push(boss);
                     }

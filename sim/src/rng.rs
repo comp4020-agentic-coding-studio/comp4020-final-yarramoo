@@ -129,6 +129,8 @@ pub const SALT_PEBBLES_DIAG: u32 = 255;
 pub const SALT_PAINT_SEED: u32 = 256;
 /// Brief E: whether a killed enemy drops a heal.
 pub const SALT_HEAL_DROP: u32 = 257;
+pub const SALT_COLOSSUS_SHED: u32 = 258;
+pub const SALT_COLOSSUS_SHOWER: u32 = 259;
 
 #[cfg(test)]
 mod tests {

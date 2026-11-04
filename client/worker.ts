@@ -50,7 +50,7 @@ import {
 } from "../shared/sim.ts";
 import { CAST_MIN_INTERVAL_MS, CAST_PAYLOAD_LEN, POS_SEND_EVERY_TICKS } from "../shared/avatar.ts";
 import type { SfxName } from "./sfx.ts";
-import { Particles, newPoseState, pushBag, pushHeal, pushBolt, pushBomb, pushBoss, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
+import { pushColossus, Particles, newPoseState, pushBag, pushHeal, pushBolt, pushBomb, pushBoss, pushEnemy, pushSprite, spriteFor, updatePose, type PoseState } from "./fx.ts";
 import { BOMB_RADIUS, DEATH_TICKS, SPELL_WALL, SPELLS } from "./spells.ts";
 import { lookupHover } from "./hover.ts";
 import { UNKNOWN_NAME, formatDeath, youDiedText } from "./toasts.ts";
@@ -217,7 +217,7 @@ let lastRumble = 0;
 let enemyBoltSeen = new Set<number>();
 let bossPhase = 0;
 let bossHud: { hp: number; max: number; phase: number; x: number; y: number } | null = null;
-const ENEMY_MAX_HP = [20, 30, 60, 90, 800];
+const ENEMY_MAX_HP = [20, 30, 60, 90, 800, 600];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
 let lastFxAt = 0;
@@ -660,6 +660,16 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
       pushBoss(rects, ex, ey, phase, now - es.hitAt < 120, now);
       continue;
     }
+    if (e.sub === 5) {
+      const phase = (e.health >> 2) & 3;
+      if (bossPhase !== phase) {
+        if (bossPhase !== 0) { sfxAt("roar", ex, ey, 1, net === "catching-up" || !!ls?.fastForwarding); fx.burst(ex, ey - 6, [0.85, 0.7, 0.4], 50, 0.1); }
+        bossPhase = phase;
+      }
+      bossHud = { hp: e.a, max: ENEMY_MAX_HP[5], phase, x: ex, y: ey };
+      pushColossus(rects, ex, ey, phase, now - es.hitAt < 120, now);
+      continue;
+    }
     pushEnemy(rects, e.sub, ex, ey, air, now - es.hitAt < 120, e.a / (ENEMY_MAX_HP[e.sub] ?? 20), ENEMY_MAX_HP[e.sub] ?? 20, (e.health & 1) === 1, now);
     // A worm tunnelling near the camera rumbles, at most twice a second.
     if (e.sub === 3 && (e.health & 1) === 1 && now - lastRumble > 500) {
@@ -668,7 +678,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     }
   }
   for (const id of enemySeen.keys()) if (!liveEnemies.has(id)) enemySeen.delete(id);
-  if (!ents.some((e) => e.type === ENT_ENEMY && e.sub === 4)) bossHud = null;
+  if (!ents.some((e) => e.type === ENT_ENEMY && (e.sub === 4 || e.sub === 5))) bossHud = null;
   // The round banner comes from state (a client that caught up or reconnected never saw the one-shot event).
   const round = ents.find((e) => e.type === ENT_ROUND);
   if (round && round.a === 1 && !roundShown && net === "live") {
@@ -880,13 +890,13 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       const es = enemySeen.get(e.a);
       if (es) {
         es.hitAt = now;
-        const col: [number, number, number] = es.kind === 4 ? [0.7, 0.4, 1] : es.kind === 1 ? [1, 0.5, 0.15] : es.kind === 2 ? [0.6, 0.85, 0.2] : es.kind === 3 ? [0.85, 0.5, 0.5] : [0.4, 0.9, 0.4];
+        const col: [number, number, number] = es.kind === 5 ? [0.85, 0.7, 0.4] : es.kind === 4 ? [0.7, 0.4, 1] : es.kind === 1 ? [1, 0.5, 0.15] : es.kind === 2 ? [0.6, 0.85, 0.2] : es.kind === 3 ? [0.85, 0.5, 0.5] : [0.4, 0.9, 0.4];
         fx.burst(es.x, es.y - 2, col, 8, 0.04);
         sfxAt(es.kind === 2 ? "hiss" : "squelch", es.x, es.y, 0.4, quiet);
       }
     } else if (e.kind === EV_ENEMY_DEATH) {
       const dcol: [number, number, number] = e.c === 1 ? [1, 0.5, 0.15] : e.c === 2 ? [0.6, 0.85, 0.2] : e.c === 3 ? [0.85, 0.5, 0.5] : [0.3, 0.85, 0.3];
-      fx.burst(e.a / 16, e.b / 16 - 2, dcol, e.c === 4 ? 90 : 22, 0.06);
+      fx.burst(e.a / 16, e.b / 16 - 2, dcol, e.c >= 4 ? 90 : 22, 0.06);
       if (e.c === 4) fx.burst(e.a / 16, e.b / 16 - 8, [1, 0.8, 0.3], 80, 0.12);
       sfxAt(e.c === 4 ? "bossdeath" : e.c === 1 ? "screech" : e.c === 3 ? "crunch" : "splat", e.a / 16, e.b / 16, 0.6, quiet);
     } else if (e.kind === EV_ROUND_START) {
@@ -1219,7 +1229,7 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
     case "devbosshp": {
       // Dev route only: patch the boss's hp in a snapshot and restore it (the screenshots of each phase). Local avatar rooms only.
       if (import.meta.env.DEV && localSim && avatar) {
-        const b = localSim.entities().find((e) => e.type === ENT_ENEMY && e.sub === 4);
+        const b = localSim.entities().find((e) => e.type === ENT_ENEMY && (e.sub === 4 || e.sub === 5));
         if (b) {
           const snap = localSim.snapshot();
           const dv = new DataView(snap.buffer, snap.byteOffset, snap.byteLength);

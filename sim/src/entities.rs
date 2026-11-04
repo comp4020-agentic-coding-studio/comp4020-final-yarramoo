@@ -464,6 +464,7 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         e.facing = r.u8().ok_or(())?;
         e.state = r.u8().ok_or(())?;
         let boss = kind == ENEMY_BOSS;
+        let colossus = kind == ENEMY_COLOSSUS;
         if e.facing > 1 || e.state > 3 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
             return Err(());
         }
@@ -475,7 +476,7 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         e.summons = r.u16().ok_or(())?;
         // Only the boss has a phase (1..=3) and a summon counter; the counter is bounded, so a summon's id
         // (`id + 1 + summons`) stays far inside u16.
-        let named_ok = if boss { (1..=3).contains(&e.phase) && u32::from(e.summons) <= BOSS_SUMMONS_TOTAL && u32::from(id) + 1 + u32::from(e.summons) < MAX_ENEMY_ID } else { e.phase == 0 && e.summons == 0 };
+        let named_ok = if colossus { (1..=3).contains(&e.phase) && e.summons <= ENEMY_STATS[usize::from(kind)].hp } else if boss { (1..=3).contains(&e.phase) && u32::from(e.summons) <= BOSS_SUMMONS_TOTAL && u32::from(id) + 1 + u32::from(e.summons) < MAX_ENEMY_ID } else { e.phase == 0 && e.summons == 0 };
         if !named_ok {
             return Err(());
         }
