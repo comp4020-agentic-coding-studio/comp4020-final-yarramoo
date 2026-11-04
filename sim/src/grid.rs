@@ -3,11 +3,20 @@
 
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{DIG_RADIUS, DIG_REACH, ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_REMOVED};
+use crate::tuning::{DIG_RADIUS, DIG_REACH, FALL_ISLAND_MAX, FALL_MAX_ISLANDS, ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_REMOVED};
 
 /// Materials that form rigid islands for falling rock v0 (Bedrock anchors them instead).
 pub fn is_structural(m: u8) -> bool {
     matches!(m, ROCK | DIRT | WOOD | ICE | GLASS | COAL)
+}
+
+/// Outcome of trying to move a free island down one cell.
+enum Fall {
+    Moved,
+    /// A live player or enemy hitbox is in the way: wait.
+    Entity,
+    /// Solid below (or the world floor): it has landed.
+    Terrain,
 }
 
 pub const CHUNK: usize = 64;
@@ -85,6 +94,16 @@ pub struct Grid {
     pub island_visits: u32,
     /// Telemetry only: islands crumbled since construction (never hashed).
     pub island_crumbled: u32,
+    /// Telemetry only: cells moved by falling islands since construction (never hashed).
+    pub island_fallen: u32,
+    /// Scratch: the last `flood` stopped because it hit its cell limit (not because it touched an anchor).
+    island_limited: bool,
+    /// STATE (falling rock v0.5, snapshot format 13, hashed): one cell index in each island that is falling now,
+    /// in the order they were found. Re-flooded every tick; at most `FALL_MAX_ISLANDS`.
+    pub falls: Vec<u32>,
+    /// Scratch, set by the sim before `crumble_islands`: hitbox rectangles (x0, y0, x1, y1 inclusive, cells) of
+    /// live players and enemies that a falling island must never be written over.
+    pub fall_blockers: Vec<(i32, i32, i32, i32)>,
 }
 
 /// Explosions resolved per tick. Bounds the per-tick cost of a chain (D-022).
@@ -121,6 +140,10 @@ impl Grid {
             island_stack: Vec::new(),
             island_visits: 0,
             island_crumbled: 0,
+            island_fallen: 0,
+            island_limited: false,
+            falls: Vec::new(),
+            fall_blockers: Vec::new(),
         }
     }
 
@@ -232,99 +255,216 @@ impl Grid {
         }
     }
 
-    /// Falling rock v0: for each queued seed flood the 4-connected structural cells. A fill that reaches
-    /// `ISLAND_MAX` cells (or the remaining `ISLAND_WORK_MAX` budget), touches Bedrock or the world edge is
-    /// anchored and left alone; any other island crumbles to Pebbles (Ice to Water). Seeds beyond the budget are
-    /// dropped, so the queue is always empty on return (no hidden state). Reads neither `awake` nor `active`.
-    pub fn crumble_islands(&mut self) {
-        self.island_visits = 0;
-        if self.island_removed.is_empty() {
-            return;
-        }
+    fn next_stamp(&mut self) -> u32 {
         self.island_tick = self.island_tick.wrapping_add(1);
         if self.island_tick == 0 {
             self.island_stamp.fill(0);
             self.island_anchor.fill(0);
             self.island_tick = 1;
         }
-        let stamp = self.island_tick;
-        let removed = core::mem::take(&mut self.island_removed);
-        let w = self.w;
-        'seeds: for &r in &removed {
-          let r = r as usize;
-          let (rx, ry) = (r % w, r / w);
-          for (dx, dy) in [(0isize, -1isize), (-1, 0), (1, 0), (0, 1)] {
-            let Some((nx, ny)) = self.off(rx, ry, dx, dy) else { continue };
-            let s = ny * w + nx;
-            let used = self.island_visits as usize;
-            if used >= ISLAND_WORK_MAX {
-                break 'seeds;
+        self.island_tick
+    }
+
+    /// Flood the 4-connected structural cells from `s` into `island_cells`. Returns true when anchored: Bedrock or
+    /// the world edge touched, `limit` cells reached, or an earlier flood this pass proved a neighbour anchored.
+    /// An anchored flood marks everything it reached or queued in `island_anchor` (D-174).
+    fn flood(&mut self, s: usize, stamp: u32, limit: usize) -> bool {
+        self.island_cells.clear();
+        self.island_stack.clear();
+        self.island_stamp[s] = stamp;
+        self.island_stack.push(s as u32);
+        let mut anchored = false;
+        self.island_limited = false;
+        while let Some(c) = self.island_stack.pop() {
+            let c = c as usize;
+            self.island_visits += 1;
+            self.island_cells.push(c as u32);
+            if self.island_cells.len() >= limit {
+                self.island_limited = true;
+                anchored = true;
+                break;
             }
-            if self.island_stamp[s] == stamp || !is_structural(self.mat[s]) {
-                continue;
+            let (x, y) = (c % self.w, c / self.w);
+            if x == 0 || y == 0 || x + 1 == self.w || y + 1 == self.h {
+                anchored = true;
+                break;
             }
-            let limit = ISLAND_MAX.min(ISLAND_WORK_MAX - used);
-            self.island_cells.clear();
-            self.island_stack.clear();
-            self.island_stamp[s] = stamp;
-            self.island_stack.push(s as u32);
-            let mut anchored = false;
-            while let Some(c) = self.island_stack.pop() {
-                let c = c as usize;
-                self.island_visits += 1;
-                self.island_cells.push(c as u32);
-                if self.island_cells.len() >= limit {
+            for j in [c - self.w, c - 1, c + 1, c + self.w] {
+                let m = self.mat[j];
+                if m == BEDROCK {
                     anchored = true;
                     break;
-                }
-                let (x, y) = (c % self.w, c / self.w);
-                if x == 0 || y == 0 || x + 1 == self.w || y + 1 == self.h {
-                    anchored = true;
-                    break;
-                }
-                for j in [c - self.w, c - 1, c + 1, c + self.w] {
-                    let m = self.mat[j];
-                    if m == BEDROCK {
+                } else if is_structural(m) {
+                    if self.island_anchor[j] == stamp {
                         anchored = true;
                         break;
-                    } else if is_structural(m) {
-                        if self.island_anchor[j] == stamp {
-                            // Joined to a region an earlier flood in this pass already proved anchored.
-                            anchored = true;
-                            break;
-                        }
-                        if self.island_stamp[j] != stamp {
-                            self.island_stamp[j] = stamp;
-                            self.island_stack.push(j as u32);
-                        }
+                    }
+                    if self.island_stamp[j] != stamp {
+                        self.island_stamp[j] = stamp;
+                        self.island_stack.push(j as u32);
                     }
                 }
             }
-            if anchored {
-                // Everything this flood reached or queued is connected to an anchor. Remember it, or a later
-                // seed's flood would find these cells already stamped, skip them, and mistake the thin rock
-                // strip it is standing on for a free island.
-                for k in 0..self.island_cells.len() {
-                    let c = self.island_cells[k] as usize;
-                    self.island_anchor[c] = stamp;
-                }
-                for k in 0..self.island_stack.len() {
-                    let c = self.island_stack[k] as usize;
-                    self.island_anchor[c] = stamp;
-                }
+        }
+        if anchored {
+            // Everything this flood reached or queued is connected to an anchor. Remember it, or a later
+            // seed's flood would find these cells already stamped, skip them, and mistake the thin rock
+            // strip it is standing on for a free island.
+            for k in 0..self.island_cells.len() {
+                let c = self.island_cells[k] as usize;
+                self.island_anchor[c] = stamp;
+            }
+            for k in 0..self.island_stack.len() {
+                let c = self.island_stack[k] as usize;
+                self.island_anchor[c] = stamp;
+            }
+        }
+        anchored
+    }
+
+    /// Move the island in `island_cells` (a complete free island, stamped `stamp`) down one cell, keeping its
+    /// materials. Every cell under its bottom edge must be Empty, a gas or a liquid (a liquid is displaced upward:
+    /// the cells swap bottom-up, so the fluid bubbles to the top of each column run) and outside every blocker
+    /// rectangle (a live player or enemy hitbox, so cells are never written over one).
+    fn fall_one(&mut self, stamp: u32) -> Fall {
+        let w = self.w;
+        let mut blocked_by_entity = false;
+        for k in 0..self.island_cells.len() {
+            let below = self.island_cells[k] as usize + w;
+            if below >= self.w * self.h {
+                return Fall::Terrain;
+            }
+            if self.island_stamp[below] == stamp {
                 continue;
             }
-            self.island_crumbled += 1;
-            let cells = core::mem::take(&mut self.island_cells);
-            for &c in &cells {
-                let c = c as usize;
-                // Direct write, not `set`: the island's own cells must not seed further floods.
-                self.mat[c] = if self.mat[c] == ICE { WATER } else { PEBBLES };
-                self.aux[c] = 0;
-                self.touch(c);
+            // Review N4 F2: only structural material and Bedrock stop a fall. A powder (Sand, Pebbles, Seed) is
+            // displaced upward like a liquid, so an island can never rest on something that later moves away.
+            if is_structural(self.mat[below]) || self.mat[below] == BEDROCK {
+                return Fall::Terrain;
             }
-            self.island_cells = cells;
-          }
+            let (bx, by) = ((below % w) as i32, (below / w) as i32);
+            if self.fall_blockers.iter().any(|&(x0, y0, x1, y1)| bx >= x0 && bx <= x1 && by >= y0 && by <= y1) {
+                blocked_by_entity = true;
+            }
+        }
+        if blocked_by_entity {
+            return Fall::Entity;
+        }
+        self.island_cells.sort_unstable_by(|a, b| b.cmp(a));
+        for k in 0..self.island_cells.len() {
+            let c = self.island_cells[k] as usize;
+            self.mat.swap(c, c + w);
+            self.aux.swap(c, c + w);
+            self.touch(c);
+            self.touch(c + w);
+            // Stamp the new position too, so a second seed in this island (two falling islands that met) is skipped.
+            self.island_stamp[c + w] = stamp;
+        }
+        self.island_fallen += self.island_cells.len() as u32;
+        Fall::Moved
+    }
+
+    /// Falling rock v0.5: every tracked falling island is re-flooded and moves one cell down, or stops.
+    fn fall_step(&mut self) {
+        if self.falls.is_empty() {
+            return;
+        }
+        let stamp = self.next_stamp();
+        // `island_visits` counts the seed pass only; falling floods are bounded by FALL_MAX_ISLANDS x (cap + 1).
+        let visits = self.island_visits;
+        let old = core::mem::take(&mut self.falls);
+        let mut keep = Vec::new();
+        for &s in &old {
+            let s = s as usize;
+            if !is_structural(self.mat[s]) || self.island_stamp[s] == stamp {
+                continue; // dug away, or already moved with another seed's island this tick
+            }
+            if self.flood(s, stamp, FALL_ISLAND_MAX + 1) {
+                if self.island_limited {
+                    // Review N4 F1: free but now too big (two falling islands met): crumble, as a new one would.
+                    // The limit may also mean the flood is big AND anchored; only a sub-cap flood is trusted as
+                    // anchored, so a big one is re-judged with the full seed-pass cap.
+                    let st2 = self.next_stamp();
+                    if !self.flood(s, st2, ISLAND_MAX) {
+                        self.crumble_cells();
+                    }
+                }
+                continue; // landed on, or joined to, something anchored
+            }
+            match self.fall_one(stamp) {
+                Fall::Moved => keep.push((s + self.w) as u32),
+                Fall::Entity => keep.push(s as u32), // wait above the player; resumes when they leave
+                Fall::Terrain => {}
+            }
+        }
+        self.falls = keep;
+        self.island_visits = visits;
+    }
+
+    /// Falling rock: for each queued seed flood the 4-connected structural cells. A fill that reaches
+    /// `ISLAND_MAX` cells (or the remaining `ISLAND_WORK_MAX` budget), touches Bedrock or the world edge is
+    /// anchored and left alone. A free island of at most `FALL_ISLAND_MAX` cells starts falling as itself (tracked
+    /// in `falls`, at most `FALL_MAX_ISLANDS`); any other free island, and any containing Ice, crumbles to Pebbles (Ice to Water). Seeds
+    /// beyond the budget are dropped, so the seed queue is always empty on return. Reads neither `awake` nor `active`.
+    pub fn crumble_islands(&mut self) {
+        self.island_visits = 0;
+        self.find_islands();
+        self.fall_step();
+    }
+
+    /// Crumble the island in `island_cells` to Pebbles (Ice to Water).
+    fn crumble_cells(&mut self) {
+        self.island_crumbled += 1;
+        let cells = core::mem::take(&mut self.island_cells);
+        for &c in &cells {
+            let c = c as usize;
+            // Direct write, not `set`: the island's own cells must not seed further floods.
+            self.mat[c] = if self.mat[c] == ICE { WATER } else { PEBBLES };
+            self.aux[c] = 0;
+            self.touch(c);
+        }
+        self.island_cells = cells;
+    }
+
+    /// The seed pass of `crumble_islands`: new free islands start falling (registered, moved by `fall_step` in
+    /// the same tick) or crumble.
+    fn find_islands(&mut self) {
+        if self.island_removed.is_empty() {
+            return;
+        }
+        let stamp = self.next_stamp();
+        let removed = core::mem::take(&mut self.island_removed);
+        let w = self.w;
+        'seeds: for &r in &removed {
+            let r = r as usize;
+            let (rx, ry) = (r % w, r / w);
+            for (dx, dy) in [(0isize, -1isize), (-1, 0), (1, 0), (0, 1)] {
+                let Some((nx, ny)) = self.off(rx, ry, dx, dy) else { continue };
+                let s = ny * w + nx;
+                let used = self.island_visits as usize;
+                if used >= ISLAND_WORK_MAX {
+                    break 'seeds;
+                }
+                if self.island_stamp[s] == stamp || !is_structural(self.mat[s]) {
+                    continue;
+                }
+                let limit = ISLAND_MAX.min(ISLAND_WORK_MAX - used);
+                if self.flood(s, stamp, limit) {
+                    continue;
+                }
+                if self.falls.iter().any(|f| self.island_cells.contains(f)) {
+                    continue; // already falling (tracked): `fall_step` moves it
+                }
+                if self.island_cells.len() <= FALL_ISLAND_MAX
+                    && self.falls.len() < FALL_MAX_ISLANDS
+                    && !self.island_cells.iter().any(|&c| self.mat[c as usize] == ICE)
+                {
+                    // Registered where it stands; `fall_step` moves it, or leaves it if it rests on something.
+                    self.falls.push(s as u32);
+                    continue;
+                }
+                self.crumble_cells();
+            }
         }
         self.island_removed = removed;
         self.island_removed.clear();

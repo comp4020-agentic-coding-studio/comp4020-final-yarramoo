@@ -7,8 +7,8 @@ use crate::tuning::LOBBY_IDLE;
 
 pub const MAGIC: &[u8; 4] = b"SAND";
 /// v2 added entities; v3 appended the bag section (D-110); v4 (R0a) replaces the world-kind byte with the 16
-/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_running, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. v10 (Brief W) appends the woken-chunk bitset after the chunk records. v11 (Brief E) adds the heal section (count, then heals) between the enemies and the round tail. v12 (Brief HF) names the packed fields: the round tail is `over, running, boss_killed, result, lobby_since, majority_since` (12 bytes), and each enemy record ends with `phase u8, summons u16` (boss phase and summon counter, zero for other kinds; `state` keeps bits 0-1 and `hop_until` only the next hop). Restore refuses any other version (the game is not live, so no stored state is lost).
-pub const FORMAT_VERSION: u16 = 12;
+/// room-config bytes; v5 (F1) adds Dig, so the player record grows by one spell slot; v6 (F3) adds five spells and widens the bag to every finite spell; v7 (F4) appends the enemy section and `round_over` to the entity bytes; v8 (F4 fix pass) widens the tail to `round_over, round_running, round_result`. v9 (F6b) adds a `ready` byte to each player and `lobby_since` u32 to the round tail. v10 (Brief W) appends the woken-chunk bitset after the chunk records. v11 (Brief E) adds the heal section (count, then heals) between the enemies and the round tail. v12 (Brief HF) names the packed fields: the round tail is `over, running, boss_killed, result, lobby_since, majority_since` (12 bytes), and each enemy record ends with `phase u8, summons u16` (boss phase and summon counter, zero for other kinds; `state` keeps bits 0-1 and `hop_until` only the next hop). v13 (N4, D-189) adds the falling-island list (count u8, then that many u32 cell indices) between the chunk records and the woken bitset. Restore refuses any other version (the game is not live, so no stored state is lost).
+pub const FORMAT_VERSION: u16 = 13;
 const CFG_AT: usize = 4 + 2 + 32 + 8;
 const HEADER: usize = CFG_AT + CONFIG_BYTES + 4 + 2 + 2;
 
@@ -37,6 +37,10 @@ pub fn write(s: &Sim) -> Vec<u8> {
                 v.extend_from_slice(&plane[o..o + CHUNK]);
             }
         }
+    }
+    v.push(s.grid.falls.len() as u8);
+    for &f in &s.grid.falls {
+        v.extend_from_slice(&f.to_le_bytes());
     }
     v.extend_from_slice(&crate::hash::pack_woken(&s.grid.woken));
     v
@@ -106,8 +110,22 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
     let rec = 2 + 2 * CHUNK_AREA;
     // A crafted count must not wrap the length check on wasm32 (usize is 32-bit there).
     let wlen = s.grid.chunk_count().div_ceil(8);
-    if n > s.grid.chunk_count() || n.checked_mul(rec).and_then(|x| x.checked_add(o)).and_then(|x| x.checked_add(wlen)) != Some(b.len()) {
+    if n > s.grid.chunk_count() {
         return Err(());
+    }
+    // Chunk records, then the falling list (count u8 + u32 each), then the woken bitset to the end.
+    let fat = n.checked_mul(rec).and_then(|x| x.checked_add(o)).filter(|&x| x < b.len()).ok_or(())?;
+    let fnum = b[fat] as usize;
+    if fnum > crate::tuning::FALL_MAX_ISLANDS || fat + 1 + 4 * fnum + wlen != b.len() {
+        return Err(());
+    }
+    for k in 0..fnum {
+        let f = u32_at(fat + 1 + 4 * k) as usize;
+        // A falling seed lies on a structural cell, but the chunk records are not copied in yet: check below.
+        if f >= w * h {
+            return Err(());
+        }
+        s.grid.falls.push(f as u32);
     }
     let mut prev: Option<usize> = None;
     for _ in 0..n {
@@ -138,6 +156,10 @@ pub fn restore_with(b: &[u8], base: Option<&crate::sim::Base>) -> Result<Sim, ()
         s.grid.woken[c] = wb[c / 8] >> (c % 8) & 1 == 1;
     }
     if s.grid.chunk_count() % 8 != 0 && wb[wlen - 1] >> (s.grid.chunk_count() % 8) != 0 {
+        return Err(());
+    }
+    // Every falling seed must sit on a structural cell (a crafted list cannot make the sim read nonsense).
+    if s.grid.falls.iter().any(|&f| !crate::grid::is_structural(s.grid.mat[f as usize])) {
         return Err(());
     }
     s.tick = tick;

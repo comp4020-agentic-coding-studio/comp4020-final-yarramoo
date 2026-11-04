@@ -32,11 +32,11 @@ fn pebbles_has_the_agreed_id_and_rules() {
 fn a_freed_island_crumbles_to_pebbles_not_sand() {
     let mut g = Grid::new(N, N);
     fill(&mut g, 0, 120, N, 124, ROCK);
-    fill(&mut g, 100, 100, 105, 105, ROCK);
+    fill(&mut g, 96, 96, 110, 106, ROCK);
     fill(&mut g, 102, 105, 103, 120, ROCK);
     g.set(110 * N + 102, EMPTY, 0);
     g.crumble_islands();
-    assert_eq!(count(&g, 100, 100, 105, 105, PEBBLES), 25);
+    assert_eq!(count(&g, 96, 96, 110, 106, PEBBLES), 140);
     assert_eq!(count(&g, 0, 0, N, N, SAND), 0);
 }
 

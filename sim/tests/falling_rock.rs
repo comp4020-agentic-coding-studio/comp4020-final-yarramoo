@@ -1,4 +1,6 @@
-//! Falling rock v0: cut-free solid islands crumble to Pebbles; anchored ones stay.
+//! Falling rock v0: cut-free solid islands crumble to Pebbles; anchored ones stay. Since v0.5 (D-189) only islands
+//! over `FALL_ISLAND_MAX` cells crumble (smaller ones fall as themselves: tests/falling_islands.rs), so the
+//! crumbling fixtures here are larger than 120 cells.
 use sim::grid::Grid;
 use sim::input::{encode_join, encode_pos};
 use sim::materials::*;
@@ -36,20 +38,22 @@ fn cut(g: &mut Grid, x: usize, y: usize) {
 
 #[test]
 fn freed_block_crumbles_and_falls() {
+    // A 14 x 10 = 140 cell block (over FALL_ISLAND_MAX), joined by the column.
     let mut g = bridged();
+    fill(&mut g, 96, 96, 110, 106, ROCK);
     g.crumble_islands();
-    assert_eq!(count(&g, 100, 100, 105, 105, ROCK), 25, "attached block must not crumble");
+    assert_eq!(count(&g, 96, 96, 110, 106, ROCK), 140, "attached block must not crumble");
     cut(&mut g, 102, 110);
-    // The block plus the nine column cells above the cut are free; the column below stays anchored.
-    assert_eq!(count(&g, 100, 100, 105, 105, ROCK), 0);
-    assert_eq!(count(&g, 100, 100, 105, 105, PEBBLES), 25);
-    assert_eq!(count(&g, 102, 105, 103, 110, PEBBLES), 5);
+    // The block plus the cells of the column above the cut are free; the column below stays anchored.
+    assert_eq!(count(&g, 96, 96, 110, 106, ROCK), 0);
+    assert_eq!(count(&g, 96, 96, 110, 106, PEBBLES), 140);
+    assert_eq!(count(&g, 102, 106, 103, 110, PEBBLES), 4);
     assert_eq!(count(&g, 102, 111, 103, 120, ROCK), 9);
     assert!(g.island_removed.is_empty());
     for t in 0..200 {
         g.step_cells(1, t);
     }
-    assert_eq!(count(&g, 100, 100, 105, 105, PEBBLES), 0, "pebbles should have fallen away from the block site");
+    assert_eq!(count(&g, 96, 96, 110, 106, PEBBLES), 0, "pebbles should have fallen away from the block site");
 }
 
 #[test]
@@ -139,7 +143,7 @@ fn crumbled_sim(sleep: bool) -> Vec<u64> {
         if t == 100 {
             // A rock slab inside the player's active region, joined by a column, then cut.
             for y in 150..158 {
-                for x in 760..772 {
+                for x in 760..780 {
                     s.grid.mat[y * w + x] = ROCK;
                 }
             }
@@ -168,7 +172,7 @@ fn freed_island_in_game_world_actually_crumbles() {
     let mut s = Sim::new(3, 1).unwrap();
     let w = s.grid.w;
     for y in 150..158 {
-        for x in 760..772 {
+        for x in 760..780 {
             s.grid.mat[y * w + x] = ROCK;
         }
     }
@@ -222,19 +226,19 @@ fn large_dig_that_frees_a_slab_crumbles_it() {
     fill(&mut g, 90, 100, 130, 200, ROCK);
     fill(&mut g, 100, 50, 121, 65, ROCK);
     fill(&mut g, 110, 65, 111, 100, ROCK);
-    // Free a 14 x 8 slab (around 112 cells) by erasing a ring of 100+ cells around it.
+    // Free a 16 x 9 slab (144 cells, over FALL_ISLAND_MAX) by erasing a ring of 100+ cells around it.
     for y in 100..140 {
         for x in 90..130 {
-            let slab = (100..114).contains(&x) && (110..118).contains(&y);
-            let ring = (98..116).contains(&x) && (108..120).contains(&y);
+            let slab = (100..116).contains(&x) && (110..119).contains(&y);
+            let ring = (98..118).contains(&x) && (108..121).contains(&y);
             if ring && !slab {
                 g.set(y * N + x, EMPTY, 0);
             }
         }
     }
     g.crumble_islands();
-    assert_eq!(count(&g, 100, 110, 114, 118, ROCK), 0);
-    assert_eq!(count(&g, 100, 110, 114, 118, PEBBLES), 14 * 8);
+    assert_eq!(count(&g, 100, 110, 116, 119, ROCK), 0);
+    assert_eq!(count(&g, 100, 110, 116, 119, PEBBLES), 16 * 9);
 }
 
 #[test]
