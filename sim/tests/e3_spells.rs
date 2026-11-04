@@ -30,13 +30,13 @@ fn floor() -> Grid {
 
 #[test]
 fn ids_and_rules() {
-    assert_eq!((MUD, SALT, SNOW, THERMITE), (22, 23, 24, 25));
+    assert_eq!((MUD, SALT, SNOW, THERMITE), (25, 26, 27, 28));
     for m in [MUD, SALT, SNOW, THERMITE] {
         assert!(paintable(m));
         assert_eq!(material_class(m), CLASS_SOLID);
         assert!(!sim::grid::is_structural(m));
     }
-    assert!(!paintable(26));
+    assert!(!paintable(29));
     assert_eq!(BAG_SPELL_IDS.len(), BAG_SPELLS);
 }
 
@@ -188,6 +188,11 @@ fn new_spells_are_deterministic_and_sleep_invisible() {
                 s.grid.mat[y * w + x] = if x % 3 == 0 { WATER } else { SNOW };
             }
         }
+        // Cells written straight into `mat` are invisible to a sleeping chunk until it is marked: mark after writing
+        // (INT-3: marking only in `arena()` made even Sand diverge at tick 0, a setup fault, not a material).
+        for c in 0..s.grid.chunk_count() {
+            s.grid.mark_chunk(c);
+        }
         let mut hs = vec![];
         for (k, sp) in [12u8, 13, 14, 12].into_iter().enumerate() {
             cast(&mut s, sp, 0);
@@ -232,4 +237,36 @@ fn new_materials_sleep_is_invisible() {
         out
     };
     assert_eq!(go(true), go(false));
+}
+
+/// Each new material alone, painted by input (so every write goes through `Grid::set`) across a chunk boundary
+/// (rows 63/64, columns 63/64), with its trigger arriving late, sleep on against sleep off.
+#[test]
+fn each_new_material_alone_sleeps_invisibly() {
+    use sim::input::encode_paint;
+    for (name, mat, trigger) in [("mud", MUD, FIRE), ("salt", SALT, WATER), ("salt-ice", SALT, ICE), ("snow", SNOW, LAVA), ("snow-pack", SNOW, 0), ("thermite", THERMITE, FIRE)] {
+        let go = |sleep: bool| {
+            let mut s = Sim::new(13, 0).unwrap();
+            s.grid.sleep_enabled = sleep;
+            let mut out = vec![];
+            for t in 1..=700u32 {
+                if t == 1 {
+                    assert_eq!(s.push_input(&encode_paint(1, ROCK, 40, 100, 120, 100, 3)), 0);
+                    assert_eq!(s.push_input(&encode_paint(1, ICE, 60, 98, 70, 98, 1)), 0);
+                }
+                if t == 2 {
+                    assert_eq!(s.push_input(&encode_paint(1, mat, 50, 40, 80, 90, 6)), 0);
+                }
+                if t == 300 && trigger != 0 {
+                    assert_eq!(s.push_input(&encode_paint(1, trigger, 62, 93, 66, 93, 2)), 0);
+                }
+                s.step();
+                if t % 5 == 0 {
+                    out.push(s.state_hash());
+                }
+            }
+            out
+        };
+        assert_eq!(go(true), go(false), "{name}: sleeping changed the result");
+    }
 }
