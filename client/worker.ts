@@ -58,7 +58,8 @@ import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
-const STEP_MS = 1000 / 60;
+let STEP_MS = 1000 / 60;
+let paused = false;
 const MAX_FRAME_STEPS = 4;
 const FF_BUDGET_MS = 12;
 /** While replaying, draw the world at most this often so the visitor sees it evolve without the draw eating replay time. */
@@ -998,6 +999,7 @@ let statStart = 0;
 function frame(now: number) {
   const dt = Math.min(now - last, 250);
   last = now;
+  if (paused) return;
   flushStroke(false);
   if (localSim) {
     acc += dt;
@@ -1168,6 +1170,10 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
         // The boss (kind 4): 14 cells beside it, at its height (feet y minus 7 puts the avatar's feet at its centre line), in open arena air.
         if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell === -6 ? -14 : m.spell < 0 ? 12 : 0), list[0].y / 16 - (m.spell === -3 ? 4 : m.spell === -6 ? 2 : 0));
       }
+      break;
+    case "pace":
+      paused = m.paused;
+      STEP_MS = m.stepMs;
       break;
     case "pointer":
       onPointer(m);

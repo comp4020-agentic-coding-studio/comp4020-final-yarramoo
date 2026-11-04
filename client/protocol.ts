@@ -24,6 +24,8 @@ export type ToWorker =
       spectate: boolean;
     }
   /** Held movement keys, for the avatar controller. */
+  /** Menu backdrop only: pause stepping and drawing, or slow the step rate. Never an input. */
+  | { type: "pace"; paused: boolean; stepMs: number }
   | { type: "keys"; left: boolean; right: boolean; up: boolean }
   /** The tab was hidden or shown: while hidden the avatar sends no Pos and no casts (brief F item 1b). */
   | { type: "hidden"; hidden: boolean }

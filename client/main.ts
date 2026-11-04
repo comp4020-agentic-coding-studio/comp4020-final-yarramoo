@@ -2,7 +2,7 @@
 // location.pathname, the same pattern worldId used to pick a fixed world, just with a third branch
 // (docs/plan-game-modes.md "All routes serve the same bundle").
 import { resolveRoomTarget, startRoom } from "./room.ts";
-import { startMenu } from "./menu.ts";
+import { startMenu, startMenuBackdrop } from "./menu.ts";
 
 const menuRoot = document.getElementById("menu-root") as HTMLDivElement;
 const roomRoot = document.getElementById("room-root") as HTMLDivElement;
@@ -11,6 +11,7 @@ const clean = location.pathname.replace(/\/+$/, "") || "/";
 if (clean === "/") {
   menuRoot.hidden = false;
   startMenu(menuRoot);
+  startMenuBackdrop(menuRoot);
 } else {
   roomRoot.hidden = false;
   resolveRoomTarget(location.pathname)
