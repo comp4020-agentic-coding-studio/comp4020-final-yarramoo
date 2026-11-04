@@ -128,6 +128,29 @@ let avTicks = 0;
 let sinceSentPos = 0;
 let lastSentPos = "";
 let lastPlayersPost = 0;
+let lastTerrainPost = 0;
+const TERRAIN_COLS = 256;
+const TERRAIN_ROWS = 24;
+/** Minimap silhouette: each mask cell is solid when the middle of its block holds a solid material. A 4x4 sample per block, once a second:
+ * 256 x 24 x 16 = ~98k reads, never the full grid. Render-only. */
+function postTerrain(mat: Uint8Array, w: number, h: number) {
+  const mask = new Uint8Array(TERRAIN_COLS * TERRAIN_ROWS);
+  const bw = w / TERRAIN_COLS;
+  const bh = h / TERRAIN_ROWS;
+  for (let r = 0; r < TERRAIN_ROWS; r++) {
+    for (let c = 0; c < TERRAIN_COLS; c++) {
+      let solid = 0;
+      for (let j = 0; j < 4; j++) {
+        for (let i = 0; i < 4; i++) {
+          const m = mat[Math.min(h - 1, Math.floor((r + (j + 0.5) / 4) * bh)) * w + Math.min(w - 1, Math.floor((c + (i + 0.5) / 4) * bw))];
+          if (m === 1 || m === 2 || m === 3 || m === 4 || m === 6 || m === 21) solid++;
+        }
+      }
+      mask[r * TERRAIN_COLS + c] = solid >= 8 ? 1 : 0;
+    }
+  }
+  send({ type: "terrain", cols: TERRAIN_COLS, rows: TERRAIN_ROWS, mask }, [mask.buffer]);
+}
 /** Smoothed display positions of other players, in cells: official positions arrive about a round trip late. */
 const shown = new Map<number, { x: number; y: number }>();
 const POS_KEEPALIVE_TICKS = 30;
@@ -507,7 +530,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   // Other players (and, for a spectator, everyone) from their official positions, smoothed.
   const k = 1 - Math.exp(-dt / 70);
   const rects: Rect[] = [];
-  const list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean }[] = [];
+  const list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean; rgb: [number, number, number] }[] = [];
   const seen = new Set<number>();
   let firstOther: EntityView | null = null;
   let firstAlive: EntityView | null = null;
@@ -532,7 +555,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
         py = s.y;
       }
     }
-    list.push({ id: e.id, name: nameOf(e.id) ?? UNKNOWN_NAME, x: px, y: py, me: e.id === myId, health: e.health, dead: e.health === 0 });
+    list.push({ id: e.id, name: nameOf(e.id) ?? UNKNOWN_NAME, x: px, y: py, me: e.id === myId, health: e.health, dead: e.health === 0, rgb: PLAYER_COLOURS[e.id % PLAYER_COLOURS.length].map((v) => Math.round(v * 255)) as [number, number, number] });
     let ps = poses.get(e.id);
     if (!ps) poses.set(e.id, (ps = newPoseState(px, py, (isMe ? avatar!.facing : e.sub) === 1)));
     if (Math.abs(px - ps.x) + Math.abs(py - ps.y) > 30) ps.x = px, ps.y = py;
@@ -658,6 +681,10 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     lastPlayersPost = now;
     send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer,
       me: spectate || !mine ? null : { health: mine.health, dead, respawnTicks: dead && myDeathTick !== null ? Math.max(0, DEATH_TICKS - (sim.tick() - myDeathTick)) : null } });
+  }
+  if (now - lastTerrainPost >= 1000) {
+    lastTerrainPost = now;
+    postTerrain(sim.matView(), w, h);
   }
   if (showActiveBox) pushActiveBox(rects, ents, w, h);
   return rects;

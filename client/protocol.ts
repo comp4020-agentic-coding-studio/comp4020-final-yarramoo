@@ -77,7 +77,7 @@ export type FromWorker =
   /** Game world, about 30 Hz: who to draw labels for, where the camera is, and avatar state. */
   | {
       type: "players";
-      list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean }[];
+      list: { id: number; name: string; x: number; y: number; me: boolean; health: number; dead: boolean; /** Player colour as 0..255 RGB, for the minimap dot. */ rgb: [number, number, number] }[];
       /** My own health and death countdown (null respawnTicks: unknown, e.g. I joined while dead). Render-only. */
       me: { health: number; dead: boolean; respawnTicks: number | null } | null;
       /** Dropped bags as the entities() view gives them: cell centre in cells and total charges. Render-only. */
@@ -96,6 +96,8 @@ export type FromWorker =
       /** F6b: I arrived after the descent began (the sim made me a dead spectator): offer the choice. */
       late: boolean;
     }
+  /** About 1 Hz: a coarse solid/empty mask of the world for the minimap silhouette, `cols` x `rows`, row-major, 1 = solid. Render-only. */
+  | { type: "terrain"; cols: number; rows: number; mask: Uint8Array }
   /** A sound for the main thread to synthesise (client/sfx.ts). `vol` 0..1 and `pan` -1..1 are already worked out from the camera distance; `mag` 0..1 scales explosions. Never sent during replay. */
   | { type: "sfx"; name: SfxName; vol: number; pan: number; mag: number }
   /** A line for the death feed, already formatted from a plain-name death event. */

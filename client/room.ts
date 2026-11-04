@@ -577,6 +577,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       case "players":
         onPlayers(m);
         break;
+      case "terrain":
+        drawTerrain(m.cols, m.rows, m.mask);
+        break;
       case "sfx":
         play(m.name, m.vol, m.pan, m.mag);
         break;
@@ -1209,7 +1212,21 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   miniEl.setAttribute("aria-label", "World minimap: click to move the camera");
   const miniView = document.createElement("div");
   miniView.className = "view";
-  miniEl.append(miniView);
+  const miniTerrain = document.createElement("canvas");
+  miniTerrain.className = "terrain";
+  miniEl.append(miniTerrain, miniView);
+  /** Paint the worker's coarse solid mask as a silhouette (1 px per mask cell, stretched by CSS). */
+  function drawTerrain(cols: number, rows: number, mask: Uint8Array) {
+    if (miniTerrain.width !== cols) (miniTerrain.width = cols, miniTerrain.height = rows);
+    const g = miniTerrain.getContext("2d");
+    if (!g) return;
+    const img = g.createImageData(cols, rows);
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      img.data[i * 4] = 120; img.data[i * 4 + 1] = 100; img.data[i * 4 + 2] = 80; img.data[i * 4 + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+  }
   stage.append(miniEl);
   const whoBtn = document.createElement("button");
   whoBtn.id = "whoBtn";
@@ -1297,6 +1314,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         miniDots.set(p.id, d);
       }
       d.className = "dot" + (p.me ? " me" : "") + (p.dead ? " dead" : "");
+      d.style.background = p.me || p.dead ? "" : `rgb(${p.rgb[0]},${p.rgb[1]},${p.rgb[2]})`;
       d.style.left = `${worldToStrip(p.x, worldW, r.width).toFixed(1)}px`;
       d.style.top = `${worldToStrip(p.y, worldH, r.height).toFixed(1)}px`; // depth: deeper is lower in the strip
     }
@@ -1304,6 +1322,10 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const b = viewBracket(camera.x, camera.vw, worldW, r.width);
     miniView.style.left = `${b.left.toFixed(1)}px`;
     miniView.style.width = `${b.width.toFixed(1)}px`;
+    const vTop = worldH > 0 ? Math.max(0, Math.min(1, camera.y / worldH)) * r.height : 0;
+    const vH = worldH > 0 ? Math.max(4, Math.min(r.height, (camera.vh / worldH) * r.height)) : r.height;
+    miniView.style.top = `${Math.min(vTop, r.height - vH).toFixed(1)}px`;
+    miniView.style.height = `${vH.toFixed(1)}px`;
     if (whoEl.hidden) return;
     const sorted = sortPlayers(list);
     const key = sorted.map((p) => `${p.id}\u0000${p.name}\u0000${p.me}\u0000${p.dead}`).join("\u0001");
