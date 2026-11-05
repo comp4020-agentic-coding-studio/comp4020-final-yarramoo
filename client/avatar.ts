@@ -9,6 +9,9 @@
 import { MAX_AVATAR_SPEED, POS_ONE } from "../shared/avatar.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
+/** Material id of Ice (sim/src/materials.rs) and the horizontal blend factor on it (0.4 on other ground). */
+const ICE_ID = 18;
+export const ICE_BLEND = 0.04;
 export const BOX_W = 5;
 export const BOX_H = 10;
 const STEP = 1 / POS_ONE;
@@ -102,6 +105,16 @@ export class Avatar {
     return false;
   }
 
+  /** Is any cell directly under the feet row Ice? */
+  private iceUnderFeet(g: Grid): boolean {
+    const cy = Math.floor(this.y + STEP);
+    if (cy < 0 || cy >= g.h) return false;
+    const x0 = Math.max(0, Math.floor(this.x - BOX_W / 2));
+    const x1 = Math.min(g.w - 1, Math.ceil(this.x + BOX_W / 2) - 1);
+    for (let cx = x0; cx <= x1; cx++) if (g.mat[cy * g.w + cx] === ICE_ID) return true;
+    return false;
+  }
+
   private liquidAt(g: Grid): number {
     // Body centre and feet rows, middle column: enough to tell wading from swimming.
     const cx = Math.floor(this.x);
@@ -124,7 +137,9 @@ export class Avatar {
     const dir = (k.right ? 1 : 0) - (k.left ? 1 : 0);
     if (dir) this.facing = dir > 0 ? 1 : 0;
     const walk = this.inLiquid ? WALK * feel.walk : WALK;
-    this.vx += (dir * walk - this.vx) * (this.onGround || this.inLiquid ? 0.4 : 0.15);
+    // Ice underfoot: the same target speed (WALK), a much slower blend, so you keep sliding and turn slowly. No speed is raised.
+    const blend = this.onGround && !this.inLiquid && this.iceUnderFeet(g) ? ICE_BLEND : this.onGround || this.inLiquid ? 0.4 : 0.15;
+    this.vx += (dir * walk - this.vx) * blend;
     if (!dir && Math.abs(this.vx) < 0.02) this.vx = 0;
 
     // Vertical: jump from the ground, levitate while up is held in the air (limited energy), swim in liquid.
