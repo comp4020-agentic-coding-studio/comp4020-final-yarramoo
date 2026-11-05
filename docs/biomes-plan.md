@@ -123,8 +123,8 @@ Costs are worker-hours at Sonnet speed including tests; risk is what could go wr
 | # | Slice | Worker | Why this order |
 |---|---|---|---|
 | 1 | Site picker, format 14, lava lakes, ice caves, ice sliding (A1 + A2) | Sonnet | Sets the structure; no new materials; the two most fun-per-cost |
-| 2 | Surface and sand traps (B1 + B2) | Sonnet | Gen only; first thing a player sees |
-| 3 | Brick, Moss, Mushroom; grotto and mine (C1 + C2) | Sonnet | New materials, end to end like Pebbles |
+| 2 | Brick, Moss, Mushroom; grotto and mine (C1 + C2); ice floors; gen-time fix | Sonnet | New materials are what the user asked for most; slice 1 made L gen 2.5x slower (270 -> 691 ms) and its ice caves had no floor to slide on |
+| 3 | Surface and sand traps (B1 + B2) | Sonnet | Gen only; brief ready in `docs/briefs/biomes-surface.md` |
 | 4 | Cold review of the whole branch diff | Sonnet | Required for structure-setting slices |
 | — | **cut line at the dispatch ceiling** | | |
 | 5 | Tame animals (D) | Sonnet | Most expensive and most server/client surface |
@@ -155,3 +155,11 @@ missed, entry 30):
 
 Every slice: the full gate (cargo, clippy for wasm32, typecheck, determinism, net) re-run by the lead before push, then
 a look at `/game` worlds on the lead's play server (port 8091, data dir `/tmp/simulta-biomes`).
+
+## Amendment after slice 1 (5 Nov, 17:45)
+
+Slice 1 cost about $17 of the $50 (spend B0 + $20.7 after the gate, with other agents on the same account), so at most
+one more build slice fits under the dispatch ceiling, plus a cheap cold review. The order above was swapped: slice 2 is
+now the new materials (grotto and mine), because they are the biomes the user described in most detail and the only ones
+with new sim rules; it also carries two fixes to slice 1 (generation time at L rose from 270 to 691 ms native; the ice
+caves had no floor to slide on). The surface is the first thing cut if the budget runs out; its brief is ready.
