@@ -211,7 +211,7 @@ impl Sim {
         if self.cfg.has_players() {
             let centres = core::mem::take(&mut self.grid.explosions);
             for &(cx, cy) in &centres {
-                self.explode_at(cx as i32, cy as i32, crate::grid::BLAST_RADIUS, 0, CAUSE_GUNPOWDER);
+                self.explode_at(cx as i32, cy as i32, GUNPOWDER_DAMAGE_RADIUS, 0, CAUSE_GUNPOWDER);
             }
             self.grid.explosions = centres;
             self.hazard_scan();

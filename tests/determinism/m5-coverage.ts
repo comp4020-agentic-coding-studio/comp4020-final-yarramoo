@@ -9,7 +9,8 @@ export function m5Missing(events: SimEvent[]): string[] {
     ["EV_PICKUP of Fire bolt (4)", (e) => e.kind === EV_PICKUP && e.b === 4],
     ["EV_PICKUP of Bomb (5)", (e) => e.kind === EV_PICKUP && e.b === 5],
     ["EV_EXPLODE c=18 (bomb)", (e) => e.kind === EV_EXPLODE && e.c === 18],
-    ["EV_EXPLODE c=4 (gunpowder)", (e) => e.kind === EV_EXPLODE && e.c === 4],
+    // World gunpowder carries its damage radius (GUNPOWDER_DAMAGE_RADIUS, 10 since 5 Nov; was the 4-cell carve).
+    ["EV_EXPLODE c=10 (gunpowder)", (e) => e.kind === EV_EXPLODE && e.c === 10],
     ["EV_DEATH with a bag (c=1)", (e) => e.kind === EV_DEATH && e.c === 1],
     ["EV_DEATH with a killer (a!=0)", (e) => e.kind === EV_DEATH && e.a !== 0],
     ["EV_DEATH by self or none (a==0 or a==victim)", (e) => e.kind === EV_DEATH && (e.a === 0 || e.a === e.player)],

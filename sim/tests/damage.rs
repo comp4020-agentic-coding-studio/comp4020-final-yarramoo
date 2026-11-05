@@ -130,23 +130,48 @@ fn gunpowder_explosion_damages_by_falloff_knocks_back_and_gives_no_credit() {
     s.step();
     let ex: Vec<_> = s.events.iter().filter(|e| e.kind == EV_EXPLODE).collect();
     assert_eq!(ex.len(), 1);
-    assert_eq!((ex[0].player, ex[0].a, ex[0].b, ex[0].c), (0, 514, 833, 4));
+    assert_eq!((ex[0].player, ex[0].a, ex[0].b, ex[0].c), (0, 514, 833, GUNPOWDER_DAMAGE_RADIUS));
     // dx = 510.5 - 514.5 = -4 cells, dy = 833.5? chest = 838 - 5 = 833, minus centre 833.5 -> -0.5.
+    // Damage reaches GUNPOWDER_DAMAGE_RADIUS (10, the user 5 Nov; was 4): 60 * (10 - 4) / 10 = 36.
     let dmg = before - pl(&s, 1).health;
-    assert!(dmg == 0, "outside radius 4 takes nothing, took {dmg}");
+    assert_eq!(dmg, 36);
     let k: Vec<_> = s.events.iter().filter(|e| e.kind == EV_KNOCK).collect();
     assert_eq!(k.len(), 1);
     assert!(k[0].a < 0, "knocked away (left), got {}", k[0].a);
     assert_eq!(pl(&s, 1).last_hit_by, 0);
-    // Closer: 2 cells away takes damage 60 * (4 - 2) / 4 = 30 (distance floors to a whole cell).
+    // Closer: 2 cells away takes damage 60 * (10 - 2) / 10 = 48 (distance floors to a whole cell).
     let mut s = boxed(&[1]);
     let w = s.grid.w;
     s.grid.set(833 * w + 512, GUNPOWDER, 1);
     s.step();
-    // A literal, not the formula again: the chest is 2 whole cells from the centre, so 60 * (4 - 2) / 4 = 30
+    // A literal, not the formula again: the chest is 2 whole cells from the centre, so 60 * (10 - 2) / 10 = 48
     // (review M5 slice 1 N3: recomputing it with isqrt would pass a wrong formula too).
-    assert_eq!(pl(&s, 1).health, 100 - 30);
+    assert_eq!(pl(&s, 1).health, 100 - 48);
     assert_eq!(pl(&s, 1).last_hit_by, 0);
+}
+
+/// The user, 5 Nov: gunpowder set off by burning coal barely hurt (radius 4). A blast 8 cells from the chest now does
+/// real damage, linear to `GUNPOWDER_DAMAGE_RADIUS`; the grid carve is unchanged.
+#[test]
+fn a_world_gunpowder_blast_hurts_well_beyond_its_carve() {
+    let mut s = boxed(&[1]);
+    let w = s.grid.w;
+    // Chest at (510.5, 833.5); the blast centre 8 whole cells to the right.
+    s.grid.set(833 * w + 518, GUNPOWDER, 1);
+    s.events.clear();
+    s.step();
+    let ex: Vec<_> = s.events.iter().filter(|e| e.kind == EV_EXPLODE).collect();
+    assert_eq!(ex.len(), 1);
+    assert_eq!(ex[0].c, GUNPOWDER_DAMAGE_RADIUS);
+    // 60 * (10 - 8) / 10 = 12.
+    assert_eq!(pl(&s, 1).health, 100 - 12);
+    assert_eq!(pl(&s, 1).last_hit_by, 0, "world gunpowder credits nobody");
+    // The carve did not grow: a Rock cell 6 cells from the centre survives.
+    let mut s = boxed(&[1]);
+    s.grid.set(820 * w + 518, ROCK, 0);
+    s.grid.set(826 * w + 518, GUNPOWDER, 1);
+    s.step();
+    assert_eq!(s.grid.mat[820 * w + 518], ROCK, "the carve radius changed");
 }
 
 #[test]

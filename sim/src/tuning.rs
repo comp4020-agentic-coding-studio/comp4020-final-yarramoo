@@ -97,6 +97,9 @@ pub const SEED_BURST_R: u32 = 3;
 
 /// Explosion damage at distance 0; falls off linearly to 0 at the radius.
 pub const EXPLOSION_DAMAGE_MAX: i32 = 60;
+/// Damage radius of a gunpowder blast in the world (the user, 5 Nov: blasts near burning coal should hurt). The grid
+/// carve stays `grid::BLAST_RADIUS` (4), so terrain destruction is unchanged; only players and enemies feel the reach.
+pub const GUNPOWDER_DAMAGE_RADIUS: i32 = 10;
 /// Explosion knockback at distance 0 (1/16 cell per tick); falls off linearly to 0 at 1.5 radii.
 pub const KNOCK_EXPLOSION: i32 = 96;
 /// Ticks a dead player stays dead before the respawn.
