@@ -58,6 +58,7 @@ import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
+import { hitboxTouchesLava, shouldSizzle } from "./hazard.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
 let STEP_MS = 1000 / 60;
@@ -497,6 +498,8 @@ function connect() {
   sock.onerror = () => {};
 }
 
+let prevHealth = 1e9;
+let lastSizzle = -1e9;
 /** Place, step and send the avatar; return the overlay rectangles and steer the camera. Game world only. */
 function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   const ents = sim.entities();
@@ -506,6 +509,17 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   const dead = !!mine && mine.health === 0;
   iAmDead = dead;
   if (mine && !dead) myDeathTick = null;
+  // Lava sizzle (display only): my health fell while lava touches my hitbox. Rate-limited; silent while replaying.
+  if (mine && !dead && !spectate) {
+    const touching = prevHealth > mine.health && hitboxTouchesLava(sim.matView(), w, h, mine.x, mine.y);
+    if (shouldSizzle(prevHealth, mine.health, touching, now, lastSizzle)) {
+      lastSizzle = now;
+      if (evLogOut.length < 100) evLogOut.push({ k: 900, p: myId, a: mine.health, b: 0, c: 0 }); // dev-route log only: a sizzle was requested
+      sfxBudget = Math.max(sfxBudget, 1);
+      sfxSelf("sizzle", net === "catching-up" || !!ls?.fastForwarding);
+    }
+  }
+  prevHealth = mine && !dead ? mine.health : 1e9;
   // Re-place the avatar whenever the sim's `life` for me changes (a respawn, D-073), not just on my own Join:
   // otherwise my next Pos would carry the new life with the old position and undo the respawn.
   if (avatarReady && mine && mine.a !== avatarLife) avatarReady = false;
