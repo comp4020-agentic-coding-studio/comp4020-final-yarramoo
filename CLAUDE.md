@@ -183,10 +183,21 @@ come into existence.
   --release -- -D warnings`; `cargo build --target wasm32-unknown-unknown
   --release` writes `target/wasm32-unknown-unknown/release/sim.wasm`, which must
   have zero imports.
-- **Determinism suite:** `pnpm test:determinism` (about 50 s) builds both
-  wasms and runs D1, D2 (Node, Chromium, Firefox, WebKit), D3, D6, D10 and D11.
-  It is separate from `pnpm check`, which needs a running server; run both
-  before committing anything in `sim/`, `shared/` or the input path.
+- **Determinism suite:** `pnpm test:determinism` (about 7 min under load by
+  November; 50 s in October) builds both wasms and runs D1, D2 (Node, Chromium,
+  Firefox, WebKit), D3, D6, D10 and D11. It is separate from `pnpm check`, which
+  needs a running server; run both before committing anything in `sim/`,
+  `shared/` or the input path.
+- **The gate and how to run tests: the `run-tests` skill** (`.claude/skills/`).
+  It holds the five-step chain and its rules: one gate at a time and few agents
+  (eleven at once wrecked every gate on 4 Nov), never edit under a running gate,
+  and show a test red before trusting it.
+- **Rebuilding the wasm breaks the user's dev server: the `dev-server` skill.**
+  The server hashes `sim.wasm` once at start (invariant 10), so after any
+  `build:client`, `dev:client` or gate, a fresh tab on :8080 is refused with
+  "new version, reload" until the server is restarted (5 Nov). Restart it with
+  the same `DATA_DIR`, join in a browser, and tell the user to reload. Run your
+  own checks on another port and data dir, never on the user's.
 - **An input must not be able to cost unbounded work.** Every client runs every
   input, so one huge `Paint` freezes the whole room. The sim clamps paint
   endpoints to the world, the radius to `MAX_PAINT_RADIUS` and the stroke length to `MAX_PAINT_STROKE`
