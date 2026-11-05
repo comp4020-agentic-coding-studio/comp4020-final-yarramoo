@@ -129,6 +129,13 @@ pub const SALT_PEBBLES_DIAG: u32 = 255;
 pub const SALT_PAINT_SEED: u32 = 256;
 /// Brief E: whether a killed enemy drops a heal.
 pub const SALT_HEAL_DROP: u32 = 257;
+/// Biomes (generation only): site pick, site radius, lava-lake basin x, lava ledges, ice-cave pool x, icicles.
+pub const SALT_GEN_BIOME: u32 = 260;
+pub const SALT_GEN_BIOME_R: u32 = 261;
+pub const SALT_GEN_LAKE_X: u32 = 262;
+pub const SALT_GEN_LEDGE: u32 = 263;
+pub const SALT_GEN_ICE_POOL_X: u32 = 264;
+pub const SALT_GEN_ICICLE: u32 = 265;
 
 #[cfg(test)]
 mod tests {

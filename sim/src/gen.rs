@@ -23,6 +23,18 @@ const GAS_POCKET_ROWS: i32 = 6;
 const GAS_MIN_HEIGHT: i32 = 24;
 /// Radius of an ice-lined chamber, cells.
 const ICE_R: i32 = 22;
+/// Biome kinds (a site's `kind`). 3 (grotto) and 4 (mine) are reserved for later slices.
+pub const BIOME_LAVA: u8 = 1;
+pub const BIOME_ICE: u8 = 2;
+/// Lava lake and ice cave radii at L (rx, cells); `ry` is 2/5 and 1/2 of it.
+const LAVA_RX_MIN: i32 = 70;
+const LAVA_RX_MAX: i32 = 110;
+const ICE_RX_MIN: i32 = 45;
+const ICE_RX_MAX: i32 = 65;
+/// Cells a site keeps clear of every other site.
+const SITE_GAP: i32 = 40;
+/// A lava-site dam may strand at most this many open cells (they are filled); more and the dam is undone.
+const DAM_STRAND_MAX: usize = 1500;
 
 /// `smoothstep(i / 255)` in Q12 (0..=4096). Checked in, so no platform arithmetic can change it.
 #[rustfmt::skip]
@@ -194,6 +206,11 @@ struct Scale {
     acid_count: i32,
     gas_count: i32,
     ice_count: i32,
+    /// Biome sites per kind (lava, ice), their radius ranges (rx, cells) and the chambers' width percentage.
+    biome_count: (i32, i32),
+    lava_rx: (i32, i32),
+    ice_rx: (i32, i32),
+    pct: i32,
     coal_count: i32,
     worm_target_y: i32,
     worm_branch_span: i32,
@@ -242,6 +259,10 @@ impl Scale {
             acid_count: scale_count(w, h, 10, 3),
             gas_count: scale_count(w, h, 14, 3),
             ice_count: scale_count(w, h, 8, 2),
+            biome_count: (scale_count(w, h, 3, 1), scale_count(w, h, 3, 1)),
+            lava_rx: (wr(LAVA_RX_MIN), wr(LAVA_RX_MAX)),
+            ice_rx: (wr(ICE_RX_MIN), wr(ICE_RX_MAX)),
+            pct,
             coal_count: scale_count(w, h, 36, 6),
             worm_target_y,
             worm_branch_span: scale_u(h, 450).max(60),
@@ -285,8 +306,27 @@ impl Arena {
     }
 }
 
+/// A biome site: an ellipse centred on a worm-path point (plan section 1). A pure function of (seed, size).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Site {
+    pub kind: u8,
+    pub cx: i32,
+    pub cy: i32,
+    pub rx: i32,
+    pub ry: i32,
+}
+
+impl Site {
+    /// True when (x, y) lies inside the ellipse. Integer only.
+    pub fn inside(&self, x: i32, y: i32) -> bool {
+        let (dx, dy) = (i64::from(x - self.cx), i64::from(y - self.cy));
+        dx * dx * i64::from(self.ry * self.ry) + dy * dy * i64::from(self.rx * self.rx) <= i64::from(self.rx * self.rx) * i64::from(self.ry * self.ry)
+    }
+}
+
 /// Everything `generate_world` makes besides the grid.
 pub struct World {
+    pub sites: Vec<Site>,
     pub spots: Vec<PickupSpot>,
     pub path: Vec<(i32, i32)>,
     pub arena: Option<Arena>,
@@ -315,9 +355,12 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     carve_worms(g, seed, &surf, &mut path, &sc);
     carve_chambers(g, seed, &path, &sc);
     let arena = if with_arena { carve_arena(g, seed, &path, &sc) } else { None };
+    let sites = pick_sites(g, seed, &path, &sc, arena.as_ref());
+    carve_sites(g, &sites);
     connect_and_prune(g, seed, &path);
     line_entrances_with_dirt(g, seed, &surf);
     let mut pool_scratch = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
+    fill_lava_lakes(g, seed, &mut pool_scratch, &sites, &sc);
     place_sand(g, seed, &sc);
     place_lava(g, seed, &mut pool_scratch, &sc);
     place_gunpowder(g, seed, &sc);
@@ -339,7 +382,7 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     if let Some(a) = &arena {
         supply_pile(a, &mut spots);
     }
-    World { spots, path, arena }
+    World { sites, spots, path, arena }
 }
 
 /// The arena: centred on a worm-path point in the deep band between `deep_top` and `repair_depth - 40`, clear of the
@@ -722,6 +765,207 @@ fn place_gunpowder(g: &mut Grid, seed: u64, sc: &Scale) {
     }
 }
 
+/// True if two sites' ellipses, each grown by `SITE_GAP / 2`, overlap (bounding-box test: conservative, integer).
+fn sites_overlap(a: &Site, b: &Site) -> bool {
+    (a.cx - b.cx).abs() < a.rx + b.rx + SITE_GAP && (a.cy - b.cy).abs() < a.ry + b.ry + SITE_GAP
+}
+
+/// Pick the biome sites (plan section 1): kinds in a fixed order (lava, ice); site `k` of kind `b` tries up to 64
+/// candidates, each a path point in the kind's depth band chosen by `rng(seed, 0, k * 64 + t, b, SALT_GEN_BIOME)`.
+/// A candidate is rejected if it comes within `near_border`, above the surface margin, in the spawn clearance, overlaps
+/// the boss arena grown by `ARENA_KEEP_OUT + rx`, or comes within `SITE_GAP` of an earlier site. A site with no
+/// candidate is skipped. At most `sum(count) * 64` draws; a pure function of (seed, size, path, arena).
+fn pick_sites(g: &Grid, seed: u64, path: &[(i32, i32)], sc: &Scale, arena: Option<&Arena>) -> Vec<Site> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let mut sites: Vec<Site> = Vec::new();
+    // Only a path point already open to the sky (a sealed pocket would be filled by `connect_and_prune`).
+    let mut open = vec![0u8; g.mat.len()];
+    flood(g, &mut open, g.w / 2, &mut Vec::new(), None);
+    for (kind, count) in [(BIOME_LAVA, sc.biome_count.0), (BIOME_ICE, sc.biome_count.1)] {
+        let (lo, hi) = if kind == BIOME_LAVA {
+            (sc.deep_top + scale_u(h, 60), sc.repair_depth - scale_u(h, 80))
+        } else {
+            (sc.shallow_top, sc.shallow_top + scale_u(h, 300))
+        };
+        let (rlo, rhi) = if kind == BIOME_LAVA { sc.lava_rx } else { sc.ice_rx };
+        let cand: Vec<(i32, i32)> = path.iter().copied().filter(|p| p.1 >= lo && p.1 < hi && open[(p.1 * w + p.0) as usize] != 0).collect();
+        if cand.is_empty() {
+            continue;
+        }
+        for k in 0..count as u32 {
+            let rx = rlo + (rng(seed, 0, k, u32::from(kind), SALT_GEN_BIOME_R) % (rhi - rlo + 1) as u32) as i32;
+            let ry = if kind == BIOME_LAVA { rx * 2 / 5 } else { rx / 2 };
+            for t in 0..64u32 {
+                let (cx, cy) = cand[(rng(seed, 0, k * 64 + t, u32::from(kind), SALT_GEN_BIOME) % cand.len() as u32) as usize];
+                let site = Site { kind, cx, cy, rx, ry };
+                let ok = cy - ry >= sc.surface_y + 60
+                    && cy + ry < h - FLOOR_ROWS as i32 - 12
+                    && cx - rx > WALL_COLS as i32 + 12
+                    && cx + rx < w - WALL_COLS as i32 - 12
+                    && !near_border(g, cx, cy, ry)
+                    && !((cx - w / 2).abs() - rx <= ENEMY_SPAWN_CLEAR && cy - ry < sc.shallow_top + ENEMY_SPAWN_ROWS)
+                    && !arena.is_some_and(|a| a.contains(cx, cy, ARENA_KEEP_OUT + rx))
+                    && !sites.iter().any(|s| sites_overlap(s, &site));
+                if ok {
+                    sites.push(site);
+                    break;
+                }
+            }
+        }
+    }
+    sites
+}
+
+/// Carve each site's cavern: Rock and Dirt inside the ellipse become Empty (like `carve_chambers`). Runs before
+/// `connect_and_prune`, so a cavern the worms did not reach is joined or filled like any other open space.
+fn carve_sites(g: &mut Grid, sites: &[Site]) {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let depth = |g: &Grid| box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
+    for s in sites {
+        let d0 = depth(g);
+        let mut bowl: Vec<usize> = Vec::new();
+        for y in (s.cy - s.ry).max(0)..=(s.cy + s.ry).min(h - 1) {
+            for x in (s.cx - s.rx).max(0)..=(s.cx + s.rx).min(w - 1) {
+                let (dx, dy) = (i64::from(x - s.cx), i64::from(y - s.cy));
+                if dx * dx * i64::from(s.ry * s.ry) + dy * dy * i64::from(s.rx * s.rx) <= i64::from(s.rx * s.rx) * i64::from(s.ry * s.ry) {
+                    let i = (y * w + x) as usize;
+                    if y < site_floor(s) {
+                        if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                            g.mat[i] = EMPTY;
+                        }
+                    } else if g.mat[i] == EMPTY {
+                        // A flat bowl: open space the worms left below the floor row is sealed, so a pool has a basin.
+                        g.mat[i] = ROCK;
+                        bowl.push(i);
+                    }
+                }
+            }
+        }
+        // A bowl that seals the route a worm took under the site would push `repair_traversal` to cut elsewhere (even
+        // through the boss arena floor): if the walkable depth got shallower, undo the bowl.
+        if depth(g) < d0 {
+            for &i in &bowl {
+                g.mat[i] = EMPTY;
+            }
+        }
+    }
+}
+
+/// Dam the low rim of a lava site (after `connect_and_prune`, whose links cut through any earlier dam): Empty cells in the ring just outside the ellipse (grown by 3) at or below 18 rows above
+/// its floor become Rock, so a tunnel entering at floor level cannot drain the lake or blow its basin past the pool cap.
+fn dam_site(g: &mut Grid, s: &Site) -> Vec<usize> {
+    let mut changed = Vec::new();
+    let (w, h) = (g.w as i32, g.h as i32);
+    let (rx, ry) = (i64::from(s.rx + 3), i64::from(s.ry + 3));
+    for y in (site_floor(s) - 18).max(0)..=(s.cy + s.ry + 3).min(h - 1) {
+        for x in (s.cx - s.rx - 3).max(0)..=(s.cx + s.rx + 3).min(w - 1) {
+            let (dx, dy) = (i64::from(x - s.cx), i64::from(y - s.cy));
+            if dx * dx * ry * ry + dy * dy * rx * rx <= rx * rx * ry * ry {
+                let i = (y * w + x) as usize;
+                if g.mat[i] == EMPTY && !s.inside(x, y) {
+                    g.mat[i] = ROCK;
+                    changed.push(i);
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// The first solid row of a site's flat floor: the cavern is open above it (like the boss arena's floor).
+fn site_floor(s: &Site) -> i32 {
+    s.cy + s.ry / 2
+}
+
+/// Lava lakes (plan A1): fill each lava site's basin from the floor under the centre (or a third of the way to either
+/// wall if that fails) with a wide, deep pool, Rock lining under it, and two or three Rock ledges jutting from the walls
+/// 6-10 rows above the surface so there is somewhere to stand. Runs before `place_lava`, so the ordinary pools,
+/// gunpowder and water all respect the lake.
+fn fill_lava_lakes(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site], scale: &Scale) {
+    let w = g.w as i32;
+    let cap = (9000 * scale.pct * scale.pct / 10000) as usize;
+    for (n, s) in sites.iter().enumerate().filter(|(_, s)| s.kind == BIOME_LAVA) {
+        let n = n as u32;
+        // Seal the low rim. A small pocket the dam cuts off from the sky is filled; if it would strand a big region
+        // (a tunnel that carries on past the lake), undo it: reachability comes first.
+        let mut seen = vec![0u8; g.mat.len()];
+        flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
+        let before = seen.iter().filter(|&&v| v != 0).count();
+        let dam = dam_site(g, s);
+        seen.fill(0);
+        flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
+        let lost = before - dam.len() - seen.iter().filter(|&&v| v != 0).count();
+        if lost > DAM_STRAND_MAX {
+            for &i in &dam {
+                g.mat[i] = EMPTY;
+            }
+        } else if lost > 0 {
+            for i in 0..g.mat.len() {
+                if g.mat[i] == EMPTY && seen[i] == 0 && i / g.w >= 100 {
+                    g.mat[i] = ROCK;
+                }
+            }
+        }
+        let mut filled = false;
+        let depth = |g: &Grid| box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
+        let d0 = depth(g);
+        for (j, off) in [0, -s.rx / 3, s.rx / 3].into_iter().enumerate() {
+            let x = s.cx + off;
+            let Some(yf) = find_floor(g, x, s.cy, s.ry + 4) else { continue };
+            if g.mat[(yf * w + x) as usize] != EMPTY || j > 0 && rng(seed, 0, n, j as u32, SALT_GEN_LAKE_X) % 8 == 0 {
+                continue;
+            }
+            if try_pool(g, sc, x, yf, (6, 16), cap, (2 * s.rx + 20) as usize, LAVA, WATER, &[]) {
+                // A lake that drowns the route down would make `repair_traversal` cut a tunnel elsewhere (maybe through the
+                // boss arena floor): undo any lake that makes the walkable depth shallower.
+                if depth(g) < d0 {
+                    for &c in &sc.region {
+                        g.mat[c as usize] = EMPTY;
+                    }
+                    continue;
+                }
+                filled = true;
+                break;
+            }
+        }
+        if !filled {
+            continue;
+        }
+        let surface = sc.region.iter().map(|&c| c as usize / g.w).min().unwrap_or(0) as i32;
+        for &c in &sc.region {
+            let i = c as usize;
+            for dy in 1..=2 {
+                let j = i + dy * g.w;
+                if matches!(g.mat[j], DIRT | SAND) {
+                    g.mat[j] = ROCK;
+                }
+            }
+        }
+        let ledges = 2 + (rng(seed, 0, n, 7, SALT_GEN_LEDGE) % 2) as i32;
+        for l in 0..ledges as u32 {
+            let side = if l % 2 == 0 { -1 } else { 1 };
+            let len = 12 + (rng(seed, 0, n, 10 + l, SALT_GEN_LEDGE) % 9) as i32;
+            let yr = surface - 6 - (rng(seed, 0, n, 20 + l, SALT_GEN_LEDGE) % 5) as i32;
+            // Walk out from the centre to the wall at this row, then build inward from it.
+            let mut x = s.cx;
+            while (x - s.cx).abs() <= s.rx + 4 && x > 0 && x < w - 1 && g.mat[(yr * w + x) as usize] == EMPTY {
+                x += side;
+            }
+            if (x - s.cx).abs() > s.rx + 4 {
+                continue;
+            }
+            for d in 1..=len {
+                for y in yr - 2..=yr {
+                    let i = (y * w + x - side * d) as usize;
+                    if g.mat[i] == EMPTY {
+                        g.mat[i] = ROCK;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Level fill: every Empty cell connected to (x, yf) at or below row `ly`, up to `cap` cells.
 /// By construction the region is closed below the level (any Empty neighbour is in it), so a liquid
 /// filling it has a flat top at `ly` and nowhere to fall. Returns false if it exceeds `cap`.
@@ -774,8 +1018,8 @@ struct PoolScratch {
 }
 
 /// Try a pool of up to `max_depth` rows resting on the floor at (x, yf): the deepest level whose basin
-/// stays under `cap` cells. `foe` is a liquid that must not touch it.
-fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i32), cap: usize, mat: u8, foe: u8, keep_off: &[(i32, i32)]) -> bool {
+/// stays under `cap` cells and `max_w` columns wide (70 for the ordinary ponds). `foe` is a liquid that must not touch it.
+fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i32), cap: usize, max_w: usize, mat: u8, foe: u8, keep_off: &[(i32, i32)]) -> bool {
     let w = g.w;
     // Deepest first; a basin that overflows `cap` at one level may fit at a shallower one.
     for d in (depths.0..=depths.1).rev() {
@@ -791,7 +1035,7 @@ fn try_pool(g: &mut Grid, sc: &mut PoolScratch, x: i32, yf: i32, depths: (i32, i
             hi = hi.max(cx);
             lowest = lowest.max(cy);
         }
-        if hi - lo > 70 || (mat == WATER && lowest >= DEEP_TOP as usize - 4) {
+        if hi - lo > max_w || (mat == WATER && lowest >= DEEP_TOP as usize - 4) {
             continue;
         }
         let touches = sc.region.iter().any(|&c| {
@@ -827,7 +1071,7 @@ fn place_water(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
         if yf >= scale.deep_top - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
             continue;
         }
-        if try_pool(g, sc, x, yf, (3, depth), 900, WATER, LAVA, &[]) {
+        if try_pool(g, sc, x, yf, (3, depth), 900, 70, WATER, LAVA, &[]) {
             placed += 1;
         }
     }
@@ -847,7 +1091,7 @@ fn place_lava(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
         if yf < scale.deep_top + 30 || g.mat[(yf * w + x) as usize] != EMPTY {
             continue;
         }
-        if try_pool(g, sc, x, yf, (4, depth), 1800, LAVA, WATER, &[]) {
+        if try_pool(g, sc, x, yf, (4, depth), 1800, 70, LAVA, WATER, &[]) {
             // A 2-cell Rock lining under the pool, so it cannot meet other liquids from below.
             for &c in &sc.region {
                 let i = c as usize;
@@ -902,7 +1146,7 @@ fn place_oil(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale) {
         if yf >= scale.deep_top - 12 || g.mat[yf as usize * g.w + x as usize] != EMPTY {
             continue;
         }
-        if try_pool(g, sc, x, yf, (2, depth), 700, OIL, LAVA, &[]) {
+        if try_pool(g, sc, x, yf, (2, depth), 700, 70, OIL, LAVA, &[]) {
             placed += 1;
         }
     }
@@ -928,7 +1172,7 @@ fn place_acid(g: &mut Grid, seed: u64, sc: &mut PoolScratch, scale: &Scale, path
         if yf < scale.deep_top + 20 || g.mat[yf as usize * g.w + x as usize] != EMPTY || near_path(path, x, yf, ACID_PATH_MARGIN) {
             continue;
         }
-        if try_pool(g, sc, x, yf, (2, depth), 500, ACID, WATER, path) {
+        if try_pool(g, sc, x, yf, (2, depth), 500, 70, ACID, WATER, path) {
             placed += 1;
         }
     }
@@ -1101,8 +1345,9 @@ fn pick_spots(g: &Grid, seed: u64, sc: &Scale, arena: Option<&Arena>) -> Vec<Pic
     let mut out: Vec<PickupSpot> = Vec::new();
     for (band, &(y_lo, y_hi, want)) in sc.target_spots.iter().enumerate() {
         let mut n = 0;
-        // 4000 tries, not 400: sparse deep caves need the room to find every spot (D-086).
-        for k in 0..4000u32 {
+        // 4000 tries, not 400: sparse deep caves need the room to find every spot (D-086). 20000 since biomes: a lava
+        // lake covers floor in the deep band, and the loop still stops at `want`, so worlds that were full do not move.
+        for k in 0..20000u32 {
             if n == want {
                 break;
             }
