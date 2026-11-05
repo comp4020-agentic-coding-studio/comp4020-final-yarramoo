@@ -51,7 +51,9 @@ Run them with `eval` in agent-browser (below) or the page console.
 
 `SIMULTA_DEV_TELEPORT=1 node server/main.ts` (`server/devteleport.ts`) makes `GET /api/rooms/:code` return
 `devTeleport: true`; the client then installs remote versions of `__devGoto` and `__devGotoEnemy` (`room.ts:1319`) and
-exposes `window.__boss`. The server accepts any `Pos` jump and logs `dev.teleport` (`server/world.ts:789`). It is
+exposes `window.__boss`. **Only in a production-built client** (`pnpm build:client`, served by the node server): on vite
+the `import.meta.env.DEV` block (`room.ts:1325`) overwrites both with the local versions, which need `devAvatar` and
+drop `dist`, so `?server=` from vite gets no-op hooks. The server accepts any `Pos` jump and logs `dev.teleport` (`server/world.ts:789`). It is
 refused when `NODE_ENV=production` or `FLY_APP_NAME` is set. `__devBossHp` and `__devPaint` never work in a real room.
 
 ## Ids
