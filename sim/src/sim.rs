@@ -494,6 +494,8 @@ impl Sim {
         }
         for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
             let (x0, y0, x1, y1) = p.hitbox_cells();
+            // Pickups reach a little below the feet (the user, 5 Nov): on narrow footing the hitbox sat just above.
+            let y1 = y1 + PICKUP_REACH_BELOW;
             for k in self.pickups.iter_mut() {
                 let (kx, ky) = (i32::from(k.x), i32::from(k.y));
                 if tick < k.respawn_at || kx < x0 || kx > x1 || ky < y0 || ky > y1 {

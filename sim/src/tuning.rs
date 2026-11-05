@@ -10,6 +10,9 @@ pub const START_CHARGES: [u16; NUM_SPELLS] = [INFINITE, INFINITE, 0, 0, 0, 0, IN
 pub const PICKUP_CHARGES: [u16; NUM_SPELLS] = [0, 0, 15, 15, 10, 5, 0, 8, 10, 10, 4, 2];
 /// Ticks before a collected pickup is available again (plan 14: 60 s).
 pub const PICKUP_RESPAWN: u32 = 3600;
+/// Pickups are collected this many cells below the feet as well as inside the hitbox (the user, 5 Nov: on narrow
+/// footing the hitbox could sit just above a pickup it visibly touched). Pickups only; damage keeps the hitbox.
+pub const PICKUP_REACH_BELOW: i32 = 2;
 
 pub const HEALTH_MAX: u8 = 100;
 

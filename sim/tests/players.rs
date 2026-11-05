@@ -131,6 +131,25 @@ fn pickups_exist_alternate_spells_collect_and_respawn() {
     assert_eq!(s.pickups[1].respawn_at, 0);
 }
 
+/// The user's 5 Nov screenshot: a player standing on a narrow peak right over a pickup did not collect it, because the
+/// hitbox ended at the feet. Pickups reach `PICKUP_REACH_BELOW` cells below the feet; one cell further does nothing.
+#[test]
+fn a_pickup_just_below_the_feet_is_collected() {
+    let mut s = Sim::new(2, 1).unwrap();
+    let k = s.pickups[0].clone();
+    push(&mut s, encode_join(1));
+    s.step();
+    // Feet two cells above the spot where a player standing on the pickup's floor would have them.
+    let feet = |up: i32| encode_pos(1, 0, i32::from(k.x) * PX + PX / 2, (i32::from(k.y) + 1 - up) * PX, 0);
+    assert_eq!(PICKUP_REACH_BELOW, 2);
+    push(&mut s, feet(PICKUP_REACH_BELOW + 1));
+    s.step();
+    assert_eq!(s.pickups[0].respawn_at, 0, "collected from beyond the reach");
+    push(&mut s, feet(PICKUP_REACH_BELOW));
+    s.step();
+    assert_eq!(s.players[0].charges[k.spell as usize], k.charges, "a pickup just below the feet was not collected");
+}
+
 #[test]
 fn a_frozen_world_stays_frozen_and_players_wake_their_region() {
     let mut s = Sim::new(5, 1).unwrap();
