@@ -23,11 +23,17 @@ pub const GLASS: u8 = 19;
 pub const COAL: u8 = 20;
 /// Crumbled rock (falling rock v0): a powder that moves like Sand. Not paintable, structural or flammable.
 pub const PEBBLES: u8 = 21;
+/// Inert static solid (the mine's rooms): structural like Rock, but acid does not eat it. Paintable.
+pub const BRICK: u8 = 22;
+/// Static, not structural, flammable slowly (the grotto's lining). Paintable.
+pub const MOSS: u8 = 23;
+/// Static, not structural, flammable (the grotto's giant mushroom caps). Paintable.
+pub const MUSHROOM: u8 = 24;
 
 /// Materials that `Paint` may place: everything except Bedrock (the world boundary), Stem and Flower (they
 /// only grow from Seeds) and Pebbles (only from crumbled rock).
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL)
+    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL | BRICK..=MUSHROOM)
 }
 
 pub fn is_gas(m: u8) -> bool {
@@ -46,7 +52,7 @@ pub fn fill_empty_writable(m: u8) -> bool {
 }
 
 pub fn is_flammable(m: u8) -> bool {
-    matches!(m, WOOD | SEED | STEM | FLOWER | OIL | GAS)
+    matches!(m, WOOD | SEED | STEM | FLOWER | OIL | GAS | MOSS | MUSHROOM)
 }
 
 /// Movement classes, mirroring `shared/names.ts` `MATERIAL_CLASS` (a test parses that file and pins this).

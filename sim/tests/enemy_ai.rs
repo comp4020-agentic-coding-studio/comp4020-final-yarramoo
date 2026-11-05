@@ -197,7 +197,7 @@ fn material_classes_match_names_ts() {
             })
         })
         .collect();
-    assert_eq!(classes.len(), 22);
+    assert_eq!(classes.len(), 25);
     for (m, &c) in classes.iter().enumerate() {
         assert_eq!(material_class(m as u8), c, "material {m}");
     }
