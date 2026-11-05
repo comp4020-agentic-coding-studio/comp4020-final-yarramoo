@@ -1376,11 +1376,21 @@ fn place_biome_halls(g: &mut Grid, seed: u64, sites: &[Site], sc: &Scale, arena:
     g.aux = before.1;
     for (n, s) in sites.iter().enumerate() {
         let snap = (g.mat.clone(), g.aux.clone());
+        let snap2 = snap.clone();
         decorate_hall(g, seed, n as u32, s, sc);
         keep_arena_clear(g, &snap, arena);
         if !depth_reaches(g, d0) || stranded(g) > s0 {
             g.mat = snap.0;
             g.aux = snap.1;
+            // A mine retries with its room only: a post can plug a way into a pocket.
+            if s.kind == BIOME_MINE {
+                place_mine(g, seed, n as u32, s, sc, false);
+                keep_arena_clear(g, &snap2, arena);
+                if !depth_reaches(g, d0) || stranded(g) > s0 {
+                    g.mat = snap2.0;
+                    g.aux = snap2.1;
+                }
+            }
         }
     }
 }
@@ -1404,7 +1414,7 @@ fn keep_arena_clear(g: &mut Grid, before: &(Vec<u8>, Vec<u8>), arena: Option<&Ar
 fn decorate_hall(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
     match s.kind {
         BIOME_GROTTO => place_grotto(g, seed, n, s),
-        BIOME_MINE => place_mine(g, seed, n, s, sc),
+        BIOME_MINE => place_mine(g, seed, n, s, sc, true),
         _ => {}
     }
 }
@@ -1514,40 +1524,86 @@ fn place_grotto(g: &mut Grid, seed: u64, n: u32, s: &Site) {
 /// Old mine (plan C2): Wood beams hanging from the roof with a 12-row doorway under each (so a body walks through),
 /// Wood platforms between some beam pairs above the doorway line with a 3-column gap at each end, 1-2 Brick rooms
 /// with a 10-tall door each side, a coal seam through the roof beside a beam, and a gunpowder pile in a room.
-fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
+fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams: bool) {
     let w = g.w as i32;
-    let floor = site_floor(s);
     let hw = s.rx * 433 / 500 - 4;
-    let mid_ceiling = hall_ceiling(g, s, s.cx);
-    if floor - mid_ceiling < 26 {
-        return;
-    }
-    // Rooms first, so beams keep clear of them.
+    // A mine site has no bowl, so the hall floor is uneven: find the real ground column by column. `fl[x]` is the
+    // Empty cell resting on ground (None when the column has none inside the hall).
+    let lowest = site_floor(s) + 14;
+    let x_lo = s.cx - hw;
+    let fl: Vec<Option<i32>> = (x_lo..=s.cx + hw + 1).map(|x| find_floor(g, x, s.cy, s.ry + 24).filter(|&f| f <= lowest)).collect();
+    let floor_at = |x: i32| fl.get((x - x_lo) as usize).copied().flatten();
+    // The roof row over the open cell (x, f): the first open row of the run of Empty cells above it.
+    let roof_at = |g: &Grid, x: i32, f: i32| {
+        let mut y = f;
+        while y > s.cy - s.ry - 4 && g.mat[((y - 1) * w + x) as usize] == EMPTY {
+            y -= 1;
+        }
+        y
+    };
+    // Rooms first, so beams keep clear of them. A room stands where the ground is within 6 rows of level under
+    // every column; the dips are filled with a Brick footing.
     let rooms = 1 + (rng(seed, 0, n, 0, SALT_GEN_MINE) % 2) as i32;
     let mut spans: Vec<(i32, i32)> = Vec::new();
     let mut first_room = None;
     for k in 0..rooms as u32 {
-        let rw = 20 + (rng(seed, 0, n, 10 + k, SALT_GEN_MINE) % 17) as i32;
-        let rh = (12 + (rng(seed, 0, n, 20 + k, SALT_GEN_MINE) % 5) as i32).min(floor - mid_ceiling - 12);
-        let x0 = s.cx - hw + (rng(seed, 0, n, 30 + k, SALT_GEN_MINE) % (2 * hw as u32 - rw as u32 + 1).max(1)) as i32;
-        if rh < 12 || x0 + rw > s.cx + hw || spans.iter().any(|&(a, b)| x0 < b + 4 && x0 + rw > a - 4) {
-            continue;
-        }
-        let x1 = x0 + rw - 1;
-        for x in x0..=x1 {
-            for y in floor - rh..floor {
-                let wall = x < x0 + 2 || x > x1 - 2;
-                let roof = y < floor - rh + 2;
-                let door = y >= floor - 10;
-                if (roof || wall && !door) && g.mat[(y * w + x) as usize] == EMPTY {
-                    g.mat[(y * w + x) as usize] = BRICK;
+        // Slide the room along the hall from a random start to the first stretch that works (a scan, not a gamble:
+        // a random x rarely lands on 20+ columns that all have level ground).
+        let rw = 20 + (rng(seed, 0, n, 110 + k, SALT_GEN_MINE) % 17) as i32;
+        let rh = 18 + (rng(seed, 0, n, 20 + k, SALT_GEN_MINE) % 3) as i32;
+        let span = (2 * hw - rw + 1).max(1);
+        let start = (rng(seed, 0, n, 130 + k, SALT_GEN_MINE) % span as u32) as i32;
+        for t in 0..span {
+            let x0 = x_lo + (start + t) % span;
+            let x1 = x0 + rw - 1;
+            if x1 > s.cx + hw || (x0 - w / 2).abs().min((x1 - w / 2).abs()) <= ENEMY_SPAWN_CLEAR && s.cy - s.ry - 4 < sc.shallow_top + ENEMY_SPAWN_ROWS || spans.iter().any(|&(a, b)| x0 < b + 4 && x1 > a - 4) {
+                continue;
+            }
+            let Some(cols) = (x0..=x1).map(floor_at).collect::<Option<Vec<i32>>>() else { continue };
+            // `base` is the highest standing row (smallest y); the room's floor row is `base`.
+            let base = *cols.iter().min().unwrap_or(&0);
+            if cols.iter().any(|&f| f - base > 6) {
+                continue;
+            }
+            // Headroom: the roof must fit under the hall's ceiling at every column (an open interior).
+            // The roof must sit below the hall's ceiling at every column.
+            if (x0..=x1).any(|x| base - rh - roof_at(g, x, cols[(x - x0) as usize]) + 1 < 0) {
+                continue;
+            }
+            let floor = base + 1;
+            let door_left = rng(seed, 0, n, 150 + k, SALT_GEN_MINE) % 2 == 0;
+            for x in x0..=x1 {
+                // A slit of under 12 rows between the roof and the ceiling is bricked shut (it would be a stranded pocket).
+                let top = roof_at(g, x, cols[(x - x0) as usize]);
+                if floor - rh - top < 12 {
+                    for y in top..floor - rh {
+                        if g.mat[(y * w + x) as usize] == EMPTY {
+                            g.mat[(y * w + x) as usize] = BRICK;
+                        }
+                    }
+                }
+                for y in floor - rh..floor {
+                    let wall = x < x0 + 2 || x > x1 - 2;
+                    let roof = y < floor - rh + 2;
+                    // One door, on a random side: the other wall runs to the floor so the room reads as a room.
+                    let door = y >= floor - 10 && (x < x0 + 2) == door_left;
+                    if (roof || wall && !door) && g.mat[(y * w + x) as usize] == EMPTY {
+                        g.mat[(y * w + x) as usize] = BRICK;
+                    }
+                }
+                // Footing down to the ground (at most 6 rows, checked above).
+                for y in floor..=cols[(x - x0) as usize] {
+                    if g.mat[(y * w + x) as usize] == EMPTY {
+                        g.mat[(y * w + x) as usize] = BRICK;
+                    }
                 }
             }
+            spans.push((x0, x1));
+            first_room.get_or_insert(((x0 + x1) / 2, rw, floor));
+            break;
         }
-        spans.push((x0, x1));
-        first_room.get_or_insert(((x0 + x1) / 2, rw));
     }
-    if let Some((rcx, rw)) = first_room {
+    if let Some((rcx, rw, floor)) = first_room {
         let r = (rw / 2 - 4).min(7);
         // Gunpowder belongs to the deep band (the generator tests pin that), so a shallow mine has none.
         if floor >= sc.deep_top && !near_material(g, rcx, floor, r + 12, 24, LAVA) {
@@ -1555,7 +1611,7 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
         }
     }
     // Beams.
-    let beams = 3 + (rng(seed, 0, n, 40, SALT_GEN_MINE) % 4) as i32;
+    let beams = if with_beams { 3 + (rng(seed, 0, n, 40, SALT_GEN_MINE) % 4) as i32 } else { 0 };
     let mut xs: Vec<i32> = Vec::new();
     for k in 0..beams as u32 * 6 {
         if xs.len() as i32 >= beams {
@@ -1568,17 +1624,31 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
         xs.push(x);
     }
     xs.sort_unstable();
+    let mut placed: Vec<i32> = Vec::new();
     for &x in &xs {
-        let top = hall_ceiling(g, s, x).min(hall_ceiling(g, s, x + 1));
-        for d in 0..2 {
-            for y in top..floor - 12 {
+        let (Some(f0), Some(f1)) = (floor_at(x), floor_at(x + 1)) else { continue };
+        if (f0 - f1).abs() > 3 {
+            continue;
+        }
+        let top = roof_at(g, x, f0).min(roof_at(g, x + 1, f1));
+        // A beam is a post standing on the ground that props the roof, leaving a 12-row doorway under the roof so the
+        // hall stays walkable end to end (a post that met the roof would split the hall).
+        // The hall must be open and level around it, with the roof no lower than here, so the gap over the post is
+        // a real way through (a post by a pocket or a low roof would strand the cells behind it).
+        let open = (x - 8..x + 10).all(|c| floor_at(c).is_some_and(|f| (f - f0).abs() <= 3 && roof_at(g, c, f) <= top + 2));
+        if f0.min(f1) - top < 24 || !open || (x - w / 2).abs() <= ENEMY_SPAWN_CLEAR && top < sc.shallow_top + ENEMY_SPAWN_ROWS {
+            continue;
+        }
+        placed.push(x);
+        for (d, f) in [(0, f0), (1, f1)] {
+            for y in top + 12..=f {
                 if g.mat[(y * w + x + d) as usize] == EMPTY {
                     g.mat[(y * w + x + d) as usize] = WOOD;
                 }
             }
         }
         // The coal seam: through the roof rock beside this beam.
-        if x == xs[0] {
+        if Some(&x) == placed.first() {
             for dx in -1..=2 {
                 for y in top - 14..top {
                     if g.mat[(y * w + x + dx) as usize] == ROCK {
@@ -1589,12 +1659,13 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
         }
     }
     // Platforms.
-    for (k, pair) in xs.windows(2).enumerate() {
+    for (k, pair) in placed.windows(2).enumerate() {
         if rng(seed, 0, n, 80 + k as u32, SALT_GEN_MINE) % 3 == 0 {
             continue;
         }
         let t = 1 + (rng(seed, 0, n, 90 + k as u32, SALT_GEN_MINE) % 2) as i32;
-        let y = floor - 12 - t - (rng(seed, 0, n, 100 + k as u32, SALT_GEN_MINE) % 5) as i32;
+        let (Some(fa), Some(fb)) = (floor_at(pair[0]), floor_at(pair[1])) else { continue };
+        let y = fa.min(fb) - 12 - t - (rng(seed, 0, n, 100 + k as u32, SALT_GEN_MINE) % 5) as i32;
         for x in pair[0] + 5..pair[1] - 3 {
             for yy in y..y + t {
                 if g.mat[(yy * w + x) as usize] == EMPTY {

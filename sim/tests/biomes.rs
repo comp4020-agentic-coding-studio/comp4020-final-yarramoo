@@ -161,6 +161,7 @@ fn ice_sites_hold_a_frozen_lake_and_the_world_has_bounded_ice() {
 fn grotto_and_mine_exist_and_their_materials_stay_bounded_and_clear_of_the_arena() {
     let mut out = String::new();
     let mut small = 0;
+    let (mut l_brick, mut l_worlds) = (0, 0);
     for (size, seed, sv, g, w) in all() {
         let (gr, mi) = (kinds(&w, BIOME_GROTTO), kinds(&w, BIOME_MINE));
         out += &format!("size {size} seed {seed} sv {sv}: grotto {gr} mine {mi} moss {} mush {} brick {} wood {}\n", count(&g, MOSS), count(&g, MUSHROOM), count(&g, BRICK), count(&g, WOOD));
@@ -171,8 +172,11 @@ fn grotto_and_mine_exist_and_their_materials_stay_bounded_and_clear_of_the_arena
             small += usize::from(gr >= 1) + usize::from(mi >= 1);
         }
         // The halls are decorated, not just picked: every L world has a mine's brick and a grotto's moss and mushrooms.
+        // (A mine whose floor is a liquid lake or has no level stretch places no room, so brick is counted over the set.)
         if size == 2 {
-            assert!(count(&g, BRICK) >= 40 && count(&g, MOSS) >= 100 && count(&g, MUSHROOM) >= 40, "size {size} seed {seed} survival {sv}: brick {} moss {} mushroom {}", count(&g, BRICK), count(&g, MOSS), count(&g, MUSHROOM));
+            assert!(count(&g, MOSS) >= 100 && count(&g, MUSHROOM) >= 40, "size {size} seed {seed} survival {sv}: moss {} mushroom {}", count(&g, MOSS), count(&g, MUSHROOM));
+            l_brick += usize::from(count(&g, BRICK) >= 40);
+            l_worlds += 1;
         }
         let shallow_top = 260 * (g.h as i32 - 64) / (1536 - 64);
         let scale = |n: usize| n * g.w * g.h / (2048 * 1536) + 400;
@@ -190,7 +194,116 @@ fn grotto_and_mine_exist_and_their_materials_stay_bounded_and_clear_of_the_arena
             assert!(!((x - g.w as i32 / 2).abs() <= ENEMY_SPAWN_CLEAR && y < shallow_top + ENEMY_SPAWN_ROWS), "size {size} seed {seed}: material {m} in the spawn clearance at {x},{y}");
         }
     }
+    assert!(l_brick * 2 >= l_worlds, "only {l_brick} of {l_worlds} L worlds have 40+ brick");
     // At S the four kinds compete for a 512 x 512 world: require most of the 16 S worlds to get each hall.
     assert!(small >= 24, "only {small} of 32 grotto+mine sites placed across the 16 S worlds");
     std::fs::write("/tmp/b2-counts.txt", out).unwrap();
+}
+
+/// Solid enough to stand a beam or a room on.
+fn stands(m: u8) -> bool {
+    matches!(m, ROCK | DIRT | BEDROCK | SAND | BRICK | COAL | WOOD | MOSS)
+}
+
+/// Old-mine fix: beams and rooms stand on the ground (no floating decoration), rooms have a 10-row door and an
+/// interior taller than it. Beams are vertical Wood runs of 8+ rows (platforms are 1-2 thick); a room is found by its
+/// roof (a wide Brick band with Empty under it).
+#[test]
+fn mine_beams_and_rooms_stand_on_the_ground_and_rooms_are_not_mostly_roof() {
+    let mut log = String::new();
+    let (mut beams, mut rooms, mut sites_n, mut sites_with_room) = (0, 0, 0, 0);
+    for (size, seed, sv, g, w) in all() {
+        let (gw, gh) = (g.w as i32, g.h as i32);
+        let at = |x: i32, y: i32| g.mat[(y * gw + x) as usize];
+        for (si, s) in w.sites.iter().enumerate().filter(|(_, s)| s.kind == BIOME_MINE) {
+            sites_n += 1;
+            let mut site_rooms = 0;
+            let (x_lo, x_hi) = ((s.cx - s.rx).max(1), (s.cx + s.rx).min(gw - 2));
+            let (y_lo, y_hi) = ((s.cy - s.ry - 4).max(1), (s.cy + s.ry + 30).min(gh - 3));
+            let tag = format!("size {size} seed {seed} sv {sv} site {si}");
+            // Beams: a Wood cell whose cell above is not Wood, with a run of 8+ Wood below it.
+            for x in x_lo..=x_hi {
+                for y in y_lo..=y_hi {
+                    if at(x, y) != WOOD || at(x, y - 1) == WOOD || !s.inside(x, y) {
+                        continue;
+                    }
+                    let mut b = y;
+                    while at(x, b + 1) == WOOD {
+                        b += 1;
+                    }
+                    if b - y + 1 < 8 {
+                        continue;
+                    }
+                    beams += 1;
+                    assert!(stands(at(x, b + 1)), "{tag}: beam at x {x} rows {y}..{b} hangs over {} (cell below {})", b - y + 1, at(x, b + 1));
+                }
+            }
+            // Rooms: roof rows y, y+1 of Brick (12+ wide), Empty under the interior, no Brick above it.
+            for y in y_lo..=y_hi {
+                let mut x = x_lo;
+                while x <= x_hi {
+                    let roof = |x: i32| at(x, y) == BRICK && at(x, y + 1) == BRICK && at(x, y - 1) != BRICK;
+                    if !roof(x) {
+                        x += 1;
+                        continue;
+                    }
+                    let x0 = x;
+                    while x <= x_hi && roof(x) {
+                        x += 1;
+                    }
+                    let x1 = x - 1;
+                    if x1 - x0 + 1 < 16 || at((x0 + x1) / 2, y + 2) != EMPTY {
+                        continue;
+                    }
+                    rooms += 1;
+                    site_rooms += 1;
+                    let rt = tag.clone() + &format!(" room x {x0}..{x1} roof y {y}");
+                    // Every column rests on ground through nothing but Empty and Brick.
+                    for cx in x0..=x1 {
+                        let mut yy = y + 2;
+                        while yy < gh - 2 && matches!(at(cx, yy), EMPTY | BRICK | GUNPOWDER) {
+                            yy += 1;
+                        }
+                        assert!(stands(at(cx, yy)) && yy - y < 40, "{rt}: column {cx} finds no ground (stopped at y {yy}, material {})", at(cx, yy));
+                        assert!(matches!(at(cx, yy - 1), BRICK | EMPTY | GUNPOWDER), "{rt}");
+                    }
+                    // Under the open interior the first non-empty cell is the floor or a footing (not a hovering room).
+                    for cx in x0 + 2..=x1 - 2 {
+                        let mut yy = y + 2;
+                        while at(cx, yy) == EMPTY || at(cx, yy) == GUNPOWDER {
+                            yy += 1;
+                        }
+                        assert!(stands(at(cx, yy)) && yy - (y + 2) <= 20, "{rt}: interior column {cx} hovers {} rows over material {}", yy - (y + 2), at(cx, yy));
+                    }
+                    // The door side: wall run, then a gap of 10+ Empty rows; the interior is taller than the door.
+                    let mut best = (0, 0);
+                    for dx in [x0, x1] {
+                        let mut wb = y + 2;
+                        while at(dx, wb) == BRICK {
+                            wb += 1;
+                        }
+                        let mut door = 0;
+                        while at(dx, wb + door) == EMPTY {
+                            door += 1;
+                        }
+                        if door > best.0 {
+                            best = (door, wb - (y + 2));
+                        }
+                    }
+                    let (door, wall) = best;
+                    assert!(door >= 10, "{rt}: door only {door} rows tall (wall stub {wall})");
+                    assert!(wall + door > door, "{rt}: interior {} rows is not taller than the door {door} (mostly roof)", wall + door);
+                    assert!(wall >= 2, "{rt}: wall above the door is {wall} rows");
+                    assert!(x1 - x0 + 1 - 4 >= 6, "{rt}: interior too narrow");
+                }
+            }
+            if site_rooms > 0 {
+                sites_with_room += 1;
+            }
+            log += &format!("{tag}: rooms {site_rooms}\n");
+        }
+    }
+    std::fs::write("/tmp/mine-rooms.txt", log).unwrap();
+    assert!(beams > 0 && rooms > 0, "no beams ({beams}) or rooms ({rooms}) found");
+    assert!(sites_with_room * 5 >= sites_n, "only {sites_with_room} of {sites_n} mine sites got a room");
 }
