@@ -370,8 +370,8 @@ harness can see nondeterminism, and the input script exercises the sim (690
 paints, 30 of 30 distinct checkpoint hashes, D-020), so agreement is evidence
 rather than an idle world agreeing with itself.
 
-**Cost / consequences.** The suite takes about 50 s, so it is separate from
-`pnpm check` (D-019). D4, the cross-architecture run on an ARM device, was owed
+**Cost / consequences.** The suite took about 50 s, so it is separate from
+`pnpm check` (D-019). By November it had grown to about 7 minutes (entry 40). D4, the cross-architecture run on an ARM device, was owed
 and never closed in the record: CI only runs once the repo is public, and a
 phone run was left for later (D-020).
 
@@ -902,6 +902,10 @@ heap by tick 16,000 (4.4 minutes), about twice as fast, and the regression test
 now measures that on the real sandbox through `Sim::step`. A big lava heap still
 takes minutes, partly by design. The lesson: check a diagnosis against the artifact
 the user sees.
+
+**Corrected on 5 Nov (entry 39).** The steps sat on chunk edges because cells were updated chunk by chunk, which
+gave liquid at an edge fewer moves per tick. Dispersion made the heap level faster but left the cause in place,
+and poured water still stood in walls 64 cells apart. D-191 changed the scan order.
 
 **Evidence.** D-081, D-082;
 [`f48a500`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f48a500),
@@ -1457,3 +1461,97 @@ the file, with the loaded one labelled. The result is also not a verdict. At the
 in a browser, and a phone at 4x throttle would be at or over the frame budget. Whether to act is the user's call.
 
 **Evidence.** D-176; `docs/research/wake-load-results.md`; commits `b609005`, `3ac67c8`, `cff4375`.
+
+## 39. The water walls were the scan order, not sleeping
+
+**What.** After the liquid fixes (entries 32 and 33), the user's screenshot on 5 Nov still showed water poured
+from one point standing in walls 64 cells apart, "only slowly spilling over". The cells had been updated chunk
+by chunk: all 64 rows of one chunk, then the next. They are now updated row by row across a whole band of chunks,
+so with every chunk awake the pass is a plain raster scan (D-191, plan 6.2 amended).
+
+**The challenge.** Entry 18 met the same steps in October and treated them as slow settling; entry 32 found
+walls that were the active region. Every earlier explanation for a liquid wall had been sleeping, the active region
+or settling speed, so the
+first step was to rule them out rather than add another patch. The sandbox keeps every chunk active, and a probe
+with sleeping on and off gave identical grids, so neither was the cause. Measured in cells, the wall edges in the
+screenshot sat at x ≈ 453, 386 and 322, just past the chunk edges at 448, 384 and 320. A temporary raster-order
+switch in the same probe levelled the pour smoothly. With chunk-major order, liquid at a chunk edge got fewer
+moves per tick than liquid inside a chunk, so it piled up in a 22-row step that took about 3000 ticks to level.
+The existing `water_levels_out` test only looked at tick 6000, after the step had gone. The new test measures the
+surface while the water spreads: a 54-row step before the fix, within 6 after it.
+
+Interleaving rows makes sleeping harder to keep invisible, because a sleeping chunk can now be woken halfway
+through its band. It joins at its next row and stays awake for the following tick. The rows it skipped came
+earlier in the scan than the change that woke it, so they saw an unchanged neighbourhood and would have done
+nothing. A band with nothing running is skipped whole, since only its own cells run during its pass. The change
+moves results everywhere, so the golden snapshot and the `perf_equiv` trace were re-recorded on purpose. One wake
+test then failed for a new reason: water now arrived about 1500 ticks sooner and drowned the stem it was meant to
+water. My first repair (raising the seed) passed, but the cold reviewer found the test had never tested waking: it
+built its scene after freezing the region, and every `set` wakes the chunk it lands in, so the volatile seed held its
+chunk awake from tick 0. The test now re-freezes after building, asserts the seed's chunk stays frozen until water
+crosses, and was shown red twice: with no water, and with `wake` stubbed to never wake a frozen chunk.
+
+**Evidence.** D-191; `sim/src/grid.rs` (`step_cells`, `poured_water_spreads_without_walls_on_chunk_edges`);
+`sim/tests/wake.rs`; `docs/research/review-scan-order.md`.
+
+## 40. The gate: how a lockstep game is tested, and what the tests kept missing
+
+**Context.** In lockstep, a bug that changes one cell on one client is not a glitch: the clients' hashes disagree
+and the room splits. So the question for every change to `sim/`, the protocol or the input path is whether every
+client in every engine still computes the same thing, and whether the test of it could have failed.
+
+**Decision.** Before any such commit, the session model runs five steps, chained with `&&` so that a red step
+stops everything after it, the commit included:
+
+1. `cargo test --release`: 41 Rust test binaries over the sim, natively. Rules, invariants and pinned
+   results (the golden snapshot, a scripted Survival hash, the `perf_equiv` trace).
+2. `cargo clippy` for wasm32 with `-D warnings`: the static half of D11. No floating point, no `HashMap`, no clocks.
+3. `pnpm typecheck`.
+4. `pnpm test:determinism`: builds `sim.wasm` and a canary build. It runs the same scripts in Node, Chromium,
+   Firefox and WebKit and against native Rust, and checks that `sim.wasm` imports nothing (D1-D3, D5-D7, D10, D11,
+   entry 7).
+5. `pnpm test:net`: 399 tests that boot real servers and connect real WebSocket clients. They cover joins,
+   snapshots, rejoin, catch-up, claims, rooms and security.
+
+`pnpm check`, which CI runs against the real Docker image, is the fast subset. Determinism and net stay outside it
+because they need browsers, cargo and minutes (D-019). They run on the session model's machine, and CI only runs
+once the repo is public. Slower soaks (`soak:n1`, `soak:capacity`) are run by hand before a deploy.
+
+**Why these layers.** Each one exists because a cheaper one could not see a class of bug.
+- **Native and wasm comparison (D3)** catches target-dependent code such as `usize` (invariant 7).
+- **Four engines (D2)** catch engine-dependent behaviour.
+- **The canary (D10)** is a build that must fail D2, which proves the harness can see nondeterminism at all.
+- **Sleep on/off (D7)** proves an optimisation is invisible (entry 8).
+- **Pinned hashes** make any change in results a decision someone has to re-record on purpose, with the scenarios
+  that moved listed in the commit (D-191 moved all but `survival_l`).
+- **The net suite** tests the server: a mismatch there is a protocol or playout bug, not a sim bug.
+
+**What the gate has missed, and the rules that came from it.** Most of this project's process rules began as a
+green gate that was wrong.
+- **Agreement is not coverage.** "D2 with casts" passed in four engines while no cast ever succeeded (entry 22).
+  Tests now assert what happened before they trust agreement.
+- **A regression test must be shown red first,** against the real failure. A restore test that painted water into
+  dirt passed on the buggy code (entry 33). On 5 Nov a wake test woke its own chunk in setup and could not fail
+  (entry 39).
+- **The exit code is the gate.** A merge was committed on a red run because the commit followed the test with `;`
+  (`d24bf69`). A later gate piped `cargo test` into `grep`, which exits 0 whatever the tests do. Each step now
+  writes to a log and the steps are chained with `&&`.
+- **Intermittent means a race until shown otherwise.** `first_blood` failed about one run in three. Its "far enough"
+  assumption was 15 cells short (D-179). Another test compared two independent clocks' tick numbers.
+- **Load makes the gate lie both ways.** On 4 Nov eleven parallel agents pushed the load average to about 575.
+  Gates timed out, and quiet reruns then found two real bugs the noise had hidden. Workers also committed on red or
+  skipped `test:net`. So the session model reruns every gate itself, with one or two workers at a time.
+- **Green is not working.** Every test passed while size-S rooms drew as sandboxes and `/r/` links were blank
+  (entry 29). Cold reviews found a buffer overrun and a restore desync that every test passed over (entries 20 and
+  33). A change is finished after the gate, a cold review for anything structural, and a look in two browsers.
+
+**Cost / consequences.** About 8 to 15 minutes per run (determinism 414 s and net 334 s on 5 Nov, at a load
+average near 30), against 50 s for the October suite. One fix often needs two runs: the reviewer's findings change
+the tests, and the commit must rest on a run of the code it contains.
+
+**Still owed.** D4, the run on an ARM device, was never closed (D-015, D-020). Every engine comparison has been on
+one x86-64 Mac.
+
+**Evidence.** Plan section 12; D-015, D-019, D-020, D-114, D-179, D-191; entries 7, 8, 20, 22, 29, 33 and 39;
+`package.json` (`test:determinism`, `test:net`, `check`); `.github/workflows/checks.yml`;
+[`d24bf69`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d24bf69).
