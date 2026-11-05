@@ -820,36 +820,50 @@ fn pick_sites(g: &Grid, seed: u64, path: &[(i32, i32)], sc: &Scale, arena: Optio
 /// Carve each site's cavern: Rock and Dirt inside the ellipse become Empty (like `carve_chambers`). Runs before
 /// `connect_and_prune`, so a cavern the worms did not reach is joined or filled like any other open space.
 fn carve_sites(g: &mut Grid, sites: &[Site]) {
-    let (w, h) = (g.w as i32, g.h as i32);
     let depth = |g: &Grid| box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
+    let d0 = depth(g);
+    // Bowls only add solids, so the walkable depth never grows: if it still reaches `d0` after every site, it did after
+    // each one. Check once (the usual case); only on failure redo the sites one by one with a check each.
+    let before = g.mat.clone();
+    let bowls: Vec<Vec<usize>> = sites.iter().map(|s| carve_site(g, s)).collect();
+    if bowls.iter().all(|b| b.is_empty()) || depth_reaches(g, d0) {
+        return;
+    }
+    g.mat = before;
     for s in sites {
-        let d0 = depth(g);
-        let mut bowl: Vec<usize> = Vec::new();
-        for y in (s.cy - s.ry).max(0)..=(s.cy + s.ry).min(h - 1) {
-            for x in (s.cx - s.rx).max(0)..=(s.cx + s.rx).min(w - 1) {
-                let (dx, dy) = (i64::from(x - s.cx), i64::from(y - s.cy));
-                if dx * dx * i64::from(s.ry * s.ry) + dy * dy * i64::from(s.rx * s.rx) <= i64::from(s.rx * s.rx) * i64::from(s.ry * s.ry) {
-                    let i = (y * w + x) as usize;
-                    if y < site_floor(s) {
-                        if g.mat[i] == ROCK || g.mat[i] == DIRT {
-                            g.mat[i] = EMPTY;
-                        }
-                    } else if g.mat[i] == EMPTY {
-                        // A flat bowl: open space the worms left below the floor row is sealed, so a pool has a basin.
-                        g.mat[i] = ROCK;
-                        bowl.push(i);
-                    }
-                }
-            }
-        }
+        let bowl = carve_site(g, s);
         // A bowl that seals the route a worm took under the site would push `repair_traversal` to cut elsewhere (even
         // through the boss arena floor): if the walkable depth got shallower, undo the bowl.
-        if depth(g) < d0 {
+        if !bowl.is_empty() && !depth_reaches(g, d0) {
             for &i in &bowl {
                 g.mat[i] = EMPTY;
             }
         }
     }
+}
+
+/// Carve one site's cavern and seal the Empty cells below its floor row; returns the sealed cells (the bowl).
+fn carve_site(g: &mut Grid, s: &Site) -> Vec<usize> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let mut bowl: Vec<usize> = Vec::new();
+    for y in (s.cy - s.ry).max(0)..=(s.cy + s.ry).min(h - 1) {
+        for x in (s.cx - s.rx).max(0)..=(s.cx + s.rx).min(w - 1) {
+            let (dx, dy) = (i64::from(x - s.cx), i64::from(y - s.cy));
+            if dx * dx * i64::from(s.ry * s.ry) + dy * dy * i64::from(s.rx * s.rx) <= i64::from(s.rx * s.rx) * i64::from(s.ry * s.ry) {
+                let i = (y * w + x) as usize;
+                if y < site_floor(s) {
+                    if g.mat[i] == ROCK || g.mat[i] == DIRT {
+                        g.mat[i] = EMPTY;
+                    }
+                } else if g.mat[i] == EMPTY {
+                    // A flat bowl: open space the worms left below the floor row is sealed, so a pool has a basin.
+                    g.mat[i] = ROCK;
+                    bowl.push(i);
+                }
+            }
+        }
+    }
+    bowl
 }
 
 /// Dam the low rim of a lava site (after `connect_and_prune`, whose links cut through any earlier dam): Empty cells in the ring just outside the ellipse (grown by 3) at or below 18 rows above
@@ -908,12 +922,16 @@ fn seal_site(g: &mut Grid, s: &Site) {
 fn fill_lava_lakes(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site], scale: &Scale) {
     let w = g.w as i32;
     let cap = (9000 * scale.pct * scale.pct / 10000) as usize;
+    let depth = |g: &Grid| box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
+    let mut d0 = depth(g);
     for (n, s) in sites.iter().enumerate().filter(|(_, s)| s.kind == BIOME_LAVA) {
         let n = n as u32;
         seal_site(g, s);
+        // The dam can itself make the route shallower (a lake is judged against the depth after it).
+        if !depth_reaches(g, d0) {
+            d0 = depth(g);
+        }
         let mut filled = false;
-        let depth = |g: &Grid| box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
-        let d0 = depth(g);
         for (j, off) in [0, -s.rx / 3, s.rx / 3].into_iter().enumerate() {
             let x = s.cx + off;
             let Some(yf) = find_floor(g, x, s.cy, s.ry + 4) else { continue };
@@ -923,7 +941,7 @@ fn fill_lava_lakes(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site]
             if try_pool(g, sc, x, yf, (6, 16), cap, (2 * s.rx + 20) as usize, LAVA, WATER, &[]) {
                 // A lake that drowns the route down would make `repair_traversal` cut a tunnel elsewhere (maybe through the
                 // boss arena floor): undo any lake that makes the walkable depth shallower.
-                if depth(g) < d0 {
+                if !depth_reaches(g, d0) {
                     for &c in &sc.region {
                         g.mat[c as usize] = EMPTY;
                     }
@@ -1780,12 +1798,26 @@ const CHAMBER_R_MAX: i32 = 45;
 /// Flood a `bw` x `bh` box (keyed by top-left) through Empty cells from `start`. Returns the top-left
 /// of the box whose bottom is deepest, or None if the start box does not fit. Liquids, sand and solids block.
 pub fn box_reach(g: &Grid, start: (usize, usize), bw: usize, bh: usize) -> Option<(usize, usize)> {
+    box_reach_to(g, start, bw, bh, usize::MAX)
+}
+
+/// True if a body can walk from the surface centre to a box top at row `dy` or deeper (`box_reach` depth >= `dy`).
+/// Stops flooding as soon as it gets there.
+fn depth_reaches(g: &Grid, dy: usize) -> bool {
+    box_reach_to(g, (g.w / 2, 0), FIT_W, FIT_H, dy).is_some_and(|(_, d)| d >= dy) || dy == 0
+}
+
+/// `box_reach`, stopping early once a box top at row `stop_y` or deeper is reached.
+fn box_reach_to(g: &Grid, start: (usize, usize), bw: usize, bh: usize, stop_y: usize) -> Option<(usize, usize)> {
     let (w, h) = (g.w, g.h);
     let mut ps = vec![0u32; (w + 1) * (h + 1)];
     for y in 0..h {
+        let (above, here) = ps.split_at_mut((y + 1) * (w + 1));
+        let above = &above[y * (w + 1)..];
+        let mut run = 0u32;
         for x in 0..w {
-            let solid = u32::from(g.mat[y * w + x] != EMPTY);
-            ps[(y + 1) * (w + 1) + x + 1] = solid + ps[y * (w + 1) + x + 1] + ps[(y + 1) * (w + 1) + x] - ps[y * (w + 1) + x];
+            run += u32::from(g.mat[y * w + x] != EMPTY);
+            here[x + 1] = above[x + 1] + run;
         }
     }
     let fits = |x: usize, y: usize| {
@@ -1804,6 +1836,9 @@ pub fn box_reach(g: &Grid, start: (usize, usize), bw: usize, bh: usize) -> Optio
     while let Some((x, y)) = stack.pop() {
         if y > deepest.1 {
             deepest = (x, y);
+            if y >= stop_y {
+                break;
+            }
         }
         let mut nb = [(usize::MAX, 0); 4];
         if x > 0 {
@@ -2102,18 +2137,19 @@ mod tests {
         use crate::config::RoomConfig;
         let mut out = String::new();
         for size in 0u8..=2 {
-            let cfg = RoomConfig { size, ..RoomConfig::caves_pvp() };
-            let (mut best, mut open, mut sh, mut dp) = (u128::MAX, 0usize, 0usize, 0usize);
+            let cfg = RoomConfig { size, ..if std::env::var("GEN_SURV").is_ok() { RoomConfig::survival() } else { RoomConfig::caves_pvp() } };
+            let (mut best, mut worst, mut open, mut sh, mut dp) = (u128::MAX, 0u128, 0usize, 0usize, 0usize);
             for seed in 1..=4u64 {
                 let t = std::time::Instant::now();
                 let s = Sim::new(seed, cfg).unwrap();
                 best = best.min(t.elapsed().as_micros());
+                worst = worst.max(t.elapsed().as_micros());
                 open += s.grid.mat.iter().filter(|&&m| m == EMPTY).count() * 100 / s.grid.mat.len();
                 let deep = |p: &crate::entities::Pickup| crate::tuning::PICKUP_TABLE[1].iter().any(|&(k, _)| k == p.spell);
                 sh += s.pickups.iter().filter(|p| !deep(p)).count();
                 dp += s.pickups.iter().filter(|p| deep(p)).count();
             }
-            out += &format!("size {size}: best {} ms, open {}% avg, pickups/seed shallow {} deep {}\n", best / 1000, open / 4, sh / 4, dp / 4);
+            out += &format!("size {size}: best {} worst {} ms, open {}% avg, pickups/seed shallow {} deep {}\n", best / 1000, worst / 1000, open / 4, sh / 4, dp / 4);
         }
         std::fs::write("/tmp/f1-gen.txt", out).unwrap();
     }
