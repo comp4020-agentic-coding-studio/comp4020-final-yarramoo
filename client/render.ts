@@ -82,10 +82,20 @@ void main() {
   uint m = texelFetch(uMat, c, 0).r;
   float a = float(texelFetch(uAux, c, 0).r);
   float h = hash(vec2(c));
-  vec3 bg = vec3(0.043, 0.055, 0.078) + vec3(0.02, 0.025, 0.04) * (1.0 - uv.y);
-  // Open air only: in a game world a cell is sky when it is above the first solid cell of its column (caves stay
-  // dark); the sandbox has no ground to speak of, so all of it is sky.
+  // Open air only: in a game world a cell is sky above the ground line of its column (updateSurface); the
+  // sandbox has no ground to speak of, so all of it is sky. Below the line, a cave's open cells show a dim back
+  // wall in the depth bands' colours (dirt brown, grey rock, cold blue-black), so a cave reads as inside the earth.
+  vec3 bg;
   if (uBands.x < 0.5 || c.y < int(texelFetch(uSurf, ivec2(c.x, 0), 0).r)) bg = skyColor(uv, floor(uv * uView));
+  else {
+    float y = float(c.y);
+    float s1 = smoothstep(uBands.y - 40.0, uBands.y + 40.0, y);
+    float s2 = smoothstep(uBands.z - 40.0, uBands.z + 40.0, y);
+    vec3 wall = mix(mix(vec3(0.23, 0.15, 0.10), vec3(0.19, 0.19, 0.20), s1), vec3(0.09, 0.11, 0.17), s2);
+    // Chunky two-scale noise (2- and 6-cell blocks), so the wall has texture but stays well behind the terrain.
+    float n = 0.78 + 0.22 * hash(vec2(c / 2) + 31.0) + 0.12 * (hash(vec2(c / 6) + 7.0) - 0.5);
+    bg = wall * n;
+  }
   vec3 col = uPal[m];
   if (m == 0u) {
     outColor = vec4(bg, 1.0);
