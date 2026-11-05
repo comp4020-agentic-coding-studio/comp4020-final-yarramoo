@@ -25,6 +25,27 @@ describe("avatar controller", () => {
     expect(MAX_SPEED_FIXED).toBeLessThan(MAX_AVATAR_SPEED);
   });
 
+  it("keeps sliding on ice after the key is released, and stops within a cell or two on rock", () => {
+    const slide = (floor: number) => {
+      const mat = new Uint8Array(W * H);
+      for (let y = 100; y < H; y++) mat.fill(3, y * W, (y + 1) * W);
+      for (let x = 20; x < 140; x++) mat[100 * W + x] = floor; // the walking surface: row 100
+      const g: Grid = { mat, w: W, h: H };
+      const a = new Avatar(30, 100);
+      a.onGround = true;
+      run(a, g, 60, { ...idle, right: true });
+      const x0 = a.x;
+      run(a, g, 200);
+      return { x0, slid: a.x - x0, top: a.vx };
+    };
+    const ice = slide(18);
+    const rock = slide(3);
+    expect(rock.slid).toBeLessThan(2.5);
+    expect(ice.slid).toBeGreaterThan(8);
+    expect(ice.top).toBe(0); // the snap-to-zero still applies, so it does stop eventually
+    expect(Math.abs(ice.x0 - 30)).toBeLessThan(MAX_SPEED_FIXED * 60 / 16 + 1); // no faster than walking
+  });
+
   it("falls onto the floor and stands there on a 1/16 grid", () => {
     const g = world();
     const a = new Avatar(20, 80);
@@ -159,8 +180,8 @@ import { MATERIAL_NAMES } from "../../shared/names.ts";
 
 describe("avatar material classes", () => {
   const E = "empty", S = "solid", L = "liquid", G = "gas";
-  const want = [E, S, S, S, S, L, S, S, S, S, G, G, G, S, L, L, L, G, S, S, S, S];
-  it("pins every material id 0-21 to exactly one class", () => {
+  const want = [E, S, S, S, S, L, S, S, S, S, G, G, G, S, L, L, L, G, S, S, S, S, S, S, S];
+  it("pins every material id 0-24 to exactly one class", () => {
     expect(Object.keys(MATERIAL_NAMES).length).toBe(want.length);
     for (let m = 0; m < want.length; m++) {
       const got = m === 0 ? E : isSolid(m) ? S : isLiquid(m) ? L : isGas(m) ? G : "none";

@@ -22,7 +22,9 @@ function stepTo(sim: ReturnType<typeof loadSim>, from: number, to: number, log?:
 // 5 Nov (gunpowder damage radius 4 -> 10): the script's opening gunpowder now kills all three players at ticks 10-11
 // (respawn ~190), so bombs fly at 305-314, 370-379, 435-444, 630-639, 695-704 and player 2 dies at 445. Cuts 308 and
 // 438 are bombs in flight, 460 a dead player with a bag; the older cuts are kept.
-const CUTS = [45, 72, 90, 101, 141, 150, 206, 240, 262, 300, 308, 438, 460, 500, 899];
+// 6 Nov (biomes, D-193): the caves moved again; bombs fly at 565-574 and 630-639, all three die at 9 and 265 (bags on
+// the ground at 90). Cuts 568 and 633 are bombs in flight.
+const CUTS = [45, 72, 90, 101, 141, 150, 206, 240, 262, 300, 308, 438, 460, 500, 568, 633, 899];
 
 describe("D5 with the M5 script", () => {
   it("snapshot cuts (bomb in flight, mid-death, bags present, after respawn) restore and continue identically", () => {
@@ -40,7 +42,7 @@ describe("D5 with the M5 script", () => {
     // Cuts chosen from the script's own timeline (see the coverage test): bombs fly 40..100 and again after 135.
     const cuts = CUTS;
     expect(seen.bag.length).toBeGreaterThan(100);
-    expect(seen.proj.length).toBeGreaterThan(40);
+    expect(seen.proj.length).toBeGreaterThanOrEqual(20);
     expect(cuts.some((c) => seen.bag.includes(c)) && cuts.some((c) => seen.proj.includes(c))).toBe(true);
     for (const cut of cuts) {
       const a = loadSim(wasm);
@@ -61,7 +63,7 @@ describe("D5 with the M5 script", () => {
     sim.init(BigInt(script.seed), 1);
     const dead = new Set<number>();
     const marks: Record<number, { dead: number; bags: number; bombs: number }> = {};
-    for (let t = 1; t <= 500; t++) {
+    for (let t = 1; t <= 700; t++) {
       stepTo(sim, t, t);
       for (const e of sim.events()) {
         if (e.kind === EV_DEATH) dead.add(e.player);
@@ -75,7 +77,7 @@ describe("D5 with the M5 script", () => {
       };
     }
     expect(marks[90].dead).toBeGreaterThan(0);
-    expect(marks[308].bombs).toBeGreaterThan(0);
+    expect(CUTS.some((c) => c <= 700 && marks[c].bombs > 0), "a cut with a bomb in flight").toBe(true);
     // F3 moved the script's deaths, so name no single tick; but the guarantee is about the CUTS (D5 must snapshot a
     // dead player with a bag on the ground), so the tick has to be one of them, not any tick of the run.
     const deadCut = CUTS.find((c) => c <= 500 && marks[c].dead > 0 && marks[c].bags > 0);

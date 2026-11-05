@@ -8,13 +8,13 @@ pub enum Input {
     Cast { player: u32, spell: u8, angle: u16, cast_seq: u16 },
     /// F6b: toggle the lobby ready flag (`ready` is 0 or 1; anything else is malformed).
     Ready { player: u32, ready: u8 },
-    // `mat`'s bit 7 is extracted into `fill_empty` at decode (material ids are 0-20, below bit 7); `mat` itself
+    // `mat`'s bit 7 is extracted into `fill_empty` at decode (material ids are 0-24, below bit 7); `mat` itself
     // is already masked down to the plain material id, so nothing downstream needs to know about the flag
     // bit at all (R4, plan-game-modes.md "Paint modes").
     Paint { player: u32, mat: u8, x0: i16, y0: i16, x1: i16, y1: i16, radius: u8, fill_empty: bool },
 }
 
-/// The fill-empty flag bit within the Paint input's `mat` byte (bit 7; ids 0-20 sit below it, in the low 7 bits).
+/// The fill-empty flag bit within the Paint input's `mat` byte (bit 7; ids 0-24 sit below it, in the low 7 bits).
 pub const FILL_EMPTY_BIT: u8 = 0x80;
 
 struct R<'a>(&'a [u8], usize);

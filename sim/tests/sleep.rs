@@ -104,6 +104,26 @@ fn d7_new_materials_sleep_is_invisible() {
     same(0, 13, 2200, 20, &materials_script());
 }
 
+/// Brick, Moss and Mushroom painted across chunk edges (x = 128, 256), left quiet, then fire set to the moss and
+/// mushroom, and acid dropped on the brick and moss: the sleeping run must match the awake one.
+fn biome_script() -> Script {
+    vec![
+        (1, paint(2, 100, 300, 300, 300, 2)),
+        (1, paint(22, 110, 296, 150, 296, 2)),
+        (1, paint(23, 120, 290, 200, 290, 2)),
+        (1, paint(24, 230, 296, 290, 296, 3)),
+        (400, paint(10, 124, 286, 126, 286, 1)),
+        (450, paint(10, 250, 292, 252, 292, 1)),
+        (900, paint(16, 140, 250, 146, 250, 3)),
+        (1200, paint(0, 100, 280, 300, 300, 8)),
+    ]
+}
+
+#[test]
+fn d7_brick_moss_mushroom_sleep_is_invisible() {
+    same(0, 17, 1800, 20, &biome_script());
+}
+
 /// A quiet basin whose only activity is ice freezing the water beside it by chance: if the ice did not keep
 /// its chunk awake, the sleeping run would stop freezing and diverge from the awake one.
 #[test]

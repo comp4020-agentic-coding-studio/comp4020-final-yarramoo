@@ -7,7 +7,7 @@ use crate::tuning::{DIG_RADIUS, DIG_REACH, FALL_ISLAND_MAX, FALL_MAX_ISLANDS, IS
 
 /// Materials that form rigid islands for falling rock v0 (Bedrock anchors them instead).
 pub fn is_structural(m: u8) -> bool {
-    matches!(m, ROCK | DIRT | WOOD | ICE | GLASS | COAL)
+    matches!(m, ROCK | DIRT | WOOD | ICE | GLASS | COAL | BRICK)
 }
 
 /// Outcome of trying to move a free island down one cell.
@@ -904,7 +904,7 @@ impl Grid {
     }
 
     fn dissolvable(m: u8) -> bool {
-        matches!(m, ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER)
+        matches!(m, ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER | MOSS | MUSHROOM)
     }
 
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
@@ -973,6 +973,8 @@ impl Grid {
                 if is_flammable(m) {
                     let n = match m {
                         WOOD => 12,
+                        MOSS => 40,
+                        MUSHROOM => 6,
                         OIL => 2,
                         GAS => 1,
                         _ => 4,
@@ -1238,7 +1240,7 @@ impl Grid {
                 }
                 let i = y as usize * self.w + x as usize;
                 match self.mat[i] {
-                    ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER | ICE | GLASS | COAL => self.set(i, EMPTY, 0),
+                    ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER | ICE | GLASS | COAL | BRICK | MOSS | MUSHROOM => self.set(i, EMPTY, 0),
                     GUNPOWDER if self.aux[i] != 1 => self.set(i, GUNPOWDER, 1),
                     _ => {}
                 }
@@ -1907,7 +1909,7 @@ mod tests {
             assert!(paintable(m), "{m}");
         }
         // Bedrock is the boundary, Stem and Flower only grow from Seeds, Pebbles only come from crumbled rock.
-        assert!(![BEDROCK, STEM, FLOWER, PEBBLES, PEBBLES + 1].iter().any(|&m| paintable(m)));
+        assert!(![BEDROCK, STEM, FLOWER, PEBBLES, MUSHROOM + 1].iter().any(|&m| paintable(m)));
     }
 }
 
