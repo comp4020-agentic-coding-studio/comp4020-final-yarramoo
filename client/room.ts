@@ -166,8 +166,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   let hoverShow: (text: string | null) => void = () => {};
   let roundOutcome: "win" | "lose" | null = null;
   let lastDeepest = 0;
+  let combatAt: number | null = null; // performance.now() of the latest "combat" message from the worker
   const updateMood = (y: number, boss: boolean) => {
-    moodState = stepMood(moodState, { y, bossAlive: boss, sandbox: worldKind === 0, round: roundOutcome }, performance.now());
+    moodState = stepMood(moodState, { y, bossAlive: boss, sandbox: worldKind === 0, round: roundOutcome, combatAt }, performance.now());
     setMood(moodState.mood);
   };
   const showMute = () => {
@@ -632,6 +633,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         if (m.sky !== undefined) fallback?.setSky(m.sky, m.skyMotion);
         applyCamera();
         if (localKind !== null) $("title").textContent = "Game world (local, single player)";
+        break;
+      case "combat":
+        combatAt = performance.now();
         break;
       case "players":
         onPlayers(m);

@@ -108,6 +108,8 @@ export type FromWorker =
       /** Damage-relevant events since the last post (Explode: owner, cell x, y, radius; Knock on me: attacker; Death), for scripts. Read-only. */
       evlog: { k: number; p: number; a: number; b: number; c: number }[];
     }
+  /** Display-only: the local player was hit, or hurt an enemy or another player. Drives the fight music (room.ts). */
+  | { type: "combat" }
   /** About 1 Hz: a coarse solid/empty mask of the world for the minimap silhouette, `cols` x `rows`, row-major, 1 = solid. Render-only. */
   | { type: "terrain"; cols: number; rows: number; mask: Uint8Array }
   /** A sound for the main thread to synthesise (client/sfx.ts). `vol` 0..1 and `pan` -1..1 are already worked out from the camera distance; `mag` 0..1 scales explosions. Never sent during replay. */

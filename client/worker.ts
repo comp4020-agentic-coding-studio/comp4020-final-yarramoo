@@ -499,6 +499,13 @@ function connect() {
 }
 
 let prevHealth = 1e9;
+let lastCombatPost = -1e9;
+/** Tell the main thread the local player is in a fight (music only); throttled, and silent while replaying. */
+function combatSignal(now: number, quiet: boolean) {
+  if (quiet || now - lastCombatPost < 500) return;
+  lastCombatPost = now;
+  send({ type: "combat" });
+}
 let lastSizzle = -1e9;
 /** Place, step and send the avatar; return the overlay rectangles and steer the camera. Game world only. */
 function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
@@ -512,6 +519,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   // Lava sizzle (display only): my health fell while lava touches my hitbox. Rate-limited; silent while replaying.
   if (mine && !dead && !spectate) {
     const touching = prevHealth > mine.health && hitboxTouchesLava(sim.matView(), w, h, mine.x, mine.y);
+    if (prevHealth > mine.health && !touching) combatSignal(now, net === "catching-up" || !!ls?.fastForwarding);
     if (shouldSizzle(prevHealth, mine.health, touching, now, lastSizzle)) {
       lastSizzle = now;
       if (evLogOut.length < 100) evLogOut.push({ k: 900, p: myId, a: mine.health, b: 0, c: 0 }); // dev-route log only: a sizzle was requested
@@ -819,6 +827,8 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
   const quiet = net === "catching-up" || !!ls?.fastForwarding;
   sfxBudget = 24;
   for (const e of evs) {
+    // Combat signals for the music: I hurt an enemy, or knocked another player (c = attacker). Being hurt is the health drop in gameFrame.
+    if ((e.kind === EV_ENEMY_HURT && e.player === myId) || (e.kind === EV_KNOCK && e.c === myId && e.player !== myId)) combatSignal(now, quiet);
     if ((e.kind === EV_EXPLODE || e.kind === EV_DEATH || (e.kind === EV_KNOCK && e.player === myId)) && evLogOut.length < 100) evLogOut.push({ k: e.kind, p: e.player, a: e.a, b: e.b, c: e.c });
     if (e.kind === EV_CAST) {
       const c = chestOf(e.player);

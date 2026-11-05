@@ -8,7 +8,7 @@ import { DEEP_TOP, SHALLOW_TOP } from "../shared/stats.ts";
 
 export const MUSIC_KEY = "sand.music";
 
-export type Mood = "menu" | "surface" | "caves" | "deep" | "boss" | "victory" | "defeat";
+export type Mood = "menu" | "surface" | "caves" | "deep" | "boss" | "fight" | "victory" | "defeat";
 export type VoiceKind = "pad" | "mel" | "bass" | "pluck" | "drone" | "perc";
 
 export interface Note {
@@ -111,6 +111,15 @@ export const MOODS: Record<Mood, MoodDef> = {
       pad: { type: "square", cutoff: 700, attack: 0.1, release: 0.4, gain: 0.18 },
     },
   },
+  // Combat: C minor, fast, eighth-note bass and a noise hit on every beat. Shorter and brighter than boss.
+  fight: {
+    root: 36, scale: MINOR, bpm: 152, beatsPerBar: 4, chords: [0, 5, 6, 4],
+    melDensity: 0.18, pluckDensity: 0, pad: false, drone: false, bassOstinato: true, perc: true,
+    voices: {
+      mel: { type: "square", cutoff: 1600, attack: 0.01, release: 0.2, gain: 0.22 },
+      bass: { type: "sawtooth", cutoff: 450, attack: 0.005, release: 0.1, gain: 0.5 },
+    },
+  },
   // Stings: one bar, then a fall back to calm.
   victory: {
     root: 60, scale: PENT_MAJOR, bpm: 96, beatsPerBar: 4, chords: [0],
@@ -185,7 +194,7 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   } else {
     add("bass", degreeToMidi(m, chord), 0, bars, 0.7);
   }
-  if (m.perc) for (let b = 0; b < bars; b += 1) if (mood === "boss" || b % 2 === 0) add("perc", 0, b, 0.12, b === 0 ? 1 : 0.6);
+  if (m.perc) for (let b = 0; b < bars; b += 1) if (mood === "boss" || mood === "fight" || b % 2 === 0) add("perc", 0, b, 0.12, b === 0 ? 1 : 0.6);
   if (m.melDensity > 0 && mood !== "victory" && mood !== "defeat") {
     for (let h = 0; h < bars * 2; h++) {
       if (rng() < m.melDensity) {
@@ -220,6 +229,8 @@ export interface MoodInput {
   sandbox: boolean;
   /** Round outcome once known (a one-shot sting); null while playing. */
   round: "win" | "lose" | null;
+  /** performance.now() of the latest combat signal (the local player was hit or hurt something), or null/absent for none. */
+  combatAt?: number | null;
 }
 
 export interface MoodState {
@@ -231,6 +242,8 @@ export interface MoodState {
 }
 
 export const DEPTH_HOLD_MS = 3000;
+/** How long the fight mood lasts after the last combat signal. */
+export const FIGHT_HOLD_MS = 9000;
 export const initialMoodState = (): MoodState => ({ mood: "surface", candidate: "surface", since: null, sting: false });
 
 function depthMood(y: number): Mood {
@@ -243,6 +256,8 @@ export function stepMood(s: MoodState, inp: MoodInput, nowMs: number): MoodState
   if (inp.round) return { mood: inp.round === "win" ? "victory" : "defeat", candidate: s.candidate, since: null, sting: true };
   if (inp.bossAlive) return { ...s, mood: "boss", candidate: "boss", since: null };
   const want = inp.sandbox ? "surface" : depthMood(inp.y);
+  if (!inp.sandbox && inp.combatAt != null && nowMs - inp.combatAt < FIGHT_HOLD_MS) return { ...s, mood: "fight", since: null };
+  if (s.mood === "fight") return { ...s, mood: want, candidate: want, since: null }; // the hold ran out: straight back to the depth mood
   if (want === s.mood) return { ...s, candidate: want, since: null };
   if (want !== s.candidate || s.since === null) return { ...s, candidate: want, since: nowMs };
   if (nowMs - s.since >= DEPTH_HOLD_MS) return { ...s, mood: want, since: null };

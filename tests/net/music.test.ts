@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEEP_TOP, SHALLOW_TOP } from "../../shared/stats.ts";
-import { DEPTH_HOLD_MS, MAX_MUSIC_VOICES, MOODS, degreeToMidi, moodToSwitch, initialMoodState, makeRng, maxOverlap, planBar, stepMood, type Mood, type MoodInput, type MoodState } from "../../client/music.ts";
+import { DEPTH_HOLD_MS, FIGHT_HOLD_MS, MAX_MUSIC_VOICES, MOODS, degreeToMidi, moodToSwitch, initialMoodState, makeRng, maxOverlap, planBar, stepMood, type Mood, type MoodInput, type MoodState } from "../../client/music.ts";
 
 const moods = Object.keys(MOODS) as Mood[];
 const base: MoodInput = { y: 100, bossAlive: false, sandbox: false, round: null };
@@ -82,6 +82,39 @@ describe("stepMood", () => {
     sb = run(sb, { ...base, sandbox: true, y: DEEP_TOP + 50 }, 0);
     sb = run(sb, { ...base, sandbox: true, y: DEEP_TOP + 50 }, 99999);
     expect(sb.mood).toBe("surface");
+  });
+});
+
+describe("fight mood", () => {
+  const run = (s: MoodState, inp: MoodInput, t: number) => stepMood(s, inp, t);
+  it("a combat signal switches to fight at once and holds, then returns to the depth mood at once", () => {
+    let s = run(initialMoodState(), { ...base, combatAt: 1000 }, 1000);
+    expect(s.mood).toBe("fight");
+    s = run(s, { ...base, combatAt: 1000 }, 1000 + FIGHT_HOLD_MS - 1);
+    expect(s.mood).toBe("fight");
+    s = run(s, { ...base, combatAt: 1000 }, 1000 + FIGHT_HOLD_MS);
+    expect(s.mood).toBe("surface");
+  });
+  it("a fresh signal extends the hold", () => {
+    let s = run(initialMoodState(), { ...base, combatAt: 0 }, 0);
+    s = run(s, { ...base, combatAt: 5000 }, 5000);
+    s = run(s, { ...base, combatAt: 5000 }, FIGHT_HOLD_MS + 1000);
+    expect(s.mood).toBe("fight");
+  });
+  it("boss and round stings outrank fight; no signal means no fight", () => {
+    expect(run(initialMoodState(), { ...base, bossAlive: true, combatAt: 0 }, 0).mood).toBe("boss");
+    expect(run(initialMoodState(), { ...base, round: "win", combatAt: 0 }, 0).mood).toBe("victory");
+    expect(run(initialMoodState(), { ...base, combatAt: null }, 0).mood).toBe("surface");
+    expect(run(initialMoodState(), base, 0).mood).toBe("surface");
+  });
+  it("fight is faster, minor and has percussion on every beat", () => {
+    expect(MOODS.fight.bpm).toBeGreaterThan(MOODS.deep.bpm * 1.8);
+    expect(MOODS.fight.scale).toEqual([0, 2, 3, 5, 7, 8, 10]);
+    const perc = planBar("fight", 0, makeRng(1)).filter((n) => n.voice === "perc");
+    expect(perc.map((n) => n.t)).toEqual([0, 1, 2, 3]);
+  });
+  it("sandbox ignores combat", () => {
+    expect(run(initialMoodState(), { ...base, sandbox: true, combatAt: 0 }, 0).mood).toBe("surface");
   });
 });
 
