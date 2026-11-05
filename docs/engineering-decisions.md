@@ -1204,6 +1204,9 @@ guard.
 
 > **Update, 1 Nov:** v0 was built overnight (D-165, entry 29). Cut-free islands now crumble to sand. v1 and
 > v2 stay in `FUTURE.md`.
+>
+> **Update, 5 Nov:** v0.5 merged (D-190, D-192): small cut-free islands (up to 120 cells) fall whole and cut trees
+> fall as burning Wood. The user played it and closed the line there: v1 and v2 are not planned.
 
 **Context.** On 31 October the user asked what it would take for rock that a player cuts entirely free to
 fall as a solid piece, the way it does in Noita. Noita's talk describes "destructible rigid body physics"

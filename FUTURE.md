@@ -489,7 +489,8 @@ generator-placed enemies Survival gets first.
 ## Rigid bodies: rock that falls when cut free
 
 v0: crumble a freed island into falling powder. v0.5: drop small islands straight down in the grid. v1: a
-translation-only `Body` entity. v2: rotation.
+translation-only `Body` entity. v2: rotation. **v0.5 shipped 5 Nov (D-192); v1 and v2 not planned (the user: too
+much work for the gain).**
 
 - **Source:** the user, 31 Oct; research in `docs/research/rigid-bodies.md`; engineering-decisions entry 28.
 - **Why:** it's the Noita moment of cutting a chunk free and watching it fall. v0 is cheap (about half a day,
@@ -507,7 +508,8 @@ A deep-pickup bolt that moves the caster to the last body-sized open spot along 
 
 ## Falling rock: logs, not sand, and v1 bodies
 
-A cut tree crumbles to sand today (D-165); it could fall as Wood instead, so it still burns. Beyond that, the
+**Done in v0.5 (D-190):** a cut tree falls as Wood. Still open: a large freed dirt mass becomes Pebbles, not
+falling dirt (the user, 5 Nov). Originally: a cut tree crumbled to sand (D-165); it could fall as Wood instead, so it still burns. Beyond that, the
 research's v1 (a translation-only `Body` entity that falls as one piece) and v2 (rotation).
 
 - **Source:** falling rock v0 and its review (`docs/research/review-falling-rock.md`), 1 Nov.
@@ -658,3 +660,22 @@ Fatter water streams, pause the scene while a sheet is open, reset by restoring 
 restarting the worker, and a second scene for variety.
 
 - **Source:** brief HM's local worker report, 4 Nov.
+
+## Playtest feedback, 5 Nov (the user's list, not yet scheduled)
+
+From the user's `feedback.txt` after the water fix. The pickup bug and the small items (lava sound, fight music,
+coal blast damage, spell slots by pickup order) were offered for before the deadline; the rest are here.
+
+- **Cave biomes and structures.** Greenery, moss and mushrooms (burn slowly); wooden support beams that burn
+  slowly and can ignite coal piles; a man-made Brick material for rooms and platforms in large open spaces; icy
+  biomes with frozen lakes where walking slides. **Why:** variety and hazards to use against enemies and players.
+  Each is gen plus sim work and a format bump; ice sliding touches the client avatar controller and the server's
+  Pos validation.
+- **Large lava pools** that players can push each other or mobs into. **Why:** environmental kills. Watch the
+  sleeping cost of big lakes (D-172 lets quiet lava sleep).
+- **A livelier surface.** A small mountain or lake, trees with greenery, shrubs, tame animals (a new passive
+  enemy kind). **Why:** the first thing a player sees is a flat strip.
+- **Sandbox rooms.** The same create/share interface as game rooms, public or private, with a chosen expiry
+  within 24 hours. **Why:** the shared sandbox is one world for everyone. Rooms already exist for game modes
+  (D-188 expiry, "unlisted" visibility), so this is mostly menu and config work.
+- **Large freed dirt falls as dirt**, not Pebbles (see "Falling rock" above).
