@@ -9,7 +9,7 @@ export const MUTE_KEY = "sand.muted";
 export type SfxName =
   | "push" | "blast" | "water" | "rose" | "fire" | "bomb" | "dig" | "flask" | "wall" | "hole"
   | "reject" | "impact" | "explode" | "knock" | "death" | "respawn" | "pickup" | "bag" | "heal" | "squelch" | "splat"
-  | "crackle" | "screech" | "hiss" | "rumble" | "crunch" | "roar" | "bossdeath" | "descend";
+  | "crackle" | "screech" | "hiss" | "rumble" | "crunch" | "roar" | "bossdeath" | "descend" | "sizzle";
 
 /** At most this many voices sound at once; extra ones are dropped (16 explosions in a frame must not clip). */
 const MAX_VOICES = 10;
@@ -142,6 +142,7 @@ export function play(name: SfxName, vol: number, pan: number, mag = 0.5) {
     case "bossdeath": tone(o, "sawtooth", 220, 30, 1.8, 0.55); tone(o, "sine", 60, 25, 1.8, 0.6); noise(o, 1.6, 0.5, 2500, 100, 0.8, "lowpass"); noise(o, 0.5, 0.5, 4000, 1000, 2, "bandpass", 0.2); dur = 2; break;
     case "descend": tone(o, "sine", 110, 55, 0.9, 0.5); tone(o, "triangle", 330, 110, 0.7, 0.3); noise(o, 0.5, 0.25, 600, 120, 1, "lowpass"); dur = 1; break;
     case "screech": tone(o, "sawtooth", 1500, 500, 0.35, 0.35); tone(o, "square", 1100, 380, 0.3, 0.2); dur = 0.4; break;
+    case "sizzle": noise(o, 0.28, 0.45, 6500, 3000, 1.2, "highpass"); noise(o, 0.2, 0.3, 1800, 700, 2, "bandpass", 0.02); tone(o, "sawtooth", 180, 90, 0.12, 0.15); dur = 0.32; break;
     case "hiss": noise(o, 0.3, 0.3, 5000, 2500, 1.5, "highpass"); dur = 0.34; break;
     case "rumble": tone(o, "sine", 55, 38, 0.4, 0.5); noise(o, 0.35, 0.35, 220, 90, 0.7, "lowpass"); dur = 0.45; break;
     case "crunch": noise(o, 0.12, 0.5, 1800, 400, 1.2, "lowpass"); noise(o, 0.2, 0.4, 900, 150, 0.9, "lowpass"); tone(o, "square", 130, 50, 0.18, 0.35); dur = 0.3; break;

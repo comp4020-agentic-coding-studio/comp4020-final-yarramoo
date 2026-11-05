@@ -58,6 +58,7 @@ import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
+import { hitboxTouchesLava, shouldSizzle } from "./hazard.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
 let STEP_MS = 1000 / 60;
@@ -497,6 +498,16 @@ function connect() {
   sock.onerror = () => {};
 }
 
+/** My health last frame, or null when there was none (not joined, dead, spectating): a spawn is not a hit. */
+let prevHealth: number | null = null;
+let lastCombatPost = -1e9;
+/** Tell the main thread the local player is in a fight (music only); throttled, and silent while replaying. */
+function combatSignal(now: number, quiet: boolean) {
+  if (quiet || now - lastCombatPost < 500) return;
+  lastCombatPost = now;
+  send({ type: "combat" });
+}
+let lastSizzle = -1e9;
 /** Place, step and send the avatar; return the overlay rectangles and steer the camera. Game world only. */
 function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   const ents = sim.entities();
@@ -506,6 +517,19 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   const dead = !!mine && mine.health === 0;
   iAmDead = dead;
   if (mine && !dead) myDeathTick = null;
+  // Lava sizzle (display only): my health fell while lava touches my hitbox. Rate-limited; silent while replaying.
+  if (mine && !dead && !spectate) {
+    const hurt = prevHealth !== null && prevHealth > mine.health;
+    const touching = hurt && hitboxTouchesLava(sim.matView(), w, h, mine.x, mine.y);
+    if (hurt && !touching) combatSignal(now, net === "catching-up" || !!ls?.fastForwarding);
+    if (prevHealth !== null && shouldSizzle(prevHealth, mine.health, touching, now, lastSizzle)) {
+      lastSizzle = now;
+      if (evLogOut.length < 100) evLogOut.push({ k: 900, p: myId, a: mine.health, b: 0, c: 0 }); // dev-route log only: a sizzle was requested
+      sfxBudget = Math.max(sfxBudget, 1);
+      sfxSelf("sizzle", net === "catching-up" || !!ls?.fastForwarding);
+    }
+  }
+  prevHealth = mine && !dead && !spectate ? mine.health : null;
   // Re-place the avatar whenever the sim's `life` for me changes (a respawn, D-073), not just on my own Join:
   // otherwise my next Pos would carry the new life with the old position and undo the respawn.
   if (avatarReady && mine && mine.a !== avatarLife) avatarReady = false;
@@ -805,6 +829,8 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
   const quiet = net === "catching-up" || !!ls?.fastForwarding;
   sfxBudget = 24;
   for (const e of evs) {
+    // Combat signals for the music: I hurt an enemy, or knocked another player (c = attacker). Being hurt is the health drop in gameFrame.
+    if ((e.kind === EV_ENEMY_HURT && e.player === myId) || (e.kind === EV_KNOCK && e.c === myId && e.player !== myId)) combatSignal(now, quiet);
     if ((e.kind === EV_EXPLODE || e.kind === EV_DEATH || (e.kind === EV_KNOCK && e.player === myId)) && evLogOut.length < 100) evLogOut.push({ k: e.kind, p: e.player, a: e.a, b: e.b, c: e.c });
     if (e.kind === EV_CAST) {
       const c = chestOf(e.player);
