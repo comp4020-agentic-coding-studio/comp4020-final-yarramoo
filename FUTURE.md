@@ -679,3 +679,15 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   within 24 hours. **Why:** the shared sandbox is one world for everyone. Rooms already exist for game modes
   (D-188 expiry, "unlisted" visibility), so this is mostly menu and config work.
 - **Large freed dirt falls as dirt**, not Pebbles (see "Falling rock" above).
+
+## Biome follow-ups (from the biomes lead's report, 6 Nov)
+
+- **The surface** (hills, a lake, tree canopies, shrubs, sand traps): cut for budget, brief ready in
+  `docs/briefs/biomes-surface.md`. Tame animals: a passive enemy kind, below the cut line.
+- **Rooms on more mine halls**: about 1 in 4 halls has a level floor; filling or bridging lake floors would give more.
+- **A rock bridge across each lava lake**, and lava lakes as the boss arena's moat.
+- **Enemies slide on ice** (a sim rule: slimes keep their hop velocity on Ice).
+- **Pick biome sites before the worms and the arena**, so the cave network is built around them, not repaired after.
+- **Generation time**: L went from 270 ms to 515-860 ms; a bounded local reachability check per site instead of
+  whole-grid floods would win most of it back.
+- **Source:** `docs/research/biomes-report.md` and `biomes-mine-fix-report.md`. **Why:** each was out of the $50.

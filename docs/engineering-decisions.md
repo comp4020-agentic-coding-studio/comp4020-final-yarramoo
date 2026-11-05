@@ -1558,3 +1558,31 @@ one x86-64 Mac.
 **Evidence.** Plan section 12; D-015, D-019, D-020, D-114, D-179, D-191; entries 7, 8, 20, 22, 29, 33 and 39;
 `package.json` (`test:determinism`, `test:net`, `check`); `.github/workflows/checks.yml`;
 [`d24bf69`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d24bf69).
+
+## 41. Biomes on a $50 budget, and the mine that floated
+
+**What.** The user asked for small biomes (lava lakes, the surface, ice caves, a moss grotto, an old mine, and the
+agent's own ideas) on a hard $50 cap, run by an Opus lead allowed Sonnet and Haiku workers. Built: lava lakes, ice
+caves with client-side sliding, Brick, Moss and Mushroom, the grotto and the mine (D-193 to D-200, format 14). Cut:
+the surface and tame animals (D-199). Biomes are *sites* placed on the guaranteed cave path after the boss arena and
+before traversal repair, so the generator's two hard guarantees (a walkable path down, an intact arena) and their
+tests did not change.
+
+**The challenge.** The cap had to live in the brief, because nothing in the tooling enforces one: the lead read the
+week's spend at the start (B0 = $30.46), re-read it after every worker, stopped dispatching at B0 + $42 and finished
+at B0 + $40.85, using 3 of its 6 allowed workers, one at a time. Two of the three workers stopped at their tool caps
+with work unfinished, and the lead finished it. The first mine floated: grotto and mine halls lost their flattened
+floor because that floor had sealed off the boss arena, and the beams and rooms were built on a floor row that was
+often open air. The lead said so plainly in its report and left an untested draft fix. The user chose to fix it
+first; a Sonnet worker wrote a test that failed on the floating mine ("beam at x 160 rows 281..294 hangs over 14"),
+then placed beams and rooms only where the ground is found column by column. Its choice, to place nothing rather
+than float over a lake floor, leaves the mine sparse (about 1 in 4 halls gets a room).
+
+Merging cost two gate runs. The pinned results all passed unchanged, but the M5 determinism script plays in a
+generated cave world, so its bombs moved to new ticks and two coverage guards failed. No engine disagreed. A probe
+of the new timeline re-aimed the snapshot cuts, and the bomb check now asks for *any* cut with a bomb in flight so
+the next generation change does not break it again. The same happened hours earlier for the gunpowder damage change.
+
+**Evidence.** D-193 to D-200; `docs/biomes-plan.md`; `docs/research/biomes-report.md`,
+`docs/research/biomes-mine-fix-report.md`; `docs/art/shots/biomes/`; `sim/tests/biomes.rs`,
+`tests/determinism/m5-state.test.ts`; commits `a4b54e3` (plan), `3cf4c33` (mine fix), `5b004e7` (merge).
