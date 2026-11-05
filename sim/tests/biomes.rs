@@ -111,3 +111,42 @@ fn lava_lakes_hold_lava_and_every_liquid_rests_on_something() {
         assert!(big * 2 >= tot, "size {size}: only {big} of {tot} lava sites hold {want}+ cells");
     }
 }
+#[test]
+fn generated_ice_is_spent() {
+    for (size, seed, _, g, _) in all() {
+        for (i, &m) in g.mat.iter().enumerate() {
+            if m == ICE {
+                assert_eq!(g.aux[i], 1, "size {size} seed {seed}: fresh ice at {},{}", i % g.w, i / g.w);
+            }
+        }
+    }
+}
+
+#[test]
+fn ice_sites_hold_a_frozen_lake_and_the_world_has_bounded_ice() {
+    let mut with_lake = 0;
+    let mut total_sites = 0;
+    for (size, seed, _, g, w) in all() {
+        let ice = count(&g, ICE);
+        assert!(ice <= 40000 * (g.w * g.h) / (2048 * 1536) + 4000, "size {size} seed {seed}: {ice} ice cells");
+        for s in w.sites.iter().filter(|s| s.kind == BIOME_ICE) {
+            total_sites += 1;
+            let mut cells = (0usize, 0usize);
+            for y in (s.cy - s.ry - 4).max(0)..=(s.cy + s.ry + 4).min(g.h as i32 - 1) {
+                for x in (s.cx - s.rx - 4).max(0)..=(s.cx + s.rx + 4).min(g.w as i32 - 1) {
+                    match g.mat[y as usize * g.w + x as usize] {
+                        ICE => cells.0 += 1,
+                        WATER => cells.1 += 1,
+                        _ => {}
+                    }
+                }
+            }
+            assert!(cells.0 >= 10, "size {size} seed {seed}: ice site {s:?} holds {} ice", cells.0);
+            if cells.1 > 0 {
+                with_lake += 1;
+            }
+        }
+    }
+    std::fs::write("/tmp/b1-ice.txt", format!("{with_lake} of {total_sites} ice sites hold water")).unwrap();
+    assert!(with_lake * 2 >= total_sites, "{with_lake} of {total_sites} ice sites hold water");
+}

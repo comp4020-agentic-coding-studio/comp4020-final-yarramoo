@@ -22,7 +22,6 @@ const ACID_PATH_MARGIN: i32 = 40;
 const GAS_POCKET_ROWS: i32 = 6;
 const GAS_MIN_HEIGHT: i32 = 24;
 /// Radius of an ice-lined chamber, cells.
-const ICE_R: i32 = 22;
 /// Biome kinds (a site's `kind`). 3 (grotto) and 4 (mine) are reserved for later slices.
 pub const BIOME_LAVA: u8 = 1;
 pub const BIOME_ICE: u8 = 2;
@@ -205,7 +204,6 @@ struct Scale {
     oil_count: i32,
     acid_count: i32,
     gas_count: i32,
-    ice_count: i32,
     /// Biome sites per kind (lava, ice), their radius ranges (rx, cells) and the chambers' width percentage.
     biome_count: (i32, i32),
     lava_rx: (i32, i32),
@@ -258,7 +256,6 @@ impl Scale {
             oil_count: scale_count(w, h, 24, 6),
             acid_count: scale_count(w, h, 10, 3),
             gas_count: scale_count(w, h, 14, 3),
-            ice_count: scale_count(w, h, 8, 2),
             biome_count: (scale_count(w, h, 3, 1), scale_count(w, h, 3, 1)),
             lava_rx: (wr(LAVA_RX_MIN), wr(LAVA_RX_MAX)),
             ice_rx: (wr(ICE_RX_MIN), wr(ICE_RX_MAX)),
@@ -360,6 +357,10 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     connect_and_prune(g, seed, &path);
     line_entrances_with_dirt(g, seed, &surf);
     let mut pool_scratch = PoolScratch { mark: vec![0u8; g.mat.len()], stack: Vec::new(), region: Vec::new() };
+    // Ice sites are dammed before any liquid is placed (a pocket the dam strands is filled, not left holding a pool).
+    for s in sites.iter().filter(|s| s.kind == BIOME_ICE) {
+        seal_site(g, s);
+    }
     fill_lava_lakes(g, seed, &mut pool_scratch, &sites, &sc);
     place_sand(g, seed, &sc);
     place_lava(g, seed, &mut pool_scratch, &sc);
@@ -369,7 +370,7 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     place_oil(g, seed, &mut pool_scratch, &sc);
     place_acid(g, seed, &mut pool_scratch, &sc, &path);
     place_gas_pockets(g, seed, &sc, &path);
-    place_ice(g, seed, &sc, &path);
+    place_ice(g, seed, &mut pool_scratch, &sites);
     place_coal(g, seed, &sc);
     if let Some(a) = &arena {
         clear_arena(g, a);
@@ -877,6 +878,29 @@ fn site_floor(s: &Site) -> i32 {
     s.cy + s.ry / 2
 }
 
+/// Seal a site's low rim (`dam_site`). A small pocket the dam cuts off from the sky is filled; if it would strand a big
+/// region (a tunnel that carries on past the site), undo the dam: reachability comes first.
+fn seal_site(g: &mut Grid, s: &Site) {
+    let mut seen = vec![0u8; g.mat.len()];
+    flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
+    let before = seen.iter().filter(|&&v| v != 0).count();
+    let dam = dam_site(g, s);
+    seen.fill(0);
+    flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
+    let lost = before - dam.len() - seen.iter().filter(|&&v| v != 0).count();
+    if lost > DAM_STRAND_MAX {
+        for &i in &dam {
+            g.mat[i] = EMPTY;
+        }
+    } else if lost > 0 {
+        for i in 0..g.mat.len() {
+            if g.mat[i] == EMPTY && seen[i] == 0 && i / g.w >= 100 {
+                g.mat[i] = ROCK;
+            }
+        }
+    }
+}
+
 /// Lava lakes (plan A1): fill each lava site's basin from the floor under the centre (or a third of the way to either
 /// wall if that fails) with a wide, deep pool, Rock lining under it, and two or three Rock ledges jutting from the walls
 /// 6-10 rows above the surface so there is somewhere to stand. Runs before `place_lava`, so the ordinary pools,
@@ -886,26 +910,7 @@ fn fill_lava_lakes(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site]
     let cap = (9000 * scale.pct * scale.pct / 10000) as usize;
     for (n, s) in sites.iter().enumerate().filter(|(_, s)| s.kind == BIOME_LAVA) {
         let n = n as u32;
-        // Seal the low rim. A small pocket the dam cuts off from the sky is filled; if it would strand a big region
-        // (a tunnel that carries on past the lake), undo it: reachability comes first.
-        let mut seen = vec![0u8; g.mat.len()];
-        flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
-        let before = seen.iter().filter(|&&v| v != 0).count();
-        let dam = dam_site(g, s);
-        seen.fill(0);
-        flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
-        let lost = before - dam.len() - seen.iter().filter(|&&v| v != 0).count();
-        if lost > DAM_STRAND_MAX {
-            for &i in &dam {
-                g.mat[i] = EMPTY;
-            }
-        } else if lost > 0 {
-            for i in 0..g.mat.len() {
-                if g.mat[i] == EMPTY && seen[i] == 0 && i / g.w >= 100 {
-                    g.mat[i] = ROCK;
-                }
-            }
-        }
+        seal_site(g, s);
         let mut filled = false;
         let depth = |g: &Grid| box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
         let d0 = depth(g);
@@ -1237,26 +1242,67 @@ fn place_gas_pockets(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]
     }
 }
 
-/// Ice-lined chambers in the shallow band near the surface: around a few path points, the Rock and Dirt
-/// that borders open space becomes Ice (about two cells in three). It only replaces solids, so it cannot
-/// change what a body can walk through.
-fn place_ice(g: &mut Grid, seed: u64, scale: &Scale, path: &[(i32, i32)]) {
-    let (w, h) = (g.w as i32, g.h as i32);
-    let cand: Vec<(i32, i32)> = path.iter().copied().filter(|&(_, y)| y >= scale.shallow_top && y < scale.shallow_top + 260).collect();
-    if cand.is_empty() {
-        return;
-    }
-    for k in 0..scale.ice_count as u32 {
-        let (px, py) = cand[(rng(seed, 0, k, 0, SALT_GEN_ICE_PICK) % cand.len() as u32) as usize];
-        for y in (py - ICE_R).max(1)..=(py + ICE_R).min(h - 2) {
-            for x in (px - ICE_R).max(1)..=(px + ICE_R).min(w - 2) {
-                let i = (y * w + x) as usize;
-                if !matches!(g.mat[i], ROCK | DIRT) || (x - px) * (x - px) + (y - py) * (y - py) > ICE_R * ICE_R {
-                    continue;
+/// Ice caves (plan A2): in each ice site (carved earlier, flat floor), a water pool in the basin (depths 4..=8) whose top
+/// two rows become an ice lid, Rock and Dirt within the ellipse grown by 4 that touch open space become Ice, and 3-6 icicles
+/// hang from the ceiling. Every Ice cell written here is spent (`aux = 1`): static, never freezes water, not volatile.
+/// Only solids become Ice and only Empty cells become icicles/lid (water), and `repair_traversal` still runs after.
+fn place_ice(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site]) {
+    let w = g.w as i32;
+    for (n, s) in sites.iter().enumerate().filter(|(_, s)| s.kind == BIOME_ICE) {
+        let n = n as u32;
+        let floor = site_floor(s);
+        // The pool: from the floor under the centre, else under a third of the way to either wall.
+        let mut pooled = false;
+        for (j, off) in [0, -s.rx / 3, s.rx / 3].into_iter().enumerate() {
+            let x = s.cx + off + (rng(seed, 0, n, j as u32, SALT_GEN_ICE_POOL_X) % 5) as i32 - 2;
+            let Some(yf) = find_floor(g, x, s.cy - s.ry / 2, s.ry + 4) else { continue };
+            if g.mat[(yf * w + x) as usize] == EMPTY && try_pool(g, sc, x, yf, (4, 8), 3000, (2 * s.rx + 20) as usize, WATER, LAVA, &[]) {
+                pooled = true;
+                break;
+            }
+        }
+        let lid = if pooled { sc.region.iter().map(|&c| c as usize / g.w).min().unwrap_or(0) } else { 0 };
+        if pooled {
+            // The lid stops 3 columns short of each shore, so the water under it stays joined to the open cave.
+            let lo = sc.region.iter().map(|&c| c as usize % g.w).min().unwrap_or(0) + 3;
+            let hi = sc.region.iter().map(|&c| c as usize % g.w).max().unwrap_or(0).saturating_sub(3);
+            // Only water inside the cavern is lidded, so a side tunnel that dips into the pool is never capped.
+            let inner = Site { rx: s.rx - 6, ry: s.ry - 3, ..*s };
+            for &c in &sc.region {
+                if c as usize / g.w < lid + 2 && (lo..=hi).contains(&(c as usize % g.w)) && inner.inside((c as usize % g.w) as i32, (c as usize / g.w) as i32) {
+                    g.mat[c as usize] = ICE;
+                    g.aux[c as usize] = 1;
                 }
-                let lining = [i - 1, i + 1, i - w as usize, i + w as usize].iter().any(|&j| g.mat[j] == EMPTY);
-                if lining && rng(seed, 0, x as u32, y as u32, SALT_GEN_ICE_CELL) % 3 != 0 {
+            }
+        }
+        // The lining: solids in the ellipse grown by 4 that touch open space.
+        let grown = Site { rx: s.rx + 4, ry: s.ry + 4, ..*s };
+        for y in (grown.cy - grown.ry).max(1)..=(grown.cy + grown.ry).min(g.h as i32 - 2) {
+            for x in (grown.cx - grown.rx).max(1)..=(grown.cx + grown.rx).min(w - 2) {
+                let i = (y * w + x) as usize;
+                if matches!(g.mat[i], ROCK | DIRT) && grown.inside(x, y) && [i - 1, i + 1, i - g.w, i + g.w].iter().any(|&j| g.mat[j] == EMPTY) {
                     g.mat[i] = ICE;
+                    g.aux[i] = 1;
+                }
+            }
+        }
+        // Icicles: from the first ceiling cell under a column, 1-2 wide, 3-8 long.
+        let count = 3 + (rng(seed, 0, n, 50, SALT_GEN_ICICLE) % 4) as i32;
+        for k in 0..count as u32 {
+            let x = s.cx - s.rx * 2 / 3 + (rng(seed, 0, n, 60 + k, SALT_GEN_ICICLE) % (s.rx as u32 * 4 / 3 + 1)) as i32;
+            let (wd, len) = (1 + (rng(seed, 0, n, 80 + k, SALT_GEN_ICICLE) % 2) as i32, 3 + (rng(seed, 0, n, 100 + k, SALT_GEN_ICICLE) % 6) as i32);
+            let Some(top) = (s.cy - s.ry - 4..floor).find(|&y| g.mat[(y * w + x) as usize] == EMPTY) else { continue };
+            if !matches!(g.mat[((top - 1) * w + x) as usize], ICE | ROCK | DIRT) {
+                continue;
+            }
+            for dx in 0..wd {
+                for y in top..top + len {
+                    let i = (y * w + x + dx) as usize;
+                    if g.mat[i] != EMPTY || y >= floor {
+                        break;
+                    }
+                    g.mat[i] = ICE;
+                    g.aux[i] = 1;
                 }
             }
         }
