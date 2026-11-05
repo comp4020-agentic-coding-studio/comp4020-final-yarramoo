@@ -1,0 +1,58 @@
+--- a/sim/src/gen.rs	2026-11-05 21:07:29
++++ b/sim/src/gen.rs	2026-11-05 21:30:13
+@@ -1516,7 +1516,10 @@
+ /// with a 10-tall door each side, a coal seam through the roof beside a beam, and a gunpowder pile in a room.
+ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
+     let w = g.w as i32;
+-    let floor = site_floor(s);
++    // The hall's real floor: the first solid row under the centre (a mine site has no bowl, so `site_floor` may be open).
++    let Some(floor) = (s.cy..s.cy + s.ry + 24).find(|&y| y > 0 && y < g.h as i32 - 1 && g.mat[(y * w + s.cx) as usize] != EMPTY && g.mat[((y - 1) * w + s.cx) as usize] == EMPTY) else {
++        return;
++    };
+     let hw = s.rx * 433 / 500 - 4;
+     let mid_ceiling = hall_ceiling(g, s, s.cx);
+     if floor - mid_ceiling < 26 {
+@@ -1530,7 +1533,10 @@
+         let rw = 20 + (rng(seed, 0, n, 10 + k, SALT_GEN_MINE) % 17) as i32;
+         let rh = (12 + (rng(seed, 0, n, 20 + k, SALT_GEN_MINE) % 5) as i32).min(floor - mid_ceiling - 12);
+         let x0 = s.cx - hw + (rng(seed, 0, n, 30 + k, SALT_GEN_MINE) % (2 * hw as u32 - rw as u32 + 1).max(1)) as i32;
+-        if rh < 12 || x0 + rw > s.cx + hw || spans.iter().any(|&(a, b)| x0 < b + 4 && x0 + rw > a - 4) {
++        // A room stands on ground: every column of it has solid under the floor row and open air just above it.
++        // Ground within 4 rows under every column (a cave floor is not flat); the gaps are bricked in as a footing.
++        let grounded = (x0..x0 + rw).all(|x| (floor..floor + 4).any(|y| g.mat[(y * w + x) as usize] != EMPTY));
++        if rh < 12 || x0 + rw > s.cx + hw || !grounded || spans.iter().any(|&(a, b)| x0 < b + 4 && x0 + rw > a - 4) {
+             continue;
+         }
+         let x1 = x0 + rw - 1;
+@@ -1538,10 +1544,18 @@
+             for y in floor - rh..floor {
+                 let wall = x < x0 + 2 || x > x1 - 2;
+                 let roof = y < floor - rh + 2;
+-                let door = y >= floor - 10;
++                let door = y >= floor - 8;
+                 if (roof || wall && !door) && g.mat[(y * w + x) as usize] == EMPTY {
+                     g.mat[(y * w + x) as usize] = BRICK;
++                }
++            }
++        }
++        for x in x0..=x1 {
++            for y in floor..floor + 4 {
++                if g.mat[(y * w + x) as usize] != EMPTY {
++                    break;
+                 }
++                g.mat[(y * w + x) as usize] = BRICK;
+             }
+         }
+         spans.push((x0, x1));
+@@ -1570,8 +1584,10 @@
+     xs.sort_unstable();
+     for &x in &xs {
+         let top = hall_ceiling(g, s, x).min(hall_ceiling(g, s, x + 1));
++        // A beam props the roof from the ground: it runs down to the first solid cell (within the hall) under it.
++        let Some(base) = (top..floor + 16).find(|&y| y < g.h as i32 - 1 && g.mat[(y * w + x) as usize] != EMPTY && y > top) else { continue };
+         for d in 0..2 {
+-            for y in top..floor - 12 {
++            for y in top..base {
+                 if g.mat[(y * w + x + d) as usize] == EMPTY {
+                     g.mat[(y * w + x + d) as usize] = WOOD;
+                 }
