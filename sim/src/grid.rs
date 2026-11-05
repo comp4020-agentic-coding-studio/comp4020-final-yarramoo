@@ -70,8 +70,10 @@ pub struct Grid {
     /// volatile after this tick's run), so a chunk the player walks away from mid-flow keeps flowing. Hashed
     /// (only when some bit is set) and snapshotted. Always all false while every chunk is active (the sandbox).
     pub woken: Vec<bool>,
-    /// Scratch: set by `update_cell` when it sees a volatile material in the chunk being run.
+    /// Scratch: set by `update_cell` when it sees a volatile material in the row segment being run.
     vol_seen: bool,
+    /// Scratch, one per chunk column: whether that chunk of the band being stepped is running.
+    running: Vec<bool>,
     /// Telemetry only: chunks actually run in the last `step_cells`.
     pub ran_chunks: u32,
     /// Scratch, not state: explosions queued during this tick's cell pass (plan 6.2 step 4).
@@ -129,6 +131,7 @@ impl Grid {
             active: vec![true; cw * ch],
             woken: vec![false; cw * ch],
             vol_seen: false,
+            running: vec![false; cw],
             ran_chunks: 0,
             pending: Vec::new(),
             explosions: Vec::new(),
@@ -155,7 +158,9 @@ impl Grid {
         (y >> CHUNK_SHIFT) * self.cw + (x >> CHUNK_SHIFT)
     }
 
-    /// Record that the cell at flat index `i` changed.
+    /// Record that the cell at flat index `i` changed. Sleeping is invisible (invariant 8, D-191) only while every rule
+    /// of a non-volatile material reads at most its 3 x 3 neighbourhood (or is gated by it): a cell that can act on a
+    /// change 2 or more cells away must mark its chunk volatile in `update_cell`.
     pub fn touch(&mut self, i: usize) {
         let (x, y) = (i % self.w, i / self.w);
         let c = self.chunk_of(x, y);
@@ -490,33 +495,56 @@ impl Grid {
         if !self.active.iter().any(|&a| a) {
             self.woken.fill(false);
         }
+        // A band of chunks runs row by row across every running chunk (bottom row first), not one chunk at a time:
+        // with chunk-major order a spreading liquid stood in walls on chunk edges (D-191). With every chunk running
+        // this is a plain raster scan. A chunk asleep (or frozen) when its band starts joins at the first row
+        // segment after something wakes it; the rows it skipped saw an unchanged neighbourhood when they would have
+        // run, so they would have done nothing. A chunk that joins late keeps `awake` (or `woken`) set: the touch
+        // that woke it may have changed a cell next to a row it skipped, so it runs in full next tick.
         for cy in (0..self.ch).rev() {
+            let row0 = cy * self.cw;
             for ci in 0..self.cw {
-                let cx = if odd { self.cw - 1 - ci } else { ci };
-                let c = cy * self.cw + cx;
+                let c = row0 + ci;
                 let frozen = !self.active[c];
-                if frozen && !self.woken[c] {
+                self.running[ci] = if frozen && !self.woken[c] {
                     // Frozen, but awake so it runs on its first active tick.
                     self.awake[c] = true;
-                    continue;
+                    false
+                } else {
+                    // A woken frozen chunk runs whatever the sleep switch says, so the switch cannot change results.
+                    !self.sleep_enabled || frozen || self.awake[c]
+                };
+                if self.running[ci] {
+                    // Quiet unless this run changes a cell here or meets a volatile material. Cleared with sleeping
+                    // off too: `awake` after a run is then the "busy" flag the woken rule reads.
+                    self.awake[c] = false;
+                    self.ran_chunks += 1;
                 }
-                // A woken frozen chunk runs whatever the sleep switch says, so the switch cannot change results.
-                if self.sleep_enabled && !frozen && !self.awake[c] {
-                    continue;
-                }
-                // Quiet unless this run changes a cell here or meets a volatile material. Cleared with sleeping
-                // off too: `awake` after a run is then the "busy" flag the woken rule reads.
-                self.awake[c] = false;
-                self.vol_seen = false;
-                self.ran_chunks += 1;
-                for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
+            }
+            // Only this band's cells run during its pass, so if none of its chunks is running nothing can wake one.
+            if !self.running[..self.cw].contains(&true) {
+                continue;
+            }
+            for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
+                for i in 0..self.cw {
+                    let ci = if odd { self.cw - 1 - i } else { i };
+                    let c = row0 + ci;
+                    if !self.running[ci] {
+                        let frozen = !self.active[c];
+                        if !(if frozen { self.woken[c] } else { self.awake[c] }) {
+                            continue;
+                        }
+                        self.running[ci] = true;
+                        self.ran_chunks += 1;
+                    }
+                    self.vol_seen = false;
                     for xi in 0..CHUNK {
-                        let x = cx * CHUNK + if odd { CHUNK - 1 - xi } else { xi };
+                        let x = ci * CHUNK + if odd { CHUNK - 1 - xi } else { xi };
                         self.update_cell(x, y, seed, tick);
                     }
-                }
-                if self.vol_seen {
-                    self.awake[c] = true;
+                    if self.vol_seen {
+                        self.awake[c] = true;
+                    }
                 }
             }
         }
@@ -1923,6 +1951,64 @@ mod lava_levels {
         let s = surface_of(&g, WATER);
         let spread = s.iter().max().unwrap() - s.iter().min().unwrap();
         assert!(spread <= 2, "water surface spans {spread} rows; a liquid should level");
+    }
+
+    /// Water poured from one point (5 Nov playtest screenshot): the largest step in the surface between neighbouring
+    /// columns while it spreads, and the grid at the end. Each chunk used to run all 64 of its rows before the next
+    /// chunk, so a spreading body stood in walls on chunk edges (22 rows at x = 448) that only levelled thousands of
+    /// ticks later.
+    fn pour(sleep: bool) -> (usize, Grid) {
+        let (w, h) = (512, 256);
+        let mut g = Grid::new(w, h);
+        g.set_all_active();
+        g.sleep_enabled = sleep;
+        for x in 0..w {
+            g.set((h - 1) * w + x, BEDROCK, 0);
+        }
+        for y in 0..h {
+            g.set(y * w + w - 1, BEDROCK, 0);
+            g.set(y * w, BEDROCK, 0);
+        }
+        let (px, py) = (470i32, 40i32);
+        let (mut worst, mut measured) = (0, 0);
+        for t in 0..1600u32 {
+            if t < 1000 && t % 2 == 0 {
+                for dy in -5..=5i32 {
+                    for dx in -5..=5i32 {
+                        let i = (py + dy) as usize * w + (px + dx) as usize;
+                        if dx * dx + dy * dy <= 25 && g.mat[i] == EMPTY {
+                            g.set(i, WATER, 0);
+                        }
+                    }
+                }
+            }
+            g.step_cells(7, t);
+            if t >= 600 && t % 50 == 0 {
+                // Columns the water has reached, away from the falling stream.
+                let s = surface_of(&g, WATER);
+                for x in 1..s.len() - 1 {
+                    let (a, b) = (s[x - 1], s[x]);
+                    if a < h && b < h && (x as i32 - px).abs() > 10 {
+                        worst = worst.max(a.abs_diff(b));
+                        measured += 1;
+                    }
+                }
+            }
+        }
+        assert!(measured > 1000, "too few columns measured ({measured})");
+        (worst, g)
+    }
+
+    #[test]
+    fn poured_water_spreads_without_walls_on_chunk_edges() {
+        let ((on, gon), (off, goff)) = (pour(true), pour(false));
+        assert!(gon.mat == goff.mat && gon.aux == goff.aux && gon.woken == goff.woken, "sleeping changed the result (invariant 8)");
+        assert_eq!(on, off);
+        // The pour starts at x = 470 and must have crossed at least two chunk edges (448 and 384).
+        let left = (0..gon.w).find(|&x| (0..gon.h).any(|y| gon.mat[y * gon.w + x] == WATER)).unwrap();
+        assert!(left < 384, "water only reached x = {left}");
+        // Before D-191 this measured a 54-row step (the screenshot's wall at x = 448 was 22 rows at one moment).
+        assert!(on <= 6, "a spreading water surface stepped {on} rows between neighbouring columns");
     }
 
     #[test]

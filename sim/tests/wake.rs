@@ -64,10 +64,13 @@ fn fire_spreading_out_of_the_region_keeps_burning() {
     assert!(burnt_far >= 50, "fire did not carry on across the edge: {burnt_far} of 100 burnt");
 }
 
-/// A seed in a frozen chunk, reached by water from the active region, germinates and grows.
+/// A seed in a frozen chunk, reached by water from the active region, germinates and grows. The scene is built and
+/// then the region re-frozen (a `set` on a frozen chunk wakes it), and the seed's chunk must stay frozen until the
+/// water gets there, so only the water can have woken it.
 #[test]
 fn a_seed_reached_by_water_across_the_edge_grows() {
     let mut g = world();
+    g.set_all_active();
     for x in 21..W {
         g.set((H - 2) * W + x, DIRT, 0);
     }
@@ -76,9 +79,29 @@ fn a_seed_reached_by_water_across_the_edge_grows() {
             g.set(y * W + x, WATER, 0);
         }
     }
-    g.set((H - 3) * W + 530, SEED, 0);
-    run(&mut g, 0, 12000);
-    let plant = (0..H - 2).filter(|&y| matches!(g.mat[y * W + 530], STEM | FLOWER)).count();
+    // On a 3-wide dirt post just above the ~3-deep film: water beside it at x = 528 is inside the seed's 5 x 5 wet
+    // check, the seed (a powder) cannot slide off diagonally, and the stem is not drowned (a stem grows only into
+    // empty cells, and water arrives about 1500 ticks sooner since D-191).
+    for y in H - 5..H - 2 {
+        for x in 529..532 {
+            g.set(y * W + x, DIRT, 0);
+        }
+    }
+    g.set((H - 6) * W + 530, SEED, 0);
+    g.set_active_around(&[(200, 64)]);
+    g.woken.fill(false);
+    let c = g.chunk_of(530, H - 6);
+    assert!(!g.active[c], "the seed must be in a frozen chunk");
+    let mut t = 0;
+    while !(0..H).any(|y| (512..W).any(|x| g.mat[y * W + x] == WATER)) {
+        assert!(!g.woken[c] && g.mat[(H - 6) * W + 530] == SEED, "the seed's chunk ran before water reached it");
+        g.step_cells(5, t);
+        t += 1;
+        assert!(t < 12000, "water never crossed into the frozen chunk");
+    }
+    run(&mut g, t, 12000);
+    // Stems lean, so count plant cells anywhere above the post, not just in its column.
+    let plant = (0..H - 5).flat_map(|y| (520..541).map(move |x| y * W + x)).filter(|&i| matches!(g.mat[i], STEM | FLOWER)).count();
     assert!(plant >= 3, "the seed never grew across the edge ({plant} plant cells)");
 }
 
