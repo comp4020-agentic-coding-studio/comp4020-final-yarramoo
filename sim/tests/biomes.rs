@@ -142,6 +142,10 @@ fn ice_sites_hold_a_frozen_lake_and_the_world_has_bounded_ice() {
                 }
             }
             assert!(cells.0 >= 10, "size {size} seed {seed}: ice site {s:?} holds {} ice", cells.0);
+            // The frozen floor: the flat floor row is mostly Ice across the cavern's width (measured minimum 1.75 rx of 2 rx + 1) (the pool's water sits above it).
+            let fy = (s.cy + s.ry / 2) as usize;
+            let floor_ice = (s.cx - s.rx..=s.cx + s.rx).filter(|&x| g.mat[fy * g.w + x as usize] == ICE).count();
+            assert!(floor_ice as i32 >= s.rx * 3 / 2, "size {size} seed {seed}: ice site {s:?} has {floor_ice} ice cells on its floor row");
             if cells.1 > 0 {
                 with_lake += 1;
             }

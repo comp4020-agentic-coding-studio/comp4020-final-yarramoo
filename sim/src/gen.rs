@@ -1281,9 +1281,9 @@ fn place_ice(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site]) {
         }
         let lid = if pooled { sc.region.iter().map(|&c| c as usize / g.w).min().unwrap_or(0) } else { 0 };
         if pooled {
-            // The lid stops 3 columns short of each shore, so the water under it stays joined to the open cave.
-            let lo = sc.region.iter().map(|&c| c as usize % g.w).min().unwrap_or(0) + 3;
-            let hi = sc.region.iter().map(|&c| c as usize % g.w).max().unwrap_or(0).saturating_sub(3);
+            // The lid reaches the shore; only water outside the cavern (a side tunnel dipping in) is left uncapped.
+            let lo = sc.region.iter().map(|&c| c as usize % g.w).min().unwrap_or(0);
+            let hi = sc.region.iter().map(|&c| c as usize % g.w).max().unwrap_or(0);
             // Only water inside the cavern is lidded, so a side tunnel that dips into the pool is never capped.
             let inner = Site { rx: s.rx - 6, ry: s.ry - 3, ..*s };
             for &c in &sc.region {
@@ -1295,6 +1295,16 @@ fn place_ice(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site]) {
         }
         // The lining: solids in the ellipse grown by 4 that touch open space.
         let grown = Site { rx: s.rx + 4, ry: s.ry + 4, ..*s };
+        // The frozen floor: the flat floor row and the one below, across the cavern's whole width, Rock/Dirt -> Ice.
+        for y in floor..=floor + 1 {
+            for x in (s.cx - s.rx - 4).max(1)..=(s.cx + s.rx + 4).min(w - 2) {
+                let i = (y * w + x) as usize;
+                if matches!(g.mat[i], ROCK | DIRT) && grown.inside(x, y) {
+                    g.mat[i] = ICE;
+                    g.aux[i] = 1;
+                }
+            }
+        }
         for y in (grown.cy - grown.ry).max(1)..=(grown.cy + grown.ry).min(g.h as i32 - 2) {
             for x in (grown.cx - grown.rx).max(1)..=(grown.cx + grown.rx).min(w - 2) {
                 let i = (y * w + x) as usize;
