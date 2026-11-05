@@ -498,7 +498,8 @@ function connect() {
   sock.onerror = () => {};
 }
 
-let prevHealth = 1e9;
+/** My health last frame, or null when there was none (not joined, dead, spectating): a spawn is not a hit. */
+let prevHealth: number | null = null;
 let lastCombatPost = -1e9;
 /** Tell the main thread the local player is in a fight (music only); throttled, and silent while replaying. */
 function combatSignal(now: number, quiet: boolean) {
@@ -518,16 +519,17 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   if (mine && !dead) myDeathTick = null;
   // Lava sizzle (display only): my health fell while lava touches my hitbox. Rate-limited; silent while replaying.
   if (mine && !dead && !spectate) {
-    const touching = prevHealth > mine.health && hitboxTouchesLava(sim.matView(), w, h, mine.x, mine.y);
-    if (prevHealth > mine.health && !touching) combatSignal(now, net === "catching-up" || !!ls?.fastForwarding);
-    if (shouldSizzle(prevHealth, mine.health, touching, now, lastSizzle)) {
+    const hurt = prevHealth !== null && prevHealth > mine.health;
+    const touching = hurt && hitboxTouchesLava(sim.matView(), w, h, mine.x, mine.y);
+    if (hurt && !touching) combatSignal(now, net === "catching-up" || !!ls?.fastForwarding);
+    if (prevHealth !== null && shouldSizzle(prevHealth, mine.health, touching, now, lastSizzle)) {
       lastSizzle = now;
       if (evLogOut.length < 100) evLogOut.push({ k: 900, p: myId, a: mine.health, b: 0, c: 0 }); // dev-route log only: a sizzle was requested
       sfxBudget = Math.max(sfxBudget, 1);
       sfxSelf("sizzle", net === "catching-up" || !!ls?.fastForwarding);
     }
   }
-  prevHealth = mine && !dead ? mine.health : 1e9;
+  prevHealth = mine && !dead && !spectate ? mine.health : null;
   // Re-place the avatar whenever the sim's `life` for me changes (a respawn, D-073), not just on my own Join:
   // otherwise my next Pos would carry the new life with the old position and undo the respawn.
   if (avatarReady && mine && mine.a !== avatarLife) avatarReady = false;
