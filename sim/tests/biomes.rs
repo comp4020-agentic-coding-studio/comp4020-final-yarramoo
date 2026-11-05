@@ -1,6 +1,6 @@
 //! Biomes slice 1: site picker, lava lakes, ice caves (generation invariants over seeds 1..=8, every size, both presets).
 use sim::config::RoomConfig;
-use sim::gen::{generate_world, World, BIOME_ICE, BIOME_LAVA};
+use sim::gen::{generate_world, World, BIOME_GROTTO, BIOME_ICE, BIOME_LAVA, BIOME_MINE};
 use sim::grid::Grid;
 use sim::materials::*;
 use sim::tuning::{ARENA_KEEP_OUT, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
@@ -153,4 +153,44 @@ fn ice_sites_hold_a_frozen_lake_and_the_world_has_bounded_ice() {
     }
     std::fs::write("/tmp/b1-ice.txt", format!("{with_lake} of {total_sites} ice sites hold water")).unwrap();
     assert!(with_lake * 2 >= total_sites, "{with_lake} of {total_sites} ice sites hold water");
+}
+
+/// Slice 2: every L and M world has a grotto and a mine; the new materials stay bounded and stay out of the
+/// arena (grown by `ARENA_KEEP_OUT`) and the spawn clearance.
+#[test]
+fn grotto_and_mine_exist_and_their_materials_stay_bounded_and_clear_of_the_arena() {
+    let mut out = String::new();
+    let mut small = 0;
+    for (size, seed, sv, g, w) in all() {
+        let (gr, mi) = (kinds(&w, BIOME_GROTTO), kinds(&w, BIOME_MINE));
+        out += &format!("size {size} seed {seed} sv {sv}: grotto {gr} mine {mi} moss {} mush {} brick {} wood {}\n", count(&g, MOSS), count(&g, MUSHROOM), count(&g, BRICK), count(&g, WOOD));
+        if size >= 1 {
+            assert!(gr >= 1 && mi >= 1, "size {size} seed {seed} survival {sv}: grotto {gr} mine {mi}");
+        }
+        if size == 0 {
+            small += usize::from(gr >= 1) + usize::from(mi >= 1);
+        }
+        // The halls are decorated, not just picked: every L world has a mine's brick and a grotto's moss and mushrooms.
+        if size == 2 {
+            assert!(count(&g, BRICK) >= 40 && count(&g, MOSS) >= 100 && count(&g, MUSHROOM) >= 40, "size {size} seed {seed} survival {sv}: brick {} moss {} mushroom {}", count(&g, BRICK), count(&g, MOSS), count(&g, MUSHROOM));
+        }
+        let shallow_top = 260 * (g.h as i32 - 64) / (1536 - 64);
+        let scale = |n: usize| n * g.w * g.h / (2048 * 1536) + 400;
+        assert!(count(&g, MOSS) <= scale(60000), "size {size} seed {seed}: {} moss", count(&g, MOSS));
+        assert!(count(&g, MUSHROOM) <= scale(6000), "size {size} seed {seed}: {} mushroom", count(&g, MUSHROOM));
+        assert!(count(&g, BRICK) <= scale(6000), "size {size} seed {seed}: {} brick", count(&g, BRICK));
+        for (i, &m) in g.mat.iter().enumerate() {
+            if !matches!(m, BRICK | MOSS | MUSHROOM) {
+                continue;
+            }
+            let (x, y) = ((i % g.w) as i32, (i / g.w) as i32);
+            if let Some(a) = &w.arena {
+                assert!(!a.contains(x, y, ARENA_KEEP_OUT), "size {size} seed {seed}: material {m} in the arena at {x},{y}");
+            }
+            assert!(!((x - g.w as i32 / 2).abs() <= ENEMY_SPAWN_CLEAR && y < shallow_top + ENEMY_SPAWN_ROWS), "size {size} seed {seed}: material {m} in the spawn clearance at {x},{y}");
+        }
+    }
+    // At S the four kinds compete for a 512 x 512 world: require most of the 16 S worlds to get each hall.
+    assert!(small >= 24, "only {small} of 32 grotto+mine sites placed across the 16 S worlds");
+    std::fs::write("/tmp/b2-counts.txt", out).unwrap();
 }

@@ -22,9 +22,11 @@ const ACID_PATH_MARGIN: i32 = 40;
 const GAS_POCKET_ROWS: i32 = 6;
 const GAS_MIN_HEIGHT: i32 = 24;
 /// Radius of an ice-lined chamber, cells.
-/// Biome kinds (a site's `kind`). 3 (grotto) and 4 (mine) are reserved for later slices.
+/// Biome kinds (a site's `kind`).
 pub const BIOME_LAVA: u8 = 1;
 pub const BIOME_ICE: u8 = 2;
+pub const BIOME_GROTTO: u8 = 3;
+pub const BIOME_MINE: u8 = 4;
 /// Lava lake and ice cave radii at L (rx, cells); `ry` is 2/5 and 1/2 of it.
 const LAVA_RX_MIN: i32 = 70;
 const LAVA_RX_MAX: i32 = 110;
@@ -32,6 +34,9 @@ const ICE_RX_MIN: i32 = 45;
 const ICE_RX_MAX: i32 = 65;
 /// Cells a site keeps clear of every other site.
 const SITE_GAP: i32 = 40;
+const LAVA_SITE_GAP: i32 = 90;
+/// Extra cells a grotto or mine keeps from the boss arena (its caverns and bowls reshape the worm network around it).
+const HALL_ARENA_GAP: i32 = 60;
 /// A lava-site dam may strand at most this many open cells (they are filled); more and the dam is undone.
 const DAM_STRAND_MAX: usize = 1500;
 
@@ -372,6 +377,7 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     place_gas_pockets(g, seed, &sc, &path);
     place_ice(g, seed, &mut pool_scratch, &sites);
     place_coal(g, seed, &sc);
+    place_biome_halls(g, seed, &sites, &sc, arena.as_ref());
     if let Some(a) = &arena {
         clear_arena(g, a);
     }
@@ -768,7 +774,9 @@ fn place_gunpowder(g: &mut Grid, seed: u64, sc: &Scale) {
 
 /// True if two sites' ellipses, each grown by `SITE_GAP / 2`, overlap (bounding-box test: conservative, integer).
 fn sites_overlap(a: &Site, b: &Site) -> bool {
-    (a.cx - b.cx).abs() < a.rx + b.rx + SITE_GAP && (a.cy - b.cy).abs() < a.ry + b.ry + SITE_GAP
+    // A lava lake keeps further from the other caverns: a neighbouring cavern opening into its basin drains the lake.
+    let gap = if (a.kind == BIOME_LAVA && b.kind >= BIOME_GROTTO) || (b.kind == BIOME_LAVA && a.kind >= BIOME_GROTTO) { LAVA_SITE_GAP } else { SITE_GAP };
+    (a.cx - b.cx).abs() < a.rx + b.rx + gap && (a.cy - b.cy).abs() < a.ry + b.ry + gap
 }
 
 /// Pick the biome sites (plan section 1): kinds in a fixed order (lava, ice); site `k` of kind `b` tries up to 64
@@ -782,11 +790,12 @@ fn pick_sites(g: &Grid, seed: u64, path: &[(i32, i32)], sc: &Scale, arena: Optio
     // Only a path point already open to the sky (a sealed pocket would be filled by `connect_and_prune`).
     let mut open = vec![0u8; g.mat.len()];
     flood(g, &mut open, g.w / 2, &mut Vec::new(), None);
-    for (kind, count) in [(BIOME_LAVA, sc.biome_count.0), (BIOME_ICE, sc.biome_count.1)] {
-        let (lo, hi) = if kind == BIOME_LAVA {
-            (sc.deep_top + scale_u(h, 60), sc.repair_depth - scale_u(h, 80))
-        } else {
-            (sc.shallow_top, sc.shallow_top + scale_u(h, 300))
+    for (kind, count) in [(BIOME_LAVA, sc.biome_count.0), (BIOME_ICE, sc.biome_count.1), (BIOME_GROTTO, sc.biome_count.1), (BIOME_MINE, sc.biome_count.1)] {
+        let (lo, hi) = match kind {
+            BIOME_LAVA => (sc.deep_top + scale_u(h, 60), sc.repair_depth - scale_u(h, 80)),
+            BIOME_ICE => (sc.shallow_top, sc.shallow_top + scale_u(h, 300)),
+            BIOME_GROTTO => (sc.shallow_top + scale_u(h, 120), sc.deep_top),
+            _ => (sc.shallow_top + scale_u(h, 200), sc.deep_top + scale_u(h, 250)),
         };
         let (rlo, rhi) = if kind == BIOME_LAVA { sc.lava_rx } else { sc.ice_rx };
         let cand: Vec<(i32, i32)> = path.iter().copied().filter(|p| p.1 >= lo && p.1 < hi && open[(p.1 * w + p.0) as usize] != 0).collect();
@@ -805,7 +814,7 @@ fn pick_sites(g: &Grid, seed: u64, path: &[(i32, i32)], sc: &Scale, arena: Optio
                     && cx + rx < w - WALL_COLS as i32 - 12
                     && !near_border(g, cx, cy, ry)
                     && !((cx - w / 2).abs() - rx <= ENEMY_SPAWN_CLEAR && cy - ry < sc.shallow_top + ENEMY_SPAWN_ROWS)
-                    && !arena.is_some_and(|a| a.contains(cx, cy, ARENA_KEEP_OUT + rx))
+                    && !arena.is_some_and(|a| a.contains(cx, cy, ARENA_KEEP_OUT + rx + if kind >= BIOME_GROTTO { HALL_ARENA_GAP } else { 0 }))
                     && !sites.iter().any(|s| sites_overlap(s, &site));
                 if ok {
                     sites.push(site);
@@ -855,8 +864,10 @@ fn carve_site(g: &mut Grid, s: &Site) -> Vec<usize> {
                     if g.mat[i] == ROCK || g.mat[i] == DIRT {
                         g.mat[i] = EMPTY;
                     }
-                } else if g.mat[i] == EMPTY {
-                    // A flat bowl: open space the worms left below the floor row is sealed, so a pool has a basin.
+                } else if g.mat[i] == EMPTY && matches!(s.kind, BIOME_LAVA | BIOME_ICE) {
+                    // A flat bowl: open space the worms left below the floor row is sealed, so a pool has a basin. Only the
+                    // lake sites get one: a grotto or mine holds no pool, and a bowl there can seal off the route the arena
+                    // hangs on (biomes-3), while carving alone only opens space and cannot cut anything off.
                     g.mat[i] = ROCK;
                     bowl.push(i);
                 }
@@ -1337,6 +1348,263 @@ fn place_ice(g: &mut Grid, seed: u64, sc: &mut PoolScratch, sites: &[Site]) {
     }
 }
 
+/// Grotto and mine decoration. Everything is written into Empty (or replaces Rock/Dirt), so a route can only be
+/// narrowed, not opened: the walkable depth is checked once for all sites, and only if it dropped is each site redone
+/// with its own check (undone if it makes the route shallower).
+fn place_biome_halls(g: &mut Grid, seed: u64, sites: &[Site], sc: &Scale, arena: Option<&Arena>) {
+    if !sites.iter().any(|s| s.kind == BIOME_GROTTO || s.kind == BIOME_MINE) {
+        return;
+    }
+    let d0 = box_reach(g, (g.w / 2, 0), FIT_W, FIT_H).map_or(0, |(_, dy)| dy);
+    // Open cells the sky cannot reach (below the surface band): decoration must not add to them (a beam or a cap can
+    // plug a narrow way into a hall, and `connect_and_prune` has already run).
+    let stranded = |g: &Grid| {
+        let mut seen = vec![0u8; g.mat.len()];
+        flood(g, &mut seen, g.w / 2, &mut Vec::new(), None);
+        (100 * g.w..g.mat.len()).filter(|&i| g.mat[i] == EMPTY && seen[i] == 0).count()
+    };
+    let s0 = stranded(g);
+    let before = (g.mat.clone(), g.aux.clone());
+    for (n, s) in sites.iter().enumerate() {
+        decorate_hall(g, seed, n as u32, s, sc);
+    }
+    keep_arena_clear(g, &before, arena);
+    if depth_reaches(g, d0) && stranded(g) <= s0 {
+        return;
+    }
+    g.mat = before.0;
+    g.aux = before.1;
+    for (n, s) in sites.iter().enumerate() {
+        let snap = (g.mat.clone(), g.aux.clone());
+        decorate_hall(g, seed, n as u32, s, sc);
+        keep_arena_clear(g, &snap, arena);
+        if !depth_reaches(g, d0) || stranded(g) > s0 {
+            g.mat = snap.0;
+            g.aux = snap.1;
+        }
+    }
+}
+
+/// Decoration never writes inside the arena grown by `ARENA_KEEP_OUT`: those cells are put back as they were.
+fn keep_arena_clear(g: &mut Grid, before: &(Vec<u8>, Vec<u8>), arena: Option<&Arena>) {
+    let Some(a) = arena else { return };
+    let w = g.w as i32;
+    let m = ARENA_KEEP_OUT;
+    for y in (a.cy - a.ry - m).max(0)..=(a.cy + a.ry + m).min(g.h as i32 - 1) {
+        for x in (a.cx - a.rx - m).max(0)..=(a.cx + a.rx + m).min(w - 1) {
+            if a.contains(x, y, m) {
+                let i = (y * w + x) as usize;
+                g.mat[i] = before.0[i];
+                g.aux[i] = before.1[i];
+            }
+        }
+    }
+}
+
+fn decorate_hall(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
+    match s.kind {
+        BIOME_GROTTO => place_grotto(g, seed, n, s),
+        BIOME_MINE => place_mine(g, seed, n, s, sc),
+        _ => {}
+    }
+}
+
+/// First solid row above (x, floor - 1): the ceiling of the hall at column `x`, within the ellipse's height.
+fn hall_ceiling(g: &Grid, s: &Site, x: i32) -> i32 {
+    let w = g.w as i32;
+    let mut y = site_floor(s) - 1;
+    while y > s.cy - s.ry - 4 && g.mat[(y * w + x) as usize] == EMPTY {
+        y -= 1;
+    }
+    y + 1
+}
+
+/// Grotto (plan C1): moss over the lining, 3-6 giant mushrooms (Stem stalk, Mushroom cap) and moss tufts on the floor,
+/// and a marsh-gas pocket under the roof where the old rules allow.
+fn place_grotto(g: &mut Grid, seed: u64, n: u32, s: &Site) {
+    let w = g.w as i32;
+    let floor = site_floor(s);
+    let grown = Site { rx: s.rx + 4, ry: s.ry + 4, ..*s };
+    for y in (grown.cy - grown.ry).max(1)..=(grown.cy + grown.ry).min(g.h as i32 - 2) {
+        for x in (grown.cx - grown.rx).max(1)..=(grown.cx + grown.rx).min(w - 2) {
+            let i = (y * w + x) as usize;
+            if matches!(g.mat[i], ROCK | DIRT)
+                && grown.inside(x, y)
+                && [i - 1, i + 1, i - g.w, i + g.w].iter().any(|&j| g.mat[j] == EMPTY)
+                && rng(seed, 0, x as u32, y as u32, SALT_GEN_MOSS) % 4 != 0
+            {
+                g.mat[i] = MOSS;
+            }
+        }
+    }
+    let hw = s.rx * 433 / 500 - 6;
+    let ground = |g: &Grid, x: i32| matches!(g.mat[(floor * w + x) as usize], ROCK | DIRT | SAND | MOSS) && g.mat[((floor - 1) * w + x) as usize] == EMPTY;
+    let count = 3 + (rng(seed, 0, n, 0, SALT_GEN_MUSH) % 4) as i32;
+    for k in 0..count as u32 * 4 {
+        if k as i32 / 4 >= count {
+            break;
+        }
+        let x = s.cx - hw + (rng(seed, 0, n, 10 + k, SALT_GEN_MUSH) % (2 * hw as u32 + 1)) as i32;
+        let stalk_w = 1 + (rng(seed, 0, n, 100 + k, SALT_GEN_MUSH) % 2) as i32;
+        let h = 6 + (rng(seed, 0, n, 200 + k, SALT_GEN_MUSH) % 9) as i32;
+        let cap_hw = 4 + (rng(seed, 0, n, 300 + k, SALT_GEN_MUSH) % 5) as i32;
+        let rows = 3 + (rng(seed, 0, n, 400 + k, SALT_GEN_MUSH) % 3) as i32;
+        if !(0..stalk_w).all(|d| ground(g, x + d)) || x - cap_hw < 2 || x + cap_hw > w - 3 {
+            continue;
+        }
+        let top = floor - h;
+        // The whole footprint (cap box and stalk, one cell margin) must be open air, so a cap never walls off a pocket.
+        let clear = (top - rows - 2..floor).all(|y| (x - cap_hw - 1..=x + cap_hw + stalk_w).all(|xx| g.mat[(y * w + xx) as usize] == EMPTY));
+        if !clear {
+            continue;
+        }
+        for d in 0..stalk_w {
+            for y in top..floor {
+                let i = (y * w + x + d) as usize;
+                if g.mat[i] == EMPTY {
+                    g.mat[i] = STEM;
+                    g.aux[i] = 0;
+                }
+            }
+        }
+        // A dome: the bottom row is the widest, each row up is narrower.
+        for j in 0..rows {
+            let half = cap_hw - j * cap_hw / (rows + 1);
+            for dx in -half..=half + stalk_w - 1 {
+                let i = ((top - 1 - j) * w + x + dx) as usize;
+                if g.mat[i] == EMPTY {
+                    g.mat[i] = MUSHROOM;
+                }
+            }
+        }
+    }
+    // Floor-moss tufts, 1-2 tall.
+    for k in 0..24u32 {
+        let x = s.cx - hw + (rng(seed, 0, n, 500 + k, SALT_GEN_MUSH) % (2 * hw as u32 + 1)) as i32;
+        if ground(g, x) {
+            let t = 1 + (rng(seed, 0, n, 600 + k, SALT_GEN_MUSH) % 2) as i32;
+            for y in floor - t..floor {
+                if g.mat[(y * w + x) as usize] == EMPTY {
+                    g.mat[(y * w + x) as usize] = MOSS;
+                }
+            }
+        }
+    }
+    // Marsh gas under the roof (the open-height and lava rules of `place_gas_pockets`).
+    let px = s.cx + (rng(seed, 0, n, 700, SALT_GEN_MUSH) % (s.rx as u32 / 2 + 1)) as i32 - s.rx / 4;
+    let r = 10 + (rng(seed, 0, n, 701, SALT_GEN_MUSH) % 8) as i32;
+    let top = hall_ceiling(g, s, px);
+    if near_material(g, px, top + GAS_POCKET_ROWS + 4, r + 4, GAS_POCKET_ROWS + 14, LAVA) {
+        return;
+    }
+    for x in (px - r).max(1)..=(px + r).min(w - 2) {
+        let t = hall_ceiling(g, s, x);
+        if floor - t < GAS_MIN_HEIGHT || g.mat[((t - 1) * w + x) as usize] == EMPTY {
+            continue;
+        }
+        for y in t..t + GAS_POCKET_ROWS {
+            if g.mat[(y * w + x) as usize] != EMPTY {
+                break;
+            }
+            g.mat[(y * w + x) as usize] = GAS;
+        }
+    }
+}
+
+/// Old mine (plan C2): Wood beams hanging from the roof with a 12-row doorway under each (so a body walks through),
+/// Wood platforms between some beam pairs above the doorway line with a 3-column gap at each end, 1-2 Brick rooms
+/// with a 10-tall door each side, a coal seam through the roof beside a beam, and a gunpowder pile in a room.
+fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale) {
+    let w = g.w as i32;
+    let floor = site_floor(s);
+    let hw = s.rx * 433 / 500 - 4;
+    let mid_ceiling = hall_ceiling(g, s, s.cx);
+    if floor - mid_ceiling < 26 {
+        return;
+    }
+    // Rooms first, so beams keep clear of them.
+    let rooms = 1 + (rng(seed, 0, n, 0, SALT_GEN_MINE) % 2) as i32;
+    let mut spans: Vec<(i32, i32)> = Vec::new();
+    let mut first_room = None;
+    for k in 0..rooms as u32 {
+        let rw = 20 + (rng(seed, 0, n, 10 + k, SALT_GEN_MINE) % 17) as i32;
+        let rh = (12 + (rng(seed, 0, n, 20 + k, SALT_GEN_MINE) % 5) as i32).min(floor - mid_ceiling - 12);
+        let x0 = s.cx - hw + (rng(seed, 0, n, 30 + k, SALT_GEN_MINE) % (2 * hw as u32 - rw as u32 + 1).max(1)) as i32;
+        if rh < 12 || x0 + rw > s.cx + hw || spans.iter().any(|&(a, b)| x0 < b + 4 && x0 + rw > a - 4) {
+            continue;
+        }
+        let x1 = x0 + rw - 1;
+        for x in x0..=x1 {
+            for y in floor - rh..floor {
+                let wall = x < x0 + 2 || x > x1 - 2;
+                let roof = y < floor - rh + 2;
+                let door = y >= floor - 10;
+                if (roof || wall && !door) && g.mat[(y * w + x) as usize] == EMPTY {
+                    g.mat[(y * w + x) as usize] = BRICK;
+                }
+            }
+        }
+        spans.push((x0, x1));
+        first_room.get_or_insert(((x0 + x1) / 2, rw));
+    }
+    if let Some((rcx, rw)) = first_room {
+        let r = (rw / 2 - 4).min(7);
+        // Gunpowder belongs to the deep band (the generator tests pin that), so a shallow mine has none.
+        if floor >= sc.deep_top && !near_material(g, rcx, floor, r + 12, 24, LAVA) {
+            pile(g, rcx, floor - 5, r, 2, GUNPOWDER);
+        }
+    }
+    // Beams.
+    let beams = 3 + (rng(seed, 0, n, 40, SALT_GEN_MINE) % 4) as i32;
+    let mut xs: Vec<i32> = Vec::new();
+    for k in 0..beams as u32 * 6 {
+        if xs.len() as i32 >= beams {
+            break;
+        }
+        let x = s.cx - hw + (rng(seed, 0, n, 50 + k, SALT_GEN_MINE) % (2 * hw as u32 + 1)) as i32;
+        if xs.iter().any(|&o| (o - x).abs() < 14) || spans.iter().any(|&(a, b)| x + 1 >= a - 3 && x <= b + 3) {
+            continue;
+        }
+        xs.push(x);
+    }
+    xs.sort_unstable();
+    for &x in &xs {
+        let top = hall_ceiling(g, s, x).min(hall_ceiling(g, s, x + 1));
+        for d in 0..2 {
+            for y in top..floor - 12 {
+                if g.mat[(y * w + x + d) as usize] == EMPTY {
+                    g.mat[(y * w + x + d) as usize] = WOOD;
+                }
+            }
+        }
+        // The coal seam: through the roof rock beside this beam.
+        if x == xs[0] {
+            for dx in -1..=2 {
+                for y in top - 14..top {
+                    if g.mat[(y * w + x + dx) as usize] == ROCK {
+                        g.mat[(y * w + x + dx) as usize] = COAL;
+                    }
+                }
+            }
+        }
+    }
+    // Platforms.
+    for (k, pair) in xs.windows(2).enumerate() {
+        if rng(seed, 0, n, 80 + k as u32, SALT_GEN_MINE) % 3 == 0 {
+            continue;
+        }
+        let t = 1 + (rng(seed, 0, n, 90 + k as u32, SALT_GEN_MINE) % 2) as i32;
+        let y = floor - 12 - t - (rng(seed, 0, n, 100 + k as u32, SALT_GEN_MINE) % 5) as i32;
+        for x in pair[0] + 5..pair[1] - 3 {
+            for yy in y..y + t {
+                if g.mat[(yy * w + x) as usize] == EMPTY {
+                    g.mat[(yy * w + x) as usize] = WOOD;
+                }
+            }
+        }
+    }
+}
+
 /// Coal seams: worm-like veins 3-5 cells thick that replace Rock only, in the shallow and deep bands (Rock only, so
 /// they never open or close space), so digging sometimes hits them.
 fn place_coal(g: &mut Grid, seed: u64, scale: &Scale) {
@@ -1419,9 +1687,9 @@ fn pick_spots(g: &Grid, seed: u64, sc: &Scale, arena: Option<&Arena>) -> Vec<Pic
     let mut out: Vec<PickupSpot> = Vec::new();
     for (band, &(y_lo, y_hi, want)) in sc.target_spots.iter().enumerate() {
         let mut n = 0;
-        // 4000 tries, not 400: sparse deep caves need the room to find every spot (D-086). 20000 since biomes: a lava
+        // 4000 tries, not 400: sparse deep caves need the room to find every spot (D-086). 60000 since the grotto and mine (20000 before): a lava
         // lake covers floor in the deep band, and the loop still stops at `want`, so worlds that were full do not move.
-        for k in 0..20000u32 {
+        for k in 0..60000u32 {
             if n == want {
                 break;
             }
@@ -2193,7 +2461,8 @@ mod tests {
         use crate::config::RoomConfig;
         for seed in 1..=3u64 {
             let s = Sim::new(seed, RoomConfig::caves_pvp()).unwrap();
-            assert!(s.grid.mat.iter().all(|&m| m == BEDROCK || paintable(m)));
+            // Stem is the grotto's mushroom stalk (grown plant, not paintable).
+            assert!(s.grid.mat.iter().all(|&m| m == BEDROCK || m == STEM || paintable(m)));
             let acid: usize = s.grid.mat.iter().filter(|&&m| m == ACID).count();
             assert!(acid > 0, "seed {seed}: no acid");
         }

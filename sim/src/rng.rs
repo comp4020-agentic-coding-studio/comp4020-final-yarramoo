@@ -136,6 +136,9 @@ pub const SALT_GEN_LAKE_X: u32 = 262;
 pub const SALT_GEN_LEDGE: u32 = 263;
 pub const SALT_GEN_ICE_POOL_X: u32 = 264;
 pub const SALT_GEN_ICICLE: u32 = 265;
+pub const SALT_GEN_MOSS: u32 = 266;
+pub const SALT_GEN_MUSH: u32 = 267;
+pub const SALT_GEN_MINE: u32 = 268;
 
 #[cfg(test)]
 mod tests {
