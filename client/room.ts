@@ -7,6 +7,7 @@ import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
+import { addPickedUp, swapSlots } from "./slots.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
@@ -496,8 +497,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     if (e.shiftKey) return n === 0 ? null : 9 + n;
     return n === 0 ? 9 : n - 1;
   }
+  /** Spells in hotbar order: infinite starters, then each finite spell once first held (this session), reorderable by drag. */
+  let slotOrder: number[] = [];
   function pickSlot(i: number) {
-    selectedSpell = BAR[i];
+    if (i >= slotOrder.length) return;
+    selectedSpell = slotOrder[i];
     placeDigPreview();
     renderSpellBar();
   }
@@ -505,14 +509,15 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     if (e.target instanceof HTMLInputElement) return;
     const k = e.key.toLowerCase();
     const slot = digitSlot(e);
-    if (castsOnClick() && slot !== null && slot < BAR.length) {
+    if (castsOnClick() && slot !== null && slot < slotOrder.length) {
       pickSlot(slot);
       return;
     }
     // Q and E step back and forth through the whole bar (the wheel and -/= are zoom, and only nine digits fit).
     if (castsOnClick() && (k === "q" || k === "e") && !e.repeat && !e.ctrlKey && !e.metaKey) {
-      const at = Math.max(0, BAR.indexOf(selectedSpell));
-      selectedSpell = BAR[(at + (k === "e" ? 1 : BAR.length - 1)) % BAR.length];
+      if (!slotOrder.length) return;
+      const at = Math.max(0, slotOrder.indexOf(selectedSpell));
+      selectedSpell = slotOrder[(at + (k === "e" ? 1 : slotOrder.length - 1)) % slotOrder.length];
       placeDigPreview();
       renderSpellBar();
       return;
@@ -785,37 +790,45 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   spellBar.id = "spells";
   spellBar.hidden = true;
   stage.append(spellBar);
-  /** Push, Blast and Dig come first on the bar and never run out: they are the tools, the rest are consumables. */
-  const INFINITE_TOOLS = 3;
-  const slotEls = BAR.map((spell, i) => {
+  const slotEls = BAR.map((_, i) => {
     const el = document.createElement("div");
     el.className = "slot";
-    el.title = SPELLS[spell].name;
     // A click picks the slot. The slots are siblings of the canvas, not children, so the click never reaches
     // the canvas handler; stopping propagation also keeps it from the hint's dismiss and any window handler.
+    // Releasing over another slot swaps the two (client-only order).
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       e.preventDefault();
       if (castsOnClick()) pickSlot(i);
+      dragFrom = i;
     });
     const sw = document.createElement("i");
     sw.className = "sw";
-    sw.style.background = SPELLS[spell].colour.map((v) => Math.round(v * 255)).reduce((a, v, j) => a + v.toString(16).padStart(2, "0"), "#");
     const key = document.createElement("span");
     key.className = "key";
     key.textContent = i < 9 ? String(i + 1) : i === 9 ? "0" : `\u21e7${i - 9}`;
     const nm = document.createElement("span");
     nm.className = "nm";
-    nm.textContent = SHORT_NAMES[SPELLS[spell].name] ?? SPELLS[spell].name;
     const ch = document.createElement("span");
     ch.className = "ch";
     const cd = document.createElement("div");
     cd.className = "cd";
     el.append(cd, sw, key, nm, ch);
-    if (i === INFINITE_TOOLS - 1) el.classList.add("last-tool"); // a gap after the infinite tools
     spellBar.append(el);
-    return { el, ch, cd, spell };
+    return { el, ch, cd, sw, nm, spell: -1 };
   });
+  let dragFrom = -1;
+  addEventListener("pointerup", (e) => {
+    const from = dragFrom;
+    dragFrom = -1;
+    if (from < 0 || !castsOnClick()) return;
+    const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest(".slot");
+    const to = slotEls.findIndex((s) => s.el === hit);
+    if (to < 0 || to === from) return;
+    slotOrder = swapSlots(slotOrder, from, to);
+    renderSpellBar();
+  });
+  addEventListener("pointercancel", () => { dragFrom = -1; });
   const barHint = document.createElement("span");
   barHint.className = "barhint";
   barHint.textContent = "Q/E";
@@ -823,14 +836,24 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   spellBar.append(barHint);
   function renderSpellBar() {
     const v = lastPlayers?.spells ?? null;
-    slotEls.forEach((s) => {
-      const charges = v ? v.charges[s.spell] : 0;
-      s.el.classList.toggle("sel", s.spell === selectedSpell);
+    if (v) slotOrder = addPickedUp(slotOrder, v.charges, BAR);
+    slotEls.forEach((s, i) => {
+      const spell = slotOrder[i];
+      s.el.hidden = spell === undefined;
+      if (spell === undefined) return;
+      if (s.spell !== spell) {
+        s.spell = spell;
+        s.sw.style.background = SPELLS[spell].colour.map((c) => Math.round(c * 255)).reduce((a, c) => a + c.toString(16).padStart(2, "0"), "#");
+        s.nm.textContent = SHORT_NAMES[SPELLS[spell].name] ?? SPELLS[spell].name;
+      }
+      const charges = v ? v.charges[spell] : 0;
+      s.el.classList.toggle("sel", spell === selectedSpell);
       s.el.classList.toggle("empty", charges === 0);
-      s.el.title = charges === 0 ? `${SPELLS[s.spell].name}: no charges. Find pickups in the caves.` : SPELLS[s.spell].name;
+      s.el.classList.toggle("last-tool", charges === INFINITE && (slotOrder[i + 1] === undefined || (v?.charges[slotOrder[i + 1]] ?? 0) !== INFINITE)); // a gap after the infinite tools
+      s.el.title = charges === 0 ? `${SPELLS[spell].name}: no charges. Find pickups in the caves.` : `${SPELLS[spell].name} (drag onto another slot to swap)`;
       s.ch.textContent = charges === INFINITE ? "\u221e" : String(charges);
-      const left = v ? v.cooldown[s.spell] : 0;
-      s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[s.spell].cooldown) * 100))}%`;
+      const left = v ? v.cooldown[spell] : 0;
+      s.cd.style.height = `${Math.min(100, Math.round((left / SPELLS[spell].cooldown) * 100))}%`;
     });
   }
   /** Name tags: fully solid within FADE_NEAR cells of the view centre, fading to a floor by FADE_FAR. */
