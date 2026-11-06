@@ -7,7 +7,7 @@ import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
-import { addPickedUp, swapSlots } from "./slots.ts";
+import { addPickedUp, isTap, swapSlots } from "./slots.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
@@ -796,11 +796,22 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     // A click picks the slot. The slots are siblings of the canvas, not children, so the click never reaches
     // the canvas handler; stopping propagation also keeps it from the hint's dismiss and any window handler.
     // Releasing over another slot swaps the two (client-only order).
+    // Touch is different: the bar scrolls (touch-action: pan-x), so a press picks nothing; a tap (isTap) on release does.
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
+      if (e.pointerType === "touch") {
+        touchDown = { x: e.clientX, y: e.clientY, t: performance.now(), slot: i };
+        return;
+      }
       e.preventDefault();
       if (castsOnClick()) pickSlot(i);
       dragFrom = i;
+    });
+    el.addEventListener("pointerup", (e) => {
+      if (e.pointerType !== "touch" || !touchDown) return;
+      const d = touchDown;
+      touchDown = null;
+      if (castsOnClick() && isTap(d, { x: e.clientX, y: e.clientY, t: performance.now(), slot: i })) pickSlot(i);
     });
     const sw = document.createElement("i");
     sw.className = "sw";
@@ -818,6 +829,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     return { el, ch, cd, sw, nm, spell: -1 };
   });
   let dragFrom = -1;
+  let touchDown: { x: number; y: number; t: number; slot: number } | null = null;
   addEventListener("pointerup", (e) => {
     const from = dragFrom;
     dragFrom = -1;
@@ -828,12 +840,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     slotOrder = swapSlots(slotOrder, from, to);
     renderSpellBar();
   });
-  addEventListener("pointercancel", () => { dragFrom = -1; });
+  addEventListener("pointercancel", () => { dragFrom = -1; touchDown = null; });
   const barHint = document.createElement("span");
   barHint.className = "barhint";
   barHint.textContent = "Q/E";
   barHint.title = "Q and E step through the spells";
   spellBar.append(barHint);
+  let selectedSeen = -1;
   function renderSpellBar() {
     const v = lastPlayers?.spells ?? null;
     if (v) slotOrder = addPickedUp(slotOrder, v.charges, BAR);
@@ -848,6 +861,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       }
       const charges = v ? v.charges[spell] : 0;
       s.el.classList.toggle("sel", spell === selectedSpell);
+      if (spell === selectedSpell && selectedSeen !== spell) {
+        // Keep the selected tile in view when Q/E, a digit or a pickup changes it (only on a change, so a manual scroll stays put).
+        selectedSeen = spell;
+        const l = s.el.offsetLeft; // #spells is absolute, so it is the slot's offsetParent
+        if (l < spellBar.scrollLeft) spellBar.scrollLeft = l - 4;
+        else if (l + s.el.offsetWidth > spellBar.scrollLeft + spellBar.clientWidth) spellBar.scrollLeft = l + s.el.offsetWidth - spellBar.clientWidth + 4;
+      }
       s.el.classList.toggle("empty", charges === 0);
       s.el.classList.toggle("last-tool", charges === INFINITE && (slotOrder[i + 1] === undefined || (v?.charges[slotOrder[i + 1]] ?? 0) !== INFINITE)); // a gap after the infinite tools
       s.el.title = charges === 0 ? `${SPELLS[spell].name}: no charges. Find pickups in the caves.` : `${SPELLS[spell].name} (drag onto another slot to swap)`;

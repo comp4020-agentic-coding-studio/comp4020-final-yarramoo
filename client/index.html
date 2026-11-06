@@ -84,7 +84,7 @@
     /* One row, opaque tiles. The stage reserves the bar's height below the canvas (room.ts layout subtracts the padding). */
     #stage.has-bar { padding-bottom: 58px; }
     #stage.has-mini { padding-top: 34px; }
-    #spells { position: absolute; left: 8px; right: 8px; bottom: 6px; display: flex; flex-wrap: nowrap; justify-content: center; align-items: stretch; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+    #spells { position: absolute; left: 8px; right: 8px; bottom: 6px; display: flex; flex-wrap: nowrap; justify-content: center; align-items: stretch; gap: 3px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
     #spells[hidden], #hud[hidden] { display: none; }
     #spells .slot { position: relative; flex: 0 0 auto; width: 62px; height: 46px; border: 2px solid var(--line); border-radius: 6px; background: #0f131b; overflow: hidden; font-size: 11px; padding: 3px 4px; cursor: pointer; user-select: none; }
     #spells .slot.sel { border-color: var(--accent); background: #17202f; }

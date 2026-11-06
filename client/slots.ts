@@ -17,3 +17,14 @@ export function swapSlots(order: number[], i: number, j: number): number[] {
   [out[i], out[j]] = [out[j], out[i]];
   return out;
 }
+
+/** Tap-vs-swipe on a touch slot: a tap is a release within TAP_SLOP px and TAP_MS ms of the press, on the same slot.
+ * Anything else was a scroll of the bar (the browser usually cancels the pointer then) and selects nothing. */
+export const TAP_SLOP = 10;
+export const TAP_MS = 300;
+export function isTap(
+  down: { x: number; y: number; t: number; slot: number },
+  up: { x: number; y: number; t: number; slot: number },
+): boolean {
+  return down.slot === up.slot && up.t - down.t <= TAP_MS && Math.hypot(up.x - down.x, up.y - down.y) <= TAP_SLOP;
+}
