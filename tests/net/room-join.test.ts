@@ -218,6 +218,39 @@ describe("unload when empty (brief item 3: uniform 2-minute timer, shortened her
   });
 });
 
+describe("room seeds (6 Nov playtest: every new medium Survival room looked identical)", () => {
+  // RED (before the fix): the seed was the room id, and sqlite hands a deleted room's id to the next room, so
+  // a room created after the last one emptied got the same seed and the same cave. Run against the old code:
+  //   expected 2n not to be 2n
+  it("a room created after the previous one was deleted gets a different seed, even with the same id", async () => {
+    const s = await boot(tmp(), { roomUnloadMs: 200 });
+    const first = await createRoom(s.port);
+    const a = await connect(s.port, hex, { world: first.id });
+    const seed1 = s.worlds.get(first.id)!.seed;
+    a.close();
+    await waitFor(() => !s.worlds.has(first.id), 3000, "first room deleted after empty timeout");
+    const second = await createRoom(s.port);
+    expect(second.id).toBe(first.id); // the id reuse that made every room look the same
+    const b = await connect(s.port, hex, { world: second.id });
+    expect(s.worlds.get(second.id)!.seed).not.toBe(seed1);
+    b.close();
+  });
+
+  it("a room keeps its seed across a server restart (the worlds row, not a fresh draw)", async () => {
+    const dir = tmp();
+    const s1 = await boot(dir);
+    const room = await createRoom(s1.port);
+    const a = await connect(s1.port, hex, { world: room.id });
+    const seed = s1.worlds.get(room.id)!.seed;
+    a.close();
+    await s1.close();
+    const s2 = await boot(dir);
+    const b = await connect(s2.port, hex, { world: room.id });
+    expect(BigInt.asUintN(64, s2.worlds.get(room.id)!.seed)).toBe(BigInt.asUintN(64, seed));
+    b.close();
+  });
+});
+
 describe("R2b fix: a first-ever HELLO rejected by caps must not leak the freshly-loaded room (review-r2b.md finding 1)", () => {
   // RED (before the fix): a brand-new room's very first HELLO, rejected by the member cap, left the just-loaded
   // World sitting in `worlds` forever (nobody ever joined it, so nothing ever calls scheduleUnload). This test

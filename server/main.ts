@@ -1,6 +1,6 @@
 // Lockstep server: tick clock, input sequencer, closed-tick broadcast, static client. Never steps the sim.
 import { resolveDevTeleport } from "./devteleport.ts";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -342,16 +342,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       .run(1, "__reserved_game__", "(reserved)", "sandbox", Buffer.alloc(16), "unlisted", null, 0, 0);
   }
   /**
-   * Deterministic per-room seed (R2b): the `rooms` table has no `seed` column yet (plan's "a seed plus a
-   * config" storage field is out of this slice's "Files you may touch" — `server/db.ts` is not on that list),
-   * so every member of a room must still agree on one without a database round trip adding real entropy. The
-   * room's own id is already unique and stable for its lifetime, so it doubles as the seed. Flagged under
-   * "Architectural decisions for review": a real per-room random seed (closer to the plan's intent, and better
-   * against a creator picking a room id to get a chosen cave layout) is the more reversible follow-up once
-   * `server/db.ts` migrations are back in scope; using the id now costs nothing to change later, since no
-   * room's sim state is live yet (the game is not live, D-132-style).
+   * A new room's seed: 64 random bits, drawn once when its `worlds` row is created (`World.loadFromDb` keeps the
+   * stored seed on every later load, so all members and every restart agree). It used to be the room id, but
+   * sqlite hands a deleted room's id to the next room, so a room made after the last one emptied got the same
+   * seed and the same cave (6 Nov playtest, D-201). Random also means a creator can't pick an id for a layout.
    */
-  const seedForRoom = (id: number): bigint => BigInt(id);
+  const seedForRoom = (): bigint => randomBytes(8).readBigUInt64LE();
   /** In-flight room loads, keyed by room id: closes the lazy-loading race (two near-simultaneous HELLOs for the
    * same not-yet-loaded room must not both construct and insert a World). The check (`worlds.get`/`loadingRooms.get`)
    * and the set (`loadingRooms.set`) below run with no `await` between them, so a second HELLO's synchronous
@@ -524,7 +520,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return "cap";
     }
     const p = (async () => {
-      const w = mk(id, cfg, seedForRoom(id));
+      const w = mk(id, cfg, seedForRoom());
       await w.load();
       w.roundEnded = row.endedAt !== null; // review S5: the row, not memory, says the round is over
       wireWorld(w);
