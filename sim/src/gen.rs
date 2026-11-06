@@ -698,6 +698,31 @@ fn find_floor(g: &Grid, x: i32, y0: i32, max_down: i32) -> Option<i32> {
     solid_ground(at(y + 1)).then_some(y)
 }
 
+/// A mine column's real floor: the Empty cell resting on ground (Rock, Dirt, Sand, Bedrock, Brick, Coal or Moss: the
+/// materials the beams test accepts as standing). Starts at the hall's centre row and falls up to `2 * ry + 24` rows
+/// (the hall has no bowl, so its floor is wherever the cave puts it). A liquid film or Ice/Pebbles floor is not ground
+/// (None): a post set in a puddle or on a slick would not read as standing.
+fn mine_floor(g: &Grid, x: i32, s: &Site) -> Option<i32> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    if x < 0 || x >= w {
+        return None;
+    }
+    let at = |y: i32| g.mat[(y * w + x) as usize];
+    let mut y = s.cy.clamp(0, h - 2);
+    let lim = y + 60;
+    while at(y) != EMPTY {
+        y += 1;
+        if y >= h - 1 || y > lim {
+            return None;
+        }
+    }
+    let end = (y + 4 * s.ry + 40).min(h - 2);
+    while y < end && at(y + 1) == EMPTY {
+        y += 1;
+    }
+    matches!(at(y + 1), ROCK | DIRT | BEDROCK | SAND | BRICK | COAL | MOSS).then_some(y)
+}
+
 /// Below the surface, most of the top 40 rows are Dirt, so shafts open through a soil layer.
 fn line_entrances_with_dirt(g: &mut Grid, seed: u64, surf: &[i32]) {
     let w = g.w;
@@ -1529,10 +1554,14 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
     let hw = s.rx * 433 / 500 - 4;
     // A mine site has no bowl, so the hall floor is uneven: find the real ground column by column. `fl[x]` is the
     // Empty cell resting on ground (None when the column has none inside the hall).
-    let lowest = site_floor(s) + 14;
     let x_lo = s.cx - hw;
-    let fl: Vec<Option<i32>> = (x_lo..=s.cx + hw + 1).map(|x| find_floor(g, x, s.cy, s.ry + 24).filter(|&f| f <= lowest)).collect();
+    let fl: Vec<Option<i32>> = (x_lo..=s.cx + hw + 1).map(|x| mine_floor(g, x, s)).collect();
     let floor_at = |x: i32| fl.get((x - x_lo) as usize).copied().flatten();
+    // Rooms keep the old, shallow floor model (within `lowest`): a room is a roofed building on a shallow hall floor,
+    // and the room tests pin that shape. Only beams use the deeper floors.
+    let lowest = site_floor(s) + 14;
+    let rfl: Vec<Option<i32>> = (x_lo..=s.cx + hw + 1).map(|x| find_floor(g, x, s.cy, s.ry + 24).filter(|&f| f <= lowest)).collect();
+    let room_floor_at = |x: i32| rfl.get((x - x_lo) as usize).copied().flatten();
     // The roof row over the open cell (x, f): the first open row of the run of Empty cells above it.
     let roof_at = |g: &Grid, x: i32, f: i32| {
         let mut y = f;
@@ -1559,7 +1588,7 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
             if x1 > s.cx + hw || (x0 - w / 2).abs().min((x1 - w / 2).abs()) <= ENEMY_SPAWN_CLEAR && s.cy - s.ry - 4 < sc.shallow_top + ENEMY_SPAWN_ROWS || spans.iter().any(|&(a, b)| x0 < b + 4 && x1 > a - 4) {
                 continue;
             }
-            let Some(cols) = (x0..=x1).map(floor_at).collect::<Option<Vec<i32>>>() else { continue };
+            let Some(cols) = (x0..=x1).map(room_floor_at).collect::<Option<Vec<i32>>>() else { continue };
             // `base` is the highest standing row (smallest y); the room's floor row is `base`.
             let base = *cols.iter().min().unwrap_or(&0);
             if cols.iter().any(|&f| f - base > 6) {
@@ -1613,12 +1642,12 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
     // Beams.
     let beams = if with_beams { 3 + (rng(seed, 0, n, 40, SALT_GEN_MINE) % 4) as i32 } else { 0 };
     let mut xs: Vec<i32> = Vec::new();
-    for k in 0..beams as u32 * 6 {
+    for k in 0..beams as u32 * 40 {
         if xs.len() as i32 >= beams {
             break;
         }
         let x = s.cx - hw + (rng(seed, 0, n, 50 + k, SALT_GEN_MINE) % (2 * hw as u32 + 1)) as i32;
-        if xs.iter().any(|&o| (o - x).abs() < 14) || spans.iter().any(|&(a, b)| x + 1 >= a - 3 && x <= b + 3) {
+        if floor_at(x).is_none() || floor_at(x + 1).is_none() || xs.iter().any(|&o| (o - x).abs() < 6) || spans.iter().any(|&(a, b)| x + 1 >= a - 3 && x <= b + 3) {
             continue;
         }
         xs.push(x);
@@ -1627,7 +1656,7 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
     let mut placed: Vec<i32> = Vec::new();
     for &x in &xs {
         let (Some(f0), Some(f1)) = (floor_at(x), floor_at(x + 1)) else { continue };
-        if (f0 - f1).abs() > 3 {
+        if (f0 - f1).abs() > 5 {
             continue;
         }
         let top = roof_at(g, x, f0).min(roof_at(g, x + 1, f1));
@@ -1635,8 +1664,9 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
         // hall stays walkable end to end (a post that met the roof would split the hall).
         // The hall must be open and level around it, with the roof no lower than here, so the gap over the post is
         // a real way through (a post by a pocket or a low roof would strand the cells behind it).
-        let open = (x - 8..x + 10).all(|c| floor_at(c).is_some_and(|f| (f - f0).abs() <= 3 && roof_at(g, c, f) <= top + 2));
-        if f0.min(f1) - top < 24 || !open || (x - w / 2).abs() <= ENEMY_SPAWN_CLEAR && top < sc.shallow_top + ENEMY_SPAWN_ROWS {
+        let open = (x - 4..x + 6).filter(|&c| floor_at(c).is_some_and(|f| (f - f0).abs() <= 6 && roof_at(g, c, f) <= top + 4)).count() >= 5
+            && (x - 1..x + 3).all(|c| floor_at(c).is_none_or(|f| (f - f0).abs() <= 6 && roof_at(g, c, f) <= top + 4));
+        if f0.min(f1) - top < 19 || !open || (x - w / 2).abs() <= ENEMY_SPAWN_CLEAR && top < sc.shallow_top + ENEMY_SPAWN_ROWS {
             continue;
         }
         placed.push(x);
@@ -1664,6 +1694,10 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
             continue;
         }
         let t = 1 + (rng(seed, 0, n, 90 + k as u32, SALT_GEN_MINE) % 2) as i32;
+        // A platform never crosses a room (it would block the room's door).
+        if spans.iter().any(|&(a, b)| pair[0] + 5 < b + 2 && pair[1] - 3 > a - 2) {
+            continue;
+        }
         let (Some(fa), Some(fb)) = (floor_at(pair[0]), floor_at(pair[1])) else { continue };
         let y = fa.min(fb) - 12 - t - (rng(seed, 0, n, 100 + k as u32, SALT_GEN_MINE) % 5) as i32;
         for x in pair[0] + 5..pair[1] - 3 {
