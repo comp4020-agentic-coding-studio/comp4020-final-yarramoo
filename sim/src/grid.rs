@@ -2028,7 +2028,7 @@ mod tests {
             assert!(paintable(m), "{m}");
         }
         // Bedrock is the boundary, Stem and Flower only grow from Seeds, Pebbles only come from crumbled rock.
-        assert!(![BEDROCK, STEM, FLOWER, PEBBLES, MUSHROOM + 1].iter().any(|&m| paintable(m)));
+        assert!(![BEDROCK, STEM, FLOWER, PEBBLES, THERMITE + 1].iter().any(|&m| paintable(m)));
     }
 }
 

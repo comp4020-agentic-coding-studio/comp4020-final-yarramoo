@@ -20,13 +20,13 @@ fn bytes_with(bags: &[Bag]) -> (Vec<u8>, Vec<Pickup>, usize) {
 }
 
 #[test]
-fn bag_is_twenty_six_bytes_and_round_trips() {
-    assert_eq!(BAG_BYTES, 26);
+fn bag_is_thirty_two_bytes_and_round_trips() {
+    assert_eq!(BAG_BYTES, 32);
     let bags = vec![bag(10, 20, [15, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0], 5400), bag(2047, 1535, [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], u32::MAX)];
     let (b, mut pk, at) = bytes_with(&bags);
     assert_eq!(&b[at..at + 4], &2u32.to_le_bytes());
-    // literal layout of the first bag: x, y, nine charges, expires_at, all LE
-    assert_eq!(&b[at + 4..at + 30], &[10, 0, 20, 0, 15, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x18, 0x15, 0, 0]);
+    // literal layout of the first bag: x, y, twelve charges, expires_at, all LE
+    assert_eq!(&b[at + 4..at + 36], &[10, 0, 20, 0, 15, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x18, 0x15, 0, 0]);
     let (players, projs, got, _, _, _) = decode(&b, &mut pk, 2048, 1536).unwrap();
     assert_eq!((players.len(), projs.len()), (1, 0));
     assert_eq!(got, bags);
@@ -435,13 +435,13 @@ fn with_version(snap: &[u8], v: u16) -> Vec<u8> {
 }
 
 #[test]
-fn format_is_fifteen_and_a_game_snapshot_round_trips_with_bags() {
-    assert_eq!(snapshot::FORMAT_VERSION, 15);
+fn format_is_sixteen_and_a_game_snapshot_round_trips_with_bags() {
+    assert_eq!(snapshot::FORMAT_VERSION, 16);
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 15, 0, 0, 5]);
     kill(&mut s, 1);
     let snap = snapshot::write(&s);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 15);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 16);
     let mut r = snapshot::restore(&snap).unwrap();
     assert_eq!(r.bags, s.bags);
     assert_eq!(r.state_hash(), s.state_hash());
@@ -455,11 +455,11 @@ fn other_formats_are_refused_for_sandbox_and_game() {
     push(&mut sb, sim::input::encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let snap = snapshot::write(&sb);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 15);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 16);
     assert!(snapshot::restore(&snap).is_ok());
     let gsnap = snapshot::write(&boxed(&[1]));
     assert!(snapshot::restore(&gsnap).is_ok());
-    for v in [0u16, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16] {
+    for v in [0u16, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
         assert!(snapshot::restore(&with_version(&snap, v)).is_err(), "sandbox v{v}");
         assert!(snapshot::restore(&with_version(&gsnap, v)).is_err(), "game v{v}");
     }

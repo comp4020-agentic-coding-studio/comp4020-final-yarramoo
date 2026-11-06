@@ -15,7 +15,7 @@ fn ids_and_rules_are_pinned() {
         assert!(paintable(m), "{m} paintable");
         assert_eq!(material_class(m), CLASS_SOLID);
     }
-    assert!(!paintable(MUSHROOM + 1));
+    assert!(!paintable(THERMITE + 1));
 }
 
 /// A fire cell on each side of a row of `m`, a floor of bedrock; count how many `m` cells burn (are no longer `m`)
