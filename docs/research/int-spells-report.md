@@ -34,3 +34,18 @@ Full cargo run (/tmp/int3-cargo0.log, 16:06-16:19) was red in 8 binaries, all me
 
 ## Gate
 Run 1 (16:33-16:47, /tmp/int3-g-*.log): cargo, clippy, tsc green; determinism red on one test, `tests/determinism/entities.test.ts` pinning the pickup spell list to ids 2-11 (the new Freeze, Quake and Mudslide are now in the pickup table, so it correctly saw 12-14). Updated the list; that test alone then passed. Gate rerun from scratch below.
+
+Run 2 (16:48-17:14, /tmp/int3-g-{cargo,clippy,tsc,det,net}.log): cargo, clippy, tsc, determinism (53/53) green; `test:net` red, 4 tests (log /tmp/int3-g-net.log): `avatar.test.ts` (class table 0-24), `entity-layout.test.ts` (hard-coded player record 102 and bag 26 bytes), `slots.test.ts` (`charges()` helper length 12), `stats.test.ts` (it used **25 as "an unknown id"**: the exact lesson from the last slices, 25 is now Mud; moved to 60). All four were tests pinning old sizes or ids, none a sim fault. Fixed, then those four files green (29 tests) and the whole `pnpm test:net` rerun green: **417 passed, 1 skipped** (/tmp/int3-g-net2.log, 17:17-17:23). The sim, clippy and determinism steps were not rerun after those test-only edits (no sim/ or shared/ file changed after the green run 2 steps); `pnpm typecheck` was rerun green (/tmp/int3-g-tsc2.log). Strictly the chain was not one unbroken run: the last full chain stopped at net.
+
+## Architectural decisions for review
+1. **Ids and format:** Mud 25, Salt 26, Snow 27, Thermite 28, spells 12-14, format 16. Alternative: reuse gaps (none). Cost: bag record is 32 bytes, three hard-coded mirrors in tests (entity-layout now derives them from NUM_SPELLS).
+2. **Sleep fix is a test fix, not a sim fix.** No sim rule changed for invariant 8. Cost: the Snow `powder_can_move` flag and Thermite's lit `vol_seen` are untested by mutation (redundant in what I could build); if someone later removes them nothing fails. Alternative was deleting them; I kept the conservative flags.
+3. **Thermite cap is a per-tick budget of 16** (a shared scratch counter on `Grid`, like the trails), first-come in scan order. Alternative: per-cell limit only (existing). Cost: scan order decides which lit cell eats first; deterministic, but a big mass burns slower. 16 is untuned.
+4. **Mobile hotbar left as is** (overflows at 390 px; pre-existing). Alternative: wrap or scroll the bar; client-only, deferred.
+5. **`SPELL_ENABLED` written out as 15 `true`s** because `tests/net/spells-table.test.ts` parses the literal list with a regex; `[true; NUM_SPELLS]` broke it. Alternative: teach the test to read the repeat form.
+6. Freeze untested in the browser (see above).
+
+## FUTURE.md ideas
+- Mud, Salt, Snow, Thermite could appear in generation (mud pits, salt flats, snow at the top biome) once they are known to be sleep-safe.
+- A hotbar that scrolls or wraps below ~480 px.
+- A sim test helper `write_cells(grid, ...)` that always marks the chunks, so hand-written arenas cannot repeat this setup fault.

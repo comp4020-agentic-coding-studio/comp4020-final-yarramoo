@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addPickedUp, swapSlots } from "../../client/slots.ts";
 import { BAR, INFINITE } from "../../client/spells.ts";
 
-const charges = (m: Record<number, number>) => Array.from({ length: 12 }, (_, i) => m[i] ?? 0);
+const charges = (m: Record<number, number>) => Array.from({ length: 15 }, (_, i) => m[i] ?? 0);
 
 describe("hotbar slot order", () => {
   it("starts with the infinite starters in bar order", () => {

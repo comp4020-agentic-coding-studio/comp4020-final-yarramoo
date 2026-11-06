@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { activePlayersIn } from "../../server/world.ts";
 import { encodeCast, encodeJoin, encodeLeave, encodePos } from "../../shared/inputs.ts";
 import { compressSnapshot } from "../../shared/protocol.ts";
+import { NUM_SPELLS } from "../../shared/sim.ts";
 import { ENT_BAG, ENT_PICKUP, ENT_PLAYER, ENT_PROJECTILE, EV_DEATH, EV_PICKUP, loadSim } from "../../shared/sim.ts";
 import { wasmBytes } from "./helpers.ts";
 
@@ -62,7 +63,7 @@ describe("server's snapshot entity parser matches the sim", () => {
     const dv = new DataView(snap.buffer, snap.byteOffset, snap.byteLength);
     const elen = dv.getUint32(HEADER, true);
     const e = new DataView(snap.buffer, snap.byteOffset + HEADER + 4, elen);
-    const [PLAYER, PICKUP, PROJECTILE, BAG] = [102, 13, 23, 26];
+    const [PLAYER, PICKUP, PROJECTILE, BAG] = [21 + 6 * NUM_SPELLS + 9, 13, 23, 2 + 2 + 2 * 12 + 4];
     let o = 0;
     const np = e.getUint32(o, true);
     o += 4 + np * PLAYER;

@@ -180,8 +180,8 @@ import { MATERIAL_NAMES } from "../../shared/names.ts";
 
 describe("avatar material classes", () => {
   const E = "empty", S = "solid", L = "liquid", G = "gas";
-  const want = [E, S, S, S, S, L, S, S, S, S, G, G, G, S, L, L, L, G, S, S, S, S, S, S, S];
-  it("pins every material id 0-24 to exactly one class", () => {
+  const want = [E, S, S, S, S, L, S, S, S, S, G, G, G, S, L, L, L, G, S, S, S, S, S, S, S, S, S, S, S];
+  it("pins every material id 0-28 to exactly one class", () => {
     expect(Object.keys(MATERIAL_NAMES).length).toBe(want.length);
     for (let m = 0; m < want.length; m++) {
       const got = m === 0 ? E : isSolid(m) ? S : isLiquid(m) ? L : isGas(m) ? G : "none";
