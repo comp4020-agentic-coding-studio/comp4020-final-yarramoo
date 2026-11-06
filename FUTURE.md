@@ -713,3 +713,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **More frost sprites per ice cave**: scale `ANCHOR_NEAR` and the spawn pocket with the site radius (L gets 0-2 of
   the designed 6). And **frost trails that freeze a lava lake's surface into a bridge**. **Source:**
   `docs/research/int-enemies-report.md`, 6 Nov.
+
+## Colossus balance and mechanics (INT-2, 6 Nov)
+- Balance the Colossus: 600 hp with 2 hp per sand cell re-formed every 8 ticks is a guess; run a budget pass like `boss-budget.md` and consider whether water should do more than the shared weakness (turning its sand to mud so it cannot re-form).
+- Seeds 1, 6, 10, 12, 16 roll the Colossus, 2-5 roll the Mage: show the boss on the room card or lobby ("Boss: Sand Colossus") so players know before descending.
