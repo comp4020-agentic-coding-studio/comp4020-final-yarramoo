@@ -691,3 +691,19 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **Generation time**: L went from 270 ms to 515-860 ms; a bounded local reachability check per site instead of
   whole-grid floods would win most of it back.
 - **Source:** `docs/research/biomes-report.md` and `biomes-mine-fix-report.md`. **Why:** each was out of the $50.
+
+## Dev tools and rendering follow-ups (6 Nov, from the sky and dev-tools workers)
+
+- **A hitbox overlay** for players and enemies, drawn beside `__activeBox`'s rects (`pushActiveBox`,
+  `client/worker.ts`), from a hitbox table mirrored from `sim/src/entities.rs` and pinned by a test like
+  `spells-table.test.ts`. Drawing only (invariant 9). **Why:** there is none, and contact damage and pickup reach
+  are argued about by eye. **Source:** `.claude/skills/dev-tools/SKILL.md` "Not available".
+- **`__devGive(spell)` / `__devHeal`** dev hooks, to test a spell without finding its pickup. **Source:** the
+  dev-tools worker.
+- **The remote teleport hooks under vite**: the dev block in `client/room.ts` replaces them, so
+  `SIMULTA_DEV_TELEPORT` only works from a built client. The user is fine with this (6 Nov); fix only if it bites.
+- **An exact sky mask**: flood "open to sky" from the top row instead of the rim heuristic, so very wide pits
+  (over ~128 columns) and open-sided cliff caves get the right background. And a `plant` material class in
+  `shared/names.ts` to replace the renderer's hardcoded plant ids. **Source:** `docs/research/sky-report.md`.
+- **Per-biome cave back walls** (icy blue in the ice caves, warm red near lava lakes). **Source:** the sky
+  worker's report; the wall is one function of depth today.
