@@ -90,11 +90,11 @@ change on the branch, so the determinism suite was not required and not run.
 ## Spend
 | Who | Model | Spend (approx.) | Outcome |
 |---|---|---|---|
-| Lead (reading, probes, assets, briefs, review, polish, verification) | Opus | ~$12 | design, 3 briefs, 2 fixes |
+| Lead (reading, probes, assets, briefs, review, polish, verification) | Opus | ~$16 | design, 3 briefs, 2 fixes |
 | W1 `/api/live` | Sonnet | ~$1.9 | merged, tests red then green |
 | W2 screens + routing | Sonnet | ~$2.1 | merged, tests red then green |
 | W3 backdrop + mobs | Sonnet | ~$2.7 | merged, tests red then green |
-Three workers of the four allowed; no Haiku job was worth briefing (the asset work was a few commands).
+Total $22.95 (week spend 122.07 -> 145.02), under the $35 cap. Three workers of the four allowed; no Haiku job was worth briefing (the asset work was a few commands).
 
 ## Architectural decisions for review
 1. **Mobs: option (a), a real local Caves sim with one local explorer.** Config `{terrain 0, size 1, avatars 1,
