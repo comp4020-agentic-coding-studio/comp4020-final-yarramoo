@@ -92,7 +92,7 @@ impl Sim {
                     return Some(make(grid, b.pickups.clone(), b.enemies.clone(), b.arena, None));
                 }
                 let world = crate::gen::generate_world(&mut grid, seed, cfg.has_enemies());
-                let (spots, arena) = (world.spots, world.arena);
+                let (spots, arena, sites) = (world.spots, world.arena, world.sites);
                 let pickups: Vec<Pickup> = spots
                     .iter()
                     .enumerate()
@@ -119,7 +119,7 @@ impl Sim {
                 // F4 (D-157): the generator places the slimes once; they join the cached base like pickups.
                 let enemies: Vec<Enemy> = if cfg.has_enemies() {
                     let at: Vec<(u16, u16)> = pickups.iter().map(|p| (p.x, p.y)).collect();
-                    let mut v: Vec<Enemy> = crate::gen::enemy_spots(&grid, seed, &at, arena.as_ref())
+                    let mut v: Vec<Enemy> = crate::gen::enemy_spots(&grid, seed, &at, arena.as_ref(), &sites)
                         .iter()
                         .enumerate()
                         .map(|(i, &(x, y, kind))| Enemy::new(i as u16, kind, i32::from(x) * POS_ONE + POS_ONE / 2, (i32::from(y) + 1) * POS_ONE))

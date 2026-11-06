@@ -10,6 +10,9 @@ use crate::materials::*;
 use crate::rng::*;
 use crate::tuning::{ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_WISP, ENEMY_WISPS_L, ENEMY_WISPS_MIN, ENEMY_FROST, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
+/// Anchored enemies (wisps, frost sprites) spawn with their biome's material within this many cells (Chebyshev).
+const ANCHOR_NEAR: i32 = 24;
+
 pub const FLOOR_ROWS: usize = 64;
 pub const WALL_COLS: usize = 16;
 /// Mean surface height; the heightfield stays within about 200..260.
@@ -541,7 +544,7 @@ fn supply_pile(a: &Arena, spots: &mut Vec<PickupSpot>) {
 /// (x, y) of the Empty floor cell, in placement order, which is the enemy id order. Kept off the surface spawn
 /// area (`ENEMY_SPAWN_CLEAR` columns either side of the world centre, within `ENEMY_SPAWN_ROWS` rows of the
 /// shallow top), off pickups, out of liquids (the whole 5x4 body must be Empty), and apart from each other.
-pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], arena: Option<&Arena>) -> Vec<(u16, u16, u8)> {
+pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], arena: Option<&Arena>, sites: &[Site]) -> Vec<(u16, u16, u8)> {
     let (w, h) = (g.w as i32, g.h as i32);
     let sc = Scale::new(w, h);
     let mut all: Vec<(u16, u16, u8)> = Vec::new();
@@ -549,12 +552,24 @@ pub fn enemy_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], arena: Option<&A
     let (y_lo, y_hi) = (sc.shallow_top + 20, (sc.deep_top - 40).max(sc.shallow_top + 60));
     floor_spots(g, seed, pickups, &mut all, ENEMY_SLIME, want, (y_lo, y_hi), (SALT_GEN_ENEMY_X, SALT_GEN_ENEMY_Y), arena);
     let rows = ((sc.shallow_top + sc.deep_top) / 2, sc.deep_top + 100);
-    imp_spots(g, seed, pickups, &mut all, arena, (ENEMY_IMP, scale_count(w, h, ENEMY_IMPS_L, ENEMY_IMPS_MIN) as usize, rows, (SALT_GEN_IMP_X, SALT_GEN_IMP_Y)));
-    // X2: lava wisps in the deep band, frost sprites in the shallow one.
-    let rows = (sc.deep_top + 40, (sc.repair_depth - 20).max(sc.deep_top + 80));
-    imp_spots(g, seed, pickups, &mut all, arena, (ENEMY_WISP, scale_count(w, h, ENEMY_WISPS_L, ENEMY_WISPS_MIN) as usize, rows, (SALT_GEN_WISP_X, SALT_GEN_WISP_Y)));
-    let rows = (sc.shallow_top + 60, (sc.shallow_top + sc.deep_top) / 2);
-    imp_spots(g, seed, pickups, &mut all, arena, (ENEMY_FROST, scale_count(w, h, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN) as usize, rows, (SALT_GEN_FROST_X, SALT_GEN_FROST_Y)));
+    imp_spots(g, seed, pickups, &mut all, arena, ImpSpec { kind: ENEMY_IMP, want: scale_count(w, h, ENEMY_IMPS_L, ENEMY_IMPS_MIN) as usize, rows, salts: (SALT_GEN_IMP_X, SALT_GEN_IMP_Y), anchor: None });
+    // X2/INT-1: lava wisps beside the lava lakes (deep), frost sprites in and beside the ice caves (shallow). A world with
+    // no site of that kind falls back to the old band rows with the size's minimum count (so a lakeless world still has a few).
+    let wisp_want = scale_count(w, h, ENEMY_WISPS_L, ENEMY_WISPS_MIN) as usize;
+    let frost_want = scale_count(w, h, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN) as usize;
+    let band = ((sc.deep_top + 40, (sc.repair_depth - 20).max(sc.deep_top + 80)), (sc.shallow_top + 60, (sc.shallow_top + sc.deep_top) / 2));
+    for (kind, want, rows, salts, biome, mat) in [
+        (ENEMY_WISP, wisp_want, band.0, (SALT_GEN_WISP_X, SALT_GEN_WISP_Y), BIOME_LAVA, LAVA),
+        (ENEMY_FROST, frost_want, band.1, (SALT_GEN_FROST_X, SALT_GEN_FROST_Y), BIOME_ICE, ICE),
+    ] {
+        let anchored: Vec<Site> = sites.iter().filter(|s| s.kind == biome).copied().collect();
+        if anchored.is_empty() {
+            let min = if kind == ENEMY_WISP { ENEMY_WISPS_MIN } else { ENEMY_FROSTS_MIN } as usize;
+            imp_spots(g, seed, pickups, &mut all, arena, ImpSpec { kind, want: want.min(min), rows, salts, anchor: None });
+        } else {
+            imp_spots(g, seed, pickups, &mut all, arena, ImpSpec { kind, want, rows, salts, anchor: Some((&anchored, mat)) });
+        }
+    }
     worm_spots(g, seed, &sc, pickups, &mut all, arena);
     let want = scale_count(w, h, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN) as usize;
     let (y_lo, y_hi) = (sc.deep_top + 20, (sc.repair_depth - 20).max(sc.deep_top + 60));
@@ -637,17 +652,25 @@ fn worm_spots(g: &Grid, seed: u64, sc: &Scale, pickups: &[(u16, u16)], all: &mut
 /// Fire imps (F5): open air in the lower shallow band and the top of the deep band, inside a 13 x 13 pocket of Empty
 /// cells (so it never spawns in liquid, gas or against a wall), off the pickups and the spawn column, and apart from
 /// every other enemy. `(x, y)` is the feet cell; the 5x4 body stands above it.
-fn imp_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, arena: Option<&Arena>, spec: (u8, usize, (i32, i32), (u32, u32))) {
+fn imp_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u16, u8)>, arena: Option<&Arena>, spec: ImpSpec) {
     let (w, h) = (g.w as i32, g.h as i32);
-    let (kind, want, (y_lo, y_hi), (salt_x, salt_y)) = spec;
+    let ImpSpec { kind, want, rows: (y_lo, y_hi), salts: (salt_x, salt_y), anchor } = spec;
     let mut placed = 0usize;
     for k in 0..6000u32 {
         if placed >= want {
             break;
         }
-        let x = 40 + (rng(seed, 0, k, 0, salt_x) % (w - 80) as u32) as i32;
-        let y = y_lo + (rng(seed, 0, k, 0, salt_y) % (y_hi - y_lo).max(1) as u32) as i32;
-        if y + 7 >= h || (0..13).any(|i| (0..13).any(|j| g.mat[((y - 6 + j) * w + x - 6 + i) as usize] != EMPTY)) {
+        let (x, y) = match anchor {
+            // Biome-anchored: pick a site, then a point in its bounding box (counter-based, so deterministic).
+            Some((sites, _)) => {
+                let s = &sites[(rng(seed, 0, k, 0, SALT_GEN_BIOME_ENEMY) % sites.len() as u32) as usize];
+                let x = s.cx - s.rx + (rng(seed, 0, k, 0, salt_x) % (2 * s.rx + 1) as u32) as i32;
+                let y = s.cy - s.ry + (rng(seed, 0, k, 0, salt_y) % (2 * s.ry + 1) as u32) as i32;
+                (x.clamp(40, w - 41), y)
+            }
+            None => (40 + (rng(seed, 0, k, 0, salt_x) % (w - 80) as u32) as i32, y_lo + (rng(seed, 0, k, 0, salt_y) % (y_hi - y_lo).max(1) as u32) as i32),
+        };
+        if y < 8 || y + 7 >= h ||  (0..13).any(|i| (0..13).any(|j| g.mat[((y - 6 + j) * w + x - 6 + i) as usize] != EMPTY)) {
             continue;
         }
         if arena.is_some_and(|a| a.contains(x, y, ARENA_KEEP_OUT)) {
@@ -659,9 +682,26 @@ fn imp_spots(g: &Grid, seed: u64, pickups: &[(u16, u16)], all: &mut Vec<(u16, u1
         if all.iter().any(|&(ox, oy, _)| (i32::from(ox) - x).abs() < 20 && (i32::from(oy) - y).abs() < 20) {
             continue;
         }
+        // Anchored kinds need their biome material within `ANCHOR_NEAR` cells (the site's own pool/lake/ice).
+        if let Some((_, mat)) = anchor {
+            let (x0, x1, y0, y1) = ((x - ANCHOR_NEAR).max(0), (x + ANCHOR_NEAR).min(w - 1), (y - ANCHOR_NEAR).max(0), (y + ANCHOR_NEAR).min(h - 1));
+            if !(y0..=y1).any(|yy| (x0..=x1).any(|xx| g.mat[(yy * w + xx) as usize] == mat)) {
+                continue;
+            }
+        }
         all.push((x as u16, y as u16, kind));
         placed += 1;
     }
+}
+
+/// What `imp_spots` places: kind, count, band rows (used when not anchored), salts, and an optional biome anchor
+/// (the sites to pick from and the material that must lie within `ANCHOR_NEAR` cells).
+struct ImpSpec<'a> {
+    kind: u8,
+    want: usize,
+    rows: (i32, i32),
+    salts: (u32, u32),
+    anchor: Option<(&'a [Site], u8)>,
 }
 
 /// A floor position where M4 can place a pickup: an Empty cell with solid ground below and headroom.

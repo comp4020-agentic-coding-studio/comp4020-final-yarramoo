@@ -152,3 +152,33 @@ fn survival_worlds_place_both_kinds_deterministically() {
     assert!(a.enemies.iter().any(|e| e.kind == ENEMY_FROST));
     assert!(a.enemies.len() <= MAX_ENEMIES);
 }
+
+/// Chebyshev distance from (x, y) to the nearest cell of material `m` within `r`, if any.
+fn near(s: &Sim, x: i32, y: i32, m: u8, r: i32) -> bool {
+    let (w, h) = (s.grid.w as i32, s.grid.h as i32);
+    ((y - r).max(0)..=(y + r).min(h - 1)).any(|yy| ((x - r).max(0)..=(x + r).min(w - 1)).any(|xx| s.grid.mat[(yy * w + xx) as usize] == m))
+}
+
+#[test]
+fn enemies_are_placed_by_biome() {
+    // Seeds whose world holds both lava and ice: every wisp spawns near Lava, every frost sprite near Ice.
+    let mut checked = 0;
+    for seed in 1..=12u64 {
+        let s = Sim::new(seed, RoomConfig::survival()).unwrap();
+        let has = |m: u8| s.grid.mat.iter().any(|&c| c == m);
+        let (wisps, frosts): (Vec<_>, Vec<_>) = s.enemies.iter().filter(|e| e.kind == ENEMY_WISP || e.kind == ENEMY_FROST).partition(|e| e.kind == ENEMY_WISP);
+        assert!(wisps.len() + frosts.len() <= 12, "bounded counts");
+        if !(has(LAVA) && has(ICE)) {
+            continue;
+        }
+        checked += 1;
+        for e in &wisps {
+            assert!(near(&s, e.x / PX, e.y / PX, LAVA, 30), "seed {seed}: wisp at ({}, {}) is not near Lava", e.x / PX, e.y / PX);
+        }
+        for e in &frosts {
+            assert!(near(&s, e.x / PX, e.y / PX, ICE, 30), "seed {seed}: frost sprite at ({}, {}) is not near Ice", e.x / PX, e.y / PX);
+        }
+        assert!(!wisps.is_empty() || !frosts.is_empty(), "seed {seed}: a world with both biomes places some");
+    }
+    assert!(checked >= 2, "only {checked} seeds had both biomes");
+}
