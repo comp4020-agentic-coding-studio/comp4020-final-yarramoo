@@ -1700,6 +1700,10 @@ fn place_mine(g: &mut Grid, seed: u64, n: u32, s: &Site, sc: &Scale, with_beams:
         }
         let (Some(fa), Some(fb)) = (floor_at(pair[0]), floor_at(pair[1])) else { continue };
         let y = fa.min(fb) - 12 - t - (rng(seed, 0, n, 100 + k as u32, SALT_GEN_MINE) % 5) as i32;
+        // Nor does it sit within 12 rows of the roof anywhere along its span (a box 11 tall must still pass over it).
+        if (pair[0] + 5..pair[1] - 3).any(|x| floor_at(x).is_none_or(|f| roof_at(g, x, f) + 12 > y)) {
+            continue;
+        }
         for x in pair[0] + 5..pair[1] - 3 {
             for yy in y..y + t {
                 if g.mat[(yy * w + x) as usize] == EMPTY {
