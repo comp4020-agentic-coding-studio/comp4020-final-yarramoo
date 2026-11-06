@@ -1,4 +1,5 @@
 // The sky line is captured once from the generated world (client/background.ts) and the renderer never recomputes
+import { readFileSync } from "node:fs";
 // it from live cells. A source guard covers the renderer (it needs WebGL); the pure function is tested directly.
 import { describe, expect, it } from "vitest";
 import { groundLine } from "../../client/background.ts";
@@ -42,5 +43,13 @@ describe("groundLine", () => {
     const g = grid(w, 80, 20);
     for (let y = 20; y < 60; y++) g[y * w + 10] = 0;
     expect(groundLine(g, w, 80)[10]).toBe(20);
+  });
+});
+describe("renderer", () => {
+  it("has no periodic surface recomputation from live cells", () => {
+    const src = readFileSync(new URL("../../client/render.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/updateSurface/);
+    expect(src).not.toMatch(/GROUND\[/);
+    expect(src).toMatch(/setBackground/);
   });
 });

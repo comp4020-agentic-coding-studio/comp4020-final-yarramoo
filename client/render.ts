@@ -1,5 +1,4 @@
 // WebGL2 renderer, shared by the worker (OffscreenCanvas) and the main-thread fallback.
-import { MATERIAL_CLASS } from "../shared/names.ts";
 import { DEEP_TOP, paletteTable, SHALLOW_TOP } from "./materials.ts";
 
 /** The window of the world to draw, in cells. */
@@ -30,7 +29,7 @@ uniform vec2 uWorld;
 uniform vec2 uCam;
 uniform vec2 uView;
 uniform vec3 uBands; // x: 1 in a game world, else 0; y: SHALLOW_TOP; z: DEEP_TOP
-uniform usampler2D uSurf; // per column: y of the surface (first solid cell from the top), refreshed a few times a second
+uniform usampler2D uSurf; // per column: y of the surface (first solid cell from the top), fixed at generation (setBackground)
 uniform vec2 uSky; // x: sky kind 0..4, y: 1 when motion is allowed (0 under prefers-reduced-motion)
 in vec2 uv;
 out vec4 outColor;
@@ -82,7 +81,7 @@ void main() {
   uint m = texelFetch(uMat, c, 0).r;
   float a = float(texelFetch(uAux, c, 0).r);
   float h = hash(vec2(c));
-  // Open air only: in a game world a cell is sky above the ground line of its column (updateSurface); the
+  // Open air only: in a game world a cell is sky above the ground line of its column (setBackground); the
   // sandbox has no ground to speak of, so all of it is sky. Below the line, a cave's open cells show a dim back
   // wall in the depth bands' colours (dirt brown, grey rock, cold blue-black), so a cave reads as inside the earth.
   vec3 bg;
@@ -184,14 +183,6 @@ void main() { outColor = uCol; }`;
 
 const SANDBOX_H = 512;
 
-/** Wood, Seed, Stem and Flower: trees and plants stand on the ground, they are not it. */
-const PLANTS = new Set([6, 7, 8, 9]);
-/** Materials that make the ground line (`updateSurface`): solid terrain, not plants, liquids or gases. */
-const GROUND: readonly boolean[] = MATERIAL_CLASS.map((c, id) => c === "solid" && !PLANTS.has(id));
-/** How far either side a shaft looks for its rim, and how far below both rims a column must be to count. */
-const SHAFT_REACH = 64;
-const SHAFT_MIN_DEPTH = 12;
-
 export class Renderer {
   private gl: WebGL2RenderingContext;
   private matTex: WebGLTexture;
@@ -203,11 +194,6 @@ export class Renderer {
   private uBands: WebGLUniformLocation | null;
   private uSky: WebGLUniformLocation | null;
   private surfTex: WebGLTexture | null = null;
-  private surf = new Uint16Array(0);
-  private rawSurf = new Uint16Array(0);
-  private surfFrame = 0;
-  private surfX0 = -1;
-  private surfX1 = -1;
   private sky = 0;
   private motion = 1;
   private prog: WebGLProgram;
@@ -294,44 +280,16 @@ export class Renderer {
   }
 
   /**
-   * Refresh the per-column ground line for the columns on screen. A column's raw ground is the first cell from
-   * the top that starts a run of 3 ground cells: solid terrain only, so gas, smoke, steam, fire and liquids
-   * never count (a gas cloud at the top of the world used to cast a cave-dark column all the way down, 6 Nov),
-   * and nor do plants, so the sky shows between trees. Then a shaft is closed at its rim: a column more than
-   * `SHAFT_MIN_DEPTH` below ground on both sides, within `SHAFT_REACH` columns, takes the lower of the two rims,
-   * so a hole dug into the earth shows the cave wall rather than sky. About 100k byte reads, done 5 times a
-   * second or when the window moves sideways: nothing per frame.
+   * Set the backdrop line once, from the pristine generated world (`groundLine` in background.ts, called right after
+   * `sim.init`): a column is sky above `groundY[x]` and dim cave wall below it. It is never recomputed from live
+   * cells, so what players build or dig does not move it. Call after `setWorld` (which sizes the texture).
    */
-  private updateSurface(mat: Uint8Array, x0: number, x1: number) {
-    if (!this.caves) return;
-    if (x0 === this.surfX0 && x1 === this.surfX1 && ++this.surfFrame % 12 !== 0) return;
-    const { ww, wh, surf } = this;
-    // The rim test looks past the visible columns, so scan a margin either side.
-    const a = Math.max(0, x0 - SHAFT_REACH);
-    const b = Math.min(ww, x1 + SHAFT_REACH);
-    const raw = this.rawSurf;
-    for (let x = a; x < b; x++) {
-      let y = 0;
-      for (; y < wh - 2; y++) {
-        const i = y * ww + x;
-        if (GROUND[mat[i]] && GROUND[mat[i + ww]] && GROUND[mat[i + 2 * ww]]) break;
-      }
-      raw[x] = y;
-    }
-    for (let x = x0; x < x1; x++) {
-      let left = wh;
-      for (let k = Math.max(a, x - SHAFT_REACH); k < x; k++) left = Math.min(left, raw[k]);
-      let right = wh;
-      for (let k = x + 1; k < Math.min(b, x + SHAFT_REACH + 1); k++) right = Math.min(right, raw[k]);
-      const rim = Math.max(left, right);
-      surf[x] = raw[x] - rim > SHAFT_MIN_DEPTH ? rim : raw[x];
-    }
+  setBackground(groundY: Uint16Array) {
+    if (!this.surfTex || groundY.length !== this.ww) return;
     const gl = this.gl;
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.surfTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, 0, x1 - x0, 1, gl.RED_INTEGER, gl.UNSIGNED_SHORT, surf.subarray(x0, x1));
-    this.surfX0 = x0;
-    this.surfX1 = x1;
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.ww, 1, gl.RED_INTEGER, gl.UNSIGNED_SHORT, groundY);
   }
 
   /** Allocate textures for a world of `w` by `h` cells (a no-op if the size is unchanged). */
@@ -340,7 +298,6 @@ export class Renderer {
   setWorld(w: number, h: number, caves = h > SANDBOX_H) {
     if (caves !== this.caves) {
       this.caves = caves;
-      this.surfX0 = this.surfX1 = -1;
       if (this.ww) this.gl.uniform3f(this.uBands, caves ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
     }
     if (w === this.ww && h === this.wh) return;
@@ -360,9 +317,6 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.surf = new Uint16Array(w);
-    this.rawSurf = new Uint16Array(w);
-    this.surfX0 = this.surfX1 = -1;
     gl.uniform2f(this.uWorld, w, h);
     // The sandbox is 512 tall and has no bands: only a taller world gets the depth look.
     gl.uniform3f(this.uBands, this.caves ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
@@ -422,7 +376,6 @@ export class Renderer {
     gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
     gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
     this.lastUploadCells = w * h;
-    this.updateSurface(mat, x0, x1);
     this.present(seconds, cam);
     if (rects.length) this.drawRects(rects, cam);
   }

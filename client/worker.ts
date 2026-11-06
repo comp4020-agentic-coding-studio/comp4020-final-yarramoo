@@ -59,6 +59,7 @@ import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
 import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
+import { groundLine } from "./background.ts";
 import { hitboxTouchesLava, shouldSizzle } from "./hazard.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
@@ -403,6 +404,8 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   netAvatars = kind === 1;
   send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc, caves: rc?.terrain === 0, ...applySky(seed) });
   renderer?.setWorld(sim.width(), sim.height(), rc?.terrain === 0);
+  // Right after init the grid is the pristine generated world: capture the backdrop line now, before any replay.
+  if (renderer && rc?.terrain === 0) renderer.setBackground(groundLine(sim.matView(), sim.width(), sim.height()));
 }
 
 function connect() {
@@ -1205,6 +1208,7 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
     setNet("live");
     send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null, caves: m.local.kind !== 0, ...applySky(BigInt(m.local.seed)) });
     renderer?.setWorld(sim.width(), sim.height(), m.local.kind !== 0);
+    if (renderer && m.local.kind !== 0) renderer.setBackground(groundLine(sim.matView(), sim.width(), sim.height()));
   } else {
     connect();
   }
