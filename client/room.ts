@@ -376,6 +376,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
           // A second finger turns the gesture into a pan; cancel any stroke in progress.
           if (down) post("up", e);
           down = false;
+          castHeld = false; // a pinch must not also cast
           panning = true;
           last = mid();
           return;
