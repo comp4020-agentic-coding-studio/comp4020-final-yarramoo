@@ -1,4 +1,5 @@
 // WebGL2 renderer, shared by the worker (OffscreenCanvas) and the main-thread fallback.
+import { MATERIAL_CLASS } from "../shared/names.ts";
 import { DEEP_TOP, paletteTable, SHALLOW_TOP } from "./materials.ts";
 
 /** The window of the world to draw, in cells. */
@@ -81,10 +82,20 @@ void main() {
   uint m = texelFetch(uMat, c, 0).r;
   float a = float(texelFetch(uAux, c, 0).r);
   float h = hash(vec2(c));
-  vec3 bg = vec3(0.043, 0.055, 0.078) + vec3(0.02, 0.025, 0.04) * (1.0 - uv.y);
-  // Open air only: in a game world a cell is sky when it is above the first solid cell of its column (caves stay
-  // dark); the sandbox has no ground to speak of, so all of it is sky.
+  // Open air only: in a game world a cell is sky above the ground line of its column (updateSurface); the
+  // sandbox has no ground to speak of, so all of it is sky. Below the line, a cave's open cells show a dim back
+  // wall in the depth bands' colours (dirt brown, grey rock, cold blue-black), so a cave reads as inside the earth.
+  vec3 bg;
   if (uBands.x < 0.5 || c.y < int(texelFetch(uSurf, ivec2(c.x, 0), 0).r)) bg = skyColor(uv, floor(uv * uView));
+  else {
+    float y = float(c.y);
+    float s1 = smoothstep(uBands.y - 40.0, uBands.y + 40.0, y);
+    float s2 = smoothstep(uBands.z - 40.0, uBands.z + 40.0, y);
+    vec3 wall = mix(mix(vec3(0.23, 0.15, 0.10), vec3(0.19, 0.19, 0.20), s1), vec3(0.09, 0.11, 0.17), s2);
+    // Chunky two-scale noise (2- and 6-cell blocks), so the wall has texture but stays well behind the terrain.
+    float n = 0.78 + 0.22 * hash(vec2(c / 2) + 31.0) + 0.12 * (hash(vec2(c / 6) + 7.0) - 0.5);
+    bg = wall * n;
+  }
   vec3 col = uPal[m];
   if (m == 0u) {
     outColor = vec4(bg, 1.0);
@@ -173,6 +184,14 @@ void main() { outColor = uCol; }`;
 
 const SANDBOX_H = 512;
 
+/** Wood, Seed, Stem and Flower: trees and plants stand on the ground, they are not it. */
+const PLANTS = new Set([6, 7, 8, 9]);
+/** Materials that make the ground line (`updateSurface`): solid terrain, not plants, liquids or gases. */
+const GROUND: readonly boolean[] = MATERIAL_CLASS.map((c, id) => c === "solid" && !PLANTS.has(id));
+/** How far either side a shaft looks for its rim, and how far below both rims a column must be to count. */
+const SHAFT_REACH = 64;
+const SHAFT_MIN_DEPTH = 12;
+
 export class Renderer {
   private gl: WebGL2RenderingContext;
   private matTex: WebGLTexture;
@@ -185,6 +204,7 @@ export class Renderer {
   private uSky: WebGLUniformLocation | null;
   private surfTex: WebGLTexture | null = null;
   private surf = new Uint16Array(0);
+  private rawSurf = new Uint16Array(0);
   private surfFrame = 0;
   private surfX0 = -1;
   private surfX1 = -1;
@@ -274,21 +294,37 @@ export class Renderer {
   }
 
   /**
-   * Refresh the per-column surface heights for the columns on screen. A column's surface is the first cell
-   * from the top that starts a run of 3 solid cells (so a single falling grain does not count). About 100k
-   * byte reads, done 5 times a second or when the window moves sideways: nothing per frame.
+   * Refresh the per-column ground line for the columns on screen. A column's raw ground is the first cell from
+   * the top that starts a run of 3 ground cells: solid terrain only, so gas, smoke, steam, fire and liquids
+   * never count (a gas cloud at the top of the world used to cast a cave-dark column all the way down, 6 Nov),
+   * and nor do plants, so the sky shows between trees. Then a shaft is closed at its rim: a column more than
+   * `SHAFT_MIN_DEPTH` below ground on both sides, within `SHAFT_REACH` columns, takes the lower of the two rims,
+   * so a hole dug into the earth shows the cave wall rather than sky. About 100k byte reads, done 5 times a
+   * second or when the window moves sideways: nothing per frame.
    */
   private updateSurface(mat: Uint8Array, x0: number, x1: number) {
     if (!this.caves) return;
     if (x0 === this.surfX0 && x1 === this.surfX1 && ++this.surfFrame % 12 !== 0) return;
     const { ww, wh, surf } = this;
-    for (let x = x0; x < x1; x++) {
+    // The rim test looks past the visible columns, so scan a margin either side.
+    const a = Math.max(0, x0 - SHAFT_REACH);
+    const b = Math.min(ww, x1 + SHAFT_REACH);
+    const raw = this.rawSurf;
+    for (let x = a; x < b; x++) {
       let y = 0;
       for (; y < wh - 2; y++) {
         const i = y * ww + x;
-        if (mat[i] !== 0 && mat[i + ww] !== 0 && mat[i + 2 * ww] !== 0) break;
+        if (GROUND[mat[i]] && GROUND[mat[i + ww]] && GROUND[mat[i + 2 * ww]]) break;
       }
-      surf[x] = y;
+      raw[x] = y;
+    }
+    for (let x = x0; x < x1; x++) {
+      let left = wh;
+      for (let k = Math.max(a, x - SHAFT_REACH); k < x; k++) left = Math.min(left, raw[k]);
+      let right = wh;
+      for (let k = x + 1; k < Math.min(b, x + SHAFT_REACH + 1); k++) right = Math.min(right, raw[k]);
+      const rim = Math.max(left, right);
+      surf[x] = raw[x] - rim > SHAFT_MIN_DEPTH ? rim : raw[x];
     }
     const gl = this.gl;
     gl.activeTexture(gl.TEXTURE2);
@@ -325,6 +361,7 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this.surf = new Uint16Array(w);
+    this.rawSurf = new Uint16Array(w);
     this.surfX0 = this.surfX1 = -1;
     gl.uniform2f(this.uWorld, w, h);
     // The sandbox is 512 tall and has no bands: only a taller world gets the depth look.
