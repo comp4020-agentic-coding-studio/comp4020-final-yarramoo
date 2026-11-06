@@ -7,7 +7,7 @@
 
 use crate::entities::*;
 use crate::materials::*;
-use crate::rng::{rng, SALT_HEAL_DROP, SALT_BOSS_RING, SALT_BOSS_SUMMON, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
+use crate::rng::{rng, SALT_HEAL_DROP, SALT_BOSS_RING, SALT_BOSS_SUMMON, SALT_COLOSSUS_SHED, SALT_COLOSSUS_SHOWER, SALT_ENEMY_HOP, SALT_ENEMY_IDLE};
 use crate::sim::Sim;
 use crate::spells::{isqrt, BOMB, FIRE_BOLT};
 use crate::tuning::*;
@@ -307,6 +307,105 @@ impl Sim {
         e.vy += (wy - i32::from(e.vy)).signum() as i16;
     }
 
+    /// The Sand Colossus (INT-2). A walker: hunts the nearest player on foot, gravity and step-up as for
+    /// slimes. Its hp is its mass, and `last_hp` holds the hp it had after its own last update (`last`): a drop below
+    /// it (a player's hit) sheds one SAND cell per `COLOSSUS_SHED_PER_HP` hp lost beside its body (at most
+    /// `COLOSSUS_SHED_MAX` a tick, Empty cells only). Every `COLOSSUS_REFORM_EVERY` ticks it sucks up to
+    /// `COLOSSUS_REFORM_CELLS` SAND cells within `COLOSSUS_REFORM_R` (bottom rows first) back into its body, +1 hp each.
+    /// Phase 2+ it pays hp for a sand shower above the nearest player. Work per tick is bounded: 24 shed + 361 scan
+    /// + 10 shower cells, and only the one Colossus steps this way.
+    fn colossus_ai(&mut self, e: &mut Enemy, st: EnemyStats, targets: &[Target]) {
+        let tick = self.tick;
+        let mid = st.h * POS_ONE / 2;
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let id32 = tick.wrapping_add(u32::from(e.id));
+        let mut best: Option<(i64, i32, i32)> = None;
+        for &(_, px, py) in targets {
+            let (dx, dy) = (px - e.x, py - e.y);
+            let d2 = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+            if best.is_none_or(|(b, _, _)| d2 < b) {
+                best = Some((d2, dx, dy));
+            }
+        }
+        let max = u32::from(st.hp);
+        let want: u8 = if u32::from(e.hp) * 3 > max * 2 { 1 } else if u32::from(e.hp) * 3 > max { 2 } else { 3 };
+        if want > e.phase {
+            e.phase = want;
+            self.events.push(Event { kind: EV_ENEMY_PHASE, player: 0, a: i32::from(e.id), b: i32::from(want), c: 0 });
+        }
+        // Shed.
+        let last = e.last_hp.min(st.hp);
+        if e.hp < last {
+            let n = ((last - e.hp) / COLOSSUS_SHED_PER_HP).clamp(1, COLOSSUS_SHED_MAX);
+            let (x0, y0, x1, y1) = e.hitbox_cells();
+            let rows = (y1 - y0 + 1).max(1) as u32;
+            for k in 0..u32::from(n) {
+                let r = rng(self.seed, tick, u32::from(e.id), k, SALT_COLOSSUS_SHED);
+                let cx = if r & 1 == 0 { x0 - 1 } else { x1 + 1 };
+                let cy = y0 + ((r >> 1) % rows) as i32;
+                if cx >= 0 && cy >= 0 && cx < w && cy < h && self.grid.mat[(cy * w + cx) as usize] == EMPTY {
+                    self.grid.set((cy * w + cx) as usize, SAND, 0);
+                }
+            }
+            self.enemy_work += u32::from(n);
+        }
+        e.last_hp = e.hp;
+        // Re-form.
+        if id32 % COLOSSUS_REFORM_EVERY == 0 && e.hp > 0 && u32::from(e.hp) < max {
+            let (cx, cy) = (e.x >> POS_SHIFT, (e.y - mid) >> POS_SHIFT);
+            let mut left = COLOSSUS_REFORM_CELLS;
+            'scan: for y in (cy - COLOSSUS_REFORM_R..=cy + COLOSSUS_REFORM_R).rev() {
+                for x in cx - COLOSSUS_REFORM_R..=cx + COLOSSUS_REFORM_R {
+                    if x >= 0 && y >= 0 && x < w && y < h && self.grid.mat[(y * w + x) as usize] == SAND {
+                        self.grid.set((y * w + x) as usize, EMPTY, 0);
+                        e.hp = (e.hp + 1).min(st.hp);
+                        left -= 1;
+                        if left == 0 {
+                            break 'scan;
+                        }
+                    }
+                }
+            }
+            self.enemy_work += ((2 * COLOSSUS_REFORM_R + 1) * (2 * COLOSSUS_REFORM_R + 1)) as u32;
+            e.last_hp = e.hp;
+        }
+        // Shower: pays mass, never lethal.
+        let every = if e.phase >= 3 { COLOSSUS_SHOWER_TICKS_3 } else { COLOSSUS_SHOWER_TICKS };
+        if e.phase >= 2 && id32 % every == 90 && e.hp > COLOSSUS_SHOWER_CELLS as u16 {
+            if let Some((_, dx, dy)) = best.filter(|&(d2, _, _)| d2 <= i64::from(COLOSSUS_SHOWER_RANGE * POS_ONE).pow(2)) {
+                let (px, py) = ((e.x + dx) >> POS_SHIFT, (e.y + dy) >> POS_SHIFT);
+                for k in 0..COLOSSUS_SHOWER_CELLS {
+                    let r = rng(self.seed, tick, u32::from(e.id), k, SALT_COLOSSUS_SHOWER);
+                    let (x, y) = (px - 5 + (r % 11) as i32, py - COLOSSUS_SHOWER_HEIGHT + ((r >> 8) % 4) as i32);
+                    if x >= 0 && y >= 0 && x < w && y < h && self.grid.mat[(y * w + x) as usize] == EMPTY {
+                        self.grid.set((y * w + x) as usize, SAND, 0);
+                    }
+                }
+                e.hp -= COLOSSUS_SHOWER_CELLS as u16;
+                e.last_hp = e.hp;
+                self.enemy_work += COLOSSUS_SHOWER_CELLS;
+            }
+        }
+        // Walk.
+        e.state &= !1;
+        let grounded = self.enemy_blocked(e.x, e.y + 1, st.w, st.h);
+        if grounded && e.vy >= 0 {
+            e.vy = 0;
+            e.vx = 0;
+            if let Some((_, dx, _)) = best.filter(|&(d2, _, _)| d2 <= i64::from(COLOSSUS_AGGRO_CELLS * POS_ONE).pow(2)) {
+                e.state |= 1;
+                if dx.abs() > 4 * POS_ONE {
+                    e.vx = (dx.signum() * COLOSSUS_SPEED) as i16;
+                }
+                if dx != 0 {
+                    e.facing = u8::from(dx > 0);
+                }
+            }
+        } else {
+            e.vy = (i32::from(e.vy) + SLIME_GRAVITY).min(SLIME_FALL_MAX) as i16;
+        }
+    }
+
     /// The worm. It is meant to be inside rock, so it has no body collision, no gravity and no embedded rescue.
     /// Dormant (state bit 0 clear): it only wakes when an alive player is within `WORM_WAKE_CELLS`. Awake: it moves
     /// toward the nearest player within `WORM_HUNT_CELLS` at `WORM_SPEED_ROCK` per axis while its centre cell is solid
@@ -366,12 +465,12 @@ impl Sim {
         let in_range = |e: &Enemy| targets.iter().any(|&(_, px, py)| (e.x - px).abs() <= hw && (e.y - py).abs() <= hh);
         // The boss steps first whenever it is in range (at most one exists), then the lowest ids fill the rest, so a
         // crowd of 24 others can never starve it. The result is in index (= id) order.
-        let mut out: Vec<usize> = self.enemies.iter().enumerate().filter(|(_, e)| e.kind == ENEMY_BOSS && in_range(e)).map(|(i, _)| i).take(1).collect();
+        let mut out: Vec<usize> = self.enemies.iter().enumerate().filter(|(_, e)| is_boss(e.kind) && in_range(e)).map(|(i, _)| i).take(1).collect();
         for (i, e) in self.enemies.iter().enumerate() {
             if out.len() >= MAX_ENEMIES_STEPPED {
                 break;
             }
-            if e.kind != ENEMY_BOSS && in_range(e) {
+            if !is_boss(e.kind) && in_range(e) {
                 out.push(i);
             }
         }
@@ -430,6 +529,22 @@ impl Sim {
         if e.kind == ENEMY_WISP || e.kind == ENEMY_FROST {
             self.wisp_ai(&mut e, st, targets, wisp_trail);
             self.integrate(&mut e, st, false);
+            self.enemy_contact(&mut e, st);
+            self.enemies[i] = e;
+            return;
+        }
+        if e.kind == ENEMY_COLOSSUS {
+            self.colossus_ai(&mut e, st, targets);
+            let (ox, oy) = (e.x, e.y);
+            self.integrate(&mut e, st, true);
+            if let Some(a) = self.arena {
+                if !a.contains(e.x >> POS_SHIFT, (e.y - st.h * POS_ONE / 2) >> POS_SHIFT, 0) {
+                    e.x = ox;
+                    e.y = oy;
+                    e.vx = 0;
+                    e.vy = 0;
+                }
+            }
             self.enemy_contact(&mut e, st);
             self.enemies[i] = e;
             return;
@@ -646,7 +761,7 @@ impl Sim {
                 return true;
             }
             let credited = e.last_hit_by != 0 && tick.wrapping_sub(e.last_hit_tick) <= KILL_CREDIT_TICKS;
-            if e.kind == ENEMY_BOSS {
+            if is_boss(e.kind) {
                 boss_died = true;
             }
             if e.kind == ENEMY_ACID_SLIME {
@@ -654,7 +769,7 @@ impl Sim {
             }
             // Brief E: a heal drops one cell above the feet, on a counter-based 1-in-N draw (the boss always).
             let (cx, cy) = (e.x >> POS_SHIFT, e.y >> POS_SHIFT);
-            if drops_heals && (e.kind == ENEMY_BOSS || rng(seed, tick, cx as u32, cy as u32, SALT_HEAL_DROP).is_multiple_of(HEAL_DROP_ONE_IN)) {
+            if drops_heals && (is_boss(e.kind) || rng(seed, tick, cx as u32, cy as u32, SALT_HEAL_DROP).is_multiple_of(HEAL_DROP_ONE_IN)) {
                 heal_at.push((cx, cy - 1));
             }
             dead.push(Event { kind: EV_ENEMY_DEATH, player: if credited { e.last_hit_by } else { 0 }, a: e.x, b: e.y, c: i32::from(e.kind) });
@@ -716,4 +831,9 @@ impl Sim {
         }
         self.reap_enemies();
     }
+}
+
+/// Either boss kind: wins the round when it dies, steps first, always drops a heal.
+pub fn is_boss(kind: u8) -> bool {
+    kind == ENEMY_BOSS || kind == ENEMY_COLOSSUS
 }

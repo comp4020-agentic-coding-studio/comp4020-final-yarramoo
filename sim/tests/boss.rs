@@ -6,10 +6,13 @@ use sim::sim::Sim;
 use sim::snapshot;
 use sim::tuning::*;
 
+/// A seed that rolls the Deep Mage (INT-2: the boss is chosen per seed; seed 1 rolls the Colossus).
+const MAGE_SEED: u64 = 2;
+
 const PX: i32 = POS_ONE;
 
 fn real() -> Sim {
-    Sim::new(1, RoomConfig::survival()).unwrap()
+    Sim::new(MAGE_SEED, RoomConfig::survival()).unwrap()
 }
 
 fn boss(s: &Sim) -> &Enemy {
@@ -33,7 +36,8 @@ fn fight(dx: i32) -> Sim {
 
 #[test]
 fn exactly_one_boss_at_the_arena_centre_in_survival_and_none_elsewhere() {
-    for seed in 1..=4u64 {
+    // Seeds 2..=5 all roll the Deep Mage (INT-2); the Colossus has its own tests in colossus.rs and boss_choice.rs.
+    for seed in 2..=5u64 {
         let s = Sim::new(seed, RoomConfig::survival()).unwrap();
         let bosses: Vec<_> = s.enemies.iter().filter(|e| e.kind == ENEMY_BOSS).collect();
         assert_eq!(bosses.len(), 1);

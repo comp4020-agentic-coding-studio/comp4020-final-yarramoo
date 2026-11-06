@@ -15,7 +15,7 @@ fn join(s: &mut Sim, id: u32) {
 
 #[test]
 fn enemy_bytes_are_fixed_width_and_round_trip_through_a_snapshot() {
-    assert_eq!(ENEMY_BYTES, 38);
+    assert_eq!(ENEMY_BYTES, 40);
     let mut s = survival();
     join(&mut s, 1);
     s.step();

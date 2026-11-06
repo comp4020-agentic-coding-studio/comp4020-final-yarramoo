@@ -145,6 +145,10 @@ pub const SALT_GEN_WISP_Y: u32 = 271;
 pub const SALT_GEN_FROST_X: u32 = 272;
 pub const SALT_GEN_FROST_Y: u32 = 273;
 pub const SALT_GEN_BIOME_ENEMY: u32 = 274;
+/// INT-2: which boss a Survival world gets (Deep Mage or Sand Colossus), and the Colossus's shed / shower draws.
+pub const SALT_BOSS_KIND: u32 = 275;
+pub const SALT_COLOSSUS_SHED: u32 = 276;
+pub const SALT_COLOSSUS_SHOWER: u32 = 277;
 
 #[cfg(test)]
 mod tests {

@@ -206,6 +206,9 @@ pub struct Enemy {
     /// Boss only: imps summoned so far, at most `BOSS_SUMMONS_TOTAL` (40, so u8 would fit; u16 keeps headroom if the
     /// total is raised). The next summon's id is `id + 1 + summons`. 0 for every other kind.
     pub summons: u16,
+    /// Sand Colossus only (1..=its max hp): the hp it had after its own last update; a drop below it is a hit, and
+    /// sheds sand. 0 for every other kind. Hashed and snapshotted (format 15).
+    pub last_hp: u16,
     /// Contact damage is available when `tick >= cooldown_until`.
     pub cooldown_until: u32,
     /// The next hop is allowed when `tick >= hop_until`.
@@ -214,11 +217,11 @@ pub struct Enemy {
     pub last_hit_tick: u32,
 }
 
-pub const ENEMY_BYTES: usize = 2 + 1 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 4 + 4 + 4 + 4 + 1 + 2;
+pub const ENEMY_BYTES: usize = 2 + 1 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 4 + 4 + 4 + 4 + 1 + 2 + 2;
 
 impl Enemy {
     pub fn new(id: u16, kind: u8, x: i32, y: i32) -> Enemy {
-        Enemy { id, kind, x, y, vx: 0, vy: 0, hp: ENEMY_STATS[usize::from(kind)].hp, facing: 0, state: 0, phase: 0, summons: 0, cooldown_until: 0, hop_until: 0, last_hit_by: 0, last_hit_tick: 0 }
+        Enemy { id, kind, x, y, vx: 0, vy: 0, hp: ENEMY_STATS[usize::from(kind)].hp, facing: 0, state: 0, phase: 0, summons: 0, last_hp: 0, cooldown_until: 0, hop_until: 0, last_hit_by: 0, last_hit_tick: 0 }
     }
 
     /// Cells overlapped by the hitbox: (x0, y0, x1, y1), inclusive. Width is odd-centred like the player's.
@@ -244,6 +247,7 @@ impl Enemy {
         v.extend_from_slice(&self.last_hit_tick.to_le_bytes());
         v.push(self.phase);
         v.extend_from_slice(&self.summons.to_le_bytes());
+        v.extend_from_slice(&self.last_hp.to_le_bytes());
     }
 }
 
@@ -475,7 +479,11 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         e.summons = r.u16().ok_or(())?;
         // Only the boss has a phase (1..=3) and a summon counter; the counter is bounded, so a summon's id
         // (`id + 1 + summons`) stays far inside u16.
-        let named_ok = if boss { (1..=3).contains(&e.phase) && u32::from(e.summons) <= BOSS_SUMMONS_TOTAL && u32::from(id) + 1 + u32::from(e.summons) < MAX_ENEMY_ID } else { e.phase == 0 && e.summons == 0 };
+        e.last_hp = r.u16().ok_or(())?;
+        // The Colossus has a phase (1..=3), no summons, and a last-seen hp in 1..=max; every other kind has none of them.
+        let named_ok = if kind == ENEMY_COLOSSUS {
+            (1..=3).contains(&e.phase) && e.summons == 0 && e.last_hp >= 1 && e.last_hp <= ENEMY_STATS[usize::from(kind)].hp
+        } else if boss { (1..=3).contains(&e.phase) && u32::from(e.summons) <= BOSS_SUMMONS_TOTAL && u32::from(id) + 1 + u32::from(e.summons) < MAX_ENEMY_ID && e.last_hp == 0 } else { e.phase == 0 && e.summons == 0 && e.last_hp == 0 };
         if !named_ok {
             return Err(());
         }

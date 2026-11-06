@@ -6,11 +6,14 @@ use sim::sim::Sim;
 use sim::snapshot;
 use sim::tuning::*;
 
+/// A seed that rolls the Deep Mage (INT-2: the boss is chosen per seed; seed 1 rolls the Colossus).
+const MAGE_SEED: u64 = 2;
+
 const PX: i32 = POS_ONE;
 
 /// Seed 1's real Survival world (not a synthetic box).
 fn real() -> Sim {
-    Sim::new(1, RoomConfig::survival()).unwrap()
+    Sim::new(MAGE_SEED, RoomConfig::survival()).unwrap()
 }
 
 fn join(s: &mut Sim, id: u32) {

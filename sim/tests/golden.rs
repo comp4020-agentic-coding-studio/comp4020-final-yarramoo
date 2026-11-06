@@ -1,14 +1,17 @@
-//! Brief HF: a golden snapshot (format 14) and a scripted Survival run whose final hash is pinned.
+//! Brief HF: a golden snapshot (format 15) and a scripted Survival run whose final hash is pinned.
 //! A deliberate format or behaviour change regenerates both: `HF_REGEN=1 cargo test --release --test golden -- --nocapture`
-//! rewrites `tests/fixtures/golden-v14.bin` and prints the new pinned hash to paste into `SCRIPTED_HASH`.
+//! rewrites `tests/fixtures/golden-v15.bin` and prints the new pinned hash to paste into `SCRIPTED_HASH`.
 use sim::config::RoomConfig;
 use sim::input::{encode_cast, encode_join, encode_pos, encode_ready};
 use sim::sim::Sim;
 use sim::snapshot;
 use sim::tuning::*;
 
-const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/golden-v14.bin");
-const SCRIPTED_HASH: u64 = 9307713064455008346;
+const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/golden-v15.bin");
+const SCRIPTED_HASH: u64 = 14440853585275264011; // seed 1 rolls the Colossus (INT-2), so this run now exercises it
+
+/// A seed that rolls the Deep Mage (INT-2: the boss is chosen per seed; seed 1 rolls the Colossus).
+const MAGE_SEED: u64 = 2;
 
 fn cfg_s() -> RoomConfig {
     RoomConfig { size: 0, ..RoomConfig::survival() }
@@ -59,7 +62,7 @@ fn golden_snapshot_bytes_are_reproduced_and_restore_to_the_same_hash() {
         println!("golden written: {} bytes", bytes.len());
     }
     let golden = std::fs::read(GOLDEN).expect("fixture missing: regenerate with HF_REGEN=1");
-    assert!(bytes == golden, "snapshot bytes differ from golden-v14.bin (a deliberate format change regenerates it)");
+    assert!(bytes == golden, "snapshot bytes differ from golden-v15.bin (a deliberate format change regenerates it)");
     let mut r = snapshot::restore(&golden).unwrap();
     assert_eq!(r.state_hash(), s.state_hash());
 }
@@ -77,7 +80,7 @@ fn a_scripted_survival_run_has_a_pinned_final_hash() {
 
 #[test]
 fn the_bosss_named_state_survives_restore() {
-    let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
+    let mut s = Sim::new(MAGE_SEED, RoomConfig::survival()).unwrap();
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();

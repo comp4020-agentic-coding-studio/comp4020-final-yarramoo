@@ -127,7 +127,15 @@ impl Sim {
                     // F6: exactly one boss per Survival world, at the arena centre, hovering `BOSS_HOVER` cells above the floor.
                     // It gets the highest placed id (so ids stay sorted); `stepping_set` steps it first, so id order never starves it.
                     if let Some(a) = &arena {
-                        let mut boss = Enemy::new(v.len() as u16, ENEMY_BOSS, a.cx * POS_ONE + POS_ONE / 2, (a.floor_y - BOSS_HOVER) * POS_ONE);
+                        // INT-2: which boss is a pure function of the seed (counter-based draw), roughly 50/50.
+                        let mut boss = if boss_kind(seed) == ENEMY_COLOSSUS {
+                            // The Sand Colossus stands on the arena floor; `last_hp` starts at its max.
+                            let mut c = Enemy::new(v.len() as u16, ENEMY_COLOSSUS, a.cx * POS_ONE + POS_ONE / 2, a.floor_y * POS_ONE);
+                            c.last_hp = c.hp;
+                            c
+                        } else {
+                            Enemy::new(v.len() as u16, ENEMY_BOSS, a.cx * POS_ONE + POS_ONE / 2, (a.floor_y - BOSS_HOVER) * POS_ONE)
+                        };
                         boss.phase = 1;
                         v.push(boss);
                     }
@@ -573,4 +581,9 @@ impl Sim {
         let e = self.entity_bytes();
         hash::state_hash(&mut self.grid, self.tick, &self.cfg.encode(), &e)
     }
+}
+
+/// The boss a Survival world of this seed gets: the Sand Colossus on an odd draw, the Deep Mage on an even one.
+pub fn boss_kind(seed: u64) -> u8 {
+    if rng(seed, 0, 0, 0, crate::rng::SALT_BOSS_KIND) & 1 == 1 { ENEMY_COLOSSUS } else { ENEMY_BOSS }
 }

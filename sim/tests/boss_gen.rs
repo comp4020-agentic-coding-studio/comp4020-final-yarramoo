@@ -131,7 +131,7 @@ fn normal_enemies_and_the_supply_pile_stay_out_of_the_arena() {
             let s = survival(size, seed);
             let a = s.arena.unwrap();
             let m = sim::tuning::ARENA_KEEP_OUT;
-            for e in s.enemies.iter().filter(|e| e.kind != sim::tuning::ENEMY_BOSS) {
+            for e in s.enemies.iter().filter(|e| !sim::enemy::is_boss(e.kind)) {
                 let (cx, cy) = (e.x >> 4, e.y >> 4);
                 assert!(!a.contains(cx, cy - 2, m), "size {size} seed {seed}: enemy {} inside the arena", e.id);
             }
@@ -179,7 +179,7 @@ fn every_survival_seed_has_an_arena_and_a_boss() {
     for (size, n) in [(0u8, 200u64), (1, 40), (2, 8)] {
         for seed in 1..=n {
             let s = survival(size, seed);
-            let boss = s.enemies.iter().filter(|e| e.kind == sim::tuning::ENEMY_BOSS).count();
+            let boss = s.enemies.iter().filter(|e| sim::enemy::is_boss(e.kind)).count();
             if s.arena.is_none() || boss != 1 {
                 missing.push((size, seed));
             }

@@ -6,10 +6,13 @@ use sim::sim::Sim;
 use sim::snapshot;
 use sim::tuning::*;
 
+/// A seed that rolls the Deep Mage (INT-2: the boss is chosen per seed; seed 1 rolls the Colossus).
+const MAGE_SEED: u64 = 2;
+
 const PX: i32 = POS_ONE;
 
 fn fight() -> Sim {
-    let mut s = Sim::new(1, RoomConfig::survival()).unwrap();
+    let mut s = Sim::new(MAGE_SEED, RoomConfig::survival()).unwrap();
     s.enemies.retain(|e| e.kind == ENEMY_BOSS);
     s.push_input(&encode_join(1));
     s.step();
