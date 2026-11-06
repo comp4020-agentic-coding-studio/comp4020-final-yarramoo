@@ -300,3 +300,82 @@ fn lit_thermite_is_bounded_per_tick() {
     assert!(worst <= THERMITE_EAT_PER_TICK as usize, "converted {worst} cells in one tick");
     assert_eq!(a, go(false).1);
 }
+
+/// Review INT-3 finding 1: a resting flake packs to Ice (1 in 16) when the three cells above it are Snow, but a write
+/// only wakes chunks at distance 1. Floor at row 66, so a flake rests at 65 in the lower chunk (rows 64-127) with one
+/// flake on it at 64; the lower chunk then sleeps. Later, snow dropped well inside the upper chunk lands at rows 63 and
+/// 62: the row-65 flake now has 64, 63 and 62 above it, but only the landing at 63 (the edge row) wakes the lower
+/// chunk, and only for that tick. Sweep the column and the drop tick so it is not one lucky alignment.
+#[test]
+fn snow_packing_across_a_chunk_line_is_sleep_invisible() {
+    use sim::input::encode_paint;
+    for x in [70i16, 71, 90] {
+        for late in [200u32, 201, 202, 203] {
+            let go = |sleep: bool| {
+                let mut s = Sim::new(13, 0).unwrap();
+                s.grid.sleep_enabled = sleep;
+                let mut out = vec![];
+                for t in 1..=1200u32 {
+                    if t == 1 {
+                        assert_eq!(s.push_input(&encode_paint(1, ROCK, x - 1, 66, x + 1, 66, 0)), 0);
+                        assert_eq!(s.push_input(&encode_paint(1, ROCK, x - 1, 60, x - 1, 66, 0)), 0);
+                        assert_eq!(s.push_input(&encode_paint(1, ROCK, x + 1, 60, x + 1, 66, 0)), 0);
+                    }
+                    if t == 2 {
+                        assert_eq!(s.push_input(&encode_paint(1, SNOW, x, 64, x, 65, 0)), 0);
+                    }
+                    if t == late {
+                        // Two flakes fall onto the stack (each passes row 63, the edge row, and wakes the lower chunk)...
+                        assert_eq!(s.push_input(&encode_paint(1, SNOW, x, 40, x, 40, 0)), 0);
+                    }
+                    if t == late + 120 {
+                        // ...then, with the lower chunk asleep again, one flake painted straight into row 62: it never
+                        // touches row 63, so only a wake at distance 2+ would reach the flake at row 65 below.
+                        assert_eq!(s.push_input(&encode_paint(1, SNOW, x, 62, x, 62, 0)), 0);
+                    }
+                    s.step();
+                    if t % 5 == 0 {
+                        out.push(s.state_hash());
+                    }
+                }
+                out
+            };
+            assert_eq!(go(true), go(false), "snow column x {x}, late drop at tick {late}: sleeping changed the result");
+        }
+    }
+}
+
+/// Review INT-3 finding 2: Snow falls on even ticks and Mud on every third tick. Remove a flake's support on each
+/// residue of the tick, so a chunk that runs on the "wrong" tick would have to stay awake for the right one.
+#[test]
+fn slow_powders_falling_after_support_is_removed_are_sleep_invisible() {
+    use sim::input::encode_paint;
+    for (name, mat) in [("snow", SNOW), ("mud", MUD)] {
+        for late in [300u32, 301, 302, 303, 304, 305] {
+            let go = |sleep: bool| {
+                let mut s = Sim::new(13, 0).unwrap();
+                s.grid.sleep_enabled = sleep;
+                let mut out = vec![];
+                for t in 1..=800u32 {
+                    if t == 1 {
+                        assert_eq!(s.push_input(&encode_paint(1, ROCK, 100, 120, 140, 120, 1)), 0);
+                        assert_eq!(s.push_input(&encode_paint(1, DIRT, 110, 100, 130, 100, 1)), 0);
+                    }
+                    if t == 2 {
+                        assert_eq!(s.push_input(&encode_paint(1, mat, 115, 90, 125, 97, 2)), 0);
+                    }
+                    if t == late {
+                        // Erase the dirt shelf under the settled powder.
+                        assert_eq!(s.push_input(&encode_paint(1, 0, 108, 100, 132, 100, 2)), 0);
+                    }
+                    s.step();
+                    if t % 5 == 0 {
+                        out.push(s.state_hash());
+                    }
+                }
+                out
+            };
+            assert_eq!(go(true), go(false), "{name}, support removed at tick {late}: sleeping changed the result");
+        }
+    }
+}

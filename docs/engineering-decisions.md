@@ -1617,6 +1617,13 @@ exactly 64 enemies, the decoder's limit, so the boss slice carried a guard test 
 And every check outside the sim still meant "kind 4": a Colossus kill counted for nobody's boss stat and granted
 "Deep Mage slain" (D-206, shown red first: `expected undefined to be 1`).
 
+**The spells branch** was marked red for breaking invariant 8, and it hadn't: its sleep test wrote cells into the
+grid after the only chunk mark, so even plain Sand diverged (D-207). The real break was elsewhere, and only the cold
+review found it: Snow packs by reading three cells up while a write wakes chunks one cell away (D-208). The first
+test for it passed on the buggy code, because falling snow passes the chunk's edge row and wakes it; a trace showed
+the stack forming and packing identically in both modes. Only snow *painted* directly into place reached the gap.
+The test now does that, and failed before the one-line fix.
+
 **Lesson.** A new kind is a sim change plus every place that names the old kinds. The sim's `is_boss` was right; the
 server and client each had their own idea of "the boss". Grep the constant, not just the function.
 

@@ -902,9 +902,12 @@ impl Grid {
             self.vol_seen = true;
             return;
         }
-        if y >= 3 && (1..=3).all(|k| self.at(x, y - k) == SNOW) {
+        // The pack rule reads three cells up, but a write wakes chunks only at distance 1, so a flake topped at row
+        // 62 over a chunk line would leave this one asleep (review-int-spells 1). Any snow directly on top keeps the
+        // chunk awake, so the three cells above are re-read every tick, asleep or not.
+        if y >= 1 && self.at(x, y - 1) == SNOW {
             self.vol_seen = true;
-            if rng(seed, tick, x as u32, y as u32, SALT_SNOW_PACK) % 16 == 0 {
+            if y >= 3 && (2..=3).all(|k| self.at(x, y - k) == SNOW) && rng(seed, tick, x as u32, y as u32, SALT_SNOW_PACK) % 16 == 0 {
                 self.set(i, ICE, 1);
             }
         }

@@ -717,3 +717,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 ## Colossus balance and mechanics (INT-2, 6 Nov)
 - Balance the Colossus: 600 hp with 2 hp per sand cell re-formed every 8 ticks is a guess; run a budget pass like `boss-budget.md` and consider whether water should do more than the shared weakness (turning its sand to mud so it cannot re-form).
 - Seeds 1, 6, 10, 12, 16 roll the Colossus, 2-5 roll the Mage: show the boss on the room card or lobby ("Boss: Sand Colossus") so players know before descending.
+- **The new materials in generation** (salt flats, snow on the surface, mud near water) now that each has a sleep
+  test; **a hotbar that scrolls or wraps below ~480 px** (it clips at 390 px with six slots, a full bag is nine);
+  **a sim test helper that writes cells and marks their chunks**, so a test cannot start two different worlds again.
+  **Source:** `docs/research/int-spells-report.md`, 6 Nov.
