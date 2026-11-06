@@ -19,6 +19,7 @@ import {
 } from "../shared/protocol.ts";
 import { resolveSky } from "./sky.ts";
 import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
+import { MENU_BACKDROP } from "./menu/backdrop-config.ts";
 import {
   ENT_BAG,
   ENT_HEAL,
@@ -205,6 +206,9 @@ let explosionsThisFrame = 0;
 let iAmDead = false;
 /** The room has one life (`death` 1): a dead player spectates a living teammate. Render-only (camera). */
 let oneLife = false;
+/** The menu backdrop's local sim (`local.cfg === "menu"`): the explorer wears no "me" markers. */
+let menuBackdrop = false;
+let menuGoto: { x: number; y: number } | null = null;
 /** The round banner has been posted once (from state or from the event). */
 let roundShown = false;
 /** F6b: the late-arrival check runs once per connection, the first time my player appears in the sim. */
@@ -536,6 +540,10 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   if (!spectate && mine && !avatarReady) {
     if (avatar) avatar.teleport(mine.x / 16, mine.y / 16);
     else avatar = new Avatar(mine.x / 16, mine.y / 16);
+    if (menuGoto) {
+      avatar.teleport(menuGoto.x, menuGoto.y);
+      menuGoto = null;
+    }
     avatarLife = mine.a;
     avatarReady = true;
     avAcc = 0;
@@ -611,7 +619,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
     const bc = PLAYER_COLOURS[e.id % PLAYER_COLOURS.length];
     const body: [number, number, number] = hf > 0 ? [bc[0] + (1 - bc[0]) * hf, bc[1] + (1 - bc[1]) * hf, bc[2] + (1 - bc[2]) * hf] : bc;
     if (e.health > 0) pushSprite(rects, px, py, spriteFor(ps.pose, ps.pose === "walk" ? ps.walkPhase : now / 16.7), ps.facingRight, body, ps.castCol, now / 16.7);
-    if (isMe && e.health > 0) {
+    if (isMe && e.health > 0 && !menuBackdrop) {
       rects.push({ x: Math.round(px) - 1, y: Math.round(py), w: 3, h: 1, r: 1, g: 1, b: 1 });
       // A small white chevron above the head marks me among the others (the sprite is 10 rows tall from the feet).
       const mx = Math.round(px) - 1;
@@ -1182,7 +1190,8 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
   }
   if (m.local) {
     const sim = loadSim(wasmBytes);
-    sim.init(BigInt(m.local.seed), m.local.cfg === "survival" ? encodeConfig(SURVIVAL) : m.local.kind);
+    menuBackdrop = m.local.cfg === "menu";
+    sim.init(BigInt(m.local.seed), m.local.cfg === "survival" ? encodeConfig(SURVIVAL) : menuBackdrop ? encodeConfig(MENU_BACKDROP) : m.local.kind);
     oneLife = m.local.cfg === "survival";
     localSim = sim;
     if (sim.width() > 512 && m.local.avatar) {
@@ -1230,6 +1239,12 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
         // The boss (kind 4): 14 cells beside it, at its height (feet y minus 7 puts the avatar's feet at its centre line), in open arena air.
         if (list[0]) avatar.teleport(list[0].x / 16 - (m.spell === -6 ? -(m.dist ?? 14) : m.spell < 0 ? (m.dist ?? 12) : 0), list[0].y / 16 - (m.spell === -3 ? 4 : m.spell === -6 ? 2 : 0));
       }
+      break;
+    case "goto":
+      // Menu backdrop only: the local controller jumps; the sim hears it as the next Pos (a teleport is fine in a local sim).
+      if (!localSim) break;
+      if (avatar && avatarReady) avatar.teleport(m.x, m.y);
+      else menuGoto = { x: m.x, y: m.y }; // the avatar does not exist until the first frame after Join: apply it then
       break;
     case "pace":
       paused = m.paused;

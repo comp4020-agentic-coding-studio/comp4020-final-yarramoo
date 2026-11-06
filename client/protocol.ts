@@ -13,7 +13,7 @@ export type ToWorker =
       width: number;
       height: number;
       /** Dev: run a local single-player sim of this world kind instead of connecting (no networking). */
-      local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean; /** Dev: `survival` starts the local sim from the SURVIVAL preset (enemies on). */ cfg?: string };
+      local?: { kind: number; seed: string; /** ?avatar=1: join as player 1 so damage, death and bags can be seen alone. */ avatar?: boolean; /** Dev: `survival` starts the local sim from the SURVIVAL preset (enemies on). `menu`: the menu backdrop's MENU_BACKDROP config (client/menu/backdrop-config.ts), no "me" markers. */ cfg?: string };
       /** Which server world/room to join: 0 sandbox, 1 game, or any real room id from GET /api/rooms/:code (R3). */
       worldId: number;
       /** Dev only: force a sky kind (`?sky=rain`). Otherwise the sky comes from the room seed. */
@@ -30,6 +30,8 @@ export type ToWorker =
   /** Held movement keys, for the avatar controller. */
   /** Menu backdrop only: pause stepping and drawing, or slow the step rate. Never an input. */
   | { type: "pace"; paused: boolean; stepMs: number }
+  /** Menu backdrop only: teleport the LOCAL controller (cells, feet). Ignored unless a local sim runs; the move reaches the sim as the controller's ordinary Pos. */
+  | { type: "goto"; x: number; y: number }
   | { type: "keys"; left: boolean; right: boolean; up: boolean }
   /** The tab was hidden or shown: while hidden the avatar sends no Pos and no casts (brief F item 1b). */
   | { type: "hidden"; hidden: boolean }
