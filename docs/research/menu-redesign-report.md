@@ -35,3 +35,17 @@ players live, death log), types, settings (themed per type), join (list + code),
   enemies placed, init 100-330 ms, step 0.3-0.7 ms; with a Joined player standing at spawn, slimes within range hop.
 - So option (a) needs a local "explorer" player: Join + Pos, both existing inputs, Pos from the local controller
   (allowed by invariant 9). damage 0 keeps it alive; brushes 1 lets the director paint.
+
+- **Slice 3 (W1, Sonnet): `GET /api/live`.** `d6ad026`, report `8ad4272` (`docs/research/menu-w1-report.md`).
+  Spend ~$1.9 (week 130.13 -> 132.16, including the lead's dispatch). Test `tests/net/menu-live-api.test.ts` shown red
+  (import of the missing `server/live.ts` failed), then green; full `pnpm test:net` 60 files, 422 passed, 1 skipped.
+  Lead review: the diff is 30 lines in `server/main.ts` plus a 42-line pure `server/live.ts`. It holds the contract:
+  public rooms only (looked up by world id), plain names, `self`/`killer` derived at record time, a 2 s cache with an
+  injected clock, no per-request logging. Accepted as is.
+
+- **Slice 2 (W2, Sonnet): screens and routing.** `5572a29` router + test (red 8 failed / 3 passed against a stub,
+  then 11/11; 13/13 with `relTime`/`deathLine`), `1ed444d` title, `86bb666` types + settings + create, `1ac4aed` share +
+  join, `596deb1`/`7e38013` shots + report (`docs/research/menu-w2-report.md`). Spend ~$2.1 (132.16 -> 134.26).
+  Lead review: both `innerHTML` templates are static; names, room names and death lines go in by `textContent`;
+  pollers stop when hidden and on screen change. Screenshots read. Lead follow-ups for the polish pass: 11 px fine
+  print (death log, size captions) is hard to read at 1280; the title shots were taken before the backdrop faded in.
