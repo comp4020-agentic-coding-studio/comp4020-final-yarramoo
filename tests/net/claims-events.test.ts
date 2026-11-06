@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Achievements } from "../../server/achievements.ts";
 import { EventLog } from "../../server/log.ts";
 import { PlayerStats } from "../../server/stats.ts";
+import { STAT_BOSS_KILLS } from "../../shared/stats.ts";
 import { GameDb } from "../../server/db.ts";
 import { RoomsStore } from "../../server/rooms.ts";
 import { CLOSE_SILENT, World, type Peer, type ResolvedKill, type ResolvedRoundEnd, type ResolvedRoundStart } from "../../server/world.ts";
@@ -178,6 +179,16 @@ describe("achievements from claims", () => {
     expect(got).not.toContain("1:exterminator");
     a.onEnemyKill(1, 4, ctx(1));
     expect(got).toContain("1:exterminator");
+  });
+  it("a Sand Colossus kill counts as a boss kill, like the Deep Mage's (review-int-boss finding 1)", () => {
+    const stats = new PlayerStats(null);
+    const a = new Achievements(null, stats, new EventLog({ quiet: true }), () => {});
+    a.onEnemyKill(1, 4, ctx(1));
+    a.onEnemyKill(2, 7, ctx(2));
+    a.onEnemyKill(3, 5, ctx(3)); // a lava wisp is not a boss
+    expect(stats.get(1)[STAT_BOSS_KILLS]).toBe(1);
+    expect(stats.get(2)[STAT_BOSS_KILLS]).toBe(1);
+    expect(stats.get(3)[STAT_BOSS_KILLS] ?? 0).toBe(0);
   });
   it("a won party of 3 with 2 alive: both get Deep Mage slain, neither Last one standing or Solo", () => {
     const { a, got } = mk();

@@ -907,7 +907,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   /** The Deep Mage's bar along the bottom of the stage, shown while it is in the entities view. */
-  function updateBossBar(b: { hp: number; max: number; phase: number } | null): void {
+  function updateBossBar(b: { kind: number; hp: number; max: number; phase: number } | null): void {
     let el = document.getElementById("bossBar");
     if (!b) {
       if (el) el.hidden = true;
@@ -921,7 +921,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     }
     el.hidden = false;
     const nm = el.querySelector(".n");
-    if (nm) nm.textContent = b.max === 600 ? "The Sand Colossus" : "The Deep Mage";
+    if (nm) nm.textContent = b.kind === 7 ? "The Sand Colossus" : "The Deep Mage";
     el.dataset.phase = String(b.phase);
     (el.querySelector("b") as HTMLElement).style.width = `${Math.max(0, Math.min(100, (b.hp * 100) / b.max))}%`;
   }

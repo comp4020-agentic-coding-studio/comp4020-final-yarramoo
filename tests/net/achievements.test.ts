@@ -25,7 +25,7 @@ const check = (id: string, stats: Record<string, number>) => {
 describe("the achievement table", () => {
   it("has six server entries and nine claim entries with unique ids", () => {
     expect(SERVER_ACHIEVEMENTS.map((a) => a.id)).toEqual(["first_spell", "gardener", "waterworks", "pyromaniac", "demolitionist", "spelunker"]);
-    expect(ACHIEVEMENTS.filter((a) => a.source === "claim").map((a) => a.name)).toEqual(["First blood", "Shoved to their doom", "Five kills", "Slime slayer", "Exterminator", "Deep Mage slain", "Last one standing", "Solo descent", "Back from the dead"]);
+    expect(ACHIEVEMENTS.filter((a) => a.source === "claim").map((a) => a.name)).toEqual(["First blood", "Shoved to their doom", "Five kills", "Slime slayer", "Exterminator", "Boss slain", "Last one standing", "Solo descent", "Back from the dead"]);
     expect(new Set(ACHIEVEMENTS.map((a) => a.id)).size).toBe(15);
   });
   it("thresholds are exact", () => {

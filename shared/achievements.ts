@@ -68,9 +68,9 @@ export const ACHIEVEMENTS: readonly Achievement[] = [
   { id: "five_kills", name: "Five kills", description: "Get 5 credited kills", source: "claim" },
   { id: "slime_slayer", name: "Slime slayer", description: "Kill your first enemy", source: "claim" },
   { id: "exterminator", name: "Exterminator", description: `Kill ${EXTERMINATOR_KILLS} enemies`, source: "claim" },
-  { id: "deep_mage_slain", name: "Deep Mage slain", description: "Be in a party that defeats the Deep Mage", source: "claim" },
+  { id: "deep_mage_slain", name: "Boss slain", description: "Be in a party that defeats the boss", source: "claim" },
   { id: "last_one_standing", name: "Last one standing", description: "Be alive at the win when the rest of your party died", source: "claim" },
-  { id: "solo_descent", name: "Solo descent", description: "Defeat the Deep Mage alone", source: "claim" },
+  { id: "solo_descent", name: "Solo descent", description: "Defeat the boss alone", source: "claim" },
   { id: "back_from_the_dead", name: "Back from the dead", description: "Die 10 times", source: "claim" },
 ];
 

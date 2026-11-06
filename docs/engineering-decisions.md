@@ -1598,3 +1598,28 @@ test, red on multa (1 and 4 worlds in 32 with two or more standing beams), gave 
 narrower level check, and kept the room model unchanged so the room tests held. After: 25 in 32 at M, 32 in 32 at L.
 **Lesson:** a "never wrong" invariant needs a "sometimes right" partner, or doing nothing satisfies it.
 `docs/research/mine-wood-report.md`, `sim/tests/mine_wood.rs`, commits `87bc272` (red test), `46eccaa` (fix).
+
+## 42. Three stale branches in an afternoon, and the second boss
+
+**What.** On 6 Nov the user asked to integrate three experiment branches that had sat since a 5 Nov parallel run:
+`x-enemies` (two enemies), `x-boss` (the Sand Colossus) and `x-spells`. They were 51-55 commits behind, predated the
+water-wall scan order (D-191) and format 14, and two of three had never had a green gate. Each went to one Sonnet
+worker at a time in its own worktree, with a dollar cap in the brief, then a gate run by the session model and a cold
+Sonnet review before merging. The user chose the Colossus's placement: **one boss per world, picked from the seed**
+(D-205), not by size as the branch had it.
+
+**The challenge.** The branches collided with work done since. `x-enemies`' random salts 258-261 were taken by the
+biome picker; its enemies had to move to biome sites (D-204); a net test used kind 5 as its "unknown kind", and 5
+became the wisp. `x-boss` stored the Colossus's hp in a field format 12 had stopped overloading, so it got a real one
+(format 15), and its re-form pass could revive a body at 0 hp, so a killing blow sometimes did not win: a test failed
+on the first tick phase before the fix. The cold reviews found what no test held. A large Survival world now generates
+exactly 64 enemies, the decoder's limit, so the boss slice carried a guard test that every generated world round-trips.
+And every check outside the sim still meant "kind 4": a Colossus kill counted for nobody's boss stat and granted
+"Deep Mage slain" (D-206, shown red first: `expected undefined to be 1`).
+
+**Lesson.** A new kind is a sim change plus every place that names the old kinds. The sim's `is_boss` was right; the
+server and client each had their own idea of "the boss". Grep the constant, not just the function.
+
+**Evidence.** D-204 to D-206; `docs/research/int-enemies-report.md`, `int-boss-report.md`,
+`review-int-enemies.md`, `review-int-boss.md`; `sim/tests/boss_choice.rs`, `sim/tests/colossus.rs`,
+`tests/net/claims-events.test.ts`.

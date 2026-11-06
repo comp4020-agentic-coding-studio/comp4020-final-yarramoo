@@ -3,7 +3,7 @@
 // visitor is touched), so a Pos or Cast input costs a couple of Set lookups once everything relevant is earned.
 // Never reads or writes sim state. Visitor 0 (anonymous) earns nothing.
 import { BACK_FROM_THE_DEAD_DEATHS, EXTERMINATOR_KILLS, FIRST_BLOOD_KILLS, FIVE_KILLS, SERVER_ACHIEVEMENTS, SHOVE_CAUSES, achievementById } from "../shared/achievements.ts";
-import { STAT_BOSS_KILLS, STAT_DEATHS, STAT_ENEMY_KILLS, STAT_KILLS, ENEMY_KIND_BOSS, killStat } from "../shared/stats.ts";
+import { STAT_BOSS_KILLS, STAT_DEATHS, STAT_ENEMY_KILLS, STAT_KILLS, isBossKind, killStat } from "../shared/stats.ts";
 import type { GameDb } from "./db.ts";
 import type { EventLog } from "./log.ts";
 import type { PlayerStats } from "./stats.ts";
@@ -72,7 +72,7 @@ export class Achievements {
     if (!killer) return;
     this.stats.bump(killer, STAT_ENEMY_KILLS);
     this.stats.bump(killer, killStat(kind));
-    if (kind === ENEMY_KIND_BOSS) this.stats.bump(killer, STAT_BOSS_KILLS);
+    if (isBossKind(kind)) this.stats.bump(killer, STAT_BOSS_KILLS);
     const n = this.stats.get(killer)[STAT_ENEMY_KILLS] ?? 0;
     this.grant(killer, "slime_slayer", ctx);
     if (n >= EXTERMINATOR_KILLS) this.grant(killer, "exterminator", ctx);
@@ -80,7 +80,7 @@ export class Achievements {
 
   /**
    * F7: a won round. `alive` is the sim's own alive set at the win (agreed by the majority); `players` how many the sim holds.
-   * Everyone alive gets "Deep Mage slain"; the lone survivor of a larger party gets "Last one standing"; a party of one, "Solo descent".
+   * Everyone alive gets "Boss slain" (either boss); the lone survivor of a larger party gets "Last one standing"; a party of one, "Solo descent".
    */
   onRoundWon(alive: readonly number[], players: number, ctxOf: (visitorId: number) => AwardContext): void {
     for (const id of alive) {

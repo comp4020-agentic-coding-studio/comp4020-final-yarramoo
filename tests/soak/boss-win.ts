@@ -188,7 +188,7 @@ async function main(): Promise<void> {
     await sleep(2500);
     const texts = await Promise.all(pages.map(bodyText));
     checks.victoryBothPages = texts.every((t) => t.includes("Victory"));
-    checks.deepMageToastBothPages = texts.every((t) => t.includes("Deep Mage slain"));
+    checks.deepMageToastBothPages = texts.every((t) => t.includes("Boss slain"));
     if (process.env.SHOTS) for (let i = 0; i < 2; i++) await pages[i].screenshot({ path: `${process.env.SHOTS}-${i ? "bo" : "ana"}.png` });
     await sleep(1500);
     const list = (await (await fetch(`${base}/api/rooms`)).json()) as { code?: string }[] | { rooms: { code: string }[] };

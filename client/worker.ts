@@ -217,7 +217,7 @@ let lastRumble = 0;
 /** Enemy owners with a bolt in flight last frame, so each new bolt crackles once (pruned every frame). */
 let enemyBoltSeen = new Set<number>();
 let bossPhase = 0;
-let bossHud: { hp: number; max: number; phase: number; x: number; y: number } | null = null;
+let bossHud: { kind: number; hp: number; max: number; phase: number; x: number; y: number } | null = null;
 const ENEMY_MAX_HP = [20, 30, 60, 90, 800, 40, 30, 600];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
@@ -680,7 +680,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
         if (bossPhase !== 0) { sfxAt("roar", ex, ey, 1, net === "catching-up" || !!ls?.fastForwarding); fx.burst(ex, ey - 8, [1, 0.5, 0.2], 40, 0.1); }
         bossPhase = phase;
       }
-      bossHud = { hp: e.a, max: ENEMY_MAX_HP[4], phase, x: ex, y: ey };
+      bossHud = { kind: 4, hp: e.a, max: ENEMY_MAX_HP[4], phase, x: ex, y: ey };
       pushBoss(rects, ex, ey, phase, now - es.hitAt < 120, now);
       continue;
     }
@@ -691,7 +691,7 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
         if (bossPhase !== 0) { sfxAt("roar", ex, ey, 1, net === "catching-up" || !!ls?.fastForwarding); fx.burst(ex, ey - 6, [0.85, 0.7, 0.4], 50, 0.1); }
         bossPhase = phase;
       }
-      bossHud = { hp: e.a, max: ENEMY_MAX_HP[7], phase, x: ex, y: ey };
+      bossHud = { kind: 7, hp: e.a, max: ENEMY_MAX_HP[7], phase, x: ex, y: ey };
       pushColossus(rects, ex, ey, phase, now - es.hitAt < 120, now);
       continue;
     }

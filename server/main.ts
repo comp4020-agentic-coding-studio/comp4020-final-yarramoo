@@ -49,7 +49,7 @@ import {
   STAT_PLAY_MS,
   STAT_POS_REJECTED,
   STAT_SESSIONS,
-  ENEMY_KIND_BOSS,
+  isBossKind,
 } from "../shared/stats.ts";
 import { isPaintable } from "../shared/names.ts";
 import { Achievements } from "./achievements.ts";
@@ -583,7 +583,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       kk.set(k.kind, (kk.get(k.kind) ?? 0) + 1);
       killsByKind.set(w.id, kk);
       achievements.onEnemyKill(k.killer, k.kind, { name: nameOfVisitor(k.killer), world: w.id, tick: k.tick });
-      if (k.kind === ENEMY_KIND_BOSS) log.event("boss.killed", { world: w.id, tick: k.tick, killer: k.killer ? `${nameOfVisitor(k.killer)}#${k.killer}` : null });
+      if (isBossKind(k.kind)) log.event("boss.killed", { world: w.id, kind: k.kind, tick: k.tick, killer: k.killer ? `${nameOfVisitor(k.killer)}#${k.killer}` : null });
     };
     w.onRoundStartResolved = (r) => {
       log.event("round.start", { world: w.id, tick: r.tick, active: r.active });

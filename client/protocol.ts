@@ -98,7 +98,7 @@ export type FromWorker =
       energy: number;
       energyMax: number;
       /** The Deep Mage while it is in the entities view (hp, max hp, phase 1..3), else null. Render-only. */
-      boss: { hp: number; max: number; phase: number; x: number; y: number } | null;
+      boss: { kind: number; hp: number; max: number; phase: number; x: number; y: number } | null;
       /** My spells for the HUD (charges 65535 = infinite, cooldown in ticks left), or null. Render-only. */
       spells: { charges: number[]; cooldown: number[] } | null;
       /** F6b: the Survival lobby (null when the room has no round). `left` is ticks of countdown left, -1 when none runs. Names are plain. Render-only. */

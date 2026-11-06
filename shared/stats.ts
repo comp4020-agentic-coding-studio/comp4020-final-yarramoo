@@ -10,10 +10,13 @@ export const STAT_RESYNCS = "resyncs";
 /** Credited kills and deaths, counted from majority CLAIMs about EV_DEATH (plan 10, D-120). */
 export const STAT_KILLS = "kills";
 export const STAT_DEATHS = "deaths";
-/** F7: enemy kills from majority claims. `stat_kills_<kind>` per enemy kind; the boss is kind 4. */
+/** F7: enemy kills from majority claims. `stat_kills_<kind>` per enemy kind; the bosses are the Deep Mage (4) and
+ * the Sand Colossus (7), one per world by seed (D-205). Mirrors `is_boss` in sim/src/enemy.rs. */
 export const STAT_ENEMY_KILLS = "enemy_kills";
 export const STAT_BOSS_KILLS = "boss_kills";
 export const ENEMY_KIND_BOSS = 4;
+export const ENEMY_KIND_COLOSSUS = 7;
+export const isBossKind = (kind: number): boolean => kind === ENEMY_KIND_BOSS || kind === ENEMY_KIND_COLOSSUS;
 export const killStat = (kind: number): string => `kills_k${kind}`;
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "_");
