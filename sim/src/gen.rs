@@ -374,7 +374,8 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     place_lava(g, seed, &mut pool_scratch, &sc);
     place_gunpowder(g, seed, &sc);
     place_water(g, seed, &mut pool_scratch, &sc);
-    place_trees(g, seed, &surf, &sc);
+    let trunks = place_trees(g, seed, &surf, &sc);
+    place_greenery(g, seed, &surf, &trunks);
     place_oil(g, seed, &mut pool_scratch, &sc);
     place_acid(g, seed, &mut pool_scratch, &sc, &path);
     place_gas_pockets(g, seed, &sc, &path);
@@ -1794,7 +1795,7 @@ fn place_coal(g: &mut Grid, seed: u64, scale: &Scale) {
 }
 
 /// Wood trees on the Dirt surface: a trunk, two short branches.
-fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) {
+fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) -> Vec<i32> {
     let w = g.w as i32;
     let mut xs: Vec<i32> = Vec::new();
     for k in 0..(sc.tree_count * 5).max(120) as u32 {
@@ -1819,6 +1820,8 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) {
                 }
             }
         }
+        let base = s0.min(s1);
+        canopy(g, seed, x, base - hgt - 1, 5 + (rng(seed, 0, k, 0, SALT_GEN_CANOPY_R) % 4) as i32, base - CANOPY_CLEAR);
         for b in 0..2u32 {
             let side = if rng(seed, 0, k, b, SALT_GEN_TREE_BR) & 1 == 0 { -1 } else { 1 };
             let by = s0.min(s1) - hgt / 2 - (rng(seed, 0, k, b + 2, SALT_GEN_TREE_BR) % 6) as i32 - b as i32 * 3;
@@ -1830,8 +1833,130 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) {
                     g.mat[i] = WOOD;
                 }
             }
+            let tip = (x + if side < 0 { -len } else { len + 1 }, by - len / 2);
+            canopy(g, seed, tip.0, tip.1, 2 + (rng(seed, 0, k, b + 6, SALT_GEN_CANOPY_R) % 3) as i32, base - CANOPY_CLEAR);
         }
         xs.push(x);
+    }
+    xs
+}
+
+/// Rows kept clear of canopy above the ground, so a standing avatar (and `spawn_point`'s clear box) never meets a crown.
+const CANOPY_CLEAR: i32 = 12;
+
+/// A leafy blob (green `STEM` aux 0, one in 25 a blossom `FLOWER`) of horizontal radius `rx`, vertical radius `rx * 3 / 5`
+/// (at least 2), centred on (cx, cy). The rim is ragged: cells past 65% of the radius drop with a rising chance. Writes
+/// only Empty cells, at row >= 2 and no lower than `lowest` (the clearance above the ground). Bounded by the radius.
+fn canopy(g: &mut Grid, seed: u64, cx: i32, cy: i32, rx: i32, lowest: i32) {
+    let w = g.w as i32;
+    let ry = (rx * 3 / 5).max(2);
+    for dy in -ry..=ry {
+        for dx in -rx..=rx {
+            let (x, y) = (cx + dx, cy + dy);
+            if y < 2 || y > lowest || x < 1 || x >= w - 1 {
+                continue;
+            }
+            let d = dx * dx * 100 / (rx * rx) + dy * dy * 100 / (ry * ry);
+            if d > 100 {
+                continue;
+            }
+            let roll = (rng(seed, 0, x as u32, y as u32, SALT_GEN_CANOPY_EDGE) % 100) as i32;
+            if d > 65 && roll < (d - 65) * 100 / 35 {
+                continue;
+            }
+            let i = (y * w + x) as usize;
+            if g.mat[i] == EMPTY {
+                g.mat[i] = if roll % 25 == 7 { FLOWER } else { STEM };
+            }
+        }
+    }
+}
+
+/// Columns around the world's centre kept free of ground plants: `spawn_point` scans 16 columns 7 apart from the
+/// centre plus up to `SPAWN_JITTER`, and a plant over that column would put the spawn on top of it.
+pub(crate) const SPAWN_CLEAR_COLS: i32 = crate::tuning::SPAWN_JITTER as i32 + 7 * 16 + 8;
+
+/// Can a plant of `wd` columns start at `x0`? Flat ground (surface heights within 1), solid Dirt under every column
+/// (not an entrance shaft), open air above, no trunk within 6 columns, and clear of the spawn columns.
+fn plant_site(g: &Grid, surf: &[i32], x0: i32, wd: i32, trunks: &[i32]) -> bool {
+    let w = g.w as i32;
+    let x1 = x0 + wd - 1;
+    if x0 < 40 || x1 >= w - 40 || (x0 - w / 2).abs() <= SPAWN_CLEAR_COLS || (x1 - w / 2).abs() <= SPAWN_CLEAR_COLS {
+        return false;
+    }
+    if trunks.iter().any(|&t| t >= x0 - 6 - 1 && t <= x1 + 6) {
+        return false;
+    }
+    let (lo, hi) = (x0..=x1).fold((i32::MAX, i32::MIN), |(l, h), x| (l.min(surf[x as usize]), h.max(surf[x as usize])));
+    if hi - lo > 1 {
+        return false;
+    }
+    (x0..=x1).all(|x| {
+        let s = surf[x as usize];
+        g.mat[(s * w + x) as usize] == DIRT && g.mat[((s + 2) * w + x) as usize] == DIRT && g.mat[((s - 1) * w + x) as usize] == EMPTY
+    })
+}
+
+/// Put `m` (aux 0) at height `up` (0 = the cell on the ground) above column `x`, only into Empty.
+fn put_plant(g: &mut Grid, surf: &[i32], x: i32, up: i32, m: u8) {
+    let y = surf[x as usize] - 1 - up;
+    let i = (y * g.w as i32 + x) as usize;
+    if y >= 2 && g.mat[i] == EMPTY {
+        g.mat[i] = m;
+    }
+}
+
+/// Shrubs and wildflower patches on the flat Dirt surface, from existing cells only: `STEM` aux 0 (a static green
+/// leaf) and `FLOWER` aux 0. Fixed tries and radii; no plant stands in the spawn columns.
+fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32]) {
+    let w = g.w as i32;
+    let span = (w - 88).max(40) as u32;
+    // Shrubs: a rounded mound 3-7 wide and 2-4 tall, 0-3 blossoms on top.
+    let shrubs = scale_count(w, g.h as i32, 40, 6);
+    let mut placed = 0;
+    for k in 0..(shrubs * 8) as u32 {
+        if placed == shrubs {
+            break;
+        }
+        let wd = 3 + (rng(seed, 0, k, 0, SALT_GEN_SHRUB_DIM) % 5) as i32;
+        let th = 2 + (rng(seed, 0, k, 1, SALT_GEN_SHRUB_DIM) % 3) as i32;
+        let x0 = 40 + (rng(seed, 0, k, 0, SALT_GEN_SHRUB_X) % span) as i32;
+        if !plant_site(g, surf, x0, wd, trunks) {
+            continue;
+        }
+        for i in 0..wd {
+            let c = 2 * i - (wd - 1);
+            let hgt = 1 + (th - 1) * (100 - c * c * 100 / (wd * wd)) / 100;
+            for up in 0..hgt.max(1) {
+                put_plant(g, surf, x0 + i, up, STEM);
+            }
+            if rng(seed, 0, k, 10 + i as u32, SALT_GEN_SHRUB_DIM) % 3 == 0 {
+                put_plant(g, surf, x0 + i, hgt.max(1), FLOWER);
+            }
+        }
+        placed += 1;
+    }
+    // Tufts: sprigs and flowers clustered round patch centres.
+    let tufts = scale_count(w, g.h as i32, 260, 30);
+    let patches = (tufts / 6).max(4) as u32;
+    let mut placed = 0;
+    for k in 0..(tufts * 8) as u32 {
+        if placed == tufts {
+            break;
+        }
+        let patch = rng(seed, 0, k % patches, 0, SALT_GEN_TUFT_PATCH) % span;
+        let x = 40 + (patch as i32 + (rng(seed, 0, k, 0, SALT_GEN_TUFT_X) % 41) as i32 - 20).clamp(0, span as i32 - 1);
+        if !plant_site(g, surf, x, 1, trunks) {
+            continue;
+        }
+        let stem = 1 + (rng(seed, 0, k, 0, SALT_GEN_TUFT_DIM) % 2) as i32;
+        for up in 0..stem {
+            put_plant(g, surf, x, up, STEM);
+        }
+        if rng(seed, 0, k, 1, SALT_GEN_TUFT_DIM) % 3 == 0 {
+            put_plant(g, surf, x, stem, FLOWER);
+        }
+        placed += 1;
     }
 }
 
@@ -2615,8 +2740,8 @@ mod tests {
         use crate::config::RoomConfig;
         for seed in 1..=3u64 {
             let s = Sim::new(seed, RoomConfig::caves_pvp()).unwrap();
-            // Stem is the grotto's mushroom stalk (grown plant, not paintable).
-            assert!(s.grid.mat.iter().all(|&m| m == BEDROCK || m == STEM || paintable(m)));
+            // Stem is the grotto mushroom stalk and the surface greenery (grown plants, not paintable); Flower is the blossom.
+            assert!(s.grid.mat.iter().all(|&m| m == BEDROCK || m == STEM || m == FLOWER || paintable(m)));
             let acid: usize = s.grid.mat.iter().filter(|&&m| m == ACID).count();
             assert!(acid > 0, "seed {seed}: no acid");
         }

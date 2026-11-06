@@ -19,8 +19,8 @@ fn world_hash(size: u8, seed: u64) -> u64 {
 #[test]
 fn non_survival_worlds_are_byte_for_byte_unchanged() {
     let got: Vec<u64> = [(0u8, 1u64), (1, 2), (2, 1)].iter().map(|&(z, sd)| world_hash(z, sd)).collect();
-    // Recorded at the mine-wood fix (beams placed on the real hall floor); before that at the mine-floor fix (beams and rooms stand on ground); before that at biomes-3 (grotto and mine); before that at biomes-2 (ice floors); before that at biomes-1 (sites, lava lakes, ice caves change every Caves world); before that, before `carve_arena` existed.
-    let want: Vec<u64> = vec![1592680659594931673, 5820158069814232042, 17603796759905517450];
+    // Recorded at world-life W1 (canopies, shrubs, wildflowers); before that at the mine-wood fix (beams placed on the real hall floor); before that at the mine-floor fix (beams and rooms stand on ground); before that at biomes-3 (grotto and mine); before that at biomes-2 (ice floors); before that at biomes-1 (sites, lava lakes, ice caves change every Caves world); before that, before `carve_arena` existed.
+    let want: Vec<u64> = vec![14647285974468385876, 5195712494745236012, 4700038986524377066];
     assert_eq!(got, want, "{got:?}");
 }
 
