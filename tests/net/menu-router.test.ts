@@ -33,3 +33,25 @@ describe("menu router", () => {
     expect(parentRoute({ kind: "share", code: "ABC123" })).toEqual({ kind: "title" });
   });
 });
+
+import { deathLine, relTime } from "../../client/menu/live.ts";
+
+describe("menu live helpers", () => {
+  it("relTime", () => {
+    expect(relTime(-5000)).toBe("0s");
+    expect(relTime(0)).toBe("0s");
+    expect(relTime(12_400)).toBe("12s");
+    expect(relTime(59_999)).toBe("59s");
+    expect(relTime(60_000)).toBe("1m");
+    expect(relTime(4 * 60_000 + 5000)).toBe("4m");
+    expect(relTime(3 * 3600_000)).toBe("3h");
+    expect(relTime(2 * 86400_000)).toBe("2d");
+  });
+  it("deathLine uses the in-game wording and plain names", () => {
+    const base = { bag: false, mode: "survival", at: 0 };
+    expect(deathLine({ ...base, victim: "Ana", killer: null, self: false, cause: 47 })).toBe("Ana was buried by the Sand Colossus");
+    expect(deathLine({ ...base, victim: "Ana", killer: "Bo", self: false, cause: 1 })).toBe("Bo blasted Ana (Blast)");
+    expect(deathLine({ ...base, victim: "Ana", killer: "Ana", self: true, cause: 5 })).toBe("Ana blew themselves up");
+    expect(deathLine({ ...base, victim: "Ana", killer: null, self: false, cause: 14, bag: true })).toContain("and dropped their bag");
+  });
+});
