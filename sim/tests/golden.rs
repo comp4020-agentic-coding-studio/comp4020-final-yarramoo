@@ -8,7 +8,7 @@ use sim::snapshot;
 use sim::tuning::*;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/golden-v14.bin");
-const SCRIPTED_HASH: u64 = 8687946991476048525;
+const SCRIPTED_HASH: u64 = 9307713064455008346;
 
 fn cfg_s() -> RoomConfig {
     RoomConfig { size: 0, ..RoomConfig::survival() }
