@@ -31,3 +31,6 @@ Full cargo run (/tmp/int3-cargo0.log, 16:06-16:19) was red in 8 binaries, all me
 - `cast-quake.png`: Quake cast at the rock ledge beside the avatar: a patch of the ledge turned to light pebbles (visible crumbled area left of the avatar's feet). Charges 4 to 3.
 - `cast-mudslide.png`: Mudslide cast: two brown Mud blobs landing in the air, charges 6 to 4 (two casts, the second from an earlier aim test).
 - **Freeze not seen working in the browser**: I cast it at a painted Water pool, but the bolt flew level and did not reach the pool (charges ran out: 8 to 0 over three casts) so no screenshot shows ice. Its effect is covered only by the sim test `freeze_turns_a_bounded_amount_of_water_to_ice` (passes). Honest gap.
+
+## Gate
+Run 1 (16:33-16:47, /tmp/int3-g-*.log): cargo, clippy, tsc green; determinism red on one test, `tests/determinism/entities.test.ts` pinning the pickup spell list to ids 2-11 (the new Freeze, Quake and Mudslide are now in the pickup table, so it correctly saw 12-14). Updated the list; that test alone then passed. Gate rerun from scratch below.
