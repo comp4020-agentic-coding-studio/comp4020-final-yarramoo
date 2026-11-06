@@ -1586,3 +1586,15 @@ the next generation change does not break it again. The same happened hours earl
 **Evidence.** D-193 to D-200; `docs/biomes-plan.md`; `docs/research/biomes-report.md`,
 `docs/research/biomes-mine-fix-report.md`; `docs/art/shots/biomes/`; `sim/tests/biomes.rs`,
 `tests/determinism/m5-state.test.ts`; commits `a4b54e3` (plan), `3cf4c33` (mine fix), `5b004e7` (merge).
+
+**Correction (6 Nov, later the same day).** "Sparse" understated it. The user played several Survival rooms and saw
+ice caves, lava lakes and mushrooms but no wood at all. A probe over seeds 1-32 found every medium world had a mine
+site, but only 1 in 32 placed any beam (4 in 32 at L, none at S). The mine-fix test proved beams never *float*; no
+test asked that any *exist*, and a mine that places nothing passes it. The floor model still assumed the bowl that
+D-198 removed: `find_floor` reached only `ry + 24` rows from the hall centre, accepted only Rock, Dirt, Sand and
+Bedrock as ground, and dropped any floor more than `ry/2 + 14` below the centre, so about 40% of hall columns found
+no floor and a beam's 18-column level check rejected most of the rest. A Sonnet worker (D-203) wrote a frequency
+test, red on multa (1 and 4 worlds in 32 with two or more standing beams), gave beams a deep floor scan and a
+narrower level check, and kept the room model unchanged so the room tests held. After: 25 in 32 at M, 32 in 32 at L.
+**Lesson:** a "never wrong" invariant needs a "sometimes right" partner, or doing nothing satisfies it.
+`docs/research/mine-wood-report.md`, `sim/tests/mine_wood.rs`, commits `87bc272` (red test), `46eccaa` (fix).

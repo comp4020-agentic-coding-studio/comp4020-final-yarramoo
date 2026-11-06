@@ -707,3 +707,6 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   `shared/names.ts` to replace the renderer's hardcoded plant ids. **Source:** `docs/research/sky-report.md`.
 - **Per-biome cave back walls** (icy blue in the ice caves, warm red near lava lakes). **Source:** the sky
   worker's report; the wall is one function of depth today.
+- **A wooden scaffold or lean-to against a mine hall's wall** for halls with no level stretch (7 in 32 M worlds still
+  get no beams), and a generation-report test that prints the `place_biome_halls` undo count per size so it is
+  tracked. **Source:** `docs/research/mine-wood-report.md`, 6 Nov.
