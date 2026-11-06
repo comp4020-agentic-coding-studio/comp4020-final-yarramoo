@@ -270,3 +270,33 @@ fn each_new_material_alone_sleeps_invisibly() {
         assert_eq!(go(true), go(false), "{name}: sleeping changed the result");
     }
 }
+
+/// A big lit thermite mass inside rock converts at most `THERMITE_EAT_PER_TICK` neighbours per tick, and sleep stays invisible.
+#[test]
+fn lit_thermite_is_bounded_per_tick() {
+    let go = |sleep: bool| {
+        let mut g = Grid::new(N, N);
+        g.sleep_enabled = sleep;
+        fill(&mut g, 20, 20, 120, 120, ROCK);
+        fill(&mut g, 40, 40, 100, 100, THERMITE);
+        for i in 0..g.mat.len() {
+            if g.mat[i] == THERMITE {
+                g.aux[i] = THERMITE_BURN; // the whole mass lit at once
+                g.touch(i);
+            }
+        }
+        let (mut worst, mut hs) = (0usize, vec![]);
+        for t in 0..60u32 {
+            let before = g.mat.iter().filter(|&&c| c == LAVA || c == STEAM).count();
+            g.step_cells(7, t);
+            let after = g.mat.iter().filter(|&&c| c == LAVA || c == STEAM).count();
+            worst = worst.max(after.saturating_sub(before));
+            hs.push(g.mat.iter().filter(|&&c| c == LAVA).count());
+        }
+        (worst, hs)
+    };
+    let (worst, a) = go(true);
+    assert!(worst >= 1, "the test must convert something");
+    assert!(worst <= THERMITE_EAT_PER_TICK as usize, "converted {worst} cells in one tick");
+    assert_eq!(a, go(false).1);
+}

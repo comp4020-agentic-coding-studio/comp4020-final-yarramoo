@@ -453,3 +453,6 @@ pub const QUAKE_REACH: i32 = 9;
 pub const MUD_BURST_CELLS: usize = 70;
 /// Thermite burns this many ticks once lit, melting neighbours to Lava on a 1-in-3 roll per neighbour per tick.
 pub const THERMITE_BURN: u8 = 40;
+/// At most this many Rock/Dirt/... to Lava and Water to Steam conversions by lit Thermite per tick, whatever the number of
+/// lit cells (a shared budget, like the acid-slime and wisp trails): a thermite mass in rock cannot run away in one tick.
+pub const THERMITE_EAT_PER_TICK: u32 = 16;

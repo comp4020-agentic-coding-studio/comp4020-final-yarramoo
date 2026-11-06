@@ -17,3 +17,6 @@ tick 300, sleep on vs off. It passes. Mutation check: removing Mud's "waiting fo
 ("mud: sleeping changed the result"), so Mud's flag is load-bearing and tested. Removing Snow's `powder_can_move` flag or
 Thermite's lit `vol_seen` did NOT fail this test: those flags are redundant in the scenarios I can build (a moving cell already
 keeps its chunk awake the next tick); I left them in (harmless, conservative) and do not claim they are tested.
+
+## Step 4: Thermite per-tick bound
+`THERMITE_EAT_PER_TICK = 16` (tuning.rs), a scratch `thermite_budget` on `Grid` reset in `step_cells`; lit Thermite stops converting once it is spent (the cell stays lit, so its chunk stays awake and the rest wait). Test `lit_thermite_is_bounded_per_tick` (60x60 thermite mass in rock, all lit at once): without the cap it converted **84 cells in one tick (red)**, with it at most 16 (green), and the lava count per tick is identical with sleep on and off.

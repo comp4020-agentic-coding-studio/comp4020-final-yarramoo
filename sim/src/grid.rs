@@ -72,6 +72,8 @@ pub struct Grid {
     pub woken: Vec<bool>,
     /// Scratch: set by `update_cell` when it sees a volatile material in the row segment being run.
     vol_seen: bool,
+    /// Scratch: conversions lit Thermite may still make this tick (reset to `THERMITE_EAT_PER_TICK` in `step_cells`).
+    thermite_budget: u32,
     /// Scratch, one per chunk column: whether that chunk of the band being stepped is running.
     running: Vec<bool>,
     /// Telemetry only: chunks actually run in the last `step_cells`.
@@ -131,6 +133,7 @@ impl Grid {
             active: vec![true; cw * ch],
             woken: vec![false; cw * ch],
             vol_seen: false,
+            thermite_budget: crate::tuning::THERMITE_EAT_PER_TICK,
             running: vec![false; cw],
             ran_chunks: 0,
             pending: Vec::new(),
@@ -489,6 +492,7 @@ impl Grid {
         self.moved.fill(0);
         self.pending.clear();
         self.explosions.clear();
+        self.thermite_budget = crate::tuning::THERMITE_EAT_PER_TICK;
         let odd = tick & 1 == 1;
         self.ran_chunks = 0;
         // Nobody is active: the world is frozen outright (plan 6.5), so there is nothing to carry on.
@@ -926,10 +930,15 @@ impl Grid {
             let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
             let m = self.at(nx, ny);
             let n = ny * self.w + nx;
+            if self.thermite_budget == 0 {
+                break; // the per-tick cap: the rest wait for a later tick (this cell stays lit, so its chunk stays awake)
+            }
             if matches!(m, ROCK | DIRT | GLASS | ICE | COAL | WOOD | SAND) && rng(seed, tick, nx as u32, ny as u32, SALT_THERMITE_EAT) % 3 == 0 {
                 self.set(n, LAVA, 0);
+                self.thermite_budget -= 1;
             } else if m == WATER {
                 self.set(n, STEAM, 0);
+                self.thermite_budget -= 1;
             }
         }
         if self.aux[i] <= 1 {
