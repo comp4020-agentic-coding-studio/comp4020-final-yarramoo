@@ -112,7 +112,7 @@ function titleScreen(ctx: Ctx): () => void {
       const key = `${d.at}|${d.victim}|${d.cause}`;
       const li = el("li", "mn-death");
       li.dataset.at = String(d.at);
-      li.style.opacity = String(Math.max(0.3, 1 - i * 0.17));
+      li.style.opacity = String(Math.max(0.5, 1 - i * 0.13));
       if (!first && !seen.has(key)) li.classList.add("in");
       seen.add(key);
       const t = el("span", "t");
@@ -226,8 +226,8 @@ function stepper(label: string, min: number, max: number, initial: number, onCha
   const wrap = el("div", "mn-stepper");
   const lab = el("span", "mn-steplab", label);
   const out = el("output", "mn-stepval", String(initial));
-  const dec = button("-", "ghost small", () => set(v - 1));
-  const inc = button("+", "ghost small", () => set(v + 1));
+  const dec = button("-", "ghost", () => set(v - 1));
+  const inc = button("+", "ghost", () => set(v + 1));
   dec.setAttribute("aria-label", `Less ${label}`);
   inc.setAttribute("aria-label", `More ${label}`);
   let v = initial;
@@ -374,12 +374,159 @@ function settingsScreen(type: GameType, ctx: Ctx): () => void {
   return () => panel.classList.remove("themed", type);
 }
 
+function shareScreen(code: string, ctx: Ctx): () => void {
+  const { panel } = ctx;
+  const link = `${location.origin}/r/${code}`;
+  panel.append(heading("Room ready", "Private: only people with the link can join."));
+  const codeBig = el("p", "mn-code", code);
+  codeBig.setAttribute("aria-label", `Room code ${code.split("").join(" ")}`);
+  const field = el("input", "mn-input mn-link");
+  field.readOnly = true;
+  field.value = link;
+  field.setAttribute("aria-label", "Room link");
+  field.addEventListener("focus", () => field.select());
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const copy = button("Copy link", "water", () => {
+    const done = () => {
+      copy.textContent = "Copied!";
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => (copy.textContent = "Copy link"), 1500);
+    };
+    const fallback = () => {
+      field.focus();
+      field.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        // the text stays selected for a manual copy
+      }
+      done();
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link).then(done, fallback);
+    else fallback();
+  });
+  const enter = button("Enter room", "moss", () => {
+    ctx.ensureName().then(() => (location.href = `/r/${code}`)).catch(() => {});
+  });
+  enter.classList.add("big");
+  panel.append(codeBig, field, copy, el("p", "mn-fine", "Send the link to your friends, then enter."), enter, backRow(ctx));
+  return () => {
+    if (timer) clearTimeout(timer);
+  };
+}
+
+interface PublicRoom {
+  id: number;
+  code: string;
+  name: string;
+  mode: string;
+  players?: number;
+}
+
+function joinScreen(ctx: Ctx): () => void {
+  const { panel } = ctx;
+  panel.append(heading("Join game", "Live public rooms"));
+  let filter = "";
+  let rooms: PublicRoom[] = [];
+  const filters = segmented<string>(
+    [{ value: "", label: "All" }, { value: "survival", label: "Survival" }, { value: "deathmatch", label: "Deathmatch" }],
+    "",
+    (v) => {
+      filter = v;
+      paint();
+    },
+    "three small",
+  );
+  const list = el("div", "mn-rooms");
+  list.setAttribute("aria-live", "polite");
+  panel.append(filters, list);
+
+  function paint() {
+    const rows = filter ? rooms.filter((r) => r.mode === filter) : rooms;
+    list.replaceChildren();
+    if (!rows.length) {
+      const empty = el("div", "mn-empty");
+      empty.append(el("p", "", "No public rooms yet."), button("New game", "big", () => ctx.go({ kind: "types" })));
+      list.append(empty);
+      return;
+    }
+    for (const r of rows) {
+      const row = el("div", "mn-room");
+      const info = el("div", "mn-room-info");
+      info.append(el("span", "mn-room-name", r.name)); // textContent only: a room name is user input
+      const meta = el("span", "mn-room-meta");
+      const cls = r.mode === "survival" ? "moss" : r.mode === "deathmatch" ? "lava" : "sand";
+      meta.append(el("span", `mn-badge ${cls}`, r.mode), el("span", "mn-fine", `${r.players ?? 0} playing`));
+      info.append(meta);
+      const avatarMode = r.mode === "survival" || r.mode === "deathmatch";
+      const join = button(avatarMode && isTouch() ? "Watch" : "Join", "moss", () => {
+        ctx.ensureName().then(() => (location.href = `/r/${r.code}`)).catch(() => {});
+      });
+      row.append(info, join);
+      list.append(row);
+    }
+  }
+  paint();
+  const stop = startPoll(async () => {
+    const r = await fetch("/api/rooms");
+    const j = (await r.json()) as { rooms: PublicRoom[] };
+    rooms = j.rooms ?? [];
+    paint();
+  }, 5000);
+
+  const codeForm = el("form", "mn-codebox");
+  codeForm.noValidate = true;
+  const lab = el("label", "mn-label mn-fine", "Have a code?");
+  const input = el("input", "mn-input mn-codein");
+  input.maxLength = 6;
+  input.placeholder = "ABCDEF";
+  input.autocomplete = "off";
+  input.setAttribute("autocapitalize", "characters");
+  input.addEventListener("input", () => (input.value = input.value.toUpperCase()));
+  lab.append(input);
+  const go = el("button", "mn-btn water", "Go");
+  go.type = "submit";
+  const codeRow = el("div", "mn-row mn-nowrap");
+  codeRow.append(lab, go);
+  const err = el("p", "mn-err");
+  err.setAttribute("role", "alert");
+  err.hidden = true;
+  codeForm.append(codeRow, err);
+  codeForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const code = input.value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{1,6}$/.test(code)) {
+      err.hidden = false;
+      err.textContent = "That doesn't look like a room code.";
+      return;
+    }
+    ctx
+      .ensureName()
+      .then(() => fetch(`/api/rooms/${code}`))
+      .then((r) => {
+        if (!r.ok) throw new Error("No room has that code.");
+        location.href = `/r/${code}`;
+      })
+      .catch((e2) => {
+        if ((e2 as Error).message === "cancelled") return;
+        err.hidden = false;
+        err.textContent = String((e2 as Error).message ?? e2);
+      });
+  });
+  panel.append(codeForm, backRow(ctx));
+  return stop;
+}
+
 export function renderScreen(r: Route, ctx: Ctx): (() => void) | void {
   switch (r.kind) {
     case "types":
       return typesScreen(ctx);
     case "settings":
       return settingsScreen(r.type, ctx);
+    case "share":
+      return shareScreen(r.code, ctx);
+    case "join":
+      return joinScreen(ctx);
     default:
       return titleScreen(ctx);
   }

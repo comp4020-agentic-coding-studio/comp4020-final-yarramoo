@@ -178,3 +178,26 @@
 .mn-col.deathmatch::before { background: repeating-linear-gradient(45deg, var(--mn-lava-hi) 0 8px, var(--mn-ink) 8px 16px); }
 .mn-col.deathmatch .mn-h { color: var(--mn-lava-hi); }
 .mn-col.themed .mn-input:focus { border-color: var(--acc); }
+.mn-stepper .mn-btn { padding: 4px 12px 6px; min-width: 40px; }
+
+/* Share */
+.mn-code { font-size: 44px; line-height: 1; letter-spacing: 0.15em; text-align: center; margin: 4px 0; padding-left: 0.15em; color: var(--mn-sand); }
+.mn-link { font-size: 22px; text-overflow: ellipsis; }
+.mn-actions .mn-btn.big, .mn-col > .mn-btn.big { font-size: 33px; padding: 12px 12px 14px; }
+
+/* Join */
+.mn-seg.small .mn-segbtn { padding: 6px 4px 8px; }
+.mn-seg.small .mn-segl { font-size: 22px; }
+.mn-rooms { display: flex; flex-direction: column; gap: 10px; min-height: 120px; max-height: 50vh; overflow-y: auto; padding: 2px 4px 6px 2px; }
+.mn-room { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--mn-ink); border: var(--mn-u) solid var(--mn-edge); }
+.mn-room-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mn-room-name { font-size: 22px; line-height: 1.1; overflow-wrap: anywhere; }
+.mn-room-meta { display: flex; gap: 8px; align-items: center; }
+.mn-room .mn-btn { flex: none; }
+.mn-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 20px 8px; text-align: center; color: var(--mn-dim); }
+.mn-empty p { margin: 0; }
+.mn-codebox { display: flex; flex-direction: column; gap: 8px; border-top: var(--mn-u) solid var(--mn-edge-lo); padding-top: 14px; }
+.mn-nowrap { flex-wrap: nowrap; align-items: flex-end; }
+.mn-codebox label { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.mn-codein { letter-spacing: 0.2em; text-transform: uppercase; }
+.mn [hidden] { display: none !important; }
