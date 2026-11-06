@@ -138,9 +138,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
    * R3: the only sound test of "is this the avatar world" is the room's own config, never the id — a real
    * room's id is never 1. (`worldId === 1` survives only as a numeric join target below, never as a check.) */
   const avatarCapable = cfg.avatars === 1;
-  // A phone watches an avatar room; it does not play in it (D-011, generalized: any avatars===1 room, not just
-  // the old fixed id 1). ?spectate=1 forces it for testing.
-  const spectate = avatarCapable && (params.get("spectate") === "1" || (matchMedia("(pointer: coarse)").matches && innerWidth < 900));
+  // Phones play (D-209 overturns D-011's forced phone spectate). ?spectate=1 still forces spectating.
+  const spectate = avatarCapable && params.get("spectate") === "1";
   document.body.classList.toggle("game", avatarCapable);
   // R4: Creative is the first room with both avatars and brushes on at once. Only then does the brush/
   // spell-bar switch need to show; every other room still has exactly one of the two panels, as before.
