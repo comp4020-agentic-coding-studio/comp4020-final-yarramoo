@@ -158,67 +158,9 @@
     /* R4: Creative keeps the footer (brush panel) visible even though it is also an avatar room. */
     body.game.dual-tools footer { display: block; }
 
-    /* R3: the main menu (docs/plan-game-modes.md "The main menu"). */
-    .preview-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: #0b0e14; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; }
-    .preview-bg canvas { display: block; flex: none; image-rendering: pixelated; background: #000; box-shadow: none; cursor: default; opacity: 0; transition: opacity 1.2s ease; }
-    .preview-bg canvas.on { opacity: 1; }
-    .preview-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,14,20,.55), rgba(11,14,20,.05) 40%, rgba(11,14,20,.25)); }
-    .menu { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 0 0 40px; }
-    .menu-header, .menu-hero .content, .code-box, .room-list { backdrop-filter: blur(10px) saturate(1.2); -webkit-backdrop-filter: blur(10px) saturate(1.2); background: rgba(15,19,27,.62); }
-    .menu-header { border-radius: 0 0 12px 12px; }
-    .menu-hero .content { padding: 16px 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); }
-    .room-list { margin: 0 16px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); }
-    .code-box { margin: 16px 16px 0; padding: 12px 14px; border-radius: 12px; width: fit-content; max-width: calc(100% - 32px); }
-    .card { backdrop-filter: blur(10px) saturate(1.2); -webkit-backdrop-filter: blur(10px) saturate(1.2); background: rgba(21,26,36,.66); }
-    .menu-hero h2, .menu-hero p { text-shadow: 0 1px 8px rgba(0,0,0,.6); }
-    .menu-hero p { color: #b7bfd0; }
-    .menu-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-    .menu-header h1 { font-size: 17px; margin: 0; font-weight: 700; }
-    .menu-header .spacer { flex: 1; }
-    .menu-header a, .menu-header button.linklike { color: var(--dim); font-size: 13px; text-decoration: none; background: none; border: 0; cursor: pointer; font: inherit; }
-    .menu-hero { position: relative; padding: 28px 16px; overflow: hidden; }
-    .menu-hero .preview-bg { position: absolute; inset: 0; opacity: .28; filter: saturate(.7); pointer-events: none; }
-    .menu-hero .preview-bg canvas { width: 100%; height: 100%; object-fit: cover; }
-    .menu-hero .content { position: relative; max-width: 520px; }
-    .menu-hero h2 { font-size: 26px; margin: 0 0 8px; }
-    .menu-hero p { color: var(--dim); margin: 0 0 16px; font-size: 14px; }
     .btn { font: inherit; padding: 10px 16px; border-radius: 8px; border: 0; background: var(--accent); color: #0b0e14; font-weight: 600; cursor: pointer; }
     .btn.secondary { background: #0f131b; color: var(--fg); border: 1px solid var(--line); }
     .btn.small { padding: 6px 10px; font-size: 13px; }
-    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 0 16px 20px; }
-    @media (max-width: 760px) { .cards { grid-template-columns: 1fr; } }
-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
-    .card h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-    .card h3 img { width: 20px; height: 20px; object-fit: contain; }
-    .card .rule { color: var(--dim); font-size: 12px; min-height: 2.4em; }
-    .badge { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; }
-    .badge.pvp { background: #3a1f24; color: #ff8d8d; }
-    .badge.safe { background: #1b3326; color: #8cf0b6; }
-    .card .actions { display: flex; gap: 6px; margin-top: auto; }
-    .card .actions button { flex: 1; }
-    .room-list h2 { font-size: 14px; color: var(--dim); margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
-    .room-list select { font: inherit; font-size: 12px; background: #0f131b; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
-    .room-row { display: flex; align-items: center; gap: 10px; padding: 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
-    .room-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .room-row .mode { color: var(--dim); font-size: 12px; min-width: 90px; }
-    .room-empty { color: var(--dim); font-size: 13px; padding: 16px; text-align: center; }
-    .code-box { display: flex; gap: 8px; padding: 16px; align-items: center; flex-wrap: wrap; }
-    .code-box input { font: inherit; text-transform: uppercase; letter-spacing: .1em; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--fg); width: 140px; }
-    .code-box .err { color: #ff8d8d; font-size: 12px; width: 100%; }
-    .sheet-backdrop { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(11,14,20,.88); padding: 12px; overflow: auto; }
-    .sheet-backdrop[hidden] { display: none; }
-    .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(92vw, 420px); display: grid; gap: 12px; max-height: 90vh; overflow: auto; }
-    .sheet h2 { margin: 0; font-size: 17px; }
-    .sheet label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
-    .sheet input, .sheet select { font: inherit; padding: 8px 10px; font-size: 14px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--fg); }
-    .sheet .row { display: flex; gap: 10px; }
-    .sheet .row > * { flex: 1; }
-    .sheet .toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
-    .sheet details { font-size: 13px; }
-    .sheet details summary { cursor: pointer; color: var(--accent); }
-    .sheet .adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-    .sheet .err { color: #ff8d8d; font-size: 12px; }
-    .sheet .actions { display: flex; gap: 8px; justify-content: flex-end; }
     .share-bar { display: flex; gap: 8px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 13px; }
     .share-bar code { background: #0f131b; padding: 4px 8px; border-radius: 6px; }
     .share-btn { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: #0f131b; color: var(--fg); cursor: pointer; }

@@ -205,3 +205,9 @@
 .mn-codebox label { flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .mn-codein { letter-spacing: 0.2em; text-transform: uppercase; }
 .mn [hidden] { display: none !important; }
+
+/* The backdrop host, moved from client/index.html (lead, final cleanup). */
+.preview-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: #0b0e14; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; }
+.preview-bg canvas { display: block; flex: none; image-rendering: pixelated; background: #000; box-shadow: none; cursor: default; opacity: 0; transition: opacity 1.2s ease; }
+.preview-bg canvas.on { opacity: 1; }
+.preview-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,14,20,.55), rgba(11,14,20,.05) 40%, rgba(11,14,20,.25)); }
