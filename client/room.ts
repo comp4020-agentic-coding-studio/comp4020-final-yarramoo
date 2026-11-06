@@ -920,6 +920,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       stage.append(el);
     }
     el.hidden = false;
+    const nm = el.querySelector(".n");
+    if (nm) nm.textContent = b.max === 600 ? "The Sand Colossus" : "The Deep Mage";
     el.dataset.phase = String(b.phase);
     (el.querySelector("b") as HTMLElement).style.width = `${Math.max(0, Math.min(100, (b.hp * 100) / b.max))}%`;
   }
@@ -1028,7 +1030,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     maj.textContent = majSecs >= 0 && secs < 0 ? `Starting in ${majSecs} s without ${slow.join(", ")}` : "";
     maj.hidden = !maj.textContent;
     const about = document.createElement("p");
-    about.textContent = "Co-op, one life: descend together and kill the Deep Mage.";
+    about.textContent = "Co-op, one life: descend together and kill the boss (the Deep Mage or the Sand Colossus, by seed).";
     const ul = document.createElement("ul");
     for (const p of l.list) {
       const li = document.createElement("li");

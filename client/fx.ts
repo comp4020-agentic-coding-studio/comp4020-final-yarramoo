@@ -112,11 +112,27 @@ export function pushBoss(rects: Rect[], px: number, py: number, phase: number, h
   pushGrid(rects, BOSS, hit ? BOSS_HIT : BOSS_PAL[phase] ?? BOSS_PAL[1], x0, y0 + Math.round(Math.sin(now / 300)));
 }
 
+/** The Sand Colossus (11 x 12 cells, feet centre): a lumpy sand body, eyes glow by phase, hurt flash white. */
+export function pushColossus(rects: Rect[], px: number, py: number, phase: number, hit: boolean, now: number): void {
+  const x0 = Math.round(px) - 5;
+  const eye: [number, number, number] = phase >= 3 ? [1, 0.2, 0.1] : phase === 2 ? [1, 0.7, 0.2] : [0.3, 0.2, 0.1];
+  const rows = ["...#####...", "..#######..", ".#########.", ".#e#####e#.", ".#########.", "###########", "###########", "###########", ".#########.", ".####.####.", ".####.####.", ".###...###."];
+  for (let y = 0; y < rows.length; y++)
+    for (let x = 0; x < 11; x++) {
+      const ch = rows[y][x];
+      if (ch === ".") continue;
+      const shade = ((x * 7 + y * 13) % 5) / 40;
+      const c: [number, number, number] = hit ? [1, 1, 1] : ch === "e" ? eye : [0.82 - shade, 0.7 - shade, 0.4 - shade];
+      rects.push({ x: x0 + x, y: Math.round(py) - rows.length + y + (y < 3 ? Math.round(Math.sin(now / 400)) : 0), w: 1, h: 1, r: c[0], g: c[1], b: c[2] });
+    }
+}
+
 /** An enemy of `kind` (0 slime, 1 imp, 2 acid slime, 3 worm) standing with its feet centre at (px, py). `awake` is the
  * view's hunting bit: a dormant worm is not drawn at all (it is inside the rock), an awake one shows its head. */
 export function pushEnemy(rects: Rect[], kind: number, px: number, py: number, air: "rising" | "falling" | "ground", hit: boolean, hpFrac: number, maxHp: number, awake: boolean, now: number): void {
   if (kind === 0) return pushSlime(rects, px, py, air, hit, hpFrac);
   if (kind === 4) return pushBoss(rects, px, py, 1, hit, now);
+  if (kind === 7) return pushColossus(rects, px, py, 1, hit, now);
   if (kind === 3 && !awake) return;
   const x0 = Math.round(px) - 3;
   let rows: string[];

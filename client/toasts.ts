@@ -45,8 +45,8 @@ export function formatDeath(d: DeathInfo, nameOf: (id: number) => string | undef
   } else if (d.cause === CAUSE_ACID) {
     text = k ? `${k} dissolved ${v} in acid` : `${v} dissolved in acid`;
   } else if (d.cause >= 40 && d.cause < 48) {
-    // 40 + enemy kind: 0 slime, 1 imp, 2 acid slime, 3 worm, 4 the Deep Mage.
-    const how = ["was slain by a slime", "was burned by an imp", "was dissolved by an acid slime", "was eaten by a worm", "was struck down by the Deep Mage", "was scorched by a lava wisp", "was frozen by a frost sprite"][d.cause - 40];
+    // 40 + enemy kind: 0 slime, 1 imp, 2 acid slime, 3 worm, 4 the Deep Mage, 5 lava wisp, 6 frost sprite, 7 the Sand Colossus.
+    const how = ["was slain by a slime", "was burned by an imp", "was dissolved by an acid slime", "was eaten by a worm", "was struck down by the Deep Mage", "was scorched by a lava wisp", "was frozen by a frost sprite", "was buried by the Sand Colossus"][d.cause - 40];
     text = `${v} ${how ?? "was slain by a monster"}`;
   } else {
     text = `${v} died`;
@@ -61,7 +61,7 @@ export function formatAchievement(id: string): string | null {
 }
 
 /** Enemy kinds by index (sim ENEMY_STATS order), singular display names. */
-export const ENEMY_NAMES = ["Slime", "Fire imp", "Acid slime", "Worm", "Deep Mage", "Lava wisp", "Frost sprite"];
+export const ENEMY_NAMES = ["Slime", "Fire imp", "Acid slime", "Worm", "Deep Mage", "Lava wisp", "Frost sprite", "Sand Colossus"];
 const CAUSE_ENEMY_BASE = 40;
 
 /**
@@ -72,7 +72,7 @@ export function youDiedText(cause: number, killer: number, me: number, nameOf: (
   const other = killer !== 0 && killer !== me ? nameOf(killer) || UNKNOWN_NAME : null;
   if (cause >= CAUSE_ENEMY_BASE && cause < CAUSE_ENEMY_BASE + ENEMY_NAMES.length) {
     const n = ENEMY_NAMES[cause - CAUSE_ENEMY_BASE];
-    return n === "Deep Mage" ? "Killed by the Deep Mage" : `Killed by ${/^[AEIOU]/.test(n) ? "an" : "a"} ${n}`;
+    return n === "Deep Mage" || n === "Sand Colossus" ? `Killed by the ${n}` : `Killed by ${/^[AEIOU]/.test(n) ? "an" : "a"} ${n}`;
   }
   if (cause >= 0 && cause < SPELL_NAMES.length) {
     if (other) return `Killed by ${other}'s ${SPELL_NAMES[cause]}`;
