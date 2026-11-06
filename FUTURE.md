@@ -710,3 +710,6 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **A wooden scaffold or lean-to against a mine hall's wall** for halls with no level stretch (7 in 32 M worlds still
   get no beams), and a generation-report test that prints the `place_biome_halls` undo count per size so it is
   tracked. **Source:** `docs/research/mine-wood-report.md`, 6 Nov.
+- **More frost sprites per ice cave**: scale `ANCHOR_NEAR` and the spawn pocket with the site radius (L gets 0-2 of
+  the designed 6). And **frost trails that freeze a lava lake's surface into a bridge**. **Source:**
+  `docs/research/int-enemies-report.md`, 6 Nov.
