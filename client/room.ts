@@ -7,7 +7,7 @@ import { etaText, replayRate, type Sample } from "./catchup.ts";
 import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worldToStrip } from "./social.ts";
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
-import { addPickedUp, swapSlots } from "./slots.ts";
+import { addPickedUp, isTap, swapSlots } from "./slots.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
@@ -138,9 +138,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
    * R3: the only sound test of "is this the avatar world" is the room's own config, never the id — a real
    * room's id is never 1. (`worldId === 1` survives only as a numeric join target below, never as a check.) */
   const avatarCapable = cfg.avatars === 1;
-  // A phone watches an avatar room; it does not play in it (D-011, generalized: any avatars===1 room, not just
-  // the old fixed id 1). ?spectate=1 forces it for testing.
-  const spectate = avatarCapable && (params.get("spectate") === "1" || (matchMedia("(pointer: coarse)").matches && innerWidth < 900));
+  // Phones play (D-209 overturns D-011's forced phone spectate). ?spectate=1 still forces spectating.
+  const spectate = avatarCapable && params.get("spectate") === "1";
   document.body.classList.toggle("game", avatarCapable);
   // R4: Creative is the first room with both avatars and brushes on at once. Only then does the brush/
   // spell-bar switch need to show; every other room still has exactly one of the two panels, as before.
@@ -210,7 +209,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const modeKey = `${cfg.terrain}-${cfg.avatars}-${cfg.brushes}`;
     const seenKey = HINT_SEEN_PREFIX + modeKey;
     if (localKind === null && !store.get(seenKey)) {
-      const text = cfg.brushes === 1 ? "Paint: pick a material, drag to place it." : avatarCapable ? "Move: WASD/arrows. Cast: click and aim. Pick a spell with 1-0, Q/E or a click. Dig through caves." : "Paint: pick a material, drag to place it.";
+      const touch = matchMedia("(pointer: coarse)").matches;
+      const playHint = touch
+        ? "Move with the arrows, jump or levitate with \u25b2. Hold the world to aim and cast. Tap a spell to pick it; swipe the bar for more."
+        : "Move: WASD/arrows. Cast: click and aim. Pick a spell with 1-0, Q/E or a click. Dig through caves.";
+      const text = cfg.brushes === 1 ? "Paint: pick a material, drag to place it." : avatarCapable ? playHint : "Paint: pick a material, drag to place it.";
       hintTextEl.textContent = text;
       hintEl.hidden = false;
       const dismiss = () => {
@@ -218,6 +221,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         store.set(seenKey, "1");
       };
       hintEl.addEventListener("pointerdown", dismiss, { once: true });
+      // On touch the hint sits over the hotbar: the first touch anywhere (a movement button included) clears it.
+      if (touch) addEventListener("pointerdown", dismiss, { once: true, capture: true });
       addEventListener("keydown", dismiss, { once: true });
     }
   }
@@ -376,6 +381,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
           // A second finger turns the gesture into a pan; cancel any stroke in progress.
           if (down) post("up", e);
           down = false;
+          castHeld = false; // a pinch must not also cast
           panning = true;
           last = mid();
           return;
@@ -482,9 +488,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function sendKeys() {
     send({
       type: "keys",
-      left: held.has("arrowleft") || held.has("a"),
-      right: held.has("arrowright") || held.has("d"),
-      up: held.has("arrowup") || held.has("w") || held.has(" "),
+      left: held.has("arrowleft") || held.has("a") || held.has("touch-left"),
+      right: held.has("arrowright") || held.has("d") || held.has("touch-right"),
+      up: held.has("arrowup") || held.has("w") || held.has(" ") || held.has("touch-up"),
     });
   }
   /** Digit keys pick slots: 1-9 are slots 1-9, 0 is slot 10, Shift+1 is slot 11, Shift+2 slot 12, and so on.
@@ -796,11 +802,22 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     // A click picks the slot. The slots are siblings of the canvas, not children, so the click never reaches
     // the canvas handler; stopping propagation also keeps it from the hint's dismiss and any window handler.
     // Releasing over another slot swaps the two (client-only order).
+    // Touch is different: the bar scrolls (touch-action: pan-x), so a press picks nothing; a tap (isTap) on release does.
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
+      if (e.pointerType === "touch") {
+        touchDown = { x: e.clientX, y: e.clientY, t: performance.now(), slot: i };
+        return;
+      }
       e.preventDefault();
       if (castsOnClick()) pickSlot(i);
       dragFrom = i;
+    });
+    el.addEventListener("pointerup", (e) => {
+      if (e.pointerType !== "touch" || !touchDown) return;
+      const d = touchDown;
+      touchDown = null;
+      if (castsOnClick() && isTap(d, { x: e.clientX, y: e.clientY, t: performance.now(), slot: i })) pickSlot(i);
     });
     const sw = document.createElement("i");
     sw.className = "sw";
@@ -817,7 +834,44 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     spellBar.append(el);
     return { el, ch, cd, sw, nm, spell: -1 };
   });
+  // On-screen movement buttons (coarse pointers only). They feed the same `held` set and sendKeys() as the keyboard, one
+  // pointerId per button so left/right and jump can be held together. Siblings of the canvas, so they never start a cast.
+  if (matchMedia("(pointer: coarse)").matches && avatarCapable && !spectate) {
+    const mk = (id: string, key: string, label: string, side: "l" | "r", slot: number) => {
+      const b = document.createElement("div");
+      b.id = id;
+      b.className = `tbtn ${side}`;
+      b.style.setProperty("--slot", String(slot));
+      b.textContent = label;
+      const ids = new Set<number>();
+      const sync = () => {
+        if (ids.size) held.add(key);
+        else held.delete(key);
+        b.classList.toggle("on", ids.size > 0);
+        if (steersAvatar()) sendKeys();
+      };
+      b.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        b.setPointerCapture(e.pointerId);
+        ids.add(e.pointerId);
+        sync();
+      });
+      const up = (e: PointerEvent) => {
+        if (ids.delete(e.pointerId)) sync();
+      };
+      b.addEventListener("pointerup", up);
+      b.addEventListener("pointercancel", up);
+      b.addEventListener("lostpointercapture", up);
+      b.addEventListener("contextmenu", (e) => e.preventDefault());
+      stage.append(b);
+    };
+    mk("tLeft", "touch-left", "\u25c0", "l", 0);
+    mk("tRight", "touch-right", "\u25b6", "l", 1);
+    mk("tJump", "touch-up", "\u25b2", "r", 0);
+  }
   let dragFrom = -1;
+  let touchDown: { x: number; y: number; t: number; slot: number } | null = null;
   addEventListener("pointerup", (e) => {
     const from = dragFrom;
     dragFrom = -1;
@@ -828,12 +882,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     slotOrder = swapSlots(slotOrder, from, to);
     renderSpellBar();
   });
-  addEventListener("pointercancel", () => { dragFrom = -1; });
+  addEventListener("pointercancel", () => { dragFrom = -1; touchDown = null; });
   const barHint = document.createElement("span");
   barHint.className = "barhint";
   barHint.textContent = "Q/E";
   barHint.title = "Q and E step through the spells";
   spellBar.append(barHint);
+  let selectedSeen = -1;
   function renderSpellBar() {
     const v = lastPlayers?.spells ?? null;
     if (v) slotOrder = addPickedUp(slotOrder, v.charges, BAR);
@@ -848,6 +903,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       }
       const charges = v ? v.charges[spell] : 0;
       s.el.classList.toggle("sel", spell === selectedSpell);
+      if (spell === selectedSpell && selectedSeen !== spell) {
+        // Keep the selected tile in view when Q/E, a digit or a pickup changes it (only on a change, so a manual scroll stays put).
+        selectedSeen = spell;
+        const l = s.el.offsetLeft; // #spells is absolute, so it is the slot's offsetParent
+        if (l < spellBar.scrollLeft) spellBar.scrollLeft = l - 4;
+        else if (l + s.el.offsetWidth > spellBar.scrollLeft + spellBar.clientWidth) spellBar.scrollLeft = l + s.el.offsetWidth - spellBar.clientWidth + 4;
+      }
       s.el.classList.toggle("empty", charges === 0);
       s.el.classList.toggle("last-tool", charges === INFINITE && (slotOrder[i + 1] === undefined || (v?.charges[slotOrder[i + 1]] ?? 0) !== INFINITE)); // a gap after the infinite tools
       s.el.title = charges === 0 ? `${SPELLS[spell].name}: no charges. Find pickups in the caves.` : `${SPELLS[spell].name} (drag onto another slot to swap)`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addPickedUp, swapSlots } from "../../client/slots.ts";
+import { addPickedUp, isTap, swapSlots } from "../../client/slots.ts";
 import { BAR, INFINITE } from "../../client/spells.ts";
 
 const charges = (m: Record<number, number>) => Array.from({ length: 15 }, (_, i) => m[i] ?? 0);
@@ -36,5 +36,21 @@ describe("hotbar slot order", () => {
     expect(o).toEqual([0, 1, 6, 5]);
     expect(swapSlots(o, 1, 1)).toBe(o);
     expect(swapSlots(o, 1, 9)).toBe(o);
+  });
+});
+
+describe("tap vs swipe on a touch slot", () => {
+  const d = { x: 100, y: 500, t: 1000, slot: 5 };
+  it("a quick release in place is a tap", () => {
+    expect(isTap(d, { x: 103, y: 502, t: 1120, slot: 5 })).toBe(true);
+  });
+  it("a swipe past the slop is not", () => {
+    expect(isTap(d, { x: 140, y: 500, t: 1120, slot: 5 })).toBe(false);
+  });
+  it("a long press is not", () => {
+    expect(isTap(d, { x: 100, y: 500, t: 1400, slot: 5 })).toBe(false);
+  });
+  it("a release on another slot is not", () => {
+    expect(isTap(d, { x: 100, y: 500, t: 1100, slot: 6 })).toBe(false);
   });
 });
