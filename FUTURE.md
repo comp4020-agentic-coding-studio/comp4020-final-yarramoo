@@ -729,3 +729,5 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   panel covers the scene (throttled 390 px rendering hit 167 ms frames); persist the public death log across restarts;
   per-mode counts in `/api/live`; remember the last type/size/visibility per browser, and "same settings again" on
   the share screen; size and max players in Join rows. **Source:** `docs/research/menu-redesign-report.md`, 7 Nov.
+- **Per-biome cave walls from the generator** (icy behind ice caves, warm near lava): the background is now captured
+  from the generated world (D-211), so the generator's own sites could tint it. **Source:** the session model, 7 Nov.
