@@ -482,9 +482,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   function sendKeys() {
     send({
       type: "keys",
-      left: held.has("arrowleft") || held.has("a"),
-      right: held.has("arrowright") || held.has("d"),
-      up: held.has("arrowup") || held.has("w") || held.has(" "),
+      left: held.has("arrowleft") || held.has("a") || held.has("touch-left"),
+      right: held.has("arrowright") || held.has("d") || held.has("touch-right"),
+      up: held.has("arrowup") || held.has("w") || held.has(" ") || held.has("touch-up"),
     });
   }
   /** Digit keys pick slots: 1-9 are slots 1-9, 0 is slot 10, Shift+1 is slot 11, Shift+2 slot 12, and so on.
@@ -828,6 +828,42 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     spellBar.append(el);
     return { el, ch, cd, sw, nm, spell: -1 };
   });
+  // On-screen movement buttons (coarse pointers only). They feed the same `held` set and sendKeys() as the keyboard, one
+  // pointerId per button so left/right and jump can be held together. Siblings of the canvas, so they never start a cast.
+  if (matchMedia("(pointer: coarse)").matches && avatarCapable && !spectate) {
+    const mk = (id: string, key: string, label: string, side: "l" | "r", slot: number) => {
+      const b = document.createElement("div");
+      b.id = id;
+      b.className = `tbtn ${side}`;
+      b.style.setProperty("--slot", String(slot));
+      b.textContent = label;
+      const ids = new Set<number>();
+      const sync = () => {
+        if (ids.size) held.add(key);
+        else held.delete(key);
+        b.classList.toggle("on", ids.size > 0);
+        if (steersAvatar()) sendKeys();
+      };
+      b.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        b.setPointerCapture(e.pointerId);
+        ids.add(e.pointerId);
+        sync();
+      });
+      const up = (e: PointerEvent) => {
+        if (ids.delete(e.pointerId)) sync();
+      };
+      b.addEventListener("pointerup", up);
+      b.addEventListener("pointercancel", up);
+      b.addEventListener("lostpointercapture", up);
+      b.addEventListener("contextmenu", (e) => e.preventDefault());
+      stage.append(b);
+    };
+    mk("tLeft", "touch-left", "\u25c0", "l", 0);
+    mk("tRight", "touch-right", "\u25b6", "l", 1);
+    mk("tJump", "touch-up", "\u25b2", "r", 0);
+  }
   let dragFrom = -1;
   let touchDown: { x: number; y: number; t: number; slot: number } | null = null;
   addEventListener("pointerup", (e) => {
