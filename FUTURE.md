@@ -725,3 +725,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   the nearest enemy within a cone); in portrait the world is a thin strip under a lot of empty space, so a taller
   camera window (more rows) or a landscape prompt would use the screen; buttons scaled to the viewport. **Source:**
   `docs/research/phone-play-report.md` and the session model's look at its screenshots, 7 Nov.
+- **Menu follow-ups** (D-210): a 30 fps draw cap for the menu backdrop on phones, and pausing it while a settings
+  panel covers the scene (throttled 390 px rendering hit 167 ms frames); persist the public death log across restarts;
+  per-mode counts in `/api/live`; remember the last type/size/visibility per browser, and "same settings again" on
+  the share screen; size and max players in Join rows. **Source:** `docs/research/menu-redesign-report.md`, 7 Nov.

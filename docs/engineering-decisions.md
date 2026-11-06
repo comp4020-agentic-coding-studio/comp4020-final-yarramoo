@@ -1630,3 +1630,28 @@ server and client each had their own idea of "the boss". Grep the constant, not 
 **Evidence.** D-204 to D-206; `docs/research/int-enemies-report.md`, `int-boss-report.md`,
 `review-int-enemies.md`, `review-int-boss.md`; `sim/tests/boss_choice.rs`, `sim/tests/colossus.rs`,
 `tests/net/claims-events.test.ts`.
+
+## 43. The menu's mobs are real because the menu plays
+
+**What.** The user asked for a pixel-art menu with a New game / Join game flow, a "players live" stat, a rolling death
+log, and a backdrop landscape with "lots of little element interactions" and "mobs jumping and flying around". An Opus
+lead ran it on a $35 cap with three Sonnet workers, one at a time ($22.95 spent), on a brief written by the session
+model (`docs/briefs/menu-redesign.md`).
+
+**The challenge.** Enemies exist only as sim entities placed by generation, and they step only within 448 x 256 cells
+of an active, living player; chunks update only within 576 x 320 (`stepping_set`, `refresh_active`). A backdrop that is
+only a camera shows a frozen world. The options were a menu-only input to spawn enemies (an ABI change, against the
+"integers in, nothing new without sign-off" rule), client-drawn sprites (pictures pretending to be sim state), or
+making the menu *play*: the backdrop joins one local explorer and moves it with the game's own avatar controller, so
+the sim's own rules wake the slimes, imps, wisps and frost sprites around it, while `damage 0` keeps it alive.
+Invariant 9 (outputs never feed back as inputs) held by choosing the seed and three camera windows offline
+(`tools/menu-vignettes.ts`), never from live entity positions at runtime; a guard test fails if a generator change
+empties those windows. The lead also found, by diffing two screenshots five seconds apart, that reduced motion never
+froze the backdrop (an off-by-one), which no test had held.
+
+**Cost.** Each world restart costs 100-330 ms of generation every ~75 s, and throttled phone rendering reached 167 ms
+frames: drawing, not the sim. A real phone is still owed a look.
+
+**Evidence.** D-210; `docs/research/menu-redesign-report.md` and `menu-w{1,2,3}-report.md`;
+`tests/net/menu-live-api.test.ts`, `menu-router.test.ts`, `menu-backdrop.test.ts`; commits `9da7eea`, `0689cd6`,
+`20d93a0`, `2b8d9bd`.

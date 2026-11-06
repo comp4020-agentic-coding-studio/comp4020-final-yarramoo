@@ -1,0 +1,213 @@
+/* Menu redesign (docs/briefs/menu-redesign.md): pixel-art main menu. Imported by client/menu.ts (Vite bundles it).
+ * Tokens and primitives are the design contract; screens add their own rules below the primitives.
+ * Font: Pixelify Sans (SIL OFL 1.1, client/public/fonts/PixelifySans-OFL.txt), self-hosted. Its pixel grid is
+ * about 1/11 em, so sizes that are multiples of 11 px (11, 22, 33, 44) draw whole-pixel strokes. */
+@font-face {
+  font-family: "Pixelify Sans";
+  src: url("/fonts/PixelifySans.woff") format("woff");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+.mn {
+  /* Palette: night-sky panels, material accents taken from the sim's own colours (client/materials.ts). */
+  --mn-ink: #0e0a12;          /* outlines, the darkest pixel */
+  --mn-panel: #1a1626;        /* panel fill */
+  --mn-panel-hi: #2a2340;     /* raised panel / hover */
+  --mn-edge: #4a3f6b;         /* panel bevel light */
+  --mn-edge-lo: #0e0a12;      /* panel bevel dark */
+  --mn-fg: #f2ecdc;           /* text, warm white */
+  --mn-dim: #b3a9c9;          /* secondary text (AA on --mn-panel) */
+  --mn-sand: #dcc178;
+  --mn-sand-lo: #b0924f;
+  --mn-water: #3a74d8;
+  --mn-lava: #e03c14;
+  --mn-lava-hi: #ff7a1c;
+  --mn-moss: #4f7a2a;
+  --mn-moss-hi: #82b446;
+  --mn-ice: #a8e4f0;
+  --mn-u: 2px;                /* one "art pixel" for borders and shadows */
+  --mn-font: "Pixelify Sans", ui-monospace, monospace;
+  font-family: var(--mn-font);
+  color: var(--mn-fg);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+
+/* A pixel panel: hard 2px bevel, no radius, a solid-enough fill that text stays readable over the backdrop. */
+.mn-panel {
+  background: color-mix(in srgb, var(--mn-panel) 92%, transparent);
+  border: var(--mn-u) solid var(--mn-ink);
+  box-shadow:
+    inset var(--mn-u) var(--mn-u) 0 var(--mn-edge),
+    inset calc(-1 * var(--mn-u)) calc(-1 * var(--mn-u)) 0 var(--mn-edge-lo),
+    calc(2 * var(--mn-u)) calc(2 * var(--mn-u)) 0 rgba(0, 0, 0, 0.45);
+}
+
+/* A pixel button: a chunky slab with a lit top edge; it presses down 2px. Variants pick the slab colour. */
+.mn-btn {
+  --slab: var(--mn-sand);
+  --slab-hi: #f4dea0;
+  --slab-lo: var(--mn-sand-lo);
+  --slab-fg: var(--mn-ink);
+  font: 400 22px/1 var(--mn-font);
+  color: var(--slab-fg);
+  background: var(--slab);
+  border: var(--mn-u) solid var(--mn-ink);
+  padding: 10px 18px 12px;
+  cursor: pointer;
+  box-shadow:
+    inset 0 var(--mn-u) 0 var(--slab-hi),
+    inset 0 calc(-2 * var(--mn-u)) 0 var(--slab-lo),
+    0 calc(2 * var(--mn-u)) 0 var(--mn-ink);
+  position: relative;
+  top: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mn-btn:hover { filter: brightness(1.08); }
+.mn-btn:active { top: calc(2 * var(--mn-u)); box-shadow: inset 0 var(--mn-u) 0 var(--slab-hi), inset 0 calc(-1 * var(--mn-u)) 0 var(--slab-lo), 0 0 0 var(--mn-ink); }
+.mn-btn:focus-visible, .mn :focus-visible { outline: var(--mn-u) solid var(--mn-fg); outline-offset: var(--mn-u); }
+.mn-btn:disabled { filter: grayscale(0.7) brightness(0.8); cursor: default; }
+.mn-btn.lava { --slab: var(--mn-lava-hi); --slab-hi: #ffc070; --slab-lo: var(--mn-lava); }
+.mn-btn.water { --slab: #5a90e8; --slab-hi: #a8c8ff; --slab-lo: #2a58b0; --slab-fg: #fff; }
+.mn-btn.moss { --slab: var(--mn-moss-hi); --slab-hi: #b8e07a; --slab-lo: var(--mn-moss); }
+.mn-btn.ghost { --slab: var(--mn-panel-hi); --slab-hi: var(--mn-edge); --slab-lo: var(--mn-ink); --slab-fg: var(--mn-fg); }
+.mn-btn.small { font-size: 11px; padding: 6px 10px 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mn *, .mn *::before, .mn *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
+}
+
+/* ---- Screens (below the primitives). Font sizes: 11, 22, 33, 44 only. ---- */
+.mn { position: relative; min-height: 100%; font-size: 22px; line-height: 1.25; }
+.mn *, .mn *::before, .mn *::after { box-sizing: border-box; }
+.mn button, .mn input, .mn select { font-family: var(--mn-font); }
+.mn-page { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; padding: 0 16px 24px; }
+.mn-strip { display: flex; align-items: center; gap: 8px; padding: 12px 0; max-width: 560px; width: 100%; margin: 0 auto; }
+.mn-strip .mn-btn { margin-bottom: 4px; }
+.mn-spacer { flex: 1; }
+.mn-strip a.mn-btn { text-decoration: none; display: inline-block; }
+.mn-main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px 0 16px; }
+.mn-col { width: 100%; max-width: 560px; padding: 24px 20px 28px; display: flex; flex-direction: column; gap: 16px; }
+.mn-h { font: 400 33px/1.1 var(--mn-font); margin: 0; text-transform: uppercase; letter-spacing: 0.04em; outline: none; }
+.mn-sub { font: 400 22px/1.2 var(--mn-font); margin: 0; color: var(--mn-dim); }
+.mn-fine { font-size: 11px; line-height: 1.5; color: #d6cde6; margin: 0; letter-spacing: 0.04em; }
+.mn-label { text-transform: uppercase; letter-spacing: 0.12em; }
+.mn-err { font-size: 11px; line-height: 1.5; color: #ff9a80; margin: 0; }
+.mn-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.mn-input { font-size: 22px; line-height: 1.2; color: var(--mn-fg); background: var(--mn-ink); border: var(--mn-u) solid var(--mn-edge); padding: 8px 10px; width: 100%; min-width: 0; border-radius: 0; }
+.mn-input::placeholder { color: #7d739a; }
+.mn-sheet-bg { position: fixed; inset: 0; z-index: 10; background: rgba(8, 6, 12, 0.7); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.mn-sheet { width: 100%; max-width: 420px; padding: 20px; display: flex; flex-direction: column; gap: 12px; background: var(--mn-panel); }
+
+/* Title */
+.mn-logo-h { margin: 0; outline: none; text-align: center; line-height: 0; }
+.mn-logo { image-rendering: pixelated; display: inline-block; max-width: 100%; height: auto; }
+.mn-tag { margin: 0; text-align: center; color: var(--mn-fg); }
+.mn-bigbtns { display: flex; gap: 16px; flex-wrap: wrap; padding-bottom: 4px; }
+.mn-bigbtns .mn-btn { flex: 1 1 200px; font-size: 33px; padding: 16px 12px 18px; }
+.mn-live { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--mn-dim); }
+.mn-dot { flex: none; width: 10px; height: 10px; background: var(--mn-moss-hi); box-shadow: 0 0 0 2px var(--mn-ink); animation: mn-blink 1.4s steps(2, jump-none) infinite; }
+.mn-dot.off { background: var(--mn-edge); animation: none; }
+@keyframes mn-blink { 0% { opacity: 1; } 50% { opacity: 0.25; } 100% { opacity: 1; } }
+.mn-deaths { display: flex; flex-direction: column; gap: 6px; border-top: var(--mn-u) solid var(--mn-edge-lo); padding-top: 12px; }
+.mn-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.mn-death { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; font-size: 22px; line-height: 1.15; transition: opacity 0.4s steps(4); }
+.mn-death .x { overflow-wrap: anywhere; }
+.mn-death .t { flex: none; color: var(--mn-dim); font-size: 11px; }
+/* Lead polish: phones show the three newest deaths, so the panel leaves the backdrop visible. */
+@media (max-width: 520px), (max-height: 500px) { .mn-death:nth-child(n+4) { display: none; } }
+.mn-death.in { animation: mn-slide 0.4s steps(5) both; }
+@keyframes mn-slide { from { transform: translateY(-14px); opacity: 0; } to { transform: none; } }
+.mn [data-focus]:focus, .mn [data-focus]:focus-visible { outline: none; }
+@media (max-width: 520px) { .mn-col { padding: 20px 10px 24px; } .mn-page { padding: 0 12px 20px; } }
+/* Lead polish: a landscape phone is short: tighter panel, smaller big buttons, so the live line stays in view. */
+@media (max-height: 500px) { .mn-col { padding: 14px 18px 18px; gap: 10px; } .mn-bigbtns .mn-btn { font-size: 22px; padding: 10px 12px 12px; } .mn-main { padding-top: 0; } }
+
+/* Types screen */
+.mn-head { display: flex; flex-direction: column; gap: 6px; }
+.mn-cards { display: flex; flex-direction: column; gap: 12px; }
+.mn-card { --c: var(--mn-sand); --c-lo: var(--mn-sand-lo); display: flex; gap: 14px; align-items: center; text-align: left; width: 100%; padding: 12px; color: var(--mn-fg); cursor: pointer; font: inherit;
+  background: var(--mn-panel-hi); border: var(--mn-u) solid var(--mn-ink); border-left: 8px solid var(--c);
+  box-shadow: inset var(--mn-u) var(--mn-u) 0 var(--mn-edge), inset calc(-1 * var(--mn-u)) calc(-1 * var(--mn-u)) 0 var(--mn-edge-lo), 0 calc(2 * var(--mn-u)) 0 var(--mn-ink); }
+.mn-card:hover { filter: brightness(1.12); }
+.mn-card:active { transform: translateY(2px); }
+.mn-card.moss { --c: var(--mn-moss-hi); --c-lo: var(--mn-moss); }
+.mn-card.lava { --c: var(--mn-lava-hi); --c-lo: var(--mn-lava); }
+.mn-card.sand { --c: var(--mn-sand); }
+.mn-icon { flex: none; width: 88px; height: 88px; image-rendering: pixelated; background: var(--mn-ink); border: var(--mn-u) solid var(--mn-ink); }
+.mn-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mn-card-title { font-size: 22px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--c); }
+.mn-card-text { font-size: 22px; line-height: 1.2; }
+.mn-badges { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mn-badge { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 6px 3px; color: var(--mn-ink); background: var(--c, var(--mn-sand)); }
+.mn-badge.moss { background: var(--mn-moss-hi); }
+.mn-badge.lava { background: var(--mn-lava-hi); }
+.mn-badge.sand { background: var(--mn-sand); }
+.mn-actions { justify-content: space-between; flex-wrap: nowrap; padding-top: 4px; }
+.mn-actions .mn-btn.big { flex: 1; font-size: 33px; padding: 12px 12px 14px; }
+
+/* Settings */
+.mn-form { display: flex; flex-direction: column; gap: 18px; }
+.mn-field { display: flex; flex-direction: column; gap: 8px; border: 0; margin: 0; padding: 0; min-width: 0; }
+.mn-seg { display: grid; gap: 8px; }
+.mn-seg.three { grid-template-columns: repeat(3, 1fr); }
+.mn-seg.two { grid-template-columns: repeat(2, 1fr); }
+.mn-segbtn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 6px 10px; cursor: pointer; color: var(--mn-fg); background: var(--mn-ink);
+  border: var(--mn-u) solid var(--mn-edge); border-radius: 0; }
+.mn-segbtn:hover { background: var(--mn-panel-hi); }
+.mn-segl { font-size: 33px; line-height: 1; text-transform: uppercase; }
+.mn-segs { font-size: 11px; line-height: 1.3; color: var(--mn-dim); }
+.mn-segbtn[aria-pressed="true"] { background: var(--acc, var(--mn-sand)); color: var(--mn-ink); border-color: var(--mn-ink);
+  box-shadow: inset 0 var(--mn-u) 0 rgba(255, 255, 255, 0.45), inset 0 calc(-2 * var(--mn-u)) 0 rgba(0, 0, 0, 0.3); }
+.mn-segbtn[aria-pressed="true"] .mn-segs { color: var(--mn-ink); }
+.mn-stepper { display: flex; align-items: center; gap: 10px; }
+.mn-steplab { flex: 1; font-size: 22px; }
+.mn-stepval { font-size: 33px; min-width: 2ch; text-align: center; }
+.mn-adv summary { cursor: pointer; font-size: 22px; text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 0; }
+.mn-advgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding-top: 10px; }
+.mn-advf { display: flex; flex-direction: column; gap: 4px; }
+.mn-input.small { padding: 4px 8px; }
+
+/* Themes */
+.mn-col.themed { position: relative; padding-left: 36px; }
+.mn-col.themed::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 16px; }
+/* Survival: a descent. The panel deepens toward black; moss accents; a depth gauge of 16 px ticks runs down the left edge. */
+.mn-col.survival { --acc: var(--mn-moss-hi); background: linear-gradient(180deg, #232c24 0%, #1a1f24 45%, #0c0a10 100%); }
+.mn-col.survival::before { background: repeating-linear-gradient(180deg, var(--mn-moss-hi) 0 4px, transparent 4px 16px), linear-gradient(90deg, transparent 0 8px, var(--mn-ink) 8px 12px, transparent 12px); background-size: 8px 100%, 100% 100%; background-repeat: no-repeat; background-position: 4px 0, 0 0; opacity: 0.8; }
+.mn-col.survival .mn-h { color: var(--mn-moss-hi); }
+/* Deathmatch: an arena. Lava accents and hazard stripes down the left edge and along the top. */
+.mn-col.deathmatch { --acc: var(--mn-lava-hi); background: linear-gradient(180deg, #2c1a1a 0%, #1f1420 100%); }
+.mn-col.deathmatch::before { background: repeating-linear-gradient(45deg, var(--mn-lava-hi) 0 8px, var(--mn-ink) 8px 16px); }
+.mn-col.deathmatch .mn-h { color: var(--mn-lava-hi); }
+.mn-col.themed .mn-input:focus { border-color: var(--acc); }
+.mn-stepper .mn-btn { padding: 4px 12px 6px; min-width: 40px; }
+
+/* Share */
+.mn-code { font-size: 44px; line-height: 1; letter-spacing: 0.15em; text-align: center; margin: 4px 0; padding-left: 0.15em; color: var(--mn-sand); }
+.mn-link { font-size: 22px; text-overflow: ellipsis; }
+.mn-actions .mn-btn.big, .mn-col > .mn-btn.big { font-size: 33px; padding: 12px 12px 14px; }
+
+/* Join */
+.mn-seg.small .mn-segbtn { padding: 6px 4px 8px; }
+.mn-seg.small .mn-segl { font-size: 22px; }
+.mn-rooms { display: flex; flex-direction: column; gap: 10px; min-height: 120px; max-height: 50vh; overflow-y: auto; padding: 2px 4px 6px 2px; }
+.mn-room { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--mn-ink); border: var(--mn-u) solid var(--mn-edge); }
+.mn-room-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mn-room-name { font-size: 22px; line-height: 1.1; overflow-wrap: anywhere; }
+.mn-room-meta { display: flex; gap: 8px; align-items: center; }
+.mn-room .mn-btn { flex: none; }
+.mn-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 20px 8px; text-align: center; color: var(--mn-dim); }
+.mn-empty p { margin: 0; }
+.mn-codebox { display: flex; flex-direction: column; gap: 8px; border-top: var(--mn-u) solid var(--mn-edge-lo); padding-top: 14px; }
+.mn-nowrap { flex-wrap: nowrap; align-items: flex-end; }
+.mn-codebox label { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.mn-codein { letter-spacing: 0.2em; text-transform: uppercase; }
+.mn [hidden] { display: none !important; }
+
+/* The backdrop host, moved from client/index.html (lead, final cleanup). */
+.preview-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: #0b0e14; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; }
+.preview-bg canvas { display: block; flex: none; image-rendering: pixelated; background: #000; box-shadow: none; cursor: default; opacity: 0; transition: opacity 1.2s ease; }
+.preview-bg canvas.on { opacity: 1; }
+.preview-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,14,20,.55), rgba(11,14,20,.05) 40%, rgba(11,14,20,.25)); }

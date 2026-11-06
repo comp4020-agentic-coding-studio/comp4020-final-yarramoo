@@ -1,4 +1,5 @@
 // Lockstep server: tick clock, input sequencer, closed-tick broadcast, static client. Never steps the sim.
+import { createLiveFeed } from "./live.ts";
 import { resolveDevTeleport } from "./devteleport.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -575,6 +576,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // registered voters, so a client cannot repeat it. The per-claim lines a client CAN repeat are limited where the claim arrives.
       log.event("claim.death", { world: w.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
       achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
+      // Public death log for the menu (/api/live): public rooms only, plain names, nameless visitors skipped.
+      const room = rooms?.getRoomById(w.id);
+      if (room && room.visibility === "public") {
+        const victim = nameOfVisitor(d.victim);
+        const self = d.killer !== 0 && d.killer === d.victim;
+        const killer = d.killer === 0 || self ? null : nameOfVisitor(d.killer);
+        if (victim && (killer === null || killer !== "")) liveFeed.recordDeath({ victim, killer, self, cause: d.cause, bag: d.bag !== 0, mode: room.mode, at: Date.now() });
+      }
     };
     // F7: enemy kills, round start and round end, each a majority claim like a death. Plain names in toasts, name#id in logs.
     w.onKillResolved = (k) => {
@@ -827,6 +836,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     return w ? [...w.members.values()].filter((m) => m.playerId !== 0).length : 0;
   }
 
+  const liveFeed = createLiveFeed();
+  /** GET /api/live: players and rooms live, plus the public death log; cached 2 s, never logged per call (it is polled). */
+  function liveRoute(res: ServerResponse): void {
+    const body = liveFeed.json(() => {
+      let players = 0;
+      let nrooms = 0;
+      for (const r of rooms?.listPublicRooms() ?? []) {
+        const n = playersIn(r.id);
+        players += n;
+        if (n > 0) nrooms++;
+      }
+      return { players, rooms: nrooms };
+    });
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(body);
+  }
+
   /** GET /api/rooms: public rooms only, with a live player count but no player names. */
   function listRoomsRoute(req: IncomingMessage, res: ServerResponse): void {
     if (!rooms) {
@@ -928,6 +953,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     if (path === "/api/admin/reset") {
       adminReset(req, res);
+      return;
+    }
+    if (path === "/api/live") {
+      if (req.method === "GET") liveRoute(res);
+      else res.writeHead(405, { allow: "GET" }).end();
       return;
     }
     if (path === "/api/rooms") {
