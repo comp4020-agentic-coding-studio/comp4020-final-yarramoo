@@ -192,6 +192,8 @@ come into existence.
   It holds the five-step chain and its rules: one gate at a time and few agents
   (eleven at once wrecked every gate on 4 Nov), never edit under a running gate,
   and show a test red before trusting it.
+- **In-browser dev tools (URL flags, `__dev*` console hooks, ids, generator preview): the `dev-tools` skill**
+  (`.claude/skills/`). Says which hooks work only on the vite server and that there is no hitbox overlay.
 - **Rebuilding the wasm breaks the user's dev server: the `dev-server` skill.**
   The server hashes `sim.wasm` once at start (invariant 10), so after any
   `build:client`, `dev:client` or gate, a fresh tab on :8080 is refused with
