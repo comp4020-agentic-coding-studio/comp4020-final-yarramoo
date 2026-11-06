@@ -721,3 +721,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   test; **a hotbar that scrolls or wraps below ~480 px** (it clips at 390 px with six slots, a full bag is nine);
   **a sim test helper that writes cells and marks their chunks**, so a test cannot start two different worlds again.
   **Source:** `docs/research/int-spells-report.md`, 6 Nov.
+- **Phone play follow-ups** (D-209): a floating left thumb-stick instead of fixed arrow buttons; aim assist (snap to
+  the nearest enemy within a cone); in portrait the world is a thin strip under a lot of empty space, so a taller
+  camera window (more rows) or a landscape prompt would use the screen; buttons scaled to the viewport. **Source:**
+  `docs/research/phone-play-report.md` and the session model's look at its screenshots, 7 Nov.
