@@ -42,9 +42,9 @@ phone and measure there before merge. Worst case if it hurts: fall back to a fix
 
 ## Screenshots (looked at all)
 `docs/research/shots/menu-w3-desktop-s0.png` (vignette 0: lava/water falling, slimes, imps, a frost sprite), `-s3.png` (vignette 2: snow, dunes, mossy trees),
-`-s4.png` (back to vignette 0 in a fresh world), `menu-w3-p0.png` (phone), `menu-w3-l0.png` (landscape).
+`-v1.png` (vignette 1: sand pile over a brick hut, lava streak, imps), `-s4.png` (back to vignette 0 in a fresh world), `menu-w3-p0.png` (phone), `menu-w3-l0.png` (landscape).
 Seen and fixed: first design had nothing visible; the panel hides the centre, so mobs sit left and right of it (the vignette windows are 427 cells wide so the sides carry them).
-Not fixed: vignette 1 (sand/gunpowder) was not caught in a screenshot; on phones the portrait view is mostly panel, the scene shows at the top edge and bottom only.
+Not fixed: on phones the portrait view is mostly panel, the scene shows at the top edge and bottom only.
 Explorer is small (10 cells) and walks near the bottom of the screen.
 
 ## Architectural decisions for review
