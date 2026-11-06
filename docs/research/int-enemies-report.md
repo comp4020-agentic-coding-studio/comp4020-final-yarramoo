@@ -28,7 +28,14 @@ choice for the user (raise `ANCHOR_NEAR` or relax the pocket, see below).
 sprites inside the ice cave ellipse, above its pool.
 
 ## Gate
-See the end of this file (filled in after the run).
+Run 13:3x-13:43 AEDT, one at a time, chained with `&&`:
+- cargo test /tmp/ie-g-cargo.log green; clippy /tmp/ie-g-clippy.log green; typecheck /tmp/ie-g-tsc.log green;
+  determinism /tmp/ie-g-det.log 53/53 passed.
+- test:net first run /tmp/ie-g-net.log: 1 failed (`claims-events` "unknown enemy kind" used kind 5, which is now the wisp). That is a
+  test constant, not a bug. Fixed to kind 99 in the last commit; re-run of test:net alone /tmp/ie-g-net2.log: 416 passed, 1 skipped.
+  The fix touches only that test file, so the earlier steps still stand; the session model should re-run the gate before merging.
+- Earlier `cargo test --no-fail-fast` /tmp/ie-cargo1.log showed exactly three red pins (golden x2, perf_equiv), then re-recorded.
+- Determinism M5 cuts did not move (determinism green without re-aiming).
 
 ## Architectural decisions for review
 1. **Anchor by bounding box of the site plus a nearby-material test**, not by walking the lake cells. Alternatives: scan the grid

@@ -130,7 +130,7 @@ describe("review fixes (F7 third pass)", () => {
   it("a kill claim with an unknown enemy kind or a position outside the world is refused", () => {
     const r = rig(1);
     const t = r.tick();
-    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 900, kind: 5 });
+    r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 900, kind: 99 }); // well past the sim's kinds (the next id is always taken soon)
     r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 900, kind: 4294967295 });
     r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: -16, y: 900, kind: 0 });
     r.w.onKillClaim(r.conns[0], { tick: t, killer: 1, x: 800, y: 512 * 16 + 1, kind: 0 }); // size S is 512 cells
