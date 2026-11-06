@@ -40,3 +40,11 @@ Moved: `SCRIPTED_HASH` (seed 1 now rolls the Colossus, and format 15 changes the
 
 ## FUTURE.md
 Added: balance pass for the Colossus; show the boss on the room card or lobby.
+
+## Gate result (worktree /tmp/wt-int-boss at 0f7948f, 14:45:10 to 15:05:46 AEDT, exit 0, one run)
+- cargo test --release: 0 FAILED, `/tmp/int-boss-g-cargo.log` (14:54)
+- clippy wasm32 `-D warnings`: clean, `/tmp/int-boss-g-clippy.log` (14:54)
+- typecheck: clean, `/tmp/int-boss-g-tsc.log` (14:54)
+- determinism: 11 files, 53 tests passed, `/tmp/int-boss-g-det.log` (14:59). M5 `CUTS` did not need re-aiming.
+- net: 59 files, 416 passed, 1 skipped, `/tmp/int-boss-g-net.log` (15:05)
+An earlier unchained `cargo test --no-fail-fast` run (before the fixes, `/tmp/int-boss-cargo1.log`) was red on 23 boss/format/golden tests, all from the new format and the Mage-seed assumption; it was stopped and not used as a gate.
