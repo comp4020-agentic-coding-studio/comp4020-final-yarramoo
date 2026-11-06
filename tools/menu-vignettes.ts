@@ -13,7 +13,7 @@ const SOLID = new Set([1, 2, 3, 4, 6, 11, 13, 15, 22, 25]);
 const WEIGHT: Record<number, number> = { 0: 1, 1: 2, 2: 1, 3: 1, 5: 2, 6: 2 };
 const SKY_BONUS: Record<string, number> = { dawn: 1.25, aurora: 1.25, rain: 1.15, day: 1, night: 0.9 };
 
-interface V { x: number; y: number; camX: number; camY: number; score: number; n: number; fliers: number }
+interface V { x: number; y: number; camX: number; camY: number; skyY: number; treeX: number; treeY: number; score: number; n: number; fliers: number }
 
 function scan(seed: bigint) {
   const sim = loadSim(new Uint8Array(bytes));
@@ -51,7 +51,14 @@ function scan(seed: bigint) {
       if (!best || d < best.d) best = { x: xi, y, d };
     }
     if (!best) continue;
-    found.push({ x: best.x, y: best.y, camX: cx, camY: cy, score: sc, n: inw.length, fliers });
+    // skyY: a row above the whole window's surface (emitters start there); tree: the top wood cell nearest the middle.
+    let minTop = H;
+    for (let x = cx; x < cx + WINDOW_W; x++) minTop = Math.min(minTop, top[x]);
+    let tree = { x: -1, y: -1, d: 1e9 };
+    for (let x = cx + 20; x < cx + WINDOW_W - 20; x++) for (let y = cy; y < cy + WINDOW_H / 2; y++) {
+      if (m[y * W + x] === 6 && m[(y - 1) * W + x] === 0) { const d = Math.abs(x - (cx + WINDOW_W / 2)); if (d < tree.d) tree = { x, y, d }; break; }
+    }
+    found.push({ x: best.x, y: best.y, camX: cx, camY: cy, skyY: Math.max(2, minTop - 8), treeX: tree.x, treeY: tree.y, score: sc, n: inw.length, fliers });
   }
   return { found, W, H };
 }
@@ -73,5 +80,5 @@ for (let s = from; s <= to; s++) {
 results.sort((a, b) => b.total - a.total);
 for (const r of results.slice(0, 8)) {
   console.log(`seed ${r.seed} sky ${r.sky} total ${r.total.toFixed(1)}`);
-  for (const p of r.picks) console.log(`  { x: ${p.x}, y: ${p.y}, camX: ${p.camX}, camY: ${p.camY} }, // ${p.n} mobs, ${p.fliers} fliers, score ${p.score}`);
+  for (const p of r.picks) console.log(`  { x: ${p.x}, y: ${p.y}, camX: ${p.camX}, camY: ${p.camY}, skyY: ${p.skyY}, treeX: ${p.treeX}, treeY: ${p.treeY} }, // ${p.n} mobs, ${p.fliers} fliers, score ${p.score}`);
 }

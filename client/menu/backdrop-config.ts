@@ -22,12 +22,17 @@ export interface Vignette {
   /** The camera window's top-left corner, in cells. */
   camX: number;
   camY: number;
+  /** A row above the highest surface in the window: the director's sky emitters (rain, sand, lava) start here. */
+  skyY: number;
+  /** The top wood cell of a tree near the window's middle (fire goes here), or -1. */
+  treeX: number;
+  treeY: number;
 }
 
 /** Seed 220: a dawn sky, three windows with 4-8 real mobs and fliers each, no boss within reach (tools/menu-vignettes.ts 1 300). */
 export const MENU_SEED = "220";
 export const VIGNETTES: Vignette[] = [
-  { x: 676, y: 273, camX: 360, camY: 80 }, // 8 mobs, 5 fliers
-  { x: 304, y: 281, camX: 144, camY: 80 }, // 8 mobs, 3 fliers
-  { x: 700, y: 241, camX: 576, camY: 60 }, // 4 mobs, 2 fliers
+  { x: 676, y: 273, camX: 360, camY: 80, skyY: 77, treeX: 468, treeY: 90 }, // 8 mobs, 5 fliers
+  { x: 304, y: 281, camX: 144, camY: 80, skyY: 78, treeX: 396, treeY: 101 }, // 8 mobs, 3 fliers
+  { x: 700, y: 241, camX: 576, camY: 60, skyY: 77, treeX: 780, treeY: 86 }, // 4 mobs, 2 fliers
 ];
