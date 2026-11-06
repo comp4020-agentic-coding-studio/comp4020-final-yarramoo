@@ -209,7 +209,11 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const modeKey = `${cfg.terrain}-${cfg.avatars}-${cfg.brushes}`;
     const seenKey = HINT_SEEN_PREFIX + modeKey;
     if (localKind === null && !store.get(seenKey)) {
-      const text = cfg.brushes === 1 ? "Paint: pick a material, drag to place it." : avatarCapable ? "Move: WASD/arrows. Cast: click and aim. Pick a spell with 1-0, Q/E or a click. Dig through caves." : "Paint: pick a material, drag to place it.";
+      const touch = matchMedia("(pointer: coarse)").matches;
+      const playHint = touch
+        ? "Move with the arrows, jump or levitate with \u25b2. Hold the world to aim and cast. Tap a spell to pick it; swipe the bar for more."
+        : "Move: WASD/arrows. Cast: click and aim. Pick a spell with 1-0, Q/E or a click. Dig through caves.";
+      const text = cfg.brushes === 1 ? "Paint: pick a material, drag to place it." : avatarCapable ? playHint : "Paint: pick a material, drag to place it.";
       hintTextEl.textContent = text;
       hintEl.hidden = false;
       const dismiss = () => {
@@ -217,6 +221,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         store.set(seenKey, "1");
       };
       hintEl.addEventListener("pointerdown", dismiss, { once: true });
+      // On touch the hint sits over the hotbar: the first touch anywhere (a movement button included) clears it.
+      if (touch) addEventListener("pointerdown", dismiss, { once: true, capture: true });
       addEventListener("keydown", dismiss, { once: true });
     }
   }
