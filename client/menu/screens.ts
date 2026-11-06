@@ -36,7 +36,9 @@ function logo(panel: HTMLElement): HTMLImageElement {
   const fit = () => {
     const cs = getComputedStyle(panel);
     const avail = Math.min(panel.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), innerWidth * 0.8);
-    const s = Math.max(3, Math.min(8, Math.floor(avail / LOGO_W)));
+    // Lead polish: also cap by height (at most ~18% of the viewport), so a landscape phone keeps the buttons and the
+    // live line above the fold. Whole numbers only: the art stays crisp.
+    const s = Math.max(2, Math.min(8, Math.floor(avail / LOGO_W), Math.floor((innerHeight * 0.18) / LOGO_H)));
     img.width = LOGO_W * s;
     img.height = LOGO_H * s;
   };

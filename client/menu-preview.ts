@@ -132,7 +132,8 @@ export function startMenuPreview(host: HTMLElement): { stop(): void } {
       send({ type: "pointer", kind: "down", x: p[1], y: p[2], mat: p[0], radius: p[3], fillEmpty: false });
       send({ type: "pointer", kind: "up", x: 0, y: 0, mat: 0, radius: 0, fillEmpty: false });
     };
-    const still = () => reduced && n > 160;
+    // Lead fix: `>=`, so the pace() sent at n === 160 really pauses (with `>` it sent paused:false and never again).
+    const still = () => reduced && n >= 160;
     const pace = () => send({ type: "pace", paused: hidden || still(), stepMs: phone ? 1000 / 30 : 1000 / 60 });
     let lastKeys = "";
     const director = () => {

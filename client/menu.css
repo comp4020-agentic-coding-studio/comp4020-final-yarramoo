@@ -92,7 +92,7 @@
 .mn-col { width: 100%; max-width: 560px; padding: 24px 20px 28px; display: flex; flex-direction: column; gap: 16px; }
 .mn-h { font: 400 33px/1.1 var(--mn-font); margin: 0; text-transform: uppercase; letter-spacing: 0.04em; outline: none; }
 .mn-sub { font: 400 22px/1.2 var(--mn-font); margin: 0; color: var(--mn-dim); }
-.mn-fine { font-size: 11px; line-height: 1.5; color: var(--mn-dim); margin: 0; }
+.mn-fine { font-size: 11px; line-height: 1.5; color: #d6cde6; margin: 0; letter-spacing: 0.04em; }
 .mn-label { text-transform: uppercase; letter-spacing: 0.12em; }
 .mn-err { font-size: 11px; line-height: 1.5; color: #ff9a80; margin: 0; }
 .mn-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -112,14 +112,18 @@
 .mn-dot.off { background: var(--mn-edge); animation: none; }
 @keyframes mn-blink { 0% { opacity: 1; } 50% { opacity: 0.25; } 100% { opacity: 1; } }
 .mn-deaths { display: flex; flex-direction: column; gap: 6px; border-top: var(--mn-u) solid var(--mn-edge-lo); padding-top: 12px; }
-.mn-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; min-height: 5.5em; }
-.mn-death { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; font-size: 11px; line-height: 1.5; transition: opacity 0.4s steps(4); }
+.mn-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.mn-death { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; font-size: 22px; line-height: 1.15; transition: opacity 0.4s steps(4); }
 .mn-death .x { overflow-wrap: anywhere; }
-.mn-death .t { flex: none; color: var(--mn-dim); }
+.mn-death .t { flex: none; color: var(--mn-dim); font-size: 11px; }
+/* Lead polish: phones show the three newest deaths, so the panel leaves the backdrop visible. */
+@media (max-width: 520px), (max-height: 500px) { .mn-death:nth-child(n+4) { display: none; } }
 .mn-death.in { animation: mn-slide 0.4s steps(5) both; }
 @keyframes mn-slide { from { transform: translateY(-14px); opacity: 0; } to { transform: none; } }
 .mn [data-focus]:focus, .mn [data-focus]:focus-visible { outline: none; }
 @media (max-width: 520px) { .mn-col { padding: 20px 10px 24px; } .mn-page { padding: 0 12px 20px; } }
+/* Lead polish: a landscape phone is short: tighter panel, smaller big buttons, so the live line stays in view. */
+@media (max-height: 500px) { .mn-col { padding: 14px 18px 18px; gap: 10px; } .mn-bigbtns .mn-btn { font-size: 22px; padding: 10px 12px 12px; } .mn-main { padding-top: 0; } }
 
 /* Types screen */
 .mn-head { display: flex; flex-direction: column; gap: 6px; }
