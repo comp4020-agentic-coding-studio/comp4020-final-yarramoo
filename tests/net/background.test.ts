@@ -1,13 +1,12 @@
 // The sky line is captured once from the generated world (client/background.ts) and the renderer never recomputes
 // it from live cells. A source guard covers the renderer (it needs WebGL); the pure function is tested directly.
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { groundLine } from "../../client/background.ts";
 
 const ROCK = 2;
 const WOOD = 6;
 const SNOW = 27;
-const WATER = 3;
+const WATER = 5;
 
 function grid(w: number, h: number, surface: number): Uint8Array {
   const g = new Uint8Array(w * h);
