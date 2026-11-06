@@ -785,7 +785,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     setTimeout(() => el.remove(), TOAST_MS);
   }
   /** Shorter tile labels so twelve fit in one row; the full name is the tile's tooltip. */
-  const SHORT_NAMES: Record<string, string> = { "Acid Flask": "Acid", "Oil Flask": "Oil", "Lava Flask": "Lava", "Black Hole": "Hole" };
+  const SHORT_NAMES: Record<string, string> = { "Acid Flask": "Acid", "Oil Flask": "Oil", "Lava Flask": "Lava", "Black Hole": "Hole", "Mudslide": "Mud" };
   const spellBar = document.createElement("div");
   spellBar.id = "spells";
   spellBar.hidden = true;

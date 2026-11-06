@@ -55,7 +55,7 @@ pub const ENEMY_OWNER: u32 = 0x8000_0000;
 pub const MAX_ENEMY_PROJECTILES: usize = 16;
 
 /// Spells the sim implements; a disabled spell's cast is refused.
-pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true; NUM_SPELLS];
+pub const SPELL_ENABLED: [bool; NUM_SPELLS] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 /// Ticks between casts of the same spell.
 pub const COOLDOWN: [u32; NUM_SPELLS] = [20, 90, 10, 10, 15, 60, 18, 25, 20, 45, 60, 120, 30, 90, 30];
 /// Launch speed, 1/256 cell per tick (Push 5 cells a tick; Water and Rose are lobbed slower).
