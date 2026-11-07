@@ -154,7 +154,6 @@ export function reactToTick(ls: Lockstep, tick: number, wantSnapshotAt: number):
   return out;
 }
 
-/** A live client this many ticks behind (2 s) is not keeping up by stepping 4-8 a frame: it fast-forwards instead. */
 /** Ticks one frame may step from the 60 Hz accumulator, before the playout extra (N1, 8 Nov). The worker's frame is
  * requestAnimationFrame on an OffscreenCanvas, which follows the page's frame rate: a 4x-throttled page ran it at
  * 3-10 Hz, and the old cap of 4 steps a frame (plus MAX_EXTRA), with frame time clamped to 250 ms, could not reach the
@@ -168,6 +167,7 @@ export const FF_BUDGET_MIN_MS = 12;
 export const FF_BUDGET_MAX_MS = 400;
 export const ffBudgetMs = (dtMs: number): number => Math.min(FF_BUDGET_MAX_MS, Math.max(FF_BUDGET_MIN_MS, dtMs * 0.8));
 
+/** A live client this many ticks behind (2 s) is not keeping up by stepping a frame's worth: it fast-forwards instead. */
 export const CATCHUP_THRESHOLD = 120;
 
 /**

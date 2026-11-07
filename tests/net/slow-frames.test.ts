@@ -1,7 +1,8 @@
 // N1 (8 Nov): the worker steps the sim from requestAnimationFrame on an OffscreenCanvas, which follows the page's frame
 // rate. A 4x-throttled page (about a phone) ran it at ~10 Hz. With 4 steps a frame (+ MAX_EXTRA) and a 12 ms fast-forward
 // budget, the client could not keep up with 60 ticks/s and never caught up once behind. A pure model of that client:
-// fake time, a server adding 60 ticks/s, steps that cost 2 ms each, frames 100 ms apart, the worker's own policy.
+// fake time, a server adding 60 ticks/s, steps of a fixed cost, frames 1/fps apart (later if stepping overran),
+// the worker's own step policy (lockstep.ts). It models stepping only: decoding, hashing and drawing are not timed.
 import { describe, expect, it } from "vitest";
 import { Lockstep, MAX_FRAME_STEPS, MAX_STEP_DT_MS, driveFrame, ffBudgetMs } from "../../client/lockstep.ts";
 import type { Sim } from "../../shared/sim.ts";
@@ -22,19 +23,22 @@ function run(fps: number, stepMs: number, seconds: number, startBehind: number):
   let acc = 0;
   let catching = false;
   const dt = 1000 / fps;
-  let frameStart = clock.t;
   const STEP_MS = 1000 / 60;
+  // Like the worker's frame(): the time owed is the real gap since the last frame (clamped), and a frame ends at
+  // the later of its rAF slot and the end of its own stepping, so a frame that overran makes the next one owe more.
+  let last = clock.t - dt;
   while (clock.t < (seconds * 1000)) {
-    const stepDt = Math.min(dt, MAX_STEP_DT_MS);
+    const now = clock.t;
+    const stepDt = Math.min(now - last, MAX_STEP_DT_MS);
+    last = now;
     const base = Math.min(Math.floor((acc += stepDt) / STEP_MS), MAX_FRAME_STEPS);
     if (catching) acc = 0;
     else acc -= Math.floor(acc / STEP_MS) * STEP_MS;
     const r = driveFrame(ls, catching, base, ffBudgetMs(stepDt), () => clock.t);
     if (r.entered || (catching && !r.catching)) acc = 0;
     catching = r.catching;
-    // The rest of the frame (render, main thread): time passes whatever the stepping cost.
-    frameStart += dt;
-    if (clock.t < frameStart) clock.t = frameStart;
+    // The rest of the frame (render, main thread): the next rAF comes dt after this one, or when stepping ends.
+    clock.t = Math.max(clock.t, now + dt);
     addTo(clock.t);
   }
   return { behind: server - ls.simTick, catching };
