@@ -735,3 +735,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   on the branch; review its id, the `MAX_ENEMIES` raise to 80 and lobby stepping first) and birds that take off when a
   player nears a tree; a Leaf material so hover reads "Leaves" (format bump); brighter fireflies (faint at night);
   tuft density by surface length; bigger crowns for tall trees. **Source:** `docs/research/world-life-report.md`, 7 Nov.
+- **Capacity follow-ups** (D-213): a verify sim per loaded room so verifies stay warm (with a test that two rooms'
+  verifies don't regenerate), a longer verify timeout or adaptive cadence, CPU throttling and cgroup memory on
+  `/api/summary`, a dev-only "verify now" trigger for benches, and a real-Fly rehearsal watching the CPU quota balance.
+  **Source:** `docs/research/capacity-2026-11-07.md`, 7 Nov.
