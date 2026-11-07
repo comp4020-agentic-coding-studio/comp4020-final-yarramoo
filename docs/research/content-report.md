@@ -63,3 +63,46 @@ No must-fix. Verdict: merge. Lead checked each claim in the code:
 - **S3 vacuous test parts**: the fire test now asserts it lit at least 2 houses (red with 4: "the fire test lit only 3
   houses"); dead `reach`, `sky`, `wide` removed.
 - Nits (door a step above lower outside ground; `HashSet` in a test file) left: the body steps up 3 and jumps 15.
+
+Final gate on `c34acbf`: cargo 473/0 (`/tmp/content-g2-cargo.log`), clippy wasm (`/tmp/content-g2-clippy.log`), typecheck
+(`/tmp/content-g2-tsc.log`); net 465 passed 1 skipped on the same HEAD (`/tmp/content-g3-net.log`). Determinism 53/53 was
+on `d385ea7` (`/tmp/content-g-det.log`); the commits after it change only `client/background.ts` and sim tests.
+
+## Cut, and why
+- **W3 per-biome cave walls**: cut at B0 + $34 (W3's $8 cap plus review and screenshots would end near the $50 limit).
+  Brief ready, client-only: `docs/briefs/content-w3-cave-walls.md`.
+- Rabbits, more frost sprites, hills and lake, sandbox rooms: see the plan table above.
+
+## Spend
+B0 $236.32. W1 $243.05 -> $248.33 (+$5.3), W1 fix -> $250.89 (+$2.6), W2 review ~$4; lead the rest
+(planning, gates, screenshots, backdrop fix). Total at hand-back about $276.3 (B0 + $40).
+
+## Architectural decisions for review
+1. **Structures are generation only** (`place_structures` after `place_trees`, before `place_greenery`); `World.structures`
+   is test-only output, never sim state. No snapshot layout change; **format 19** so stored worlds reset (not live yet).
+2. **A house has one door**; the far wall stands to the floor and grounds the roof (D-200). Two doors cannot be grounded
+   in a side view (the first version's roof was an unsupported arch). Cost: houses are one-sided lean-tos.
+3. **Well kind per spot**: a cave well (shaft to a cave within `scale_u(h, 120)` rows, a second way down) or a water well
+   (solid-walled pit with Water at `>= shallow_top + 6`). M worlds mostly get water wells (60 rows of reach).
+4. **`clear_door_yards`** removes shrub and flower cells above 2 rows within 8 columns of a door, rather than widening
+   the greenery exclusion (which starved size S and broke `greenery.rs`).
+5. **The backdrop treats Brick as built, not ground** (`client/background.ts`); a mine's Brick is always below the
+   surface dirt so nothing underground changes; painted Brick never mattered (the line is captured at init, D-211).
+6. **Salts 260-267 are each declared twice** (generation and runtime pairs), pre-existing. Not fixed: it moves every
+   pinned world. `salts_are_unique` checks salts from 285 on. Worth a decision from the user.
+7. Wells' arena and `deep_top` guards are unreachable at today's reach (review S2), kept as cheap guards.
+
+## D-row draft
+| D-2xx | 2026-11-08 | **Surface ruins and wells** (Track B): generation places 1 (M) to 3 (L) ruined Brick-and-Wood houses with one 12-row door and the far wall grounding the roof, and 1-2 wells (a 7-wide shaft to a cave, or a water pit) on the real ground, outside the spawn columns and the arena; greenery avoids them. Format 19, no layout change. The backdrop no longer counts Brick as ground. | The user's 8 Nov addition. The first version's roof was an unsupported arch (two doors), sent back. Cold review: no must-fix; S1 and S3 tightened tests. Seen on seeds 3 and 7 at M and L; the backdrop bug was found by eye. `docs/research/content-report.md`, `review-content.md`. |
+
+## Engineering-decisions entry draft
+"A surface you can read": ruins and wells as generation-only content (no new sim rules, no enemy budget), held to the
+mine's D-200 rule that nothing floats, which is why a house has one door. The screenshot caught what 473 tests did
+not: the backdrop's ground line (D-211) treated a ruin's Brick as terrain and painted the inside of every house as
+cave. Links: commits `b8217d9`, `d385ea7`, `73e4550`, `c34acbf`.
+
+## FUTURE.md ideas (listed, not added)
+- House interiors worth entering (a table, a chest pickup, a ladder to the roof gap) (W1).
+- Draw water from a well into a bag (W1).
+- Per-biome cave walls (brief ready, cut tonight).
+- Fix the duplicated salts 260-267 at the next deliberate generation change.
