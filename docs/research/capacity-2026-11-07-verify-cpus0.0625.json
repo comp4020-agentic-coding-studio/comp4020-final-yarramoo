@@ -1,0 +1,178 @@
+[
+ {
+  "preset": "survival",
+  "size": 1,
+  "kind": "gen",
+  "compressedBytes": 449,
+  "initMs": [
+   27603.6,
+   8303.9
+  ],
+  "cold": [
+   {
+    "totalMs": 18502.2,
+    "decompressMs": 0.9
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 98.8,
+    "decompressMs": 0.4
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 1,
+  "kind": "full",
+  "compressedBytes": 20806,
+  "initMs": [
+   27603.6,
+   8303.9
+  ],
+  "cold": [
+   {
+    "totalMs": 12502.7,
+    "decompressMs": 499.5
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1596.2,
+    "decompressMs": 1496.4
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 2,
+  "kind": "gen",
+  "compressedBytes": 1195,
+  "initMs": [
+   42099.1,
+   32799.1
+  ],
+  "cold": [
+   {
+    "totalMs": 49600.1,
+    "decompressMs": 1.2
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1097.4,
+    "decompressMs": 199.6
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 2,
+  "kind": "full",
+  "compressedBytes": 64917,
+  "initMs": [
+   42099.1,
+   32799.1
+  ],
+  "cold": [
+   {
+    "totalMs": 39903,
+    "decompressMs": 499.4
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 2896.8,
+    "decompressMs": 2395.2
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 1,
+  "kind": "gen",
+  "compressedBytes": 178,
+  "initMs": [
+   10503.5,
+   11202
+  ],
+  "cold": [
+   {
+    "totalMs": 6197.3,
+    "decompressMs": 1.8
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 488.2,
+    "decompressMs": 0.1
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 1,
+  "kind": "full",
+  "compressedBytes": 21831,
+  "initMs": [
+   10503.5,
+   11202
+  ],
+  "cold": [
+   {
+    "totalMs": 11700.2,
+    "decompressMs": 2501
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 101.1,
+    "decompressMs": 99.5
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 2,
+  "kind": "gen",
+  "compressedBytes": 545,
+  "initMs": [
+   41104.1,
+   33503.1
+  ],
+  "cold": [
+   {
+    "totalMs": 35097,
+    "decompressMs": 0.1
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1101.2,
+    "decompressMs": 102.7
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 2,
+  "kind": "full",
+  "compressedBytes": 63611,
+  "initMs": [
+   41104.1,
+   33503.1
+  ],
+  "cold": [
+   {
+    "totalMs": 42603.7,
+    "decompressMs": 504
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1299.5,
+    "decompressMs": 1095.4
+   }
+  ]
+ }
+]

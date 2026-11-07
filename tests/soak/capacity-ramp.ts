@@ -281,7 +281,7 @@ async function main() {
   const cpus = arg("cpus", "1")!;
   const idleToo = process.argv.includes("--idle");
   const survival = scenario === "A";
-  const botsPerRoom = survival ? 4 : 8;
+  const botsPerRoom = Number(process.env.BOTS ?? (survival ? 4 : 8)); // BOTS overrides the room size (lead: the 2-player floor at the quota)
   const steps = (survival ? [1, 2, 4, 6] : [1, 2, 3, 4]).slice(0, Number(process.env.MAXSTEPS ?? 99));
   const mode = survival ? "survival" : "deathmatch";
   const cfg = survival ? { ...SURVIVAL } : DEATHMATCH;
