@@ -4,10 +4,12 @@
 // Every client generates the identical world from (seed, cfg), so every client gets the identical line (D-211 draft).
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
-/** Wood, Seed, Stem and Flower: trees and plants stand on the ground, they are not it. */
-const PLANTS = new Set([6, 7, 8, 9]);
-/** Materials that make the ground line: solid terrain, not plants, liquids or gases. */
-export const GROUND: readonly boolean[] = MATERIAL_CLASS.map((c, id) => c === "solid" && !PLANTS.has(id));
+/** Wood, Seed, Stem and Flower: trees and plants stand on the ground, they are not it. Brick (22) is built, not
+ * ground: a ruined house or a well's coping on the surface must show sky behind it (content-W1). A mine's Brick lies
+ * deep under the surface dirt, so it never starts a column's first run of ground anyway. */
+const NOT_GROUND = new Set([6, 7, 8, 9, 22]);
+/** Materials that make the ground line: solid terrain, not plants, buildings, liquids or gases. */
+export const GROUND: readonly boolean[] = MATERIAL_CLASS.map((c, id) => c === "solid" && !NOT_GROUND.has(id));
 /** How far either side a shaft looks for its rim, and how far below both rims a column must be to count. */
 export const SHAFT_REACH = 64;
 export const SHAFT_MIN_DEPTH = 12;
