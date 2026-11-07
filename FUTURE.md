@@ -739,3 +739,13 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   verifies don't regenerate), a longer verify timeout or adaptive cadence, CPU throttling and cgroup memory on
   `/api/summary`, a dev-only "verify now" trigger for benches, and a real-Fly rehearsal watching the CPU quota balance.
   **Source:** `docs/research/capacity-2026-11-07.md`, 7 Nov.
+- **Ruins follow-ups** (D-216, D-217): house interiors worth entering (a table, a chest pickup, a ladder to the roof
+  gap); drawing water from a well into a bag; per-biome cave walls (client brief ready:
+  `docs/briefs/content-w3-cave-walls.md`); renumber the duplicated salts 260-267 at the next deliberate generation
+  change. **Source:** `docs/research/content-report.md`, 8 Nov.
+- **Independent code review, 8 Nov** (`docs/research/code-review-2026-11-08.md`, read from the code only): 2 high, 7
+  medium, 12 low, and 14 ranked improvements for a future session. Most urgent: hash votes count sockets, so spectators
+  or extra tabs can outvote players and supply the stored snapshot (H1, confirmed in code); Paint has no aggregate
+  work budget (H2); `update_ice` writes `aux` without `touch`, so a joiner's chunk hash goes stale across a chunk edge
+  (S1, confirmed, a one-line fix); old-tick HASH frames grow server state without limit (M1); `max_players` is never
+  enforced (M3).

@@ -1672,3 +1672,19 @@ bigger crowns, a real change rather than a mutation, and now measures terrain pa
 
 **Evidence.** D-212; commits `c4b0f48` (greenery, format 17), `e7a2a24` (tuning), `2befe42` (grass), `fec8513`
 (ambient); `sim/tests/greenery.rs`, `tests/net/ambient.test.ts`.
+
+## 45. A surface you can read, and what only a screenshot saw
+
+**What.** Overnight 8-9 Nov the user asked for surface structures, "old houses or wells". Track B's Opus lead built
+them as generation-only content (D-216): no new sim rule, no enemy budget, held to the old mine's rule that nothing
+floats (D-200). That rule is why a house has one door: two 12-row doors leave nothing to hold a roof up in a side view,
+and the worker's first version, an unsupported arch, was sent back with a test that failed on it ("house at 44 has a
+floating cell at 77,49").
+
+**The challenge.** 473 sim tests passed while every house's inside and the air over every well drew as dark cave wall:
+the background's ground line (D-211) counted a ruin's Brick as terrain. Only the lead's screenshots showed it, and a
+background test now pins it. The same track found that eight salts had been declared twice since the spells
+integration (D-217), which that slice's worker and its cold review both missed: a new test checks salts from here on.
+
+**Evidence.** D-216, D-217; `docs/research/content-report.md`, `review-content.md`; `sim/tests/structures.rs`;
+commits `b8217d9`, `d385ea7`, `73e4550`, `c34acbf`.
