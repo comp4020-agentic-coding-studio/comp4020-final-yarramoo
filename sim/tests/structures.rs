@@ -227,3 +227,87 @@ fn fire_on_a_roof_is_bounded_and_sleep_invisible() {
     }
     std::fs::write("/tmp/cw1-fire.txt", report).unwrap();
 }
+
+/// Every Empty cell 4-connected to the top of the world centre.
+fn sky_cells(g: &Grid) -> Vec<bool> {
+    let w = g.w;
+    let mut seen = vec![false; g.mat.len()];
+    let mut stack = vec![w / 2];
+    seen[w / 2] = true;
+    while let Some(i) = stack.pop() {
+        let (x, y) = (i % w, i / w);
+        let mut nb = Vec::new();
+        if x > 0 { nb.push(i - 1) }
+        if x + 1 < w { nb.push(i + 1) }
+        if y > 0 { nb.push(i - w) }
+        if y + 1 < g.h { nb.push(i + w) }
+        for j in nb {
+            if !seen[j] && g.mat[j] == EMPTY {
+                seen[j] = true;
+                stack.push(j);
+            }
+        }
+    }
+    seen
+}
+
+#[test]
+fn wells_open_to_a_reachable_cave_or_hold_water_on_solid() {
+    let (mut cave, mut water) = (0, 0);
+    for (size, seed, sv, g, w) in all() {
+        let sky = sky_cells(&g);
+        for s in w.structures.iter().filter(|s| s.kind != STRUCT_HOUSE) {
+            let xi = s.x0 + 2;
+            if s.kind == STRUCT_WELL_CAVE {
+                cave += 1;
+                for y in s.floor..s.bottom {
+                    for x in xi..xi + 7 {
+                        assert_eq!(at(&g, x, y), EMPTY, "size {size} seed {seed} {sv}: shaft cell {x},{y} is not open");
+                    }
+                }
+                let open = (xi..xi + 7).filter(|&x| at(&g, x, s.bottom) == EMPTY);
+                assert!(open.clone().any(|x| sky[s.bottom as usize * g.w + x as usize]), "size {size} seed {seed} {sv}: the opening of the well at {xi} is not reachable from the sky");
+            } else {
+                water += 1;
+                let mut wet = 0;
+                for y in s.floor..=s.bottom {
+                    for x in xi..xi + 7 {
+                        if at(&g, x, y) == WATER {
+                            wet += 1;
+                            assert!(matches!(at(&g, x, y + 1), WATER | DIRT | ROCK | COAL), "size {size} seed {seed} {sv}: water at {x},{y} floats");
+                            assert!(matches!(at(&g, xi - 1, y), DIRT | ROCK | COAL | BRICK) && matches!(at(&g, xi + 7, y), DIRT | ROCK | COAL | BRICK), "size {size} seed {seed} {sv}: water well wall at row {y} is not solid");
+                        }
+                    }
+                }
+                assert!(wet >= 4 * 7, "size {size} seed {seed} {sv}: only {wet} water cells");
+            }
+        }
+    }
+    assert!(cave > 0 && water > 0, "cave {cave} water {water}");
+}
+
+#[test]
+fn salts_are_unique() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/rng.rs")).unwrap();
+    // Some older salts already share values and changing one would move every pinned world, so they are left alone.
+    // Every salt declared from the content-W1 comment on (and any later one) must not equal any other salt.
+    let marker = src.lines().position(|l| l.contains("content-W1: surface ruins")).expect("marker comment");
+    let mut all: Vec<(usize, String, u32)> = Vec::new();
+    for (n, line) in src.lines().enumerate().filter(|(_, l)| l.trim_start().starts_with("pub const SALT_")) {
+        let (name, rest) = line.trim_start()["pub const ".len()..].split_once(':').unwrap();
+        let val: u32 = rest.split('=').nth(1).unwrap().trim().trim_end_matches(';').trim().parse().unwrap();
+        all.push((n, name.to_string(), val));
+    }
+    assert!(all.len() > 100, "parsed only {} salts", all.len());
+    for (n, name, val) in all.iter().filter(|a| a.0 > marker) {
+        let clash: Vec<_> = all.iter().filter(|o| o.2 == *val && o.0 != *n).map(|o| o.1.clone()).collect();
+        assert!(clash.is_empty(), "{name} shares the salt {val} with {clash:?}");
+    }
+}
+
+#[test]
+fn a_large_survival_world_keeps_its_enemy_budget() {
+    let s = sim::sim::Sim::new(1, RoomConfig { size: 2, ..RoomConfig::survival() }).unwrap();
+    std::fs::write("/tmp/cw1-enemies.txt", format!("{}\n", s.enemies.len())).unwrap();
+    assert!(s.enemies.len() <= 64);
+}
