@@ -1,0 +1,362 @@
+[
+ {
+  "preset": "survival",
+  "size": 0,
+  "kind": "gen",
+  "compressedBytes": 364,
+  "initMs": [
+   346.7,
+   246.5
+  ],
+  "cold": [
+   {
+    "totalMs": 124,
+    "decompressMs": 0.9
+   },
+   {
+    "totalMs": 153.3,
+    "decompressMs": 0.3
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1.4,
+    "decompressMs": 0.4
+   },
+   {
+    "totalMs": 4.3,
+    "decompressMs": 0.2
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 0,
+  "kind": "full",
+  "compressedBytes": 9791,
+  "initMs": [
+   346.7,
+   246.5
+  ],
+  "cold": [
+   {
+    "totalMs": 159.5,
+    "decompressMs": 3.9
+   },
+   {
+    "totalMs": 158.2,
+    "decompressMs": 1.8
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 2.5,
+    "decompressMs": 2
+   },
+   {
+    "totalMs": 2.5,
+    "decompressMs": 1.9
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 1,
+  "kind": "gen",
+  "compressedBytes": 449,
+  "initMs": [
+   344.2,
+   294.7
+  ],
+  "cold": [
+   {
+    "totalMs": 407.1,
+    "decompressMs": 1
+   },
+   {
+    "totalMs": 195.8,
+    "decompressMs": 1.4
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1.7,
+    "decompressMs": 0.3
+   },
+   {
+    "totalMs": 1.5,
+    "decompressMs": 0.4
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 1,
+  "kind": "full",
+  "compressedBytes": 20806,
+  "initMs": [
+   344.2,
+   294.7
+  ],
+  "cold": [
+   {
+    "totalMs": 336.4,
+    "decompressMs": 4.6
+   },
+   {
+    "totalMs": 249.1,
+    "decompressMs": 9.6
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 6.2,
+    "decompressMs": 4.9
+   },
+   {
+    "totalMs": 7.3,
+    "decompressMs": 5.9
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 2,
+  "kind": "gen",
+  "compressedBytes": 1195,
+  "initMs": [
+   912.8,
+   883.2
+  ],
+  "cold": [
+   {
+    "totalMs": 897.9,
+    "decompressMs": 0.4
+   },
+   {
+    "totalMs": 808,
+    "decompressMs": 9.9
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 4.4,
+    "decompressMs": 0.3
+   },
+   {
+    "totalMs": 4.1,
+    "decompressMs": 0.4
+   }
+  ]
+ },
+ {
+  "preset": "survival",
+  "size": 2,
+  "kind": "full",
+  "compressedBytes": 64917,
+  "initMs": [
+   912.8,
+   883.2
+  ],
+  "cold": [
+   {
+    "totalMs": 844.5,
+    "decompressMs": 32.1
+   },
+   {
+    "totalMs": 793.6,
+    "decompressMs": 28.8
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 46.2,
+    "decompressMs": 36.8
+   },
+   {
+    "totalMs": 30.5,
+    "decompressMs": 24.7
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 0,
+  "kind": "gen",
+  "compressedBytes": 164,
+  "initMs": [
+   119.9,
+   160.9
+  ],
+  "cold": [
+   {
+    "totalMs": 119.8,
+    "decompressMs": 0.1
+   },
+   {
+    "totalMs": 153.6,
+    "decompressMs": 0.1
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 0.4,
+    "decompressMs": 0.1
+   },
+   {
+    "totalMs": 0.9,
+    "decompressMs": 0.5
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 0,
+  "kind": "full",
+  "compressedBytes": 9527,
+  "initMs": [
+   119.9,
+   160.9
+  ],
+  "cold": [
+   {
+    "totalMs": 117.6,
+    "decompressMs": 4.6
+   },
+   {
+    "totalMs": 171.1,
+    "decompressMs": 1.3
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 2.1,
+    "decompressMs": 1.7
+   },
+   {
+    "totalMs": 2,
+    "decompressMs": 1.5
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 1,
+  "kind": "gen",
+  "compressedBytes": 178,
+  "initMs": [
+   191.6,
+   207.6
+  ],
+  "cold": [
+   {
+    "totalMs": 595.8,
+    "decompressMs": 8.6
+   },
+   {
+    "totalMs": 165.9,
+    "decompressMs": 0.1
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 1.4,
+    "decompressMs": 0.1
+   },
+   {
+    "totalMs": 1.2,
+    "decompressMs": 0.1
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 1,
+  "kind": "full",
+  "compressedBytes": 21831,
+  "initMs": [
+   191.6,
+   207.6
+  ],
+  "cold": [
+   {
+    "totalMs": 170.9,
+    "decompressMs": 3.8
+   },
+   {
+    "totalMs": 162.2,
+    "decompressMs": 3.4
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 4.9,
+    "decompressMs": 3.6
+   },
+   {
+    "totalMs": 5.6,
+    "decompressMs": 4.4
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 2,
+  "kind": "gen",
+  "compressedBytes": 545,
+  "initMs": [
+   717.5,
+   754.8
+  ],
+  "cold": [
+   {
+    "totalMs": 715.8,
+    "decompressMs": 0.1
+   },
+   {
+    "totalMs": 792.2,
+    "decompressMs": 2.7
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 15.5,
+    "decompressMs": 11.1
+   },
+   {
+    "totalMs": 3.7,
+    "decompressMs": 0.1
+   }
+  ]
+ },
+ {
+  "preset": "deathmatch",
+  "size": 2,
+  "kind": "full",
+  "compressedBytes": 63611,
+  "initMs": [
+   717.5,
+   754.8
+  ],
+  "cold": [
+   {
+    "totalMs": 737.6,
+    "decompressMs": 23.5
+   },
+   {
+    "totalMs": 792.2,
+    "decompressMs": 30.6
+   }
+  ],
+  "warm": [
+   {
+    "totalMs": 31.6,
+    "decompressMs": 26.1
+   },
+   {
+    "totalMs": 26.6,
+    "decompressMs": 21
+   }
+  ]
+ }
+]
