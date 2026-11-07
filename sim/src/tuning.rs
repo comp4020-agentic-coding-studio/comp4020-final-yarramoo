@@ -343,7 +343,7 @@ pub const ARENA_KEEP_OUT: i32 = 16;
 /// The supply alcove beside the arena: width (cells beyond the rim) and height, and the spells piled in it
 /// (one pickup each, 4 cells apart, nearest the arena first).
 pub const SUPPLY_ALCOVE_W: i32 = 28;
-pub const SUPPLY_ALCOVE_H: i32 = 8;
+pub const SUPPLY_ALCOVE_H: i32 = HITBOX_H + 2;
 pub const SUPPLY_PILE: [u8; 6] = [4, 4, 4, 4, 5, 5];
 
 /// Boss movement and attacks (F6). Attack cadences are stateless: an attack fires on the ticks where

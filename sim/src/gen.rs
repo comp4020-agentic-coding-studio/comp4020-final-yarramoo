@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_WISP, ENEMY_WISPS_L, ENEMY_WISPS_MIN, ENEMY_FROST, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{HITBOX_H, HITBOX_W, ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_WISP, ENEMY_WISPS_L, ENEMY_WISPS_MIN, ENEMY_FROST, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 /// Anchored enemies (wisps, frost sprites) spawn with their biome's material within this many cells (Chebyshev).
 const ANCHOR_NEAR: i32 = 24;
@@ -1978,8 +1978,9 @@ fn pick_spots(g: &Grid, seed: u64, sc: &Scale, arena: Option<&Arena>) -> Vec<Pic
             if yf < y_lo || yf > y_hi || g.mat[((yf + 1) * w + x) as usize] == SAND {
                 continue;
             }
-            // Headroom: 8 Empty cells straight up, so an avatar fits.
-            if (1..=8).any(|d| g.mat[((yf - d) * w + x) as usize] != EMPTY) {
+            // Headroom: the whole avatar body (HITBOX_W wide, HITBOX_H tall) above the floor cell is Empty, so the pickup can be walked into.
+            let hw = HITBOX_W / 2;
+            if yf < HITBOX_H || x - hw < 0 || x + hw >= w || (x - hw..=x + hw).any(|cx| (1..=HITBOX_H).any(|d| g.mat[((yf - d) * w + cx) as usize] != EMPTY)) {
                 continue;
             }
             if arena.is_some_and(|a| a.contains(x, yf, ARENA_KEEP_OUT)) {

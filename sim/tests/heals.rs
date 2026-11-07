@@ -188,8 +188,8 @@ fn the_view_lists_a_heal() {
 }
 
 #[test]
-fn format_is_seventeen_and_a_snapshot_with_heals_runs_on_identically() {
-    assert_eq!(snapshot::FORMAT_VERSION, 17);
+fn format_is_eighteen_and_a_snapshot_with_heals_runs_on_identically() {
+    assert_eq!(snapshot::FORMAT_VERSION, 18);
     let mut s = arena();
     // HEAL_LIFETIME from tick 0: the longest a real drop can live (a restore refuses more, review E).
     s.heals = vec![heal(400, 120, HEAL_LIFETIME), heal(450, 150, HEAL_LIFETIME)];
