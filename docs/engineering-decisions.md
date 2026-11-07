@@ -1655,3 +1655,20 @@ frames: drawing, not the sim. A real phone is still owed a look.
 **Evidence.** D-210; `docs/research/menu-redesign-report.md` and `menu-w{1,2,3}-report.md`;
 `tests/net/menu-live-api.test.ts`, `menu-router.test.ts`, `menu-backdrop.test.ts`; commits `9da7eea`, `0689cd6`,
 `20d93a0`, `2b8d9bd`.
+
+## 44. Making the world feel alive without new simulation rules
+
+**What.** The user asked for more green and non-hostile mobs on a $30 cap. An Opus lead investigated, ran two Sonnet
+workers and spent about $22 (`docs/briefs/world-life.md`, `docs/research/world-life-report.md`).
+
+**The challenge.** Every new cell rule must keep chunk sleeping invisible (the snow-packing break of D-208 was the
+day before), and every new enemy kind touches nine mirrors and a full budget (a large Survival world already
+generates exactly the decoder's 64 enemies). So the lead took the cheapest honest route. Generation places leaves and
+flowers using cells that already exist and never act (`STEM` with aux 0, `FLOWER`): more of the world, no new rule.
+Everything that moves (grass sway, falling leaves, butterflies, fireflies, drips) is drawn by the client from the
+grid and never read back, so it cannot desync. The one real creature, a fleeing rabbit, was designed and briefed but
+cut when the cap came close. A generator test that measured "surface" as the first non-Empty cell went red on the
+bigger crowns, a real change rather than a mutation, and now measures terrain past leaves with its limit unchanged.
+
+**Evidence.** D-212; commits `c4b0f48` (greenery, format 17), `e7a2a24` (tuning), `2befe42` (grass), `fec8513`
+(ambient); `sim/tests/greenery.rs`, `tests/net/ambient.test.ts`.

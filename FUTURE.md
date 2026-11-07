@@ -731,3 +731,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   the share screen; size and max players in Join rows. **Source:** `docs/research/menu-redesign-report.md`, 7 Nov.
 - **Per-biome cave walls from the generator** (icy behind ice caves, warm near lava): the background is now captured
   from the generated world (D-211), so the generator's own sites could tint it. **Source:** the session model, 7 Nov.
+- **World life follow-ups** (D-212): rabbits as a passive sim kind (brief ready: `docs/briefs/life-w2-rabbits.md`
+  on the branch; review its id, the `MAX_ENEMIES` raise to 80 and lobby stepping first) and birds that take off when a
+  player nears a tree; a Leaf material so hover reads "Leaves" (format bump); brighter fireflies (faint at night);
+  tuft density by surface length; bigger crowns for tall trees. **Source:** `docs/research/world-life-report.md`, 7 Nov.
