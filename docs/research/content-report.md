@@ -1,0 +1,23 @@
+# Track B (content): overnight 8-9 Nov report
+
+Lead: Opus. Cap $50 (B0 = $236.32 at 04:46; stop dispatching at $276.32, finish by $286.32; hard stop if the week
+reads $366). Branch `content`, worktree `/tmp/wt-content`, ports 8083 / 5183, data `/tmp/content-*`.
+
+## Plan (written before any dispatch)
+
+### Ranking the candidates
+
+| Candidate | Showcase value | Cost / risk | Verdict |
+|---|---|---|---|
+| **Surface ruins and wells** (user's addition, 8 Nov) | High: the surface is the first thing every player sees (FUTURE "A livelier surface"); a ruin that burns, a well as a second way down | Generation only (`gen.rs`), existing materials (Brick 22, Wood 6), no new sim rules, no enemy budget. Format bump 19, no layout change. Risk is in traversal and spawn columns, both well tested. | **Build (W1)** |
+| **Per-biome cave walls** (FUTURE "Dev tools and rendering follow-ups") | Medium-high: every screenshot in a cave changes; ice caves read blue, lava lakes red | Client-only (`client/render.ts` shader plus a per-chunk or low-res tint texture computed once from the pristine world, like D-211's `groundLine`). No sim, no format. Needs a pure helper with a test. | **Build (W3) if budget allows** |
+| Rabbits (passive enemy kind) | Medium: life on the surface | New enemy kind across sim, shared, client, server tables; `MAX_ENEMIES` 64 to 80 changes the decode bound; lobby stepping changes the lobby's frozen-enemy rule. A cold review would almost certainly find something on submission eve. | **Cut**: too wide a change the night before submission |
+| More frost sprites per ice cave | Low-medium | An L Survival world already generates exactly `MAX_ENEMIES` = 64, so more frost sprites means fewer of something else or raising the budget | **Cut** |
+| Surface lake and hills (`biomes-surface.md`) | Medium | Hills move `surface_heights`, which feeds the cave threshold, entrances, the spawn and traversal: the riskiest generation change on the list | **Cut** (a small lake is a later idea; a well with water gives a little of it) |
+| Sandbox rooms | Medium for creative play | Server, menu and config work across `server/`, `shared/room.ts` and the menu; not "content" in the sim sense; its own review | **Cut** for this track (could be its own brief) |
+
+### Order and workers (at most 3, one at a time)
+1. **W1 (Sonnet, $14 cap): ruined houses and wells**, `docs/briefs/content-w1-structures.md`. Format 19.
+2. **W2 (Sonnet, $5 cap): cold review** of W1's sim diff into `docs/research/review-content.md` (read-only).
+3. **W3 (Sonnet, $8 cap): per-biome cave walls** (client-only) if spend after W1 + W2 + fixes is under B0 + $30.
+The lead keeps planning, the full gate, the screenshots (two seeds at M and L, real room on :8083) and the report.
