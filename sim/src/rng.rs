@@ -157,6 +157,14 @@ pub const SALT_GEN_BIOME_ENEMY: u32 = 274;
 pub const SALT_BOSS_KIND: u32 = 275;
 pub const SALT_COLOSSUS_SHED: u32 = 276;
 pub const SALT_COLOSSUS_SHOWER: u32 = 277;
+/// world-life W1: surface greenery at generation (canopy size and ragged edge, shrub and tuft placement and shape).
+pub const SALT_GEN_CANOPY_R: u32 = 278;
+pub const SALT_GEN_CANOPY_EDGE: u32 = 279;
+pub const SALT_GEN_SHRUB_X: u32 = 280;
+pub const SALT_GEN_SHRUB_DIM: u32 = 281;
+pub const SALT_GEN_TUFT_PATCH: u32 = 282;
+pub const SALT_GEN_TUFT_X: u32 = 283;
+pub const SALT_GEN_TUFT_DIM: u32 = 284;
 
 #[cfg(test)]
 mod tests {

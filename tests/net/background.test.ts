@@ -53,3 +53,13 @@ describe("renderer", () => {
     expect(src).toMatch(/setBackground/);
   });
 });
+
+describe("grass shader guard", () => {
+  const src = readFileSync(new URL("../../client/render.ts", import.meta.url), "utf8");
+  it("has a grass branch gated on game worlds (uBands.x)", () => {
+    expect(src).toMatch(/bool grassTop\(ivec2 p\)\s*\{\s*if \(uBands\.x < 0\.5/);
+    expect(src).toMatch(/if \(uBands\.x > 0\.5\) \{\s*\/\/ Grass blades/);
+    expect(src).toMatch(/if \(grassTop\(c\)\) col = g;/);
+    expect(src).toMatch(/uSky\.y/);
+  });
+});

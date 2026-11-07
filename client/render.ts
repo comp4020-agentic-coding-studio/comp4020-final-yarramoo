@@ -76,6 +76,16 @@ vec3 skyColor(vec2 uvp, vec2 cs) {
   return col;
 }
 
+// Grass (cosmetic, game world only): exposed dirt within 6 rows of the generated ground line of its column.
+// Cells are never changed: avatars and the sim see plain dirt, and blades are drawn over empty sky only.
+bool grassTop(ivec2 p) {
+  if (uBands.x < 0.5 || p.y < 1 || p.y >= int(uWorld.y) - 1) return false;
+  if (texelFetch(uMat, p, 0).r != 3u) return false;
+  uint up = texelFetch(uMat, p + ivec2(0, -1), 0).r;
+  if (up != 0u && up != 8u && up != 9u) return false;
+  return p.y <= int(texelFetch(uSurf, ivec2(p.x, 0), 0).r) + 6;
+}
+
 void main() {
   ivec2 c = clamp(ivec2(floor(uCam + uv * uView)), ivec2(0), ivec2(uWorld) - 1);
   uint m = texelFetch(uMat, c, 0).r;
@@ -97,6 +107,17 @@ void main() {
   }
   vec3 col = uPal[m];
   if (m == 0u) {
+    if (uBands.x > 0.5) {
+      // Grass blades: 1 in 2 columns a 1-cell blade, 1 in 6 a 2-cell blade, swaying only when motion is allowed.
+      int shift = int(floor(0.5 + 0.9 * sin(uTime * 1.3 + float(c.x) * 0.2) * uSky.y));
+      float hb = hash(vec2(float(c.x + shift), 11.0));
+      bool blade = hb < 0.5 && grassTop(c + ivec2(0, 1));
+      if (!blade && hb < 0.1667 && texelFetch(uMat, c + ivec2(0, 1), 0).r == 0u) blade = grassTop(c + ivec2(0, 2));
+      if (blade) {
+        vec3 g = mix(vec3(0.27, 0.55, 0.18), vec3(0.40, 0.68, 0.22), hash(vec2(c) + 5.0));
+        bg = mix(bg, g, 0.9);
+      }
+    }
     outColor = vec4(bg, 1.0);
     return;
   }
@@ -137,6 +158,11 @@ void main() {
     // Two scales of hash noise so big faces are not flat.
     float n = 0.80 + 0.28 * h + 0.14 * (hash(vec2(c / 3) + 17.0) - 0.5);
     col = col * tint * dark;
+    if (m == 3u) {
+      vec3 g = mix(vec3(0.27, 0.55, 0.18), vec3(0.40, 0.68, 0.22), h);
+      if (grassTop(c)) col = g;
+      else if (grassTop(c + ivec2(0, -1))) col = mix(col, g * 0.6, 0.55);
+    }
     if (m == 2u) {
       // Moss: rock touching water, speckled by hash.
       bool wet = texelFetch(uMat, c + ivec2(0, -1), 0).r == 5u || texelFetch(uMat, c + ivec2(-1, 0), 0).r == 5u

@@ -60,6 +60,7 @@ import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
 import { groundLine } from "./background.ts";
+import { Ambient } from "./ambient.ts";
 import { hitboxTouchesLava, shouldSizzle } from "./hazard.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 
@@ -368,9 +369,14 @@ function countPresence(inputs: { kind: number }[]) {
  * room's config never matches either fixed world's, so initing from the bare kind would hand the sim the
  * wrong world entirely. `shared/sim.ts`'s `init` already accepts a `Uint8Array` config directly.
  */
+const ambient = new Ambient();
+let ambientSurf: Uint16Array | null = null;
+
 function applySky(seed: bigint): { sky: number; skyMotion: boolean } {
   const sky = resolveSky(seed, skyOverride);
   renderer?.setSky(sky, !skyReduced);
+  ambient.setSky(sky);
+  ambient.setReduced(skyReduced);
   return { sky, skyMotion: !skyReduced };
 }
 
@@ -405,7 +411,9 @@ function beginReplay(seed: bigint, cfg: Uint8Array, target: number, playersAtBas
   send({ type: "world", width: sim.width(), height: sim.height(), kind, cfg: rc, caves: rc?.terrain === 0, ...applySky(seed) });
   renderer?.setWorld(sim.width(), sim.height(), rc?.terrain === 0);
   // Right after init the grid is the pristine generated world: capture the backdrop line now, before any replay.
-  if (renderer && rc?.terrain === 0) renderer.setBackground(groundLine(sim.matView(), sim.width(), sim.height()));
+  ambientSurf = null;
+  ambient.clear();
+  if (renderer && rc?.terrain === 0) { ambientSurf = groundLine(sim.matView(), sim.width(), sim.height()); renderer.setBackground(ambientSurf); }
 }
 
 function connect() {
@@ -735,6 +743,9 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   }
 
   spellFx(ents, dt, now, rects);
+  // Ambient life: its own pool, reads the mat view inside the camera, writes only rects (invariants 1 and 9).
+  ambient.update(dt, { x: cam.x, y: cam.y, w: cam.vw, h: cam.vh }, sim.matView(), w, h, ambientSurf);
+  ambient.toRects(rects);
 
   // Camera: the avatar, or for a spectator the first other player; the main thread pans freely otherwise.
   let following = false;
@@ -1208,7 +1219,7 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
     setNet("live");
     send({ type: "world", width: sim.width(), height: sim.height(), kind: m.local.kind, cfg: null, caves: m.local.kind !== 0, ...applySky(BigInt(m.local.seed)) });
     renderer?.setWorld(sim.width(), sim.height(), m.local.kind !== 0);
-    if (renderer && m.local.kind !== 0) renderer.setBackground(groundLine(sim.matView(), sim.width(), sim.height()));
+    if (renderer && m.local.kind !== 0) { ambientSurf = groundLine(sim.matView(), sim.width(), sim.height()); renderer.setBackground(ambientSurf); }
   } else {
     connect();
   }
