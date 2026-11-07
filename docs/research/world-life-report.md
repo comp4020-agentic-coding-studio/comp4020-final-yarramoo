@@ -73,3 +73,75 @@ at $8 and needs a gate and a look on top; it would breach the $30 cap. **Cut**, 
 `docs/briefs/life-w2-rabbits.md` (kind 8, flee AI, lobby stepping, no heal/achievement, `MAX_ENEMIES` 80). W3 goes
 ahead at a $3.5 cap because it is client-only (no gate beyond typecheck and the net suite) and its butterflies and
 fireflies give the world some moving life, labelled as decoration.
+
+## 5. W3: grass shader and ambient layer (Sonnet, about $0.8)
+
+`2befe42` grass in `client/render.ts` (exposed Dirt within 6 rows of the generated ground line greens; 1-2 cell blades
+over sky, sway gated on reduced motion; guard test in `tests/net/background.test.ts`). `fec8513` `client/ambient.ts`:
+its own 120-particle pool (spells keep all 600 of theirs), bounded sampling in the camera view only: falling leaves
+under crowns, butterflies by flowers (day/dawn), fireflies at night/aurora and near Moss/Mushroom, cave drips that stop
+at solids; nothing under reduced motion. `tests/net/ambient.test.ts` (cap, view, reduced motion, sky gate, drip);
+the cap test was green under mutation at first (fixture never filled the pool), so the worker added a dense fixture
+that went red. The view-rectangle test was not shown red (weak, flagged). Review: render-only, reads the mat view and
+the captured ground line, writes only `rects`; no sim, shared or server change.
+
+Lead check: `pnpm typecheck` and `pnpm test:net` 457 passed + 1 skipped (64 files), logs `/tmp/life-g3-{tsc,net}.log`.
+
+## 6. Results
+
+**Built**: leafy crowns with blossoms on every surface tree, shrubs and wildflower meadows (generation, format 17);
+grass on exposed surface dirt with blades; an ambient layer of leaves, butterflies, fireflies and drips.
+**Passive creatures**: only as decoration (butterflies, fireflies), **not** as sim entities: the rabbit slice
+(a passive sim enemy kind) was cut for budget; its brief is ready (`docs/briefs/life-w2-rabbits.md`).
+**Cut**: rabbits (budget), hills/mountain/lake/sand traps (own slice, traversal risk), vines (block passages),
+a spreading Grass material (sleep risk, mirrors, burns the meadow), bats/birds as sim kinds, ambient sound.
+
+Screenshots (all Read): `shots/life-before-{surface-s7,cave-s7,menu}.png`, `shots/life-w1-{surface-s7,zoom-s7,menu,dump-s3-L}.png`,
+`shots/life-w3-surface-s7-day.png`, `shots/life-after-{surface-s7-day,surface-s7-night,cave-s3-M}.png`. Seeds 7 (M) and 3 (M in browser, L in
+`dump_world`). The menu backdrop (seed 220, M) shows crowns and the flower line. Note: the vite dev route loads
+`sim-dev.wasm`, which needs `pnpm build:sim:devpaint` after a sim change or it shows the old generation.
+
+Gates: W1+tuning full gate green on `e7a2a24` (`/tmp/life-g-*.log`: determinism 53/53, net 451+1 skipped);
+W3 typecheck + net green (`/tmp/life-g3-*.log`). The full gate was **not** re-run after W3 (no sim change); the
+session model should run it once before merging.
+
+**Spend**: B0 $160.07. Lead investigation, briefs, review, tuning, two gates and screenshots about $17.3; W1 about $4.1; W3
+about $0.8. Total about $22.1 (end $182.18).
+
+## Architectural decisions for review
+1. **Greenery is generation-only, reusing `STEM` aux 0 and `FLOWER`** (no new material, no cell rule). Alternatives:
+   a Leaf/Grass material with its own rule. Why: zero sleep-invisibility risk and no mirrors. Cost: leaves are
+   indistinguishable from grown stems (they burn the same; hover says "Stem"), and changing them later is another
+   format bump.
+2. **Format 16 -> 17** for the new generation (no layout change), golden fixture renamed to `golden-v17.bin`.
+3. **`CANOPY_CLEAR` 12 rows** keeps crowns above head height; short trees get clipped crowns. `SPAWN_CLEAR_COLS`
+   duplicates `spawn_point`'s scan arithmetic in `gen.rs`: change both together.
+4. **`borders_surface_and_open_fraction` measures the terrain top past `STEM`/`FLOWER`**: the test's intent is
+   terrain height; its 120-column guard is unchanged.
+5. **Grass is a shader effect**, not cells: a pure function of the current grid and the generated ground line, so it
+   cannot desync and vanishes when the dirt is dug; it does not burn. Reversible (delete one branch).
+6. **Ambient has its own pool** (cap 120) beside `Particles`; `Math.random`, render-only (invariants 1, 9).
+7. **Passive mobs not built.** The rabbit brief puts them at kind 8, ids below the boss, `MAX_ENEMIES` 80, lobby
+   stepping for passive kinds only, no heal/achievements: review that design before it is built.
+
+## D-row draft
+| D-2xx | 2026-11-07 | **The surface is green at generation**: every tree gets a leaf crown (`STEM` aux 0, 1 in 25 a blossom),
+shrubs and wildflower meadows on flat Dirt outside the spawn columns (`place_greenery`, salts 278-284); format 17.
+Grass on exposed surface dirt and an ambient layer (leaves, butterflies, fireflies, drips) are client-only cosmetics.
+Passive sim creatures (rabbits) are briefed but cut for budget. | world-life report |
+
+## engineering-decisions entry draft
+**Making the world feel alive without new simulation rules (7 Nov).** The user asked for more green and non-hostile
+mobs. Every new cell rule must keep chunk sleeping invisible, and every new enemy kind touches nine mirrors and a full
+enemy budget, so the lead chose the cheapest honest versions: generation places leaves and flowers using cells that
+already exist and never act (`STEM` aux 0, `FLOWER`), and everything that moves (grass sway, leaves, butterflies,
+fireflies, drips) is drawn by the client from the grid and never read back. The one real sim creature, a fleeing
+rabbit, was designed and briefed but cut when the $30 cap came close; it waits on review of its id and lobby rules.
+A generator test that measured "surface" as the first non-Empty cell went red on the bigger crowns and was corrected
+to measure terrain. (D-2xx; `docs/research/world-life-report.md`; commits c4b0f48, e7a2a24, 2befe42, fec8513.)
+
+## FUTURE.md ideas (listed, not added)
+- Rabbits as a passive sim kind (brief ready). Birds that take off when a player nears a tree (same pattern, a flier).
+- Tuft density by surface length, not area (W1). Bigger crowns for tall trees (W1).
+- A Leaf material name so hover says "Leaves", not "Stem" (format bump).
+- Fireflies are faint on screen at night; brighter or bigger glows (lead's look).
