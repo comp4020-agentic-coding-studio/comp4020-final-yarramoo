@@ -12,7 +12,7 @@ session model starts the next when one hands back), so cargo gates never collide
 ## Rules for every lead (on top of `CLAUDE.md`, which binds you fully)
 - **Your track's cap is in your dispatch prompt.** Read `/api/me` at the start (B0), after every worker and every ~20
   of your own tool calls; stop dispatching at B0 + 80% of your cap and finish by B0 + your cap. **If the week reads
-  $316 or more, stop at once**, commit what you have to your branch and report.
+  $366 or more, stop at once**, commit what you have to your branch and report.
   `curl -sf https://strproxy.comp.anu.edu.au/api/me -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" | python3 -c "import json,sys;print(json.load(sys.stdin)['current_week_spend'])"`
 - **At most 3 workers per track, one at a time.** Workers never dispatch. Each worker brief lives in
   `docs/briefs/<track>-*.md` on your branch with its own cap, the files it may touch, a commit checklist, how to
@@ -73,3 +73,40 @@ From FUTURE.md's "Phone play follow-ups" and "Menu follow-ups": the menu backdro
 pausing it behind settings panels (throttled 390 px rendering hit 167 ms frames); a taller camera window in portrait
 (the world is a thin strip); a floating left thumb-stick if it fits. Measure before and after (frame times at 4x CPU
 throttle, 390x844 and 844x390). Client-only unless you find otherwise.
+
+## Track D, sound (the user's request, 8 Nov)
+**Cap $20. Branch `sound`, worktree `/tmp/wt-sound`, ports 8081 / 5181, data `/tmp/sound-*`. Client-only.**
+1. **Audit first**, into `docs/research/sound-report.md`: every event the game shows (sim `events()` kinds, damage
+   causes in `client/toasts.ts`, every spell in `client/spells.ts`, enemies, the boss, biome hazards, pickups, heals,
+   round start/end) against `client/sfx.ts`'s `play()` names and every `play("...")` call site; a table of what has a
+   sound, what shares one, what has none.
+2. **Build the most valuable gaps** (the user's examples first): **damage that sounds different by cause** (fire,
+   acid, lava, gunpowder, falling rock, each enemy kind, the boss) on the local player's hits; **a distinct cast sound
+   per spell** (all 15, including Freeze, Quake, Mudslide); **ambient water**: a large amount of moving water near the
+   player makes a rushing sound, from the grid in the camera window (read-only, like the ambient layer:
+   `client/ambient.ts`), volume by amount and distance, rate-limited, silent while catching up (the worker already
+   suppresses sounds during replay). Synthesised in the existing style (D-178: no recorded assets).
+3. Bounded: no sound per cell per tick; a cap on simultaneous voices; respect mute and the existing volume. A test for
+   any pure helper (e.g. "which damage cause maps to which sound", "water-noise level from a grid window"), red first.
+
+## Track E, chat (a new feature, the user's request, 8 Nov)
+**Cap $30. Branch `chat`, worktree `/tmp/wt-chat`, ports 8080 is the user's: use 8079 / 5179, data `/tmp/chat-*`.**
+The user: "a chat feature to allow players to communicate. Maybe computer browser-only, but pressing '/' allows the
+player to type in a chat-visible room. If they @ a player then the message is bolded for that player."
+- **Design constraints (CLAUDE.md, review them before designing):** chat is **not a sim input** (invariant 1: it never
+  touches `push_input`); it is a server-relayed message to the room's members beside the lockstep, like
+  `encodePlayerName` / `encodeAchievement` in `shared/protocol.ts`. Players see only plain names (`name#id` only in
+  logs and the admin dashboard). The server rate-limits it (a member can't flood the room: e.g. a few messages per
+  few seconds, a length cap, refuse control characters) and logs through `log.limited` / `log.event` with names in
+  `shared/events.ts`, never one line per message's text unless that's in the catalogue; never logs the message body
+  to the public dashboard. Render with `textContent` only (never innerHTML): a message is untrusted text.
+- **The feature:** `/` opens a chat input on desktop (not while another input has focus; Escape closes; Enter sends);
+  messages show in a small fading panel in the room, with the sender's plain name; **`@name` in a message is bold for
+  the named player** (match the plain display names in the room; case-insensitive; the mention is bolded only on that
+  player's screen). Phones: read-only is fine (show messages, no input), unless it's cheap to add.
+- Decide and record: whether chat history is sent to a late joiner (a short ring, or nothing), whether spectators can
+  chat, and what happens in a Survival round.
+- **Tests, red first:** the server's relay and rate limit and length cap (`tests/net/`), the mention matcher (a pure
+  function), and that a message with markup renders as text. **A cold Sonnet review** of the server side (rate
+  limiting, logging, identity). **Two browsers in a real room**: one types, the other sees it; an @mention is bold
+  only for the mentioned player.
