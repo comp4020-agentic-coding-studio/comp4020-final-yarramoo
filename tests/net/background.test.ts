@@ -38,6 +38,18 @@ describe("groundLine", () => {
     expect(captured[3]).toBe(20);
   });
 
+  it("ignores a surface ruin's Brick, so the sky shows inside a ruined house and above a well's coping", () => {
+    const BRICK = 22;
+    const w = 40;
+    const g = grid(w, 60, 30);
+    // A house: a far wall 2 wide from row 14 to the floor, a 2-row roof, a brick footing on the ground.
+    for (let y = 14; y < 30; y++) for (const x of [20, 21]) g[y * w + x] = BRICK;
+    for (let x = 6; x < 22; x++) { g[14 * w + x] = WOOD; g[15 * w + x] = WOOD; }
+    for (const x of [6, 7]) for (let y = 14; y < 17; y++) g[y * w + x] = BRICK;
+    const line = groundLine(g, w, 60);
+    for (const x of [6, 10, 15, 20, 21]) expect(line[x]).toBe(30);
+  });
+
   it("closes a generated shaft at its rim", () => {
     const w = 20;
     const g = grid(w, 80, 20);
