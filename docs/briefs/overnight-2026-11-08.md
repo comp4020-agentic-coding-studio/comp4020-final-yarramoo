@@ -58,6 +58,12 @@ for the budget. Candidates (yours to rank, cut or replace): **rabbits** as a pas
 80 and lobby stepping before building); **sandbox rooms** (the same create/share interface as game rooms, public or
 private, with an expiry within 24 h); **a surface lake and hills** (`docs/briefs/biomes-surface.md`); **per-biome cave
 walls** from the generator (D-211 captures the background at generation); **more frost sprites per ice cave**.
+**The user added (8 Nov): more structures, e.g. surface-level old houses or wells.** Treat these as a first-class
+candidate: man-made ruins on the surface (a ruined house of Brick 22 and Wood 6 with a broken roof, a stone well over a
+short shaft to water or a cave), placed by generation like the old mine (D-200: stand on the real ground, never float,
+place nothing rather than block; keep out of the spawn columns and the arena; reachability and traversal tests must
+hold). Wood burns, so a ruin can catch fire: good, if bounded. A well that opens into the caves is a nice second way
+down; a well over a pocket of water is a nice landmark. Show them in screenshots on two seeds at M and L.
 Every sim change keeps every invariant (sleep invisibility, bounded work, unique salts, the enemy budget: a large
 Survival world already generates exactly `MAX_ENEMIES` = 64).
 
