@@ -85,3 +85,29 @@ describe("youDiedText", () => {
     expect(t(200)).toBe("You died");
   });
 });
+
+describe("bossName (the Survival lobby names the boss before the descent, Q4)", () => {
+  it("names the two bosses and falls back for anything else", async () => {
+    const { bossName } = await import("../../client/toasts.ts");
+    expect(bossName(4)).toBe("the Deep Mage");
+    expect(bossName(7)).toBe("the Sand Colossus");
+    expect(bossName(null)).toBe("the boss");
+    expect(bossName(0)).toBe("the boss");
+  });
+  it("every Survival world shows exactly one boss in the entities view at generation, before any step", async () => {
+    const { wasmBytes } = await import("./helpers.ts");
+    const { loadSim, ENT_ENEMY } = await import("../../shared/sim.ts");
+    const { encodeConfig, SURVIVAL } = await import("../../shared/room.ts");
+    const kinds = new Set<number>();
+    for (const size of [0, 1]) {
+      for (let seed = 1; seed <= 6; seed++) {
+        const sim = loadSim(wasmBytes);
+        sim.init(BigInt(seed), encodeConfig({ ...SURVIVAL, size }));
+        const bosses = sim.entities().filter((e) => e.type === ENT_ENEMY && (e.sub === 4 || e.sub === 7));
+        expect(bosses.length, `size ${size} seed ${seed}`).toBe(1);
+        kinds.add(bosses[0].sub);
+      }
+    }
+    expect([...kinds].sort()).toEqual([4, 7]); // both bosses occur over these seeds
+  });
+});

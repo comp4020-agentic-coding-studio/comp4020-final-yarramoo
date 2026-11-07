@@ -64,6 +64,11 @@ export function formatAchievement(id: string): string | null {
 export const ENEMY_NAMES = ["Slime", "Fire imp", "Acid slime", "Worm", "Deep Mage", "Lava wisp", "Frost sprite", "Sand Colossus"];
 const CAUSE_ENEMY_BASE = 40;
 
+/** The lobby's boss line (Q4, 8 Nov): kind 4 or 7 from the entities view; anything else falls back to "the boss". */
+export function bossName(kind: number | null): string {
+  return kind === 4 ? "the Deep Mage" : kind === 7 ? "the Sand Colossus" : "the boss";
+}
+
 /**
  * The player's own death line: "Killed by a Fire imp", "Your own Bomb", "Burned in lava". `cause` is EV_DEATH.b, `killer` EV_DEATH.a
  * (0 when nobody is credited). Plain names only. Never returns "undefined".

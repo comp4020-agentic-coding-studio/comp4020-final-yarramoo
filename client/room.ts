@@ -12,7 +12,7 @@ import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
-import { formatAchievement } from "./toasts.ts";
+import { bossName, formatAchievement } from "./toasts.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
@@ -1092,7 +1092,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     maj.textContent = majSecs >= 0 && secs < 0 ? `Starting in ${majSecs} s without ${slow.join(", ")}` : "";
     maj.hidden = !maj.textContent;
     const about = document.createElement("p");
-    about.textContent = "Co-op, one life: descend together and kill the boss (the Deep Mage or the Sand Colossus, by seed).";
+    about.textContent = `Co-op, one life: descend together and kill ${bossName(l.boss)}.`;
     const ul = document.createElement("ul");
     for (const p of l.list) {
       const li = document.createElement("li");
