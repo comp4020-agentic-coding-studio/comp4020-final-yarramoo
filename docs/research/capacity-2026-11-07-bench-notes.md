@@ -42,3 +42,39 @@ Observations (1 CPU)
   Treat as noise-dominated, indicative of ~0.4-1.7 MB/min written.
 - Out bytes: ~2.5 KB/s per member (Survival, 4 bots) vs ~4.6 KB/s (Deathmatch, 8 bots): outbound per member scales with room size,
   as each member receives every other member's inputs.
+
+## Run 3: --cpus=0.0625 (1/16 core), Scenario A (Survival M)
+Idle (30 s, no rooms): 0.029 core (46% of the quota), 5 throttled periods, cgroup 51 MB, RSS 104 MB.
+Host load 2.7 (quiet). A first attempt (12:47) crashed in the bench: `/api/summary` fetch failed ("other side closed") while
+the server was starved; the script was changed to retry summary fetches (20 s timeout, up to 30 tries) and to dump docker logs
+on error. The second attempt is reported (12:51).
+
+| step | rooms | members | cpuCores | throttled | MB max | tps min | verify ms / rej | out KB/s/member | DB KB/min | notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1 | 4 | 0.062 (at quota) | 3205 (723 s) | 94 | 57.7 | 10272..62603 / 8 | 1.22 | 516 | lag p99 6.2 s, window 51 s+ |
+| 2 | 2 | 8 | 0.062 (at quota) | 4934 (1098 s) | 142 | 45.7 | 11300..94600 / 25 | 0.80 | 72 | lag p99 25.5 s |
+
+Failed at the first step: a single Survival room of 4 on 1/16 core already misses 58 tps (57.7), has event-loop lag p99 6 s, and
+snapshot verifies take 10-60 s with rejections (the bench's step-1 `snapshotsRejected` 8 includes rejections by timeout
+during the lobby->running transition). No bots dropped. Step 2 (the "failing step plus one") collapses further: tps 45.7,
+lag p99 25 s, verifies up to 95 s. The ramp stopped after step 2 per the rule.
+
+## Run 4: --cpus=0.0625, Scenario B (Deathmatch M), INCOMPLETE
+Host load 6.3 at step start (settling), 3.4 at end.
+
+| step | rooms | members | cpuCores | throttled | MB max | tps min | verify ms / rej | out KB/s/member | DB KB/min | notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1 | 8 | 0.062 (at quota) | 2395 (432 s) | 120 | 59.3 | 299..8801 / 2 | 1.70 | 506 | lag p99 2.7 s, window 243 s (extended to wait for verify, which took until the bench's 75 s guard failed to bind; see below) |
+
+Step 1 already failed (verify rejected 2; lag p99 2.7 s; tps 59.3 min is marginally above the 58 bar). Step 2's room creation
+or join then made `/api/summary` unreachable for over 30 retries and the bench exited with "fetch failed"; I did not
+investigate further (spend cap reached). No step-2 numbers exist. Treat Scenario B at 1/16 core as: 1 room of 8 does not
+hold (verify rejections, multi-second lag), 2 rooms did not complete a step.
+
+Known bench caveat: the "extend until all rooms verified, max 75 s" rule uses elapsed time inside the loop but the
+summary fetch retries inflated windows to 243-300 s at tiny quotas, so cpuCores there is still a valid ratio (usage delta / wall).
+
+Observations (1/16 core)
+- 0.0625 core cannot carry even one 4-member Survival room: the quota is pinned (cpuCores = 0.062 = the limit), CFS throttles
+  in 3000-5000 periods, event-loop lag reaches seconds, verifies time out. Idle (0.03 core) alone uses half the quota.
+- Memory is not the limit at this size (94-142 MB), CPU is.

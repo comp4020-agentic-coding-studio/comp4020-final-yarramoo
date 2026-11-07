@@ -238,6 +238,7 @@ const cpuStat = () => {
   }
   return o;
 };
+let summaryRetries = 0;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
 const removeContainer = () => {
@@ -249,9 +250,18 @@ const removeContainer = () => {
 };
 
 async function getSummary(): Promise<{ s: Summary; ms: number }> {
+  // Under a tiny CPU quota the server can be too slow to answer (or drop the keep-alive socket): retry, and count it.
   const t = performance.now();
-  const s = (await (await fetch(`${base}/api/summary`)).json()) as Summary;
-  return { s, ms: performance.now() - t };
+  for (let i = 0; ; i++) {
+    try {
+      const s = (await (await fetch(`${base}/api/summary`, { signal: AbortSignal.timeout(20_000) })).json()) as Summary;
+      return { s, ms: performance.now() - t };
+    } catch (e) {
+      summaryRetries++;
+      if (i >= 30) throw e;
+      await sleep(500);
+    }
+  }
 }
 
 async function createRoom(mode: string, cfg: RoomConfig, name: string, n: number): Promise<number> {
@@ -440,6 +450,7 @@ async function main() {
       memMbMean: r2(mean(memSamples)), memMbMax: r2(Math.max(...memSamples)), memPeakMb: r2(cgNum("memory.peak") / 1048576),
       rssMbSummary: sEnd.process.rssMb,
       lagP99MsMax: Math.max(...lagSamples), lagP99MsLast: lagSamples[lagSamples.length - 1],
+      summaryRetriesTotal: summaryRetries,
       summaryFetchMsMax: r2(Math.max(...getMs)),
       outBytesPerSecPerMember: r2((bytes1 - bytes0) / wall / members),
       dbBytesStart: sStart.process.dbBytes, dbBytesEnd: sEnd.process.dbBytes, walBytesStart: sStart.process.walBytes, walBytesEnd: sEnd.process.walBytes,
@@ -473,6 +484,12 @@ async function main() {
 if (isMainThread) {
   main().catch((e) => {
     console.error(e);
+    try {
+      console.error(sh("docker", "logs", "--tail", "30", NAME));
+      console.error(sh("docker", "inspect", "-f", "{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}", NAME));
+    } catch {
+      /* no container */
+    }
     removeContainer();
     process.exit(1);
   });
