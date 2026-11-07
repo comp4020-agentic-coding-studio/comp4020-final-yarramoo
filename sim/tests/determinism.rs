@@ -167,10 +167,7 @@ fn every_world_gets_its_full_set_of_pickups() {
         let s = sim::sim::Sim::new(seed, 1).unwrap();
         let shallow = s.pickups.iter().filter(|p| p.y < 800).count();
         let deep = s.pickups.len() - shallow;
-        // Spots need a whole 5x10 body of Empty above the floor (quality-W1), which a few deep bands only have in about 16 places
-        // (seed 4 at size M, even with 400000 tries): so the deep band is 25 for most seeds, never under 15.
-        assert_eq!(shallow, 40, "seed {seed} has {shallow} shallow pickups");
-        assert!((15..=25).contains(&deep), "seed {seed} has {deep} deep pickups");
+        assert_eq!((shallow, deep), (40, 25), "seed {seed} has {shallow} shallow and {deep} deep pickups");
     }
 }
 

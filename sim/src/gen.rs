@@ -1978,9 +1978,15 @@ fn pick_spots(g: &Grid, seed: u64, sc: &Scale, arena: Option<&Arena>) -> Vec<Pic
             if yf < y_lo || yf > y_hi || g.mat[((yf + 1) * w + x) as usize] == SAND {
                 continue;
             }
-            // Headroom: the whole avatar body (HITBOX_W wide, HITBOX_H tall) above the floor cell is Empty, so the pickup can be walked into.
+            // Headroom: an avatar standing on this floor can cover the pickup. With its feet on the floor its body fills rows
+            // yf - HITBOX_H + 1 ..= yf (the pickup cell is the bottom row), and the pickup may sit in any of its HITBOX_W columns,
+            // so some 5x10 box offset by -hw..=hw columns must be all Empty.
             let hw = HITBOX_W / 2;
-            if yf < HITBOX_H || x - hw < 0 || x + hw >= w || (x - hw..=x + hw).any(|cx| (1..=HITBOX_H).any(|d| g.mat[((yf - d) * w + cx) as usize] != EMPTY)) {
+            let body_fits = |dx: i32| {
+                let (c0, c1) = (x + dx - hw, x + dx + hw);
+                c0 >= 0 && c1 < w && (c0..=c1).all(|cx| (0..HITBOX_H).all(|d| g.mat[((yf - d) * w + cx) as usize] == EMPTY))
+            };
+            if yf < HITBOX_H || !(-hw..=hw).any(body_fits) {
                 continue;
             }
             if arena.is_some_and(|a| a.contains(x, yf, ARENA_KEEP_OUT)) {
