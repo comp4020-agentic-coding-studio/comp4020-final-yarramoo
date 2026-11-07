@@ -1821,7 +1821,7 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) -> Vec<i32> {
             }
         }
         let base = s0.min(s1);
-        canopy(g, seed, x, base - hgt - 1, 5 + (rng(seed, 0, k, 0, SALT_GEN_CANOPY_R) % 4) as i32, base - CANOPY_CLEAR);
+        canopy(g, seed, x, base - hgt - 1, 7 + (rng(seed, 0, k, 0, SALT_GEN_CANOPY_R) % 4) as i32, base - CANOPY_CLEAR);
         for b in 0..2u32 {
             let side = if rng(seed, 0, k, b, SALT_GEN_TREE_BR) & 1 == 0 { -1 } else { 1 };
             let by = s0.min(s1) - hgt / 2 - (rng(seed, 0, k, b + 2, SALT_GEN_TREE_BR) % 6) as i32 - b as i32 * 3;
@@ -1834,7 +1834,7 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) -> Vec<i32> {
                 }
             }
             let tip = (x + if side < 0 { -len } else { len + 1 }, by - len / 2);
-            canopy(g, seed, tip.0, tip.1, 2 + (rng(seed, 0, k, b + 6, SALT_GEN_CANOPY_R) % 3) as i32, base - CANOPY_CLEAR);
+            canopy(g, seed, tip.0, tip.1, 3 + (rng(seed, 0, k, b + 6, SALT_GEN_CANOPY_R) % 3) as i32, base - CANOPY_CLEAR);
         }
         xs.push(x);
     }
@@ -1844,12 +1844,12 @@ fn place_trees(g: &mut Grid, seed: u64, surf: &[i32], sc: &Scale) -> Vec<i32> {
 /// Rows kept clear of canopy above the ground, so a standing avatar (and `spawn_point`'s clear box) never meets a crown.
 const CANOPY_CLEAR: i32 = 12;
 
-/// A leafy blob (green `STEM` aux 0, one in 25 a blossom `FLOWER`) of horizontal radius `rx`, vertical radius `rx * 3 / 5`
+/// A leafy blob (green `STEM` aux 0, one in 25 a blossom `FLOWER`) of horizontal radius `rx`, vertical radius `rx * 3 / 4`
 /// (at least 2), centred on (cx, cy). The rim is ragged: cells past 65% of the radius drop with a rising chance. Writes
 /// only Empty cells, at row >= 2 and no lower than `lowest` (the clearance above the ground). Bounded by the radius.
 fn canopy(g: &mut Grid, seed: u64, cx: i32, cy: i32, rx: i32, lowest: i32) {
     let w = g.w as i32;
-    let ry = (rx * 3 / 5).max(2);
+    let ry = (rx * 3 / 4).max(2);
     for dy in -ry..=ry {
         for dx in -rx..=rx {
             let (x, y) = (cx + dx, cy + dy);
@@ -1937,7 +1937,7 @@ fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32]) {
         placed += 1;
     }
     // Tufts: sprigs and flowers clustered round patch centres.
-    let tufts = scale_count(w, g.h as i32, 260, 30);
+    let tufts = scale_count(w, g.h as i32, 520, 40);
     let patches = (tufts / 6).max(4) as u32;
     let mut placed = 0;
     for k in 0..(tufts * 8) as u32 {
@@ -2510,7 +2510,8 @@ mod tests {
                 }
             }
         }
-        let top = |x: usize| (0..g.h).find(|&y| g.mat[y * g.w + x] != EMPTY).unwrap();
+        // The terrain surface: leaves and blossoms (world-life canopies, shrubs, tufts) stand on it, they are not it.
+        let top = |x: usize| (0..g.h).find(|&y| !matches!(g.mat[y * g.w + x], EMPTY | STEM | FLOWER)).unwrap();
         // Entrance shafts (up to 5, each about 2 x WORM_R_MAX wide since F1) open columns, so allow a small fraction outside the band.
         let bad = (WALL_COLS + 1..g.w - WALL_COLS).filter(|&x| !(190..=270).contains(&top(x))).count();
         assert!(bad < 120, "{bad} columns off the surface band");

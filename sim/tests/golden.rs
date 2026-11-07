@@ -8,7 +8,7 @@ use sim::snapshot;
 use sim::tuning::*;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/golden-v17.bin");
-const SCRIPTED_HASH: u64 = 17345824864577898739; // seed 1 rolls the Colossus (INT-2), so this run now exercises it
+const SCRIPTED_HASH: u64 = 15709485091751220680; // seed 1 rolls the Colossus (INT-2), so this run now exercises it
 
 /// A seed that rolls the Deep Mage (INT-2: the boss is chosen per seed; seed 1 rolls the Colossus).
 const MAGE_SEED: u64 = 2;
