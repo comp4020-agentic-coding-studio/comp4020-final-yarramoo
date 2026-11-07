@@ -21,3 +21,17 @@ reads $366). Branch `content`, worktree `/tmp/wt-content`, ports 8083 / 5183, da
 2. **W2 (Sonnet, $5 cap): cold review** of W1's sim diff into `docs/research/review-content.md` (read-only).
 3. **W3 (Sonnet, $8 cap): per-biome cave walls** (client-only) if spend after W1 + W2 + fixes is under B0 + $30.
 The lead keeps planning, the full gate, the screenshots (two seeds at M and L, real room on :8083) and the report.
+
+## W1 (Sonnet): surface ruins and wells
+Brief `docs/briefs/content-w1-structures.md`. Commits `b8217d9` (houses and wells, format 19), `bb2e997` (wells, salts,
+enemy-budget tests, report). Worker spend $243.05 -> $248.33 ($5.3). Report `docs/research/content-w1-report.md`.
+Counts over seeds 1..=8, both presets: M 1 house and 1 water well per world; L 3 houses and 2 wells (half cave, half
+water) per world. L Survival still generates exactly 64 enemies.
+
+**Lead review:** the house's walls stopped above both doors, so the lintels and roof formed an arch resting on nothing
+(the worker said so and relaxed the float test to "below the door line"). That breaks D-200, and the fault was my
+brief (two 12-row doors cannot be grounded in a side view). Sent back to the same worker: one door per house on an rng
+side, far wall to the floor (the mine's room rule), float test strict again and shown red against `b8217d9`.
+**Salts:** the worker found 260-267 each declared twice (`SALT_MUD_MOVE`/`SALT_GEN_BIOME`, ...): pre-existing, one
+group is generation-only (tick 0) and the other is runtime, so draws differ in `tick` only at tick 0 where no material
+moves. Not fixed tonight (it would move every pinned world); the new test checks salts from 285 on. Listed for the user.
