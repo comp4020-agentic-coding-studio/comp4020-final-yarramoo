@@ -56,7 +56,7 @@ import { BOMB_RADIUS, DEATH_TICKS, SPELL_QUAKE, SPELL_WALL, SPELLS } from "./spe
 import { lookupHover } from "./hover.ts";
 import { UNKNOWN_NAME, formatDeath, youDiedText } from "./toasts.ts";
 import { Avatar, BOX_H, BOX_W, ENERGY_MAX } from "./avatar.ts";
-import { Lockstep, driveFrame, knockIsFresh, reactToTick } from "./lockstep.ts";
+import { Lockstep, MAX_FRAME_STEPS, MAX_STEP_DT_MS, driveFrame, ffBudgetMs, knockIsFresh, reactToTick } from "./lockstep.ts";
 import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
 import { groundLine } from "./background.ts";
@@ -66,8 +66,6 @@ import { MATERIAL_CLASS } from "../shared/names.ts";
 
 let STEP_MS = 1000 / 60;
 let paused = false;
-const MAX_FRAME_STEPS = 4;
-const FF_BUDGET_MS = 12;
 /** While replaying, draw the world at most this often so the visitor sees it evolve without the draw eating replay time. */
 const FF_DRAW_INTERVAL_MS = 250;
 let lastFfDraw = -Infinity;
@@ -524,7 +522,7 @@ function combatSignal(now: number, quiet: boolean) {
 }
 let lastSizzle = -1e9;
 /** Place, step and send the avatar; return the overlay rectangles and steer the camera. Game world only. */
-function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
+function gameFrame(sim: Sim, dt: number, now: number, stepDt: number = dt): Rect[] {
   const ents = sim.entities();
   const w = sim.width();
   const h = sim.height();
@@ -566,13 +564,17 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   if (tabHidden) avAcc = 0;
   if (avatar && avatarReady && mine && !dead && !tabHidden) {
     const grid = { mat: sim.matView(), w, h };
-    avAcc += dt;
+    avAcc += stepDt;
     const n = Math.min(Math.floor(avAcc / STEP_MS), MAX_FRAME_STEPS);
     avAcc -= Math.floor(avAcc / STEP_MS) * STEP_MS;
     for (let i = 0; i < n; i++) {
       avatar.step(keys, grid);
       // Pos every 2 ticks, quantised to 1/16 cell, with the current life; a keepalive while standing still.
-      if (++avTicks % POS_SEND_EVERY_TICKS === 0) {
+      // A slow frame steps many ticks at once: only its last due Pos goes out (the newest position is all the sim
+      // needs), so a page at a few frames/s never bursts more than one Pos per frame into the server's rate window.
+      const due = ++avTicks % POS_SEND_EVERY_TICKS === 0;
+      if (due && i + POS_SEND_EVERY_TICKS < n) continue;
+      if (due) {
         const q = avatar.quantised();
         const sig = `${q.x},${q.y},${q.facing}`;
         if (sig !== lastSentPos || ++sinceSentPos >= POS_KEEPALIVE_TICKS / 2) {
@@ -731,10 +733,12 @@ function gameFrame(sim: Sim, dt: number, now: number): Rect[] {
   }
 
   // F6b: the lobby (from the entities view) and the late-arrival offer. Both render-only.
-  let lobby: { running: boolean; left: number; majorityLeft: number; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null = null;
+  let lobby: { running: boolean; left: number; majorityLeft: number; boss: number | null; list: { id: number; name: string; ready: boolean; me: boolean }[] } | null = null;
   if (round) {
     const running = (round.health & 1) === 1;
-    lobby = { running, left: round.x, majorityLeft: round.y, list: running ? [] : ents.filter((e) => e.type === ENT_READY).map((e) => ({ id: e.id, name: nameOf(e.id) ?? "Player", ready: e.active, me: e.id === myId })) };
+    // The boss is generated with the world, so its kind is in the view from the first tick: name it before the descent.
+    const boss = ents.find((e) => e.type === ENT_ENEMY && (e.sub === 4 || e.sub === 7))?.sub ?? null;
+    lobby = { running, left: round.x, majorityLeft: round.y, boss, list: running ? [] : ents.filter((e) => e.type === ENT_READY).map((e) => ({ id: e.id, name: nameOf(e.id) ?? "Player", ready: e.active, me: e.id === myId })) };
     if (!lateChecked && mine && net === "live" && !spectate) {
       lateChecked = true;
       lateOffer = running && round.a === 0 && mine.health === 0;
@@ -1075,11 +1079,14 @@ let statStart = 0;
 
 function frame(now: number) {
   const dt = Math.min(now - last, 250);
+  // Sim and avatar steps owe real time up to MAX_STEP_DT_MS, so a page whose frames come 300-500 ms apart (a throttled
+  // phone) still steps 60 ticks/s (N1, 8 Nov). Visual smoothing keeps the 250 ms clamp.
+  const stepDt = Math.min(now - last, MAX_STEP_DT_MS);
   last = now;
   if (paused) return;
   flushStroke(false);
   if (localSim) {
-    acc += dt;
+    acc += stepDt;
     const n = Math.min(Math.floor(acc / STEP_MS), MAX_FRAME_STEPS);
     acc -= Math.floor(acc / STEP_MS) * STEP_MS;
     for (let i = 0; i < n; i++) {
@@ -1096,7 +1103,7 @@ function frame(now: number) {
       statSteps++;
     }
     ranChunks = localSim.ranChunks();
-    const rects = localSim.width() > 512 ? gameFrame(localSim, dt, now) : [];
+    const rects = localSim.width() > 512 ? gameFrame(localSim, dt, now, stepDt) : [];
     if (renderer) {
       renderer.draw(localSim.matView(), localSim.auxView(), now / 1000, shakenCam(now), rects);
     } else if (sendFrames) {
@@ -1109,11 +1116,11 @@ function frame(now: number) {
     // (target = the tick received so far) and the overlay shows. The avatar is paused while catching up because
     // gameFrame (stepping, Pos) only runs when net is "live".
     const wasCatching = net === "catching-up";
-    const base = Math.min(Math.floor((acc += dt) / STEP_MS), MAX_FRAME_STEPS);
+    const base = Math.min(Math.floor((acc += stepDt) / STEP_MS), MAX_FRAME_STEPS);
     if (wasCatching) acc = 0;
     else acc -= Math.floor(acc / STEP_MS) * STEP_MS;
     const t0 = performance.now();
-    const r = driveFrame(ls, wasCatching, base, FF_BUDGET_MS);
+    const r = driveFrame(ls, wasCatching, base, ffBudgetMs(stepDt));
     if (r.entered) {
       acc = 0;
       setNet("catching-up");
@@ -1134,7 +1141,7 @@ function frame(now: number) {
       ranChunks = ls.sim.ranChunks();
       // From the room's config, not the world's width: a size-S game room is 512 wide, the same as the sandbox,
       // and the old `width() > 512` test drew every S room as a sandbox (no players, HUD or lobby).
-      const rects = net === "live" && netAvatars ? gameFrame(ls.sim, dt, now) : [];
+      const rects = net === "live" && netAvatars ? gameFrame(ls.sim, dt, now, stepDt) : [];
       if (renderer) {
         renderer.draw(ls.sim.matView(), ls.sim.auxView(), now / 1000, shakenCam(now), rects);
       } else if (sendFrames) {

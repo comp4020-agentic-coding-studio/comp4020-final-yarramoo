@@ -8,7 +8,7 @@
 use crate::grid::Grid;
 use crate::materials::*;
 use crate::rng::*;
-use crate::tuning::{ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_WISP, ENEMY_WISPS_L, ENEMY_WISPS_MIN, ENEMY_FROST, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
+use crate::tuning::{HITBOX_H, HITBOX_W, ARENA_KEEP_OUT, ARENA_RX_L, ARENA_RX_MIN, ARENA_RY_L, ARENA_RY_MIN, SUPPLY_ALCOVE_H, SUPPLY_ALCOVE_W, SUPPLY_PILE, ENEMY_WORM, ENEMY_WORMS_L, ENEMY_WORMS_MIN, WORM_BURIED_CELLS, ENEMY_ACID_SLIME, ENEMY_ACID_SLIMES_L, ENEMY_ACID_SLIMES_MIN, ENEMY_WISP, ENEMY_WISPS_L, ENEMY_WISPS_MIN, ENEMY_FROST, ENEMY_FROSTS_L, ENEMY_FROSTS_MIN, ENEMY_IMP, ENEMY_IMPS_L, ENEMY_IMPS_MIN, ENEMY_SLIME, ENEMY_SLIMES_L, ENEMY_SLIMES_MIN, ENEMY_SPAWN_CLEAR, ENEMY_SPAWN_ROWS};
 
 /// Anchored enemies (wisps, frost sprites) spawn with their biome's material within this many cells (Chebyshev).
 const ANCHOR_NEAR: i32 = 24;
@@ -1978,8 +1978,15 @@ fn pick_spots(g: &Grid, seed: u64, sc: &Scale, arena: Option<&Arena>) -> Vec<Pic
             if yf < y_lo || yf > y_hi || g.mat[((yf + 1) * w + x) as usize] == SAND {
                 continue;
             }
-            // Headroom: 8 Empty cells straight up, so an avatar fits.
-            if (1..=8).any(|d| g.mat[((yf - d) * w + x) as usize] != EMPTY) {
+            // Headroom: an avatar standing on this floor can cover the pickup. With its feet on the floor its body fills rows
+            // yf - HITBOX_H + 1 ..= yf (the pickup cell is the bottom row), and the pickup may sit in any of its HITBOX_W columns,
+            // so some 5x10 box offset by -hw..=hw columns must be all Empty.
+            let hw = HITBOX_W / 2;
+            let body_fits = |dx: i32| {
+                let (c0, c1) = (x + dx - hw, x + dx + hw);
+                c0 >= 0 && c1 < w && (c0..=c1).all(|cx| (0..HITBOX_H).all(|d| g.mat[((yf - d) * w + cx) as usize] == EMPTY))
+            };
+            if yf < HITBOX_H || !(-hw..=hw).any(body_fits) {
                 continue;
             }
             if arena.is_some_and(|a| a.contains(x, yf, ARENA_KEEP_OUT)) {
