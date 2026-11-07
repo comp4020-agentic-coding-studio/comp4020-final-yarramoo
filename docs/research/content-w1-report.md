@@ -80,3 +80,20 @@ Design points found while testing:
 ## FUTURE.md ideas (lead decides)
 - Give houses interiors (a table, a chest pickup, a ladder to the roof gap) so they are worth entering.
 - A well-water bucket gameplay hook (draw Water into a bag).
+
+## Commit 3: Houses: one door, the far wall grounds the roof (D-200)
+Lead review: two 12-row doors cannot be grounded in a side view. Now one door on an rng side (draw index 4 of
+SALT_GEN_HOUSE_RUIN, no new salt; a house within 60 columns of a world edge faces the centre). The far wall (both
+columns) stands roof to floor, so roof, lintel and chimney are 4-connected to the ground. The roof gap takes only its top
+row, so the lower roof row still joins the door-side lintel to the far wall. The broken outer column is on the door side.
+`Structure` gained `door` (-1/+1, 0 for wells).
+- `houses_stand_on_the_ground_and_never_float` is strict (flood region starts at `top - 8`, chimney included, no door-line
+  exception). Red against commit bb2e997's code: "size 0 seed 1 false: house at 44 has a floating cell at 77,49".
+- `houses_can_be_walked_through_and_entered`: one door of 12 Empty rows, far wall Brick to the floor, box flood reaches
+  inside and both outer sides. Green.
+- Side effects found: trunks must be 21 columns from a house (a canopy branch walled a door); shrubs and tufts beside the
+  door made a 3-row obstacle under the lintel, so `clear_door_yards` removes plant cells more than 2 rows up within 8
+  columns outside the door (a wider plant-exclusion zone starved size S of the greenery test's 10 plant columns).
+- Pins moved: golden-v19.bin, `SCRIPTED_HASH = 10479313279286630864`, perf-trace, boss_gen non-survival hashes
+  `[10839771303269676431, 10868778375382045356, 2810701790968458161]`. Only golden-v19.bin is in the index.
+- Counts now: M houses 16/16 worlds, wells 16/16 (2 cave, 14 water); L houses 48, wells 16/16 (8 cave, 24 water).

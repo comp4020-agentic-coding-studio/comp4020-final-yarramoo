@@ -57,7 +57,7 @@ fn structures_exist_at_medium_and_large() {
 /// Cells of a structure's box that are Brick or Wood.
 fn built(g: &Grid, s: &Structure) -> Vec<(i32, i32)> {
     let mut v = Vec::new();
-    for y in s.top - 1..s.floor {
+    for y in s.top - 8..s.floor {
         for x in s.x0..=s.x1 {
             if matches!(at(g, x, y), BRICK | WOOD) {
                 v.push((x, y));
@@ -98,10 +98,9 @@ fn houses_stand_on_the_ground_and_never_float() {
                     }
                 }
             }
-            // What is not grounded is the lintel arch (walls above the doors, the roof, the chimney): a passage 12 tall
-            // cannot be propped from the side, so those cells must all sit above the door line.
-            if cells.iter().any(|c| !seen.contains(c) && c.1 > s.floor - 13) {
-                bad.push(format!("size {size} seed {seed} {sv}: house at {} floats a cell below the door line", s.x0));
+            // Strict (D-200): every Brick/Wood cell of the house, chimney included, is grounded; no door-line exception.
+            if let Some(c) = cells.iter().find(|c| !seen.contains(c)) {
+                bad.push(format!("size {size} seed {seed} {sv}: house at {} has a floating cell at {},{}", s.x0, c.0, c.1));
             }
         }
     }
@@ -134,9 +133,17 @@ fn structures_keep_out_of_the_spawn_columns_and_the_arena() {
 fn houses_can_be_walked_through_and_entered() {
     for (size, seed, sv, g, w) in all() {
         for s in houses(&w) {
-            for x in [s.x0, s.x0 + 1, s.x1 - 1, s.x1] {
+            // One door, on one side: 12 rows of Empty there; the far wall stands solid to the floor.
+            let door_left = at(&g, s.x0, s.floor - 1) == EMPTY;
+            let (dcols, wcols) = if door_left { ([s.x0, s.x0 + 1], [s.x1 - 1, s.x1]) } else { ([s.x1 - 1, s.x1], [s.x0, s.x0 + 1]) };
+            for x in dcols {
                 for y in s.floor - 12..s.floor {
                     assert_eq!(at(&g, x, y), EMPTY, "size {size} seed {seed} {sv}: door at {x},{y} is shut");
+                }
+            }
+            for x in wcols {
+                for y in s.top + 3..s.floor {
+                    assert_eq!(at(&g, x, y), BRICK, "size {size} seed {seed} {sv}: far wall at {x},{y} is not solid");
                 }
             }
             // A 5x10 body fits standing inside, and the box flood reaches both outer sides and the inside.
@@ -146,10 +153,6 @@ fn houses_can_be_walked_through_and_entered() {
             let _ = sky;
             let seen = flood(&g);
             let stand = |x: i32| (s.floor as usize - 15..=s.floor as usize - 10).any(|y| seen[y * g.w + x as usize]);
-            if !inside.clone().any(stand) {
-                let dump: String = (s.floor - 14..s.floor + 2).map(|y| (s.x0 - 8..=s.x1 + 8).map(|x| if seen[y as usize * g.w + x as usize] { '.' } else { char::from(b'0' + at(&g, x, y) % 10) }).collect::<String>() + "\n").collect();
-                std::fs::write("/tmp/cw1-dbg.txt", dump).unwrap();
-            }
             assert!(inside.clone().any(stand), "size {size} seed {seed} {sv}: no reachable standing spot inside house at {}", s.x0);
             if !((s.x1 + 1..s.x1 + 6).any(stand)) {
                 let dump: String = (s.floor - 20..s.floor + 3).map(|y| (s.x0 - 8..=s.x1 + 12).map(|x| if seen[y as usize * g.w + x as usize] { '.' } else { char::from(b'0' + at(&g, x, y) % 10) }).collect::<String>() + "\n").collect();

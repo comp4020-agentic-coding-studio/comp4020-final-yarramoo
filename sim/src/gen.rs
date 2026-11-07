@@ -379,6 +379,7 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     let trunks = place_trees(g, seed, &surf, &sc);
     let structures = place_structures(g, seed, &surf, &trunks, &sc, arena.as_ref());
     place_greenery(g, seed, &surf, &trunks, &structures);
+    clear_door_yards(g, &structures);
     place_oil(g, seed, &mut pool_scratch, &sc);
     place_acid(g, seed, &mut pool_scratch, &sc, &path);
     place_gas_pockets(g, seed, &sc, &path);
@@ -1979,6 +1980,8 @@ pub struct Structure {
     pub top: i32,
     pub floor: i32,
     pub bottom: i32,
+    /// A house's door side: -1 left, +1 right; 0 for a well. Greenery keeps 12 columns clear on that side.
+    pub door: i32,
 }
 
 const STRUCT_GAP: i32 = 60;
@@ -1993,7 +1996,7 @@ fn struct_site(g: &Grid, surf: &[i32], x0: i32, x1: i32, rows_up: i32, trunks: &
     if x0 < 43 || x1 >= w - 43 || !(x1 < w / 2 - c || x0 > w / 2 + c) {
         return None;
     }
-    if trunks.iter().any(|&t| t >= x0 - 15 && t <= x1 + 14) || placed.iter().any(|s| x0 < s.x1 + STRUCT_GAP && x1 > s.x0 - STRUCT_GAP) {
+    if trunks.iter().any(|&t| t >= x0 - 22 && t <= x1 + 21) || placed.iter().any(|s| x0 < s.x1 + STRUCT_GAP && x1 > s.x0 - STRUCT_GAP) {
         return None;
     }
     let (lo, hi) = (x0 - 3..=x1 + 3).fold((i32::MAX, i32::MIN), |(l, h), x| (l.min(surf[x as usize]), h.max(surf[x as usize])));
@@ -2046,6 +2049,22 @@ fn place_structures(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32], sc: &
     out
 }
 
+/// Shrubs and tufts beside a house's door can wall it off for a body (a 3-row shrub under a 12-row lintel): clear the
+/// plant cells more than 2 rows up (10 + 2 still fits under the 12-row lintel) within 8 columns outside the door side.
+fn clear_door_yards(g: &mut Grid, structures: &[Structure]) {
+    for s in structures.iter().filter(|s| s.kind == STRUCT_HOUSE) {
+        let (a, b) = if s.door > 0 { (s.x1 + 1, s.x1 + 8) } else { (s.x0 - 8, s.x0 - 1) };
+        for x in a..=b {
+            for y in s.floor - 8..s.floor - 2 {
+                let i = y as usize * g.w + x as usize;
+                if matches!(g.mat[i], STEM | FLOWER) {
+                    g.mat[i] = EMPTY;
+                }
+            }
+        }
+    }
+}
+
 /// A footprint's left column `wd` wide on a random side of the spawn columns (so the tries are not wasted inside them).
 /// `r` is one rng draw: its low bit picks the side, the rest the position. The brief's `ENEMY_SPAWN_CLEAR` (160) is
 /// narrower than `SPAWN_CLEAR_COLS` (168), so the spawn columns are the binding limit and are used alone.
@@ -2062,10 +2081,9 @@ fn set_cell(g: &mut Grid, x: i32, y: i32, m: u8) {
     g.mat[(y * w + x) as usize] = m;
 }
 
-/// One ruined house: Brick walls 2 thick with a 12-row door at floor level on both sides, a 2-row Wood roof with a gap,
-/// one wall's outer column broken down, sometimes a chimney and fallen planks. The wall stands only above each door, so
-/// the walls and roof form one arch that rests on nothing (a walkable floor-level passage cannot be held up in a side
-/// view); it is a bounded Wood-and-Brick bridge of under 120 cells that falls when disturbed.
+/// One ruined house: Brick walls 2 thick, a 12-row door at floor level on one side, a 2-row Wood roof with a gap,
+/// the door wall's outer column broken down, sometimes a chimney and fallen planks. The roof's gap takes its top row only
+/// (the lower row keeps the door-side lintel 4-connected to the far wall, which stands to the floor).
 fn place_house(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], placed: &[Structure], arena: Option<&Arena>) -> Option<Structure> {
     let w = g.w as i32;
     let wd = 26 + (rng(seed, 0, k, 0, SALT_GEN_HOUSE_DIM) % 15) as i32;
@@ -2079,8 +2097,18 @@ fn place_house(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], pl
             set_cell(g, x, y, BRICK);
         }
     }
-    for x in [x0, x0 + 1, x1 - 1, x1] {
+    // One door, on an rng side: that wall stands only above the door; the far wall stands from the roof to the floor, so
+    // the roof, lintel and chimney are 4-connected to the ground through it (D-200).
+    // A door facing a world edge fewer than 60 columns off would open on a strip too narrow for a body: face the centre then.
+    let door_left = if x0 < 60 { false } else if x1 > w - 60 { true } else { rng(seed, 0, k, 4, SALT_GEN_HOUSE_RUIN) & 1 == 0 };
+    let (dcols, wcols) = if door_left { ([x0, x0 + 1], [x1 - 1, x1]) } else { ([x1 - 1, x1], [x0, x0 + 1]) };
+    for x in dcols {
         for y in top..=base - 13 {
+            set_cell(g, x, y, BRICK);
+        }
+    }
+    for x in wcols {
+        for y in top..base {
             set_cell(g, x, y, BRICK);
         }
     }
@@ -2092,10 +2120,9 @@ fn place_house(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], pl
     let gx = x0 + 7 + (rng(seed, 0, k, 1, SALT_GEN_HOUSE_RUIN) % (wd - 13 - gw) as u32) as i32;
     for x in gx..gx + gw {
         set_cell(g, x, top, EMPTY);
-        set_cell(g, x, top + 1, EMPTY);
     }
     // One wall's outer column is broken down from the top.
-    let outer = if rng(seed, 0, k, 2, SALT_GEN_HOUSE_RUIN) & 1 == 0 { x0 } else { x1 };
+    let outer = if door_left { x0 } else { x1 };
     for y in top..top + 3 + (rng(seed, 0, k, 3, SALT_GEN_HOUSE_RUIN) % 4) as i32 {
         set_cell(g, outer, y, EMPTY);
     }
@@ -2117,7 +2144,7 @@ fn place_house(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], pl
             set_cell(g, x, base - 1, WOOD);
         }
     }
-    Some(Structure { kind: STRUCT_HOUSE, x0, x1, top, floor: base, bottom: base })
+    Some(Structure { kind: STRUCT_HOUSE, x0, x1, top, floor: base, bottom: base, door: if door_left { -1 } else { 1 } })
 }
 
 /// One well: a 7-wide shaft, a 2-thick Brick coping 3-4 rows high, Wood posts and a crossbeam with a bucket. The shaft
@@ -2189,7 +2216,7 @@ fn place_well(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], pla
         set_cell(g, x, beam, WOOD);
     }
     set_cell(g, xi, beam + 1, WOOD);
-    Some(Structure { kind, x0, x1, top: beam, floor: base, bottom })
+    Some(Structure { kind, x0, x1, top: beam, floor: base, bottom, door: 0 })
 }
 
 /// Floor positions for pickups: about 40 in the shallow band, 25 in the deep, at least 40 apart.
