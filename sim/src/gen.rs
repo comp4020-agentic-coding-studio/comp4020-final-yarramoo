@@ -335,6 +335,8 @@ pub struct World {
     pub spots: Vec<PickupSpot>,
     pub path: Vec<(i32, i32)>,
     pub arena: Option<Arena>,
+    /// Surface ruins and wells (content-W1). Generation output for tests only: never sim state.
+    pub structures: Vec<Structure>,
 }
 
 /// Generate a game world into an all-Empty grid.
@@ -375,7 +377,8 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     place_gunpowder(g, seed, &sc);
     place_water(g, seed, &mut pool_scratch, &sc);
     let trunks = place_trees(g, seed, &surf, &sc);
-    place_greenery(g, seed, &surf, &trunks);
+    let structures = place_structures(g, seed, &surf, &trunks, &sc, arena.as_ref());
+    place_greenery(g, seed, &surf, &trunks, &structures);
     place_oil(g, seed, &mut pool_scratch, &sc);
     place_acid(g, seed, &mut pool_scratch, &sc, &path);
     place_gas_pockets(g, seed, &sc, &path);
@@ -393,7 +396,7 @@ pub fn generate_world(g: &mut Grid, seed: u64, with_arena: bool) -> World {
     if let Some(a) = &arena {
         supply_pile(a, &mut spots);
     }
-    World { sites, spots, path, arena }
+    World { sites, spots, path, arena, structures }
 }
 
 /// The arena: centred on a worm-path point in the deep band between `deep_top` and `repair_depth - 40`, clear of the
@@ -1874,17 +1877,17 @@ fn canopy(g: &mut Grid, seed: u64, cx: i32, cy: i32, rx: i32, lowest: i32) {
 
 /// Columns around the world's centre kept free of ground plants: `spawn_point` scans 16 columns 7 apart from the
 /// centre plus up to `SPAWN_JITTER`, and a plant over that column would put the spawn on top of it.
-pub(crate) const SPAWN_CLEAR_COLS: i32 = crate::tuning::SPAWN_JITTER as i32 + 7 * 16 + 8;
+pub const SPAWN_CLEAR_COLS: i32 = crate::tuning::SPAWN_JITTER as i32 + 7 * 16 + 8;
 
 /// Can a plant of `wd` columns start at `x0`? Flat ground (surface heights within 1), solid Dirt under every column
 /// (not an entrance shaft), open air above, no trunk within 6 columns, and clear of the spawn columns.
-fn plant_site(g: &Grid, surf: &[i32], x0: i32, wd: i32, trunks: &[i32]) -> bool {
+fn plant_site(g: &Grid, surf: &[i32], x0: i32, wd: i32, trunks: &[i32], structures: &[Structure]) -> bool {
     let w = g.w as i32;
     let x1 = x0 + wd - 1;
     if x0 < 40 || x1 >= w - 40 || (x0 - w / 2).abs() <= SPAWN_CLEAR_COLS || (x1 - w / 2).abs() <= SPAWN_CLEAR_COLS {
         return false;
     }
-    if trunks.iter().any(|&t| t >= x0 - 6 - 1 && t <= x1 + 6) {
+    if trunks.iter().any(|&t| t >= x0 - 6 - 1 && t <= x1 + 6) || structures.iter().any(|t| x0 <= t.x1 + 2 && x1 >= t.x0 - 2) {
         return false;
     }
     let (lo, hi) = (x0..=x1).fold((i32::MAX, i32::MIN), |(l, h), x| (l.min(surf[x as usize]), h.max(surf[x as usize])));
@@ -1908,7 +1911,7 @@ fn put_plant(g: &mut Grid, surf: &[i32], x: i32, up: i32, m: u8) {
 
 /// Shrubs and wildflower patches on the flat Dirt surface, from existing cells only: `STEM` aux 0 (a static green
 /// leaf) and `FLOWER` aux 0. Fixed tries and radii; no plant stands in the spawn columns.
-fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32]) {
+fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32], structures: &[Structure]) {
     let w = g.w as i32;
     let span = (w - 88).max(40) as u32;
     // Shrubs: a rounded mound 3-7 wide and 2-4 tall, 0-3 blossoms on top.
@@ -1921,7 +1924,7 @@ fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32]) {
         let wd = 3 + (rng(seed, 0, k, 0, SALT_GEN_SHRUB_DIM) % 5) as i32;
         let th = 2 + (rng(seed, 0, k, 1, SALT_GEN_SHRUB_DIM) % 3) as i32;
         let x0 = 40 + (rng(seed, 0, k, 0, SALT_GEN_SHRUB_X) % span) as i32;
-        if !plant_site(g, surf, x0, wd, trunks) {
+        if !plant_site(g, surf, x0, wd, trunks, structures) {
             continue;
         }
         for i in 0..wd {
@@ -1946,7 +1949,7 @@ fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32]) {
         }
         let patch = rng(seed, 0, k % patches, 0, SALT_GEN_TUFT_PATCH) % span;
         let x = 40 + (patch as i32 + (rng(seed, 0, k, 0, SALT_GEN_TUFT_X) % 41) as i32 - 20).clamp(0, span as i32 - 1);
-        if !plant_site(g, surf, x, 1, trunks) {
+        if !plant_site(g, surf, x, 1, trunks, structures) {
             continue;
         }
         let stem = 1 + (rng(seed, 0, k, 0, SALT_GEN_TUFT_DIM) % 2) as i32;
@@ -1958,6 +1961,235 @@ fn place_greenery(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32]) {
         }
         placed += 1;
     }
+}
+
+/// Structure kinds in `Structure::kind`.
+pub const STRUCT_HOUSE: u8 = 0;
+pub const STRUCT_WELL_CAVE: u8 = 1;
+pub const STRUCT_WELL_WATER: u8 = 2;
+
+/// A surface structure the generator placed (content-W1), for tests. `x0..=x1` is the whole footprint (a well's coping
+/// included), `top` the highest row it uses, `floor` the first solid row it stands on (a house's floor, a well's ground),
+/// `bottom` a well's opening row (cave) or last row of its shaft (water); a house leaves it equal to `floor`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Structure {
+    pub kind: u8,
+    pub x0: i32,
+    pub x1: i32,
+    pub top: i32,
+    pub floor: i32,
+    pub bottom: i32,
+}
+
+const STRUCT_GAP: i32 = 60;
+
+/// Can a structure span `x0..=x1` with `rows_up` rows of clear air above the ground? Returns the ground row `base` (the
+/// highest ground in the span and 3 columns either side). Outside the spawn columns, 40 from the edges, no trunk within 6
+/// columns, ground within 4 rows of level, solid Dirt 3 deep under every column, the box above Empty, 60 from other
+/// structures and `ARENA_KEEP_OUT` from the arena.
+fn struct_site(g: &Grid, surf: &[i32], x0: i32, x1: i32, rows_up: i32, trunks: &[i32], placed: &[Structure], arena: Option<&Arena>) -> Option<i32> {
+    let w = g.w as i32;
+    let c = SPAWN_CLEAR_COLS;
+    if x0 < 43 || x1 >= w - 43 || !(x1 < w / 2 - c || x0 > w / 2 + c) {
+        return None;
+    }
+    if trunks.iter().any(|&t| t >= x0 - 15 && t <= x1 + 14) || placed.iter().any(|s| x0 < s.x1 + STRUCT_GAP && x1 > s.x0 - STRUCT_GAP) {
+        return None;
+    }
+    let (lo, hi) = (x0 - 3..=x1 + 3).fold((i32::MAX, i32::MIN), |(l, h), x| (l.min(surf[x as usize]), h.max(surf[x as usize])));
+    if hi - lo > 4 {
+        return None;
+    }
+    let base = lo;
+    if base - rows_up < 2 {
+        return None;
+    }
+    for x in x0..=x1 {
+        let s = surf[x as usize];
+        if (0..3).any(|d| g.mat[((s + d) * w + x) as usize] != DIRT) {
+            return None;
+        }
+    }
+    for x in x0 - 2..=x1 + 2 {
+        if (base - rows_up..base).any(|y| g.mat[(y * w + x) as usize] != EMPTY) {
+            return None;
+        }
+    }
+    if arena.is_some_and(|a| [x0, (x0 + x1) / 2, x1].iter().any(|&x| a.contains(x, base, ARENA_KEEP_OUT))) {
+        return None;
+    }
+    Some(base)
+}
+
+/// Ruined houses and wells on the real ground, before the greenery (so shrubs avoid them). Bounded tries, integer only.
+fn place_structures(g: &mut Grid, seed: u64, surf: &[i32], trunks: &[i32], sc: &Scale, arena: Option<&Arena>) -> Vec<Structure> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let mut out: Vec<Structure> = Vec::new();
+    let houses = scale_count(w, h, 3, 1);
+    let mut k = 0u32;
+    while k < (houses * 40 + 200) as u32 && out.len() < houses as usize {
+        if let Some(s) = place_house(g, seed, k, surf, trunks, &out, arena) {
+            out.push(s);
+        }
+        k += 1;
+    }
+    let wells = scale_count(w, h, 2, 1);
+    let mut placed = 0;
+    let mut k = 0u32;
+    while k < (wells * 40 + 200) as u32 && placed < wells {
+        if let Some(s) = place_well(g, seed, k, surf, trunks, &out, sc, arena) {
+            out.push(s);
+            placed += 1;
+        }
+        k += 1;
+    }
+    out
+}
+
+/// A footprint's left column `wd` wide on a random side of the spawn columns (so the tries are not wasted inside them).
+/// `r` is one rng draw: its low bit picks the side, the rest the position. The brief's `ENEMY_SPAWN_CLEAR` (160) is
+/// narrower than `SPAWN_CLEAR_COLS` (168), so the spawn columns are the binding limit and are used alone.
+fn side_x(w: i32, wd: i32, r: u32) -> i32 {
+    let c = SPAWN_CLEAR_COLS;
+    let (lo_l, hi_l) = (43, w / 2 - c - wd - 1);
+    let (lo_r, hi_r) = (w / 2 + c + 1, w - 43 - wd);
+    let (lo, hi) = if r & 1 == 0 && hi_l >= lo_l || hi_r < lo_r { (lo_l, hi_l) } else { (lo_r, hi_r) };
+    lo + ((r >> 1) % (hi - lo + 1).max(1) as u32) as i32
+}
+
+fn set_cell(g: &mut Grid, x: i32, y: i32, m: u8) {
+    let w = g.w as i32;
+    g.mat[(y * w + x) as usize] = m;
+}
+
+/// One ruined house: Brick walls 2 thick with a 12-row door at floor level on both sides, a 2-row Wood roof with a gap,
+/// one wall's outer column broken down, sometimes a chimney and fallen planks. The wall stands only above each door, so
+/// the walls and roof form one arch that rests on nothing (a walkable floor-level passage cannot be held up in a side
+/// view); it is a bounded Wood-and-Brick bridge of under 120 cells that falls when disturbed.
+fn place_house(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], placed: &[Structure], arena: Option<&Arena>) -> Option<Structure> {
+    let w = g.w as i32;
+    let wd = 26 + (rng(seed, 0, k, 0, SALT_GEN_HOUSE_DIM) % 15) as i32;
+    let hh = 14 + (rng(seed, 0, k, 1, SALT_GEN_HOUSE_DIM) % 4) as i32;
+    let x0 = side_x(w, wd, rng(seed, 0, k, 0, SALT_GEN_HOUSE_X));
+    let x1 = x0 + wd - 1;
+    let base = struct_site(g, surf, x0, x1, hh + 2 + 6, trunks, placed, arena)?;
+    let top = base - hh - 2;
+    for x in x0..=x1 {
+        for y in base..surf[x as usize] {
+            set_cell(g, x, y, BRICK);
+        }
+    }
+    for x in [x0, x0 + 1, x1 - 1, x1] {
+        for y in top..=base - 13 {
+            set_cell(g, x, y, BRICK);
+        }
+    }
+    for x in x0..=x1 {
+        set_cell(g, x, top, WOOD);
+        set_cell(g, x, top + 1, WOOD);
+    }
+    let gw = 4 + (rng(seed, 0, k, 0, SALT_GEN_HOUSE_RUIN) % 6) as i32;
+    let gx = x0 + 7 + (rng(seed, 0, k, 1, SALT_GEN_HOUSE_RUIN) % (wd - 13 - gw) as u32) as i32;
+    for x in gx..gx + gw {
+        set_cell(g, x, top, EMPTY);
+        set_cell(g, x, top + 1, EMPTY);
+    }
+    // One wall's outer column is broken down from the top.
+    let outer = if rng(seed, 0, k, 2, SALT_GEN_HOUSE_RUIN) & 1 == 0 { x0 } else { x1 };
+    for y in top..top + 3 + (rng(seed, 0, k, 3, SALT_GEN_HOUSE_RUIN) % 4) as i32 {
+        set_cell(g, outer, y, EMPTY);
+    }
+    // A chimney on the roof by one wall.
+    if rng(seed, 0, k, 0, SALT_GEN_HOUSE_PROP) % 3 != 0 {
+        let cx = if rng(seed, 0, k, 1, SALT_GEN_HOUSE_PROP) & 1 == 0 { x0 + 2 } else { x1 - 4 };
+        let ch = 4 + (rng(seed, 0, k, 2, SALT_GEN_HOUSE_PROP) % 3) as i32;
+        for x in cx..cx + 3 {
+            for y in top - ch..top {
+                set_cell(g, x, y, BRICK);
+            }
+        }
+    }
+    // One or two fallen planks on the floor.
+    for p in 0..1 + rng(seed, 0, k, 3, SALT_GEN_HOUSE_PROP) % 2 {
+        let len = 2 + (rng(seed, 0, k, 4 + p, SALT_GEN_HOUSE_PROP) % 3) as i32;
+        let px = x0 + 3 + (rng(seed, 0, k, 8 + p, SALT_GEN_HOUSE_PROP) % (wd - 6 - len) as u32) as i32;
+        for x in px..px + len {
+            set_cell(g, x, base - 1, WOOD);
+        }
+    }
+    Some(Structure { kind: STRUCT_HOUSE, x0, x1, top, floor: base, bottom: base })
+}
+
+/// One well: a 7-wide shaft, a 2-thick Brick coping 3-4 rows high, Wood posts and a crossbeam with a bucket. The shaft
+/// is dug until it meets a cave (a second way down) or, with no cave in reach, down to a solid-walled water pit.
+fn place_well(g: &mut Grid, seed: u64, k: u32, surf: &[i32], trunks: &[i32], placed: &[Structure], sc: &Scale, arena: Option<&Arena>) -> Option<Structure> {
+    let (w, h) = (g.w as i32, g.h as i32);
+    let cp = 3 + (rng(seed, 0, k, 0, SALT_GEN_WELL_DIM) % 2) as i32;
+    let ph = 9 + (rng(seed, 0, k, 1, SALT_GEN_WELL_DIM) % 2) as i32;
+    let xi = side_x(w, 11, rng(seed, 0, k, 0, SALT_GEN_WELL_X)) + 2;
+    let (x0, x1) = (xi - 2, xi + 8);
+    let base = struct_site(g, surf, x0, x1, cp + ph + 1, trunks, placed, arena)?;
+    let at = |g: &Grid, x: i32, y: i32| g.mat[(y * w + x) as usize];
+    let s0 = (xi..xi + 7).map(|x| surf[x as usize]).max()?;
+    let maxd = scale_u(h, 120).max(12);
+    let hit = (s0..s0 + maxd).find(|&y| (xi..xi + 7).any(|x| !matches!(at(g, x, y), DIRT | ROCK | COAL | SAND | GUNPOWDER | BRICK | WOOD)));
+    let (kind, bottom) = if let Some(y) = hit {
+        // The cave it meets: not deep, and no liquid or gas in the opening or the 3 rows below it.
+        let bad = (xi - 1..=xi + 7).any(|x| (y..y + 4).any(|yy| matches!(at(g, x, yy), WATER | LAVA | OIL | ACID | GAS)));
+        if y >= sc.deep_top || bad || !(xi..xi + 7).any(|x| at(g, x, y) == EMPTY) || arena.is_some_and(|a| a.contains(xi + 3, y, ARENA_KEEP_OUT)) {
+            return None;
+        }
+        (STRUCT_WELL_CAVE, y)
+    } else {
+        let bottom = (sc.shallow_top + 6).max(base + 16);
+        let solid = |m: u8| matches!(m, DIRT | ROCK | COAL);
+        let ok = (xi - 1..=xi + 7).all(|x| (surf[x as usize]..=bottom + 1).all(|y| solid(at(g, x, y)))) && arena.is_none_or(|a| !a.contains(xi + 3, bottom, ARENA_KEEP_OUT));
+        if !ok || bottom >= h - FLOOR_ROWS as i32 {
+            return None;
+        }
+        (STRUCT_WELL_WATER, bottom)
+    };
+    // Shaft: from the ground down to the opening (a cave well also clears 4 rows into it), or to the water pit's floor.
+    let last = if kind == STRUCT_WELL_CAVE { bottom + 3 } else { bottom };
+    for x in xi..xi + 7 {
+        for y in base..=last {
+            if matches!(at(g, x, y), DIRT | ROCK | COAL | SAND | GUNPOWDER) {
+                set_cell(g, x, y, EMPTY);
+            }
+        }
+    }
+    if kind == STRUCT_WELL_WATER {
+        for x in xi..xi + 7 {
+            for y in bottom - 3 - (rng(seed, 0, k, 2, SALT_GEN_WELL_DIM) % 3) as i32..=bottom {
+                set_cell(g, x, y, WATER);
+            }
+        }
+    }
+    // Brick lining: 8 rows below the ground on the shaft's walls (where the wall is solid).
+    for x in [xi - 1, xi + 7] {
+        for y in base..(base + 8).min(bottom) {
+            if matches!(at(g, x, y), DIRT | ROCK | COAL | SAND) {
+                set_cell(g, x, y, BRICK);
+            }
+        }
+    }
+    // Coping and its footing, posts, crossbeam and a bucket.
+    for x in [xi - 2, xi - 1, xi + 7, xi + 8] {
+        for y in base - cp..surf[x as usize] {
+            set_cell(g, x, y, BRICK);
+        }
+    }
+    let beam = base - cp - ph;
+    for y in beam..base - cp {
+        set_cell(g, xi - 1, y, WOOD);
+        set_cell(g, xi + 7, y, WOOD);
+    }
+    // The beam is a 3-cell cantilever from the left post: the 5-wide gap beside it lets a body (and the sky flood) in.
+    for x in xi - 1..=xi + 1 {
+        set_cell(g, x, beam, WOOD);
+    }
+    set_cell(g, xi, beam + 1, WOOD);
+    Some(Structure { kind, x0, x1, top: beam, floor: base, bottom })
 }
 
 /// Floor positions for pickups: about 40 in the shallow band, 25 in the deep, at least 40 apart.

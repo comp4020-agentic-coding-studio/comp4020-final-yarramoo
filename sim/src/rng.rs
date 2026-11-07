@@ -165,6 +165,13 @@ pub const SALT_GEN_SHRUB_DIM: u32 = 281;
 pub const SALT_GEN_TUFT_PATCH: u32 = 282;
 pub const SALT_GEN_TUFT_X: u32 = 283;
 pub const SALT_GEN_TUFT_DIM: u32 = 284;
+/// content-W1: surface ruins (houses: x, size, roof and ruin, props) and wells (x, size).
+pub const SALT_GEN_HOUSE_X: u32 = 285;
+pub const SALT_GEN_HOUSE_DIM: u32 = 286;
+pub const SALT_GEN_HOUSE_RUIN: u32 = 287;
+pub const SALT_GEN_HOUSE_PROP: u32 = 288;
+pub const SALT_GEN_WELL_X: u32 = 289;
+pub const SALT_GEN_WELL_DIM: u32 = 290;
 
 #[cfg(test)]
 mod tests {
