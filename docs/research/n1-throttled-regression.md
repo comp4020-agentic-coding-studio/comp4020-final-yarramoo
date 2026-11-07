@@ -1,6 +1,9 @@
 # N1 soak: the 4x-throttled client stopped keeping up (open, 7 Nov)
 
-**Status: open.** Found overnight 6-7 Nov by the session model; no fix yet. Determinism is not affected.
+**Status: mechanism found and scheduling fixed (D-215, 8 Nov, track A); the 4x client is now limited by raw step cost.**
+Found overnight 6-7 Nov by the session model. Determinism is not affected. The CSS commit was a trigger, not the
+cause: the worker stepped a fixed count per rAF frame, and the throttled page ran at 3-9 Hz (see D-215,
+`docs/research/quality-report.md`). Restoring the old CSS properties did not restore the old result.
 
 ## What
 `pnpm soak:n1` could not run at all from 25 Oct (R3 made `/` the menu; the harness filled the old name field there).
