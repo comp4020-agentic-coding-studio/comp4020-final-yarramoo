@@ -48,3 +48,28 @@ Choices and why:
 Order rationale: W1 is the biggest visible change and the safest sim change; W2 is the riskiest and the user's
 second ask; W3 has no sim risk and can be cut down to the grass shader (a few lines the lead can do) if the budget
 runs short.
+
+## 3. W1: surface greenery (Sonnet, about $4.1)
+
+Built by the worker (`c4b0f48`, report `docs/research/life-w1-report.md` `04a9e9c`): `canopy()` crowns on every trunk
+top and branch tip, `place_greenery()` shrubs and clustered wildflower tufts, all `STEM`/`FLOWER` aux 0, written only
+into Empty cells, clear of the spawn columns, bounded tries; salts 278-284; format 16 -> 17; `sim/tests/greenery.rs`
+(5 tests, three shown red by the worker: canopy loop skipped, aux 1, spawn-column check removed).
+
+Lead review: the diff is generation-only, integer, bounded, no new cell rule, so chunk sleeping cannot see it. The
+first look at seed 7 (M, day) read as small flat "lollipops" and the tufts barely showed, so the lead tuned it
+(crowns rx 7-10, ry = 3/4 rx, branch tips 3-5, tufts 520 at L) and re-recorded the pins on purpose (golden-v17,
+`SCRIPTED_HASH`, perf trace, boss_gen non-survival hashes).
+
+Gate on `e7a2a24` (W1 + tuning): cargo `--no-fail-fast`, clippy, typecheck, determinism 53/53 (11 files), net
+451 passed + 1 skipped (63 files); logs `/tmp/life-g-{cargo,clippy,tsc,det,net}.log`. The first gate run was red:
+`gen::tests::borders_surface_and_open_fraction` measured the "surface" as the first non-Empty cell, so the bigger
+crowns counted as 167 off-band columns; it now skips `STEM`/`FLOWER` (the 120-column guard is unchanged).
+
+## 4. Budget decision: rabbits (W2) cut
+
+After W1, the gate and the tuning, week spend was $180.15 (B0 + $20.1), $4 short of the dispatch stop. W2 was capped
+at $8 and needs a gate and a look on top; it would breach the $30 cap. **Cut**, brief kept ready at
+`docs/briefs/life-w2-rabbits.md` (kind 8, flee AI, lobby stepping, no heal/achievement, `MAX_ENEMIES` 80). W3 goes
+ahead at a $3.5 cap because it is client-only (no gate beyond typecheck and the net suite) and its butterflies and
+fireflies give the world some moving life, labelled as decoration.
