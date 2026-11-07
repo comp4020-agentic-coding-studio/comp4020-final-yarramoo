@@ -1,9 +1,9 @@
 //! content-W1: surface ruins (houses) and wells from generation. Seeds 1..=8, sizes 0..=2, PvP and Survival.
 use sim::config::RoomConfig;
-use sim::gen::{box_reach, generate_world, Structure, World, SPAWN_CLEAR_COLS, STRUCT_HOUSE, STRUCT_WELL_CAVE, STRUCT_WELL_WATER};
+use sim::gen::{generate_world, Structure, World, SPAWN_CLEAR_COLS, STRUCT_HOUSE, STRUCT_WELL_CAVE, STRUCT_WELL_WATER};
 use sim::grid::Grid;
 use sim::materials::*;
-use sim::tuning::{ARENA_KEEP_OUT, ENEMY_SPAWN_CLEAR};
+use sim::tuning::ARENA_KEEP_OUT;
 
 fn make(size: u8, seed: u64, survival: bool) -> (Grid, World) {
     let cfg = RoomConfig { size, ..if survival { RoomConfig::survival() } else { RoomConfig::caves_pvp() } };
@@ -111,7 +111,6 @@ fn houses_stand_on_the_ground_and_never_float() {
 fn structures_keep_out_of_the_spawn_columns_and_the_arena() {
     for (size, seed, sv, g, w) in all() {
         let mid = g.w as i32 / 2;
-        let mut wide = 0;
         for s in &w.structures {
             assert!(s.x1 < mid - SPAWN_CLEAR_COLS || s.x0 > mid + SPAWN_CLEAR_COLS, "size {size} seed {seed} {sv}: structure {s:?} in the spawn columns");
             if let Some(a) = &w.arena {
@@ -121,11 +120,7 @@ fn structures_keep_out_of_the_spawn_columns_and_the_arena() {
                     }
                 }
             }
-            if s.x1 < mid - ENEMY_SPAWN_CLEAR || s.x0 > mid + ENEMY_SPAWN_CLEAR {
-                wide += 1;
-            }
         }
-        let _ = wide;
     }
 }
 
@@ -148,9 +143,6 @@ fn houses_can_be_walked_through_and_entered() {
             }
             // A 5x10 body fits standing inside, and the box flood reaches both outer sides and the inside.
             let inside = s.x0 + 2..=s.x1 - 6;
-            let reach = |sx: i32| box_reach(&g, (sx as usize, s.floor as usize - 10), 5, 10);
-            let sky = (g.w / 2, 0usize);
-            let _ = sky;
             let seen = flood(&g);
             let stand = |x: i32| (s.floor as usize - 15..=s.floor as usize - 10).any(|y| seen[y * g.w + x as usize]);
             assert!(inside.clone().any(stand), "size {size} seed {seed} {sv}: no reachable standing spot inside house at {}", s.x0);
@@ -160,7 +152,6 @@ fn houses_can_be_walked_through_and_entered() {
             }
             assert!((s.x0 - 6..s.x0).any(stand), "size {size} seed {seed} {sv}: left of house at {} unreachable", s.x0);
             assert!((s.x1 + 1..s.x1 + 6).any(stand), "size {size} seed {seed} {sv}: right of house at {} unreachable", s.x1);
-            let _ = reach;
         }
     }
 }
@@ -200,6 +191,7 @@ fn flood(g: &Grid) -> Vec<bool> {
 fn fire_on_a_roof_is_bounded_and_sleep_invisible() {
     use sim::sim::Sim;
     let mut report = String::new();
+    let mut ran = 0;
     for (size, seed) in [(1u8, 1u64), (1, 2), (2, 3)] {
         let cfg = RoomConfig { size, ..RoomConfig::survival() };
         let run = |sleep: bool| {
@@ -223,12 +215,15 @@ fn fire_on_a_roof_is_bounded_and_sleep_invisible() {
         let (a, b) = (run(true), run(false));
         assert_eq!(a, b, "size {size} seed {seed}: sleep changed the burn");
         if let Some((_, burned, fire)) = a {
+            ran += 1;
             report += &format!("size {size} seed {seed}: burned {burned} wood, {fire} fire left\n");
             assert!(burned <= 400, "burned {burned}");
             assert!(fire <= 3, "{fire} fire cells still burning at tick 1200");
         }
     }
     std::fs::write("/tmp/cw1-fire.txt", report).unwrap();
+    // Review S3: a world with no house (or no Wood at the lit cell) returns None for both runs, which compares equal.
+    assert!(ran >= 2, "the fire test lit only {ran} houses");
 }
 
 /// Every Empty cell 4-connected to the top of the world centre.
@@ -266,6 +261,13 @@ fn wells_open_to_a_reachable_cave_or_hold_water_on_solid() {
                 for y in s.floor..s.bottom {
                     for x in xi..xi + 7 {
                         assert_eq!(at(&g, x, y), EMPTY, "size {size} seed {seed} {sv}: shaft cell {x},{y} is not open");
+                    }
+                }
+                // Review S1: oil, acid, gas and ice water are placed after the wells; none may sit in the shaft or the
+                // opening's first rows (placement only checked what was there when the well was dug).
+                for y in s.floor..=s.bottom + 3 {
+                    for x in xi..xi + 7 {
+                        assert!(!matches!(at(&g, x, y), WATER | LAVA | OIL | ACID | GAS), "size {size} seed {seed} {sv}: {} in the cave well's shaft at {x},{y}", at(&g, x, y));
                     }
                 }
                 let open = (xi..xi + 7).filter(|&x| at(&g, x, s.bottom) == EMPTY);

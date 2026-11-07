@@ -35,3 +35,31 @@ side, far wall to the floor (the mine's room rule), float test strict again and 
 **Salts:** the worker found 260-267 each declared twice (`SALT_MUD_MOVE`/`SALT_GEN_BIOME`, ...): pre-existing, one
 group is generation-only (tick 0) and the other is runtime, so draws differ in `tick` only at tick 0 where no material
 moves. Not fixed tonight (it would move every pinned world); the new test checks salts from 285 on. Listed for the user.
+
+**W1 fix** (`d385ea7`, same worker, +$2.6): one door per house on an rng side, far wall to the floor, roof gap top row
+only; strict float test red against the two-door code ("house at 44 has a floating cell at 77,49"), green after.
+
+## Gate (lead, on `d385ea7`, worktree `/tmp/wt-content`, quiet machine)
+`cargo test --release` 473 passed 0 failed (`/tmp/content-g-cargo.log`), clippy wasm clean (`/tmp/content-g-clippy.log`),
+typecheck (`/tmp/content-g-tsc.log`), determinism 53/53 (`/tmp/content-g-det.log`), net 464 passed 1 skipped
+(`/tmp/content-g-net.log`). Exit 0.
+
+## Open it and look (vite :5183, `/game?world=game[&cfg=survival]&seed=N`, L = default PvP preset, M = Survival)
+Seeds 3 and 7 at L and M (`docs/research/shots/content/`). **Found a bug by eye** the gate could not see: the house
+interior and the air above a well's coping drew as dark cave wall (02), because `groundLine` counted Brick as ground
+and the shaft-rim rule then closed the interior. Fixed by the lead in `client/background.ts` (Brick is built, not
+ground; a mine's Brick is always under the surface dirt), test red first ("expected 14 to be 30"), after-shot 03, and
+a stray dark column beside a well's coping disappeared too. Commit `73e4550`. Houses read as small ruined lean-tos
+(a full far wall, a broken roof, a chimney); wells read clearly (posts, coping; a cave well drops into a tunnel, 05).
+
+## Cold review (W2, Sonnet, read-only, $256.4 -> ~$258) `docs/research/review-content.md`
+No must-fix. Verdict: merge. Lead checked each claim in the code:
+- **S1 liquid in a cave well's shaft** (oil/acid/gas/ice water placed after the wells): real gap in the test only (the
+  shaft's Empty check already covered `floor..bottom`; nothing covered the opening rows). The well test now rejects any
+  liquid or gas in `floor..=bottom+3`; shown red by injecting Oil at `bottom+2` in the generator ("15 in the cave well's
+  shaft at 741,161"), restored; green on seeds 1..=8 x 3 sizes x 2 presets, so no generator change was needed.
+- **S2 dead arena/deep guards in `place_well`**: true (120 rows of reach never get near `deep_top`); kept as cheap
+  belt-and-braces, noted here.
+- **S3 vacuous test parts**: the fire test now asserts it lit at least 2 houses (red with 4: "the fire test lit only 3
+  houses"); dead `reach`, `sky`, `wide` removed.
+- Nits (door a step above lower outside ground; `HashSet` in a test file) left: the body steps up 3 and jumps 15.
