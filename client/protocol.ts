@@ -28,8 +28,9 @@ export type ToWorker =
       spectate: boolean;
     }
   /** Held movement keys, for the avatar controller. */
-  /** Menu backdrop only: pause stepping and drawing, or slow the step rate. Never an input. */
-  | { type: "pace"; paused: boolean; stepMs: number }
+  /** Menu backdrop only: pause stepping and drawing, or slow the step rate. `drawMs`: minimum ms between draws
+   * (0 every frame, -1 never: the sim steps but nothing is drawn). Never an input. */
+  | { type: "pace"; paused: boolean; stepMs: number; drawMs?: number }
   /** Menu backdrop only: teleport the LOCAL controller (cells, feet). Ignored unless a local sim runs; the move reaches the sim as the controller's ordinary Pos. */
   | { type: "goto"; x: number; y: number }
   | { type: "keys"; left: boolean; right: boolean; up: boolean }

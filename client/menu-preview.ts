@@ -7,6 +7,8 @@
 // below is a constant from client/menu/backdrop-config.ts (found offline by tools/menu-vignettes.ts).
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { MENU_SEED, VIGNETTES, WINDOW_H, WINDOW_W, type Vignette } from "./menu/backdrop-config.ts";
+import { backingSize, coversBackdrop } from "./phone.ts";
+import { parseRoute } from "./menu/router.ts";
 
 const SAND = 4, WATER = 5, FIRE = 10, GUNPOWDER = 13, LAVA = 14, SNOW = 27, MOSS = 23;
 const DIRECTOR_MS = 50;
@@ -69,6 +71,8 @@ export function startMenuPreview(host: HTMLElement): { stop(): void } {
   let timer = 0;
   let stopped = false;
   let hidden = document.hidden;
+  const isCovered = () => phone && coversBackdrop(parseRoute(location.hash).kind);
+  let covered = isCovered();
   let paceFn: (() => void) | null = null;
 
   function begin() {
@@ -81,8 +85,10 @@ export function startMenuPreview(host: HTMLElement): { stop(): void } {
     const dpr = window.devicePixelRatio || 1;
     const c = document.createElement("canvas");
     c.className = "preview-canvas";
-    c.width = Math.round(vw * k * dpr);
-    c.height = Math.round(vh * k * dpr);
+    // Phones: one backing pixel per cell (client/phone.ts); CSS `pixelated` scales it to the same picture.
+    const px = backingSize(vw, vh, vw * k, vh * k, dpr, phone);
+    c.width = px.w;
+    c.height = px.h;
     c.style.width = vw * k + "px";
     c.style.height = vh * k + "px";
     host.replaceChildren(c);
@@ -134,7 +140,9 @@ export function startMenuPreview(host: HTMLElement): { stop(): void } {
     };
     // Lead fix: `>=`, so the pace() sent at n === 160 really pauses (with `>` it sent paused:false and never again).
     const still = () => reduced && n >= 160;
-    const pace = () => send({ type: "pace", paused: hidden || still(), stepMs: phone ? 1000 / 30 : 1000 / 60 });
+    // Phones draw at most 30 fps (the sim still steps by real time owed), and not at all behind a panel that covers
+    // the scene (settings, join, share): it keeps stepping, so the scene has moved on when it shows again.
+    const pace = () => send({ type: "pace", paused: hidden || still(), stepMs: phone ? 1000 / 30 : 1000 / 60, drawMs: covered ? -1 : phone ? 1000 / 30 : 0 });
     let lastKeys = "";
     const director = () => {
       if (!ready || hidden || still() || moving) return;
@@ -194,11 +202,17 @@ export function startMenuPreview(host: HTMLElement): { stop(): void } {
     hidden = document.hidden;
     paceFn?.();
   }
+  function onHash() {
+    covered = isCovered();
+    paceFn?.();
+  }
   document.addEventListener("visibilitychange", onVis);
+  addEventListener("hashchange", onHash);
   begin();
   return {
     stop() {
       document.removeEventListener("visibilitychange", onVis);
+      removeEventListener("hashchange", onHash);
       stop();
     },
   };

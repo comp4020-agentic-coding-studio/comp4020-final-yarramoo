@@ -8,6 +8,7 @@ import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worl
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { addPickedUp, isTap, swapSlots } from "./slots.ts";
+import { backingSize } from "./phone.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
@@ -289,6 +290,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   function layout(): { w: number; h: number } {
+    /** Touch devices draw one pixel per cell (client/phone.ts): the fragment shader is the cost on a phone, not the sim. */
+    const leanCanvas = matchMedia("(pointer: coarse)").matches;
     const dpr = window.devicePixelRatio || 1;
     const cs = getComputedStyle(stage);
     const pad = (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.paddingTop) || 0);
@@ -299,7 +302,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const scale = k >= 1 ? k : fit;
     const cssW = Math.round(camera.vw * scale);
     const cssH = Math.round(camera.vh * scale);
-    const px = { w: Math.max(1, Math.round(cssW * dpr)), h: Math.max(1, Math.round(cssH * dpr)) };
+    // Phones: one backing pixel per cell, scaled up by CSS `pixelated` (client/phone.ts); the shader cost is per pixel.
+    const px = backingSize(camera.vw, camera.vh, cssW, cssH, dpr, leanCanvas);
     canvas.style.width = cssW + "px";
     canvas.style.height = cssH + "px";
     return px;
