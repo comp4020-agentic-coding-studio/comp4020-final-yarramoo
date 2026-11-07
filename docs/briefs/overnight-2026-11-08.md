@@ -1,8 +1,8 @@
 # Overnight 8-9 Nov: improvement tracks (shared rules for every lead)
 
 Written 8 Nov by the session model. The user's instructions: "dispatch some agents to work overnight looking into
-improvements we can make to the game"; **$120 for the night** (week spend was $196 of a $500 weekly budget, so the
-whole run stops starting new work at **$316**); improvements are **built, gated, reviewed and merged to `multa`**
+improvements we can make to the game"; **$170 for the night** (raised from $120 when tracks D and E were added; week
+spend was $196 of a $500 weekly budget, so the whole run stops starting new work at **$366**); improvements are **built, gated, reviewed and merged to `multa`**
 (never `main`: it deploys, the user decides in the morning). Final submission is **Mon 9 Nov 12:00**: a smaller,
 finished, correct change beats a bigger one; anything risky becomes a report with a ready brief, not a merge.
 
