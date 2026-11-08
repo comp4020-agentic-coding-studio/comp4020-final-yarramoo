@@ -140,14 +140,15 @@ fn snapshot_size_matches_write_and_restore_rejects_crafted_counts() {
 /// The reported bug (D-081, D-082): a heap of lava painted against the sandbox's right wall settled into
 /// chunk-edge steps for minutes. Measured on the real path (`Sim::step`, the 512 x 512 sandbox, the
 /// strokes used to reproduce it in the browser). Before dispersion the surface still spanned 46 rows at
-/// tick 16000; now it is flat.
+/// tick 16000; now it is flat. Since lava moves under both scan directions (D-233) it levels to a 3-row ripple by
+/// tick 10000 and within 2 by 18000 (probed every 2000 ticks), so the run is 20000.
 #[test]
 fn lava_heap_levels_in_the_sandbox() {
     let mut s = sim::sim::Sim::new(1, 0).unwrap();
     for y in (120..=470).step_by(25) {
         s.push_input(&encode_paint(1, 14, 420, y, 490, y, 16));
     }
-    for _ in 0..16_000 {
+    for _ in 0..20_000 {
         s.step();
     }
     let w = s.grid.w;
@@ -155,7 +156,7 @@ fn lava_heap_levels_in_the_sandbox() {
         .filter_map(|x| (0..s.grid.h).find(|&y| s.grid.mat[y * w + x] == 14))
         .collect();
     let spread = tops.iter().max().unwrap() - tops.iter().min().unwrap();
-    assert!(spread <= 2, "lava surface still spans {spread} rows at tick 16000");
+    assert!(spread <= 2, "lava surface still spans {spread} rows at tick 20000");
 }
 
 /// Every generated world gets its full set of pickup spots (plan 6.9: about 40 shallow, 25 deep). Deep

@@ -1494,8 +1494,16 @@ built its scene after freezing the region, and every `set` wakes the chunk it la
 chunk awake from tick 0. The test now re-freezes after building, asserts the seed's chunk stays frozen until water
 crosses, and was shown red twice: with no water, and with `wake` stubbed to never wake a frozen chunk.
 
-**Evidence.** D-191; `sim/src/grid.rs` (`step_cells`, `poured_water_spreads_without_walls_on_chunk_edges`);
-`sim/tests/wake.rs`; `docs/research/review-scan-order.md`.
+**Later (9 Nov): lava never got the alternation.** The row direction alternates with tick parity, but lava moved
+only on even ticks, so every lava move scanned left to right. A cell sliding right lands ahead of the scan and is
+skipped by `moved` for the rest of the tick, while one sliding left lands behind it, so a body drained left far more
+readily than right: the user's screenshot showed a heap standing 46 rows high against the left wall while its mirror
+against the right wall levelled to 1. Lava now moves when `tick & 2 == 0`: still half the ticks, in pairs, so
+under both directions (D-233). Snow also moves on even ticks only, but it only falls into the row below, which the
+bottom-up scan has already passed; a probe pile came out symmetric, so it was left alone.
+
+**Evidence.** D-191, D-233; `sim/src/grid.rs` (`step_cells`, `poured_water_spreads_without_walls_on_chunk_edges`,
+`lava_levels_the_same_from_either_wall`); `sim/tests/wake.rs`; `docs/research/review-scan-order.md`.
 
 ## 40. The gate: how a lockstep game is tested, and what the tests kept missing
 
@@ -1686,8 +1694,17 @@ the background's ground line (D-211) counted a ruin's Brick as terrain. Only the
 background test now pins it. The same track found that eight salts had been declared twice since the spells
 integration (D-217), which that slice's worker and its cold review both missed: a new test checks salts from here on.
 
-**Evidence.** D-216, D-217; `docs/research/content-report.md`, `review-content.md`; `sim/tests/structures.rs`;
-commits `b8217d9`, `d385ea7`, `73e4550`, `c34acbf`.
+**Later (9 Nov): the rim rule itself drew walls in the sky.** The user's screenshot showed a flat block of cave wall
+standing in the air beside a hill at a cave mouth. The shaft rule (D-202) took each side's rim as the *highest* ground
+within 64 columns, and closed only columns more than 12 rows below it, so the wall always ended in a vertical edge
+over open funnel cells up to 12 rows lower, and its top followed the nearest hill rather than the mouth's lip. Probed
+over 31 generated worlds, 183 of 190 closed spans had such a step. The rim is now the highest row at which the open
+run around a column is still shaft-narrow (40 columns), and the whole run is closed there, so the wall meets the
+terrain at both ends (0 steps, every one of the 801 deep shaft columns still closed); a wider dip is a valley and
+shows sky (D-234).
+
+**Evidence.** D-216, D-217, D-234; `docs/research/content-report.md`, `review-content.md`; `sim/tests/structures.rs`;
+`tests/net/background.test.ts`; commits `b8217d9`, `d385ea7`, `73e4550`, `c34acbf`.
 
 ## 46. An outside reader's review, and who gets to decide the truth
 

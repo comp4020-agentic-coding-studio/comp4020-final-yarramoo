@@ -37,7 +37,7 @@ const ACID_FLOW: Liquid = Liquid { diag: SALT_ACID_DIAG, side: SALT_ACID_SIDE, r
 const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6, ok: Grid::water_ok };
 /// Oil floats on Water: it only displaces what is lighter than it.
 const OIL_FLOW: Liquid = Liquid { diag: SALT_OIL_DIAG, side: SALT_OIL_SIDE, reach: 5, ok: Grid::liquid_ok };
-/// Lava is thicker, so it spreads less per update (and it only moves on even ticks).
+/// Lava is thicker, so it spreads less per update (and it only moves on half the ticks, `tick & 2 == 0`).
 const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3, ok: Grid::liquid_ok };
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
 /// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
@@ -743,7 +743,7 @@ impl Grid {
     }
 
     /// Whether `liquid_move` would move this cell in some direction (no rng, no change). Lava, which only
-    /// moves on even ticks, uses it to keep its chunk awake exactly while it still has somewhere to go.
+    /// moves on half the ticks, uses it to keep its chunk awake exactly while it still has somewhere to go.
     fn liquid_can_move(&self, x: usize, y: usize, ok: fn(u8) -> bool) -> bool {
         let open = |dx: isize, dy: isize| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(self.at(nx, ny)));
         open(0, 1) || open(-1, 1) || open(1, 1) || (self.liquid_free(x, y) && (open(-1, 0) || open(1, 0)))
@@ -1032,7 +1032,7 @@ impl Grid {
     }
 
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
-    /// moves only on even ticks (slow).
+    /// moves only when `tick & 2 == 0` (slow; D-233).
     fn update_lava(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         let i = y * self.w + x;
         if let Some((nx, ny)) = self.find_neighbour(x, y, |m| m == WATER) {
@@ -1055,7 +1055,7 @@ impl Grid {
                 }
             }
         }
-        // Lava acts on chance beside anything it can ignite, melt or glaze, and moves on even ticks only,
+        // Lava acts on chance beside anything it can ignite, melt or glaze, and moves on half the ticks only,
         // so it keeps its chunk awake while it has such a neighbour or somewhere to go; otherwise it rests.
         if self.liquid_can_move(x, y, LAVA_FLOW.ok)
             || [(0, -1), (0, 1), (-1, 0), (1, 0)].iter().any(|&(dx, dy)| {
@@ -1067,7 +1067,9 @@ impl Grid {
         {
             self.vol_seen = true;
         }
-        if tick & 1 == 0 {
+        // Half the ticks, in pairs (tick % 4 in {0, 1}), so it moves under both scan directions. On even ticks only,
+        // every lava move ran left to right and a body drained left far more readily than right (D-233).
+        if tick & 2 == 0 {
             self.liquid_move(x, y, seed, tick, LAVA_FLOW);
         }
     }
@@ -1840,13 +1842,16 @@ mod tests {
     }
 
     #[test]
-    fn lava_moves_every_other_tick_and_ignites_wood() {
+    fn lava_moves_half_the_ticks_and_ignites_wood() {
         let mut g = Grid::new(64, 64);
         g.set(10 * 64 + 5, LAVA, 0);
         g.step_cells(1, 0);
         assert_eq!(g.at(5, 11), LAVA);
         g.step_cells(1, 1);
-        assert_eq!(g.at(5, 11), LAVA, "lava rests on odd ticks");
+        assert_eq!(g.at(5, 12), LAVA, "lava moves on ticks 0 and 1 of every 4 (both scan directions, D-233)");
+        g.step_cells(1, 2);
+        g.step_cells(1, 3);
+        assert_eq!(g.at(5, 12), LAVA, "lava rests on ticks 2 and 3 of every 4");
         let mut g = boxed(64, 64);
         g.set(62 * 64 + 5, LAVA, 0);
         for x in 3..8 {
@@ -2041,8 +2046,11 @@ mod tests {
 mod lava_levels {
     use super::*;
 
-    fn lava_column(sleep: bool) -> Grid { column(sleep, LAVA) }
-    fn column(sleep: bool, mat: u8) -> Grid {
+    // Lava moves on half the ticks, so it gets twice water's settling time: at 6000 ticks after D-233 it is level but
+    // still rippling (3 rows), at 12000 it is within 2 from either wall.
+    fn lava_column(sleep: bool) -> Grid { column_at(sleep, LAVA, false, 12000) }
+    fn column(sleep: bool, mat: u8) -> Grid { column_at(sleep, mat, false, 6000) }
+    fn column_at(sleep: bool, mat: u8, left: bool, ticks: u32) -> Grid {
         let (w, h) = (384, 192);
         let mut g = Grid::new(w, h);
         g.set_all_active();
@@ -2054,13 +2062,14 @@ mod lava_levels {
             g.set(y * w + w - 1, BEDROCK, 0);
             g.set(y * w, BEDROCK, 0);
         }
-        // A tall column of lava against the right wall, as in the bug screenshot.
+        // A tall column of lava against the right wall, as in the bug screenshot (or the left one, its mirror).
+        let xs = if left { 1..61 } else { w - 60..w - 1 };
         for y in 20..h - 1 {
-            for x in w - 60..w - 1 {
+            for x in xs.clone() {
                 g.set(y * w + x, mat, 0);
             }
         }
-        for t in 0..6000 {
+        for t in 0..ticks {
             g.step_cells(7, t);
         }
         g
@@ -2069,6 +2078,19 @@ mod lava_levels {
     fn surface(g: &Grid) -> Vec<usize> { surface_of(g, LAVA) }
     fn surface_of(g: &Grid, m: u8) -> Vec<usize> {
         (1..g.w - 1).map(|x| (0..g.h).find(|&y| g.mat[y * g.w + x] == m).unwrap_or(g.h)).collect()
+    }
+
+    /// 9 Nov playtest screenshot: lava against the left wall stood high and would not level rightwards, while the
+    /// same column against the right wall levelled. Lava moved only on even ticks, and even ticks always scan rows
+    /// left to right, so a cell sliding right landed ahead of the scan (and was skipped by `moved`) while one sliding
+    /// left moved into cells already scanned: lava drained left far more readily than right.
+    #[test]
+    fn lava_levels_the_same_from_either_wall() {
+        let (l, r) = (column_at(true, LAVA, true, 12000), lava_column(true));
+        let (sl, sr) = (surface(&l), surface(&r));
+        let spread = |s: &[usize]| s.iter().max().unwrap() - s.iter().min().unwrap();
+        assert!(spread(&sl) <= 2, "lava poured against the left wall spans {} rows (right wall: {})", spread(&sl), spread(&sr));
+        assert!(spread(&sr) <= 2, "lava poured against the right wall spans {} rows", spread(&sr));
     }
 
     #[test]
