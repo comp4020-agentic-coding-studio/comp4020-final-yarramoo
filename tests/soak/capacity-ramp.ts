@@ -22,6 +22,20 @@ import { ENT_PLAYER, EV_DEATH, EV_ENEMY_DEATH, EV_ROUND_END, EV_ROUND_START, loa
 const PORT = Number(process.env.PORT ?? 8094);
 const NAME = "cap-bench-rooms";
 const IMAGE = process.env.IMAGE ?? "cap-app:9cfd24f";
+// Cumulative counts of warm-verify events in the container log (lanes opened/refused, cold vs warm accepted verifies).
+const logCounts = () => {
+  let t = "";
+  try {
+    t = execFileSync("docker", ["logs", NAME], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 << 20 });
+  } catch (e) {
+    t = String((e as { stdout?: string }).stdout ?? "");
+  }
+  const n = (re: RegExp) => (t.match(re) ?? []).length;
+  return {
+    laneOpened: n(/verify\.lane_opened/g), laneRefused: n(/verify\.lane_refused/g),
+    acceptedCold: n(/snapshot\.accepted[^\n]*"?verify_cold"?[:=]\s*true/g), acceptedWarm: n(/snapshot\.accepted[^\n]*"?verify_cold"?[:=]\s*false/g),
+  };
+};
 const WORKERS = 4;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -458,6 +472,7 @@ async function main() {
       botLagMaxMs: r2(Math.max(...lagMaxSeen)),
       botsClosed: bots.filter((b) => b.closed).length, botRejects: bots.filter((b) => b.rejected).map((b) => b.rejected).slice(0, 5),
       roundsEndedSoFar: roundsEnded,
+      verifyLog: logCounts(),
       perRoom,
     };
     (run.steps as unknown[]).push(step);
