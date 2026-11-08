@@ -505,6 +505,12 @@ function connect() {
       setNet("rejected");
       return;
     }
+    if (ev.code === 4003) {
+      // The owner deleted this world. There is nothing to reconnect to.
+      rejected = "This world was deleted";
+      setNet("rejected");
+      return;
+    }
     // 4002 (the server saw nothing from us for 10 s) is a dead link, not a refusal: fall through and reconnect as usual.
     if (net === "rejected") return; // do not hammer a server that said reload
     const delay = RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)];

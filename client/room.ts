@@ -32,6 +32,8 @@ export interface RoomTarget {
   late?: boolean;
   /** From GET /api/rooms/:code when the server runs with SIMULTA_DEV_TELEPORT (never in production): enables `__devGoto` here. */
   devTeleport?: boolean;
+  /** From GET /api/rooms/:code: a player's own persistent sandbox. */
+  owned?: boolean;
 }
 
 /** Resolve what to join from the current path: /sandbox (id 0), /game (id 1, back-compat for the old cave-world
@@ -46,10 +48,10 @@ export async function resolveRoomTarget(pathname: string): Promise<RoomTarget> {
     const code = m[1];
     const res = await fetch(`/api/rooms/${code}`);
     if (!res.ok) throw new Error("No room has that code.");
-    const j = (await res.json()) as { id: number; code: string; name: string; mode: string; visibility: string; config: string; running?: boolean; ended?: boolean; devTeleport?: boolean };
+    const j = (await res.json()) as { id: number; code: string; name: string; mode: string; visibility: string; config: string; running?: boolean; ended?: boolean; devTeleport?: boolean; owned?: boolean };
     const cfg = decodeConfig(Uint8Array.from(atob(j.config), (c) => c.charCodeAt(0)));
     if (!cfg) throw new Error("That room's config looked wrong.");
-    return { worldId: j.id, cfg, name: j.name, code: j.code, late: cfg.round === 1 && !!(j.running || j.ended), devTeleport: j.devTeleport === true };
+    return { worldId: j.id, cfg, name: j.name, code: j.code, late: cfg.round === 1 && !!(j.running || j.ended), devTeleport: j.devTeleport === true, owned: j.owned === true };
   }
   // Fallback: an unrecognised room-ish path still joins the sandbox rather than failing outright.
   return { worldId: 0, cfg: CLASSIC_SANDBOX, name: null, code: null };
@@ -155,6 +157,23 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   document.title = `${$("title").textContent} · Simulta`;
   const menuLink = document.getElementById("menuLink");
   if (menuLink) menuLink.setAttribute("href", "/");
+  // An owner of this persistent world gets a link to the menu's "My world" screen, which does the confirm and delete.
+  if (menuLink && target.owned && target.code) {
+    const tok = store.get(TOKEN_KEY);
+    if (tok) {
+      fetch("/api/sandbox", { headers: { authorization: `Bearer ${tok}` } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j: { code?: string } | null) => {
+          if (!j || j.code !== target.code) return;
+          const del = document.createElement("a");
+          del.href = "/#mine";
+          del.textContent = "Delete world";
+          del.className = menuLink.className;
+          menuLink.after(" ", del);
+        })
+        .catch(() => {});
+    }
+  }
 
   // Share bar (commit 3): shown once inside a real, just-created or just-joined room.
   // Sound: the context may only start from a gesture (phone autoplay rules), so the first pointer or key resumes it.
