@@ -6,68 +6,72 @@ next person.
 
 ## What it is
 
-One world of falling sand, in the style of Noita and Sandspiel. Pick a
-material and paint: sand piles, water finds its level, fire spreads to wood
-and burns out as smoke, gunpowder chains into explosions, and seeds grow into
-flowers. Open it in two browsers and a stroke in one appears in the other
-within about a second. Close the tab and come back tomorrow, and the world is
-still there, changed by whoever came in between.
+Simulta is a multiplayer Noita and Sandspiel: a cellular-automata world of
+solid, liquid and gas particles. Players pick a
+co-op Survival descent to a boss, a Deathmatch, or a creative sandbox, choose
+how the world is generated, and can keep a sandbox of their own that persists
+until they delete it, if they want to test a server restart for some reason. 
 
 ## What good means here
 
-Good means a shared world that has enough mechanics to be interesting, and 
-incentivises interaction between players. It should also technically be 
-able to support simulating and rendering the shared world and real-time 
-player interactions, within the compute constraints of the server. 
+Noita and Sandspiel are single-player. I
+wanted to know whether an AI harness could build the multiplayer version, which
+is a hard technical problem. So good here is definitely technical, but the game also has to be fun to play:
 
-## What I read and looked at
+- **One world, not copies.** Every player in the same game world sees the same cells. A lava flow in
+  one browser burns the same wood in every other, and clients that disagree are caught.
+- **Live.** A change reaches everyone in the room within a few frames, and one
+  player's slow connection does not slow the room down. Players with high ping are notified however, as the game is hard to play on a poor network. 
+- **It persists.** A world survives a server restart and comes back at the same
+  tick. Players are given a single sandbox that persists just for them. Survival and deathmatch gamemodes are transient - worlds deleted soon after all players have left. 
+- **Interesting to play.** Enough materials, spells and enemies that the
+  simulation is worth sharing.
 
-- Noita (Nolla Games), whose every pixel is simulated, and the [Noita
-  wiki on world
-  generation](https://noita.wiki.gg/wiki/World_generation): what a falling-sand
-  world can feel like, and how its caves are built.
-- Max Bittker's [Sandspiel](https://sandspiel.club), a falling-sand game in the
-  browser whose players share what they make: proof that a browser can run a
-  full cellular simulation, and a model of people building on each other's
-  worlds.
+The obvious design, a server simulating the world and streaming it out, fails
+on the course machine (one shared CPU, 256 MB). Instead every browser runs the
+same deterministic simulation and the server only orders inputs and checks that
+everyone agrees.
+
+## What I looked at
+
+- Noita (Nolla Games), whose every pixel is simulated, and the [Noita wiki on
+  world generation](https://noita.wiki.gg/wiki/World_generation): what a
+  falling-sand world can feel like, and how its caves are built.
+- Max Bittker's [Sandspiel](https://sandspiel.club): proof that a browser can
+  run a full cellular simulation, shared between players.
 - Sean Barrett's [herringbone Wang
   tiles](https://nothings.org/gamedev/herringbone/herringbone_tiles.html), the
-  technique behind Noita's caves, which I compared against noise and tunnelling
-  for my own generator.
+  technique behind Noita's caves, which I compared against noise for my generator.
 
 ## What is enforced and what is judged
 
 Enforced by checks that fail when the claim breaks:
 
-- **Identical worlds:** the same inputs in Node, Chromium, Firefox, WebKit and
-  native Rust must give bit-identical hashes. A deliberately broken build must
-  be caught, which proves the check can fail.
-- **Real time and shared state:** two clients join the running app, one paints,
-  and both must agree on the world's hash once it lands (`spec/`).
-- **Persistence:** the world survives a server restart and comes back at the
-  same tick from its saved snapshot and input log.
+- **One world:** the same inputs in Node, Chromium, Firefox, WebKit and native
+  Rust must give bit-identical hashes, and a deliberately broken build must be
+  caught (`pnpm test:determinism`).
+- **Live and shared:** two clients join the running app, one paints, and both
+  must agree on the world's hash (`spec/game.test.ts`).
+- **Persistence:** a world comes back after a restart from its snapshot and
+  input log (`tests/net/persistence.test.ts`).
+- **The simulation's rules** (integers only, no host clocks or randomness) are
+  in `CLAUDE.md`, enforced by clippy.
 
-Judged, by watching people use it: whether the materials feel right, and
-whether a shared world makes people play together or just alongside each
-other.
+Judged by playing it: whether the materials feel right and the game is fun. I
+playtested every major build myself, and agents played scripted rounds and took screenshots.
 
 ## What I chose not to build
 
-- **A server-side simulation.** The course machine has one shared CPU and
-  256 MB, too little to run the world for everyone; players' browsers are free
-  compute.
-- **Accounts and chat.** Painting needs no sign-in, and the shared world is
-  the conversation: you answer someone by building on what they left.
-- **A reset button for players.** A world that anyone can wipe isn't one that
-  lasts. Only the admin can reset a world, behind a token.
+- **A server-side simulation:** too little CPU and memory, and players'
+  browsers are free compute.
+- **Accounts and passwords:** a player is a name and a token kept in the
+  browser.
 
-## Status
+## Getting in
 
-Live at [comp4020-final-yarramoo.fly.dev](https://comp4020-final-yarramoo.fly.dev/).
-The front page is a generated cave world with players: walk, levitate and dig
-down through the caves, pick up spells (Push, Blast, Water, Rose, Fire bolt and
-Bomb), and fight. Death drops your spells as a bag anyone can take, and
-achievements are awarded for what you do. The shared painting sandbox is at
-[/sandbox](https://comp4020-final-yarramoo.fly.dev/sandbox). Both persist across
-restarts. Still to come before the final submission: balance, polish, and a
-live soak test that reaches the deep caves.
+Open [comp4020-final-yarramoo.fly.dev](https://comp4020-final-yarramoo.fly.dev/),
+choose a name, then **New game** or **Join game**, or **My world** for your own
+sandbox. Move with WASD or the arrow keys, aim and cast with the mouse, pick
+spells with the number keys, and press `/` to chat. Phones play with on-screen
+controls. The architecture and the decisions behind it are in
+[ARCHITECTURE.md](ARCHITECTURE.md).
