@@ -263,6 +263,18 @@ const removeContainer = () => {
   }
 };
 
+// Retrying fetch for the non-summary calls: a starved server (1/16 core) drops sockets and times out.
+async function rfetch(url: string, init?: RequestInit): Promise<Response> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+    } catch (e) {
+      if (i >= 30) throw e;
+      await sleep(1000);
+    }
+  }
+}
+
 async function getSummary(): Promise<{ s: Summary; ms: number }> {
   // Under a tiny CPU quota the server can be too slow to answer (or drop the keep-alive socket): retry, and count it.
   const t = performance.now();
@@ -279,7 +291,7 @@ async function getSummary(): Promise<{ s: Summary; ms: number }> {
 }
 
 async function createRoom(mode: string, cfg: RoomConfig, name: string, n: number): Promise<number> {
-  const r = await fetch(`${base}/api/rooms`, {
+  const r = await rfetch(`${base}/api/rooms`, {
     method: "POST",
     headers: { "fly-client-ip": `10.8.0.${n}` },
     body: JSON.stringify({ name, mode, config: Buffer.from(encodeConfig(cfg)).toString("base64"), visibility: "public" }),
@@ -336,7 +348,7 @@ async function main() {
     console.log("idle", JSON.stringify(run.idle));
   }
 
-  const wasm = new Uint8Array(await (await fetch(`${base}/sim.wasm`)).arrayBuffer());
+  const wasm = new Uint8Array(await (await rfetch(`${base}/sim.wasm`)).arrayBuffer());
   const hashHex = await simBuildHash(wasm);
   const workers: Worker[] = [];
   const latest: { bots: (BotCounters & { id: number })[]; lagMax: number }[] = [];
@@ -354,7 +366,7 @@ async function main() {
   let nextId = 0;
   const register = async (name: string) => {
     for (;;) {
-      const r = await fetch(`${base}/api/players`, { method: "POST", body: JSON.stringify({ display_name: name }) });
+      const r = await rfetch(`${base}/api/players`, { method: "POST", body: JSON.stringify({ display_name: name }) });
       if (r.status === 200) return ((await r.json()) as { token: string }).token;
       if (r.status === 429) {
         await sleep(2000);
