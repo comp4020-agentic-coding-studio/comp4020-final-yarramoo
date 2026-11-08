@@ -6,7 +6,7 @@ import { EventLog } from "../../server/log.ts";
 import { SnapshotVerifier, laneBytes, type VerifyRoom } from "../../server/verify.ts";
 import { World, type Peer } from "../../server/world.ts";
 import { compressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
-import { SURVIVAL, encodeConfig, type RoomConfig } from "../../shared/room.ts";
+import { CLASSIC_SANDBOX, SURVIVAL, encodeConfig, isCaves, type RoomConfig } from "../../shared/room.ts";
 import { loadSim } from "../../shared/sim.ts";
 import { WASM, waitFor, wasmBytes } from "./helpers.ts";
 
@@ -21,7 +21,7 @@ function snapshotOf(seed: bigint, steps = 30, cfg: RoomConfig = CFG): { data: Ui
   for (let i = 0; i < steps; i++) s.step();
   return { data: compressSnapshot(s.snapshot()), hash: s.stateHash(), tick: s.tick() };
 }
-const room = (id: number, seed: bigint, cfg: RoomConfig = CFG): VerifyRoom => ({ id, seed, cfg: encodeConfig(cfg), size: cfg.size });
+const room = (id: number, seed: bigint, cfg: RoomConfig = CFG): VerifyRoom => ({ id, seed, cfg: encodeConfig(cfg), size: cfg.size, caves: isCaves(cfg) });
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -79,9 +79,9 @@ describe("warm verify lanes (D-214)", () => {
     const rb = await v.check(snapB.data, MAX_RAW, B);
     expect(rb.kind === "ok" && rb.path).toBe("overflow");
     expect(rb.kind === "ok" && rb.v.hash).toBe(snapB.hash);
-    v.release(A.id);
+    v.release(A.id, true); // unloaded: no linger
     expect(v.laneIds()).toEqual([]);
-    expect(v.laneBytesInUse()).toBe(0);
+    expect(v.laneBytesInUse()).toBe(0); // nothing was in flight, so the worker was terminated at once
     expect(v.warm(B)).toBe(true); // the budget came back
   });
 
@@ -105,7 +105,20 @@ describe("warm verify lanes (D-214)", () => {
     const again = await v.check(snapB.data, MAX_RAW, B);
     expect(again.kind === "ok" && again.v.cold).toBe(false);
     expect(v.coldRestores).toBe(0);
-    v.release(H.id); // the room emptied: a later member gets a fresh lane
+    v.release(H.id, true); // the room emptied and unloaded: that no longer lifts the bar (review S2-4: churn defeated it)
+    expect(v.warm(H)).toBe(false);
+  });
+
+  it("a timed-out room's bar lifts after LANE_BAR_MS, not on a release", async () => {
+    let t = 0;
+    const v = verifier({ timeoutMs: 500, barMs: 1000, now: () => t, workerUrl: new URL("./hang-room-worker.ts", import.meta.url) });
+    const H = room(104, 666n);
+    expect(await v.check(snapshotOf(H.seed).data, MAX_RAW, H)).toMatchObject({ kind: "unavailable", why: "timeout", path: "lane" });
+    v.release(H.id, true);
+    expect(v.warm(H)).toBe(false);
+    t = 999;
+    expect(v.warm(H)).toBe(false);
+    t = 1000;
     expect(v.warm(H)).toBe(true);
   });
 
@@ -138,7 +151,7 @@ describe("warm verify lanes (D-214)", () => {
   });
 
   it("a World opens its lane on the first join and drops it when the last member leaves and on shutdown", async () => {
-    const v = verifier();
+    const v = verifier({ lingerMs: 0 });
     const w = new World({ id: 301, cfg: CFG, seed: 77n, now: () => performance.now(), log: new EventLog({ quiet: true }), verifier: v });
     const peer: Peer = { send() {}, buffered: () => 0, close() {} };
     const a = w.join(peer);
@@ -152,5 +165,63 @@ describe("warm verify lanes (D-214)", () => {
     expect(v.laneIds()).toEqual([301]);
     w.shutdown();
     expect(v.laneIds()).toEqual([]);
+  });
+
+  it("a lane lingers after the last leave, so a join/leave loop generates the world once (review S2-2); an unload releases at once and a reload opens a fresh warm lane", async () => {
+    const v = verifier({ lingerMs: 60_000 });
+    const w = new World({ id: 302, cfg: CFG, seed: 78n, now: () => performance.now(), log: new EventLog({ quiet: true }), verifier: v });
+    const peer: Peer = { send() {}, buffered: () => 0, close() {} };
+    for (let i = 0; i < 5; i++) w.leave(w.join(peer).conn);
+    expect(v.lanesOpened).toBe(1);
+    expect(v.laneIds()).toEqual([302]); // lingering
+    w.shutdown();
+    expect(v.laneIds()).toEqual([]); // an unload (an owned room's, a delete) releases at once, no linger
+    // A reload is a new World for the same row: a fresh lane, prewarmed from the stored seed, and its verify is warm.
+    const again = new World({ id: 302, cfg: CFG, seed: 78n, now: () => performance.now(), log: new EventLog({ quiet: true }), verifier: v });
+    again.join(peer);
+    expect(v.laneIds()).toEqual([302]);
+    expect(v.lanesOpened).toBe(2);
+    const snap = snapshotOf(78n);
+    const r = await v.check(snap.data, MAX_RAW, room(302, 78n));
+    expect(r).toMatchObject({ kind: "ok", path: "lane" });
+    expect(r.kind === "ok" && r.v.cold).toBe(false);
+    expect(r.kind === "ok" && r.v.hash).toBe(snap.hash);
+    again.shutdown();
+  });
+
+  it("a box-terrain room gets no lane: the sim caches no base for it, so a lane would buy nothing", async () => {
+    const v = verifier();
+    const box = room(303, 5n, CLASSIC_SANDBOX);
+    expect(v.warm(box)).toBe(false);
+    const s = loadSim(wasmBytes);
+    s.init(box.seed, box.cfg);
+    for (let i = 0; i < 10; i++) s.step();
+    const r = await v.check(compressSnapshot(s.snapshot()), maxSnapshotRawFor(CLASSIC_SANDBOX), box);
+    expect(r).toMatchObject({ kind: "ok", path: "overflow" });
+    expect(r.kind === "ok" && r.v.hash).toBe(s.stateHash());
+    expect(v.lanesOpened).toBe(0);
+  });
+
+  it("a released lane still answering a verify counts in the budget until its worker exits", async () => {
+    const v = verifier({ warmBudgetBytes: laneBytes(0), lingerMs: 0 });
+    expect(v.warm(A)).toBe(true);
+    const pending = v.check(snapA.data, MAX_RAW, A);
+    v.release(A.id);
+    expect(v.laneIds()).toEqual([]);
+    expect(v.laneBytesInUse()).toBe(laneBytes(0)); // the draining worker still holds A's world
+    expect(v.warm(B)).toBe(false);
+    expect((await pending).kind).toBe("ok"); // the in-flight verify was answered, not failed
+    await waitFor(() => v.laneBytesInUse() === 0, 5000, "the drained worker exits");
+    expect(v.warm(B)).toBe(true);
+  });
+
+  it("a lane released while its generation hangs is still killed at the warm-up bound, and its verify answered (review S2-3)", async () => {
+    const v = verifier({ warmTimeoutMs: 1500, lingerMs: 0, workerUrl: new URL("./hang-room-worker.ts", import.meta.url) });
+    const big = room(204, 667n); // hang-room-worker.ts: a prewarm with seed 667 never finishes
+    const pending = v.check(snapshotOf(big.seed).data, MAX_RAW, big);
+    v.release(big.id);
+    const r = await Promise.race([pending, new Promise((res) => setTimeout(() => res("hung"), 5000))]);
+    expect(r).toMatchObject({ kind: "unavailable", why: "timeout", path: "lane" });
+    expect(v.laneBytesInUse()).toBe(0);
   });
 });

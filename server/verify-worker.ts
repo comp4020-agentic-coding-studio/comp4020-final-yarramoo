@@ -39,8 +39,12 @@ parentPort!.on("message", (job: Job | Prewarm) => {
       room = Buffer.concat([seed, job.cfg]).toString("hex");
       cached = room;
     } catch {
-      cached = null; // a config this build refuses: the room's verifies will say so themselves
-      room = null;
+      // A config this build refuses: the room's verifies will say so themselves. The lane still verifies only its own
+      // room's seed and config (review S3: a failed prewarm must not drop the guard).
+      const seed = Buffer.alloc(8);
+      seed.writeBigUInt64LE(BigInt.asUintN(64, job.seed));
+      room = Buffer.concat([seed, job.cfg]).toString("hex");
+      cached = null;
     }
     parentPort!.postMessage({ warmed: true });
     return;

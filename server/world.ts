@@ -30,7 +30,7 @@ import { MAX_CLIENT_INPUTS_PER_TICK, TickClock, type ClosedTick } from "./clock.
 import type { GameDb } from "./db.ts";
 import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
-import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig, isCaves, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
 import type { SnapshotVerifier, VerifyRoom } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
@@ -791,7 +791,8 @@ export class World {
     if (this.waitingUpload?.memberId === conn) this.waitingUpload = null;
     if (this.members.size === 0) {
       this.claims.clear();
-      // Nobody left to upload: the room's verify lane gives its world of memory back (after any verify in flight answers).
+      // Nobody left to upload: the room's verify lane lingers (`LANE_LINGER_MS`) for a quick rejoin, then gives its world
+      // of memory back (after any verify in flight answers).
       this.verifier?.release(this.id);
       // Last one out. The sim is not ours to snapshot and the client is gone, so nothing to ask: the
       // next cold start replays the log since the last snapshot. Close the Leave tick and persist it now.
@@ -940,7 +941,7 @@ export class World {
   shutdown(): void {
     this.closing = true;
     for (const id of [...this.members.keys()]) this.leave(id);
-    this.verifier?.release(this.id);
+    this.verifier?.release(this.id, true); // unloaded, deleted or stopping: no linger
     this.clock.closeNow();
     this.flush();
   }
@@ -1531,7 +1532,7 @@ export class World {
 
   /** This room as the verifier sees it: its own seed and config, never an upload's (D-214). */
   private verifyRoom(): VerifyRoom {
-    return { id: this.id, seed: this.seed, cfg: encodeConfig(this.cfg), size: this.cfg.size };
+    return { id: this.id, seed: this.seed, cfg: encodeConfig(this.cfg), size: this.cfg.size, caves: isCaves(this.cfg) };
   }
 
   private checkUpload(tick: number): void {

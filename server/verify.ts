@@ -27,6 +27,12 @@ export const VERIFY_TIMEOUT_MS = 10_000;
 export const LANE_WARM_TIMEOUT_MS = 120_000;
 /** Estimated bytes all warm lanes together may hold (`laneBytes`): three M rooms, or one L room. */
 export const VERIFY_WARM_BUDGET_BYTES = 100 * 1024 * 1024;
+/** A lane outlives its room's last leave by this long, so a quick rejoin (or a join/leave loop) reuses the warm world
+ *  instead of generating it again (cold review S2-2). An unload, a delete or a shutdown still releases it at once. */
+export const LANE_LINGER_MS = 60_000;
+/** A room whose lane timed out or crashed gets no new lane for this long, whatever its members do (review S2-4): a world
+ *  too slow to generate, or one that crashes its worker, verifies on the overflow worker, as before D-214. */
+export const LANE_BAR_MS = 5 * 60_000;
 /** A worker's fixed cost (isolate, compiled module) before any world is generated, measured about 12 MB. */
 const LANE_FIXED_BYTES = 12 * 1024 * 1024;
 /** Wasm memory per cell after a generation and a restore, measured 26-27 bytes at M and L (two grids, base planes, chunk state). */
@@ -40,6 +46,9 @@ export interface VerifyRoom {
   cfg: Uint8Array;
   /** `RoomConfig.size`, for the memory estimate. */
   size: number;
+  /** Cave terrain: the only worlds whose generated base the sim caches (D-088, `sim/src/sim.rs` `Base`), so the only
+   *  rooms a lane makes warm. A box world restores without generating; a lane would cost a worker and buy nothing. */
+  caves: boolean;
 }
 
 /** Estimated memory of one warm lane for a room of this size. */
@@ -201,6 +210,7 @@ class Lane {
       j.resolve({ kind: "unavailable", why, path: this.path });
     }
     if (!this.oneShot) this.owner.retire(this, why);
+    this.draining = false;
   }
 
   check(compressed: Uint8Array, maxRaw: number): Promise<CheckResult> {
@@ -217,8 +227,9 @@ class Lane {
   /** Terminate once nothing is pending (now, if nothing is). */
   drain(): void {
     this.draining = true;
+    // With a verify in flight, the lane answers it and then terminates (`idle`). A generation still running keeps its
+    // own bound: the warm-up timer stays armed, so a released lane whose generation hangs is still killed (review S2-3).
     if (this.pending.size === 0) this.kill("closed");
-    else this.warming = false; // a released room's lane stops waiting on its generation as a reason to stay
   }
 
   /** Terminate the worker now, failing anything still pending. */
@@ -248,15 +259,24 @@ export class SnapshotVerifier {
   private readonly log?: EventLog;
   /** Warm lanes by world id. */
   private readonly lanes = new Map<number, Lane>();
-  /** Rooms whose lane timed out: no new lane until the room is released (empties or unloads), so a world too slow to
-   *  generate in time is not regenerated over and over. They verify on the overflow worker, as before D-214. */
-  private readonly barred = new Set<number>();
+  /** Rooms whose lane timed out or crashed, with the time their bar lifts (`LANE_BAR_MS`): a world too slow to generate,
+   *  or one that crashes its worker, is not regenerated over and over. They verify on the overflow worker meanwhile. */
+  private readonly barred = new Map<number, number>();
+  /** Released lanes still answering a verify: their worker holds its world until it exits, so they count in the budget. */
+  private readonly draining = new Set<Lane>();
+  /** Lingering lanes' release timers, by world id (`LANE_LINGER_MS`). */
+  private readonly lingering = new Map<number, ReturnType<typeof setTimeout>>();
+  private readonly lingerMs: number;
+  private readonly barMs: number;
+  private readonly now: () => number;
   /** Rooms without a lane, and start-up checks: a one-shot worker, cold every time, as every verify was before D-214. */
   private readonly overflow: Lane;
   /** Workers killed for exceeding a timeout (telemetry and tests). */
   timeouts = 0;
   /** Verifies whose restore regenerated the world (telemetry and tests: a warm lane keeps this flat). */
   coldRestores = 0;
+  /** Lanes opened, each one a world generation (telemetry and tests: a lingering lane keeps churn from raising it). */
+  lanesOpened = 0;
 
   constructor(
     wasmPath: string,
@@ -270,6 +290,12 @@ export class SnapshotVerifier {
       memoryBytes?: () => number | undefined;
       /** No lane opens if it would take `memoryBytes()` past this (main.ts: the room-load gate's cap). */
       memoryCapBytes?: number;
+      /** Override `LANE_LINGER_MS` (tests: 0 releases at the last leave). */
+      lingerMs?: number;
+      /** Override `LANE_BAR_MS` (tests). */
+      barMs?: number;
+      /** Clock for the bar (tests). */
+      now?: () => number;
       log?: EventLog;
     } = {},
   ) {
@@ -283,14 +309,26 @@ export class SnapshotVerifier {
     this.memoryBytes = opts.memoryBytes;
     this.memoryCapBytes = opts.memoryCapBytes ?? Infinity;
     this.log = opts.log;
+    this.lingerMs = opts.lingerMs ?? LANE_LINGER_MS;
+    this.barMs = opts.barMs ?? LANE_BAR_MS;
+    this.now = opts.now ?? (() => performance.now());
     this.overflow = new Lane(this, "overflow", null, 0, true);
   }
 
-  /** Estimated bytes held by open lanes. */
+  /** Estimated bytes held by open lanes, lingering ones, and released ones whose worker has not exited yet. */
   laneBytesInUse(): number {
     let n = 0;
     for (const l of this.lanes.values()) n += l.bytes;
+    for (const l of this.draining) n += l.bytes;
     return n;
+  }
+
+  private isBarred(id: number): boolean {
+    const until = this.barred.get(id);
+    if (until === undefined) return false;
+    if (this.now() < until) return true;
+    this.barred.delete(id);
+    return false;
   }
 
   /** World ids that hold a warm lane (tests, telemetry). */
@@ -304,8 +342,14 @@ export class SnapshotVerifier {
    * room has a lane. Never fails anything: a room without a lane verifies cold on the overflow worker.
    */
   warm(room: VerifyRoom): boolean {
-    if (this.closed || this.barred.has(room.id)) return false;
-    if (this.lanes.has(room.id)) return true;
+    if (this.closed || !room.caves || this.isBarred(room.id)) return false;
+    if (this.lanes.has(room.id)) {
+      // A lingering lane: the room is back before its release, so its warm world is kept.
+      const t = this.lingering.get(room.id);
+      if (t) clearTimeout(t);
+      this.lingering.delete(room.id);
+      return true;
+    }
     const need = laneBytes(room.size);
     const inUse = this.laneBytesInUse();
     const mem = this.memoryBytes?.();
@@ -322,29 +366,45 @@ export class SnapshotVerifier {
     const lane = new Lane(this, "lane", room, need, false);
     this.lanes.set(room.id, lane);
     lane.open();
-    this.log?.event("verify.lane_opened", { world: room.id, size: room.size, est_mb: Math.round(need / 1048576), lanes: this.lanes.size, in_use_mb: Math.round((inUse + need) / 1048576) });
+    this.lanesOpened++;
+    // Members choose when a room opens and closes a lane, so the line is limited per room (review S2-1).
+    this.log?.limited(`verify:lane:${room.id}`, 10_000, "verify.lane_opened", { world: room.id, size: room.size, est_mb: Math.round(need / 1048576), lanes: this.lanes.size, in_use_mb: Math.round((inUse + need) / 1048576) });
     return true;
   }
 
   /**
-   * The room emptied or unloaded: terminate its lane (after an in-flight verify answers, so the last snapshot before
-   * everyone left is not lost), which gives its memory back now. A rejoin opens a fresh lane.
+   * The room emptied (`now` false: the lane lingers `LANE_LINGER_MS`, so a quick rejoin keeps its warm world) or unloaded
+   * (`now` true): terminate its lane, after an in-flight verify answers so the last snapshot before everyone left is not
+   * lost. Its memory counts against the budget until the worker exits. A bar is not lifted by a release (review S2-4).
    */
-  release(id: number): void {
-    this.barred.delete(id);
+  release(id: number, now = false): void {
     const lane = this.lanes.get(id);
     if (!lane) return;
+    const t = this.lingering.get(id);
+    if (t) clearTimeout(t);
+    this.lingering.delete(id);
+    if (!now && this.lingerMs > 0) {
+      const timer = setTimeout(() => this.lingering.get(id) === timer && this.release(id, true), this.lingerMs);
+      timer.unref();
+      this.lingering.set(id, timer);
+      return;
+    }
     this.lanes.delete(id);
+    this.draining.add(lane);
     lane.drain();
-    this.log?.event("verify.lane_closed", { world: id, reason: "released", lanes: this.lanes.size });
+    this.log?.limited(`verify:lane:${id}:closed`, 10_000, "verify.lane_closed", { world: id, reason: "released", lanes: this.lanes.size });
   }
 
-  /** @internal A lane whose worker crashed or timed out: forget it. A timed-out room gets no new lane until released. */
+  /** @internal A lane's worker is gone: forget it. A room whose lane timed out or crashed is barred for `LANE_BAR_MS`. */
   retire(lane: Lane, why: "timeout" | "crashed" | "closed"): void {
+    this.draining.delete(lane);
     const id = lane.room?.id;
+    if (why !== "closed" && id !== undefined) this.barred.set(id, this.now() + this.barMs);
     if (id === undefined || this.lanes.get(id) !== lane) return; // already released
     this.lanes.delete(id);
-    if (why === "timeout") this.barred.add(id);
+    const t = this.lingering.get(id);
+    if (t) clearTimeout(t);
+    this.lingering.delete(id);
     this.log?.limited(`verify:lane_lost:${id}`, 10_000, "verify.lane_closed", { world: id, reason: why, lanes: this.lanes.size }, "warn");
   }
 
@@ -369,8 +429,11 @@ export class SnapshotVerifier {
 
   async close(): Promise<void> {
     this.closed = true;
-    for (const l of this.lanes.values()) l.kill("closed");
+    for (const t of this.lingering.values()) clearTimeout(t);
+    this.lingering.clear();
+    for (const l of [...this.lanes.values(), ...this.draining]) l.kill("closed");
     this.lanes.clear();
+    this.draining.clear();
     this.overflow.kill("closed");
   }
 }
