@@ -189,7 +189,9 @@ come into existence.
   needs a running server; run both before committing anything in `sim/`,
   `shared/` or the input path.
 - **The gate and how to run tests: the `run-tests` skill** (`.claude/skills/`).
-  It holds the five-step chain and its rules: one gate at a time and few agents
+  **Ask `node scripts/gate-plan.ts` which tier a change needs first** (full, server/client/tests, or docs): it
+  skips only whole steps a change can't affect, and an unknown path or anything reaching the sim, `shared/` or the
+  input path is always the full gate. The skill also holds the five-step chain and its rules: one gate at a time and few agents
   (eleven at once wrecked every gate on 4 Nov), never edit under a running gate,
   and show a test red before trusting it.
 - **In-browser dev tools (URL flags, `__dev*` console hooks, ids, generator preview): the `dev-tools` skill**

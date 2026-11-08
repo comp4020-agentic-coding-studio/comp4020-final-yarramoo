@@ -17,10 +17,32 @@ description: Run Simulta's tests, from one file while iterating to the full gate
 Always `--release` for cargo: debug is about 25x slower on the 512 x 512 worlds. Always prefix cargo with
 `PATH="$HOME/.cargo/bin:$PATH"`: Homebrew's `rustc` comes first on PATH and has no wasm32 target.
 
-## The gate
+## Which gate: ask the planner first
 
-Required before any commit touching `sim/`, `shared/`, `server/` or the input path, and before every push. Each step
-writes its own log and the commit is chained on the exit code, so a red step stops everything after it:
+The full gate takes ~20 minutes (cargo ~7 min to build, determinism ~5, net ~6). Most of that only proves something
+when the sim or what feeds it changed. **Run `node scripts/gate-plan.ts` (vs `multa`; or `<base>`)** and run the steps
+it prints:
+
+| Tier | When | Steps |
+|---|---|---|
+| **full** | anything in `sim/`, `shared/`, `client/lockstep.ts`, `client/worker.ts`, `client/avatar.ts`, `client/protocol.ts`, `tests/determinism/`, a build or lock file, a test config, the planner itself, **or any path it doesn't recognise** | cargo, clippy, typecheck, determinism, net |
+| **server** / **client** / **tests** | only `server/`, only other `client/` files, only `tests/net/` or `spec/` | typecheck, net (+ `pnpm check` against your own server) |
+| **docs** | only Markdown, `docs/`, `.claude/`, `tests/soak/` | `pnpm check:evidence` |
+
+- **It fails safe**: one full-tier path anywhere in the change makes the whole change full, and an unknown path is
+  full. `tests/net/gate-plan.test.ts` pins that (it was shown red against a planner that skips everything).
+- It skips **whole steps**, never single test files: many net tests reach code through a spawned server or the wasm,
+  not imports, so narrowing the net suite by file would miss them.
+- **A merge to `multa` runs the tier of everything the merge brings in** (`node scripts/gate-plan.ts <the base the
+  branch forked from>`), not just the last commit. **Before every push**, at least the tier of everything since the
+  last push.
+- It says why a change is full (`full because: ...`): put the tier in the commit message.
+- If you change what a path can affect (e.g. a client file starts producing inputs), add it to `FULL` in the planner.
+
+## The gate (the full tier)
+
+Required for the full tier (above). Each step writes its own log and the commit is chained on the exit code, so a red
+step stops everything after it:
 
 ```bash
 (cd sim && PATH="$HOME/.cargo/bin:$PATH" cargo test --release > /tmp/g-cargo.log 2>&1) \
