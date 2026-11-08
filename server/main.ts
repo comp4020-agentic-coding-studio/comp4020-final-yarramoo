@@ -29,7 +29,7 @@ import {
   WORLD_GAME,
   encodeAchievement,
 } from "../shared/protocol.ts";
-import { decodeConfig, type RoomConfig } from "../shared/room.ts";
+import { CLASSIC_SANDBOX, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
@@ -387,7 +387,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       roomUnloadTimers.delete(w.id);
       if (w.playerCount > 0 || w.closing || worlds.get(w.id) !== w) return; // rejoined, or already replaced/unloaded
       // N1: nobody has been in it for the grace period, so the room dies (a memory-only server just unloads it).
-      if (rooms) deleteRoom(w.id, "empty");
+      // OWNED: a player's own sandbox only unloads (frees memory); its rows stay and the next HELLO reloads it.
+      if (rooms && rooms.getRoomById(w.id)?.ownerPlayerId == null) deleteRoom(w.id, "empty");
       else {
         w.shutdown();
         worlds.delete(w.id);
@@ -402,14 +403,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
    * while a load is in flight or anyone is a member, so a join landing between a trigger and this call wins; once the
    * rows are gone, a later HELLO finds no row and is refused as an unknown room (nothing is resurrected).
    */
-  function deleteRoom(id: number, reason: "empty" | "never_joined"): boolean {
+  function deleteRoom(id: number, reason: "empty" | "never_joined" | "owner"): boolean {
     if (!rooms || id === SANDBOX_ID || id === GAME_ID || loadingRooms.has(id)) return false;
     const w = worlds.get(id);
-    if (w && w.playerCount > 0) return false;
+    // OWNED: the owner's delete does not wait for an empty room: its members are closed (4003, "deleted") first.
+    if (w && w.playerCount > 0 && reason !== "owner") return false;
     const row = rooms.getRoomById(id);
     if (!row) return false;
+    if (row.ownerPlayerId !== null && reason !== "owner") return false; // only its owner ends a persistent sandbox
     cancelUnload(id);
     if (w) {
+      if (reason === "owner") {
+        for (const m of [...w.members.values()]) {
+          try {
+            m.peer.close(4003, "world deleted");
+          } catch {
+            // already gone
+          }
+        }
+      }
       w.shutdown(); // flushes pending ticks; `closing` stops any in-flight snapshot verify from saving afterwards
       worlds.delete(id);
       tickSamples.delete(id);
@@ -901,7 +913,72 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     const roomWorld = worlds.get(r.id);
-    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, ended: r.endedAt !== null, running: r.endedAt === null && (roomWorld ? roomWorld.roundActive() : roomIsRunning(r)), ...(tele.on ? { devTeleport: true } : {}), config: Buffer.from(r.config).toString("base64") }));
+    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, owned: r.ownerPlayerId !== null, ended: r.endedAt !== null, running: r.endedAt === null && (roomWorld ? roomWorld.roundActive() : roomIsRunning(r)), ...(tele.on ? { devTeleport: true } : {}), config: Buffer.from(r.config).toString("base64") }));
+  }
+
+  /** OWNED: the caller's player from `authorization: Bearer <64 hex>` (the token POST /api/players gave it), or null. */
+  function bearerPlayer(req: IncomingMessage): { id: number; name: string } | null {
+    const m = /^Bearer ([0-9a-f]{64})$/.exec(String(req.headers.authorization ?? ""));
+    if (!m) return null;
+    const who = identity.resolve(new Uint8Array(Buffer.from(m[1], "hex")));
+    return who === "unknown" ? null : who;
+  }
+
+  /** OWNED: what the menu needs about an owned sandbox. The owner's plain name only, never `name#id`. */
+  const ownedJson = (r: RoomRow) => ({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility });
+
+  /**
+   * OWNED: /api/sandbox. GET finds the caller's own sandbox (404 if none), POST creates it or returns the existing one
+   * (idempotent: one per player). DELETE /api/sandbox/:code removes it and everything stored for it, for its owner
+   * only (403 for anyone else, and for a room nobody owns). Every verb needs the caller's token. POST and DELETE are
+   * same-origin only, like POST /api/rooms; POST shares that route's per-IP hourly creation limit.
+   */
+  function ownedSandboxRoute(req: IncomingMessage, res: ServerResponse, code: string | null): void {
+    const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+    const json = (status: number, body: unknown) => res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
+    const allow = code === null ? "GET, POST" : "DELETE";
+    if (!allow.split(", ").includes(req.method ?? "")) {
+      res.writeHead(405, { allow }).end();
+      return;
+    }
+    if (!rooms) return void json(503, { error: "rooms_unavailable" });
+    if (req.method !== "GET" && !originOk(req)) {
+      log.limited(`owned:${ipTag}`, 10_000, "room.create_rejected", { reason: "origin", owned: true, ip_tag: ipTag }, "warn");
+      return void json(403, { error: "origin" });
+    }
+    const me = bearerPlayer(req);
+    if (!me) {
+      if (req.method === "DELETE") log.limited(`owned:${ipTag}`, 10_000, "room.delete_refused", { reason: "no_token", ip_tag: ipTag }, "warn");
+      return void json(401, { error: "unknown_token" });
+    }
+    if (code !== null) {
+      const target = /^[A-Za-z0-9]{1,6}$/.test(code) ? rooms.getRoomByCode(code) : null;
+      if (!target) return void json(404, { error: "not_found" });
+      if (target.ownerPlayerId !== me.id) {
+        log.limited(`owned:${ipTag}`, 10_000, "room.delete_refused", { reason: "not_owner", world: target.id, who: `${me.name}#${me.id}`, ip_tag: ipTag }, "warn");
+        return void json(403, { error: "not_owner" });
+      }
+      if (!deleteRoom(target.id, "owner")) {
+        // Only a load in flight refuses an owner's delete; the client may simply retry.
+        log.limited(`owned:${ipTag}`, 10_000, "room.delete_refused", { reason: "busy", world: target.id, ip_tag: ipTag }, "warn");
+        return void json(409, { error: "busy" });
+      }
+      return void json(200, { deleted: target.code });
+    }
+    const mine = rooms.ownedBy(me.id);
+    if (req.method === "GET") return void (mine ? json(200, ownedJson(mine)) : json(404, { error: "not_found" }));
+    if (mine) return void json(200, { ...ownedJson(mine), created: false });
+    if (!roomCreateAllowed(ipTag, Date.now())) {
+      log.limited(`owned:${ipTag}`, 10_000, "room.create_rejected", { reason: "ip_rate_limited", owned: true, ip_tag: ipTag }, "warn");
+      return void json(429, { error: "rate_limited" });
+    }
+    const r = rooms.ensureOwned(me.id, me.name, encodeConfig(CLASSIC_SANDBOX));
+    if ("error" in r) {
+      log.limited(`owned:${ipTag}`, 10_000, "room.create_rejected", { reason: r.error, owned: true, ip_tag: ipTag }, "warn");
+      return void json(400, { error: r.error });
+    }
+    if (r.created) log.event("room.created", { room: r.room.id, mode: r.room.mode, visibility: r.room.visibility, owner: `${me.name}#${me.id}` });
+    json(r.created ? 201 : 200, { ...ownedJson(r.room), created: r.created });
   }
 
   const http: Server = createServer((req, res) => {
@@ -973,6 +1050,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     if (path === "/api/live") {
       if (req.method === "GET") liveRoute(res);
       else res.writeHead(405, { allow: "GET" }).end();
+      return;
+    }
+    if (path === "/api/sandbox" || path.startsWith("/api/sandbox/")) {
+      ownedSandboxRoute(req, res, path === "/api/sandbox" ? null : path.slice("/api/sandbox/".length));
       return;
     }
     if (path === "/api/rooms") {

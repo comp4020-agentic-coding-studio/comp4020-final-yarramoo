@@ -60,7 +60,7 @@ describe("migration 5", () => {
       PRAGMA user_version = 4;`);
     raw.close();
     const db = new GameDb(dir);
-    expect(db.schemaVersion).toBe(8); // migrations 6 (rooms, R2a), 7 (rooms.ended_at, F7) and 8 (rooms.first_joined_at, N1) also applied
+    expect(db.schemaVersion).toBe(9); // migrations 6 (rooms, R2a), 7 (rooms.ended_at, F7), 8 (rooms.first_joined_at, N1) and 9 (rooms.owner_player_id, OWNED) also applied
     expect(db.loadStats(1)).toEqual({ casts_water: 7 });
     expect(db.achievementsOf(1)).toEqual([]);
     expect(db.awardAchievement(1, "first_spell", 1, 10)).toBe(true);

@@ -104,6 +104,12 @@ const MIGRATIONS: string[] = [
   alter table rooms add column first_joined_at integer;
   update rooms set first_joined_at = last_active where id in (select world_id from tick_log union select world_id from snapshots);
   `,
+  // OWNED (8 Nov): a player's own persistent sandbox. Null for every other room (Survival, Deathmatch, a shared
+  // sandbox room), which stay ephemeral; the partial unique index makes "one per player" a database fact.
+  `
+  alter table rooms add column owner_player_id integer references players(id);
+  create unique index rooms_owner on rooms (owner_player_id) where owner_player_id is not null;
+  `,
 ];
 
 /** Incident rows kept (the newest). */
