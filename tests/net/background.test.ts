@@ -50,6 +50,41 @@ describe("groundLine", () => {
     for (const x of [6, 10, 15, 20, 21]) expect(line[x]).toBe(30);
   });
 
+  // 9 Nov screenshot: beside a hill, the back wall stood in the sky as a flat block with a vertical edge. The old rim
+  // was the highest ground within 64 columns either side, and only columns more than 12 below it closed, so the
+  // wall's edge stood over open funnel cells whose ground was up to 12 rows lower.
+  it("closes a cave mouth beside a hill flush with the terrain, with no wall standing in open air", () => {
+    const w = 200, h = 140;
+    const g = new Uint8Array(w * h);
+    // Ground at row 40 on the left, a hill at row 20 on the right, a valley floor at row 60 between them, and a shaft
+    // (x 92-100) dropping out of the valley floor: the screenshot's mouth at the foot of a hill.
+    const top = (x: number) => (x < 50 ? 40 : x > 140 ? 20 : x < 70 ? 40 + (x - 50) : x > 120 ? 60 - 2 * (x - 120) : 60);
+    for (let x = 0; x < w; x++) for (let y = top(x); y < h; y++) g[y * w + x] = ROCK;
+    for (let x = 92; x <= 100; x++) for (let y = 60; y < 130; y++) g[y * w + x] = 0;
+    const surface = (x: number) => { let y = 0; while (y < h && g[y * w + x] === 0) y++; return y; };
+    const line = groundLine(g, w, h);
+    expect(line[96]).toBeLessThan(surface(96)); // the shaft is closed
+    // Wherever the line sits above the surface (back wall drawn), each neighbour is wall at the same height or ground
+    // at most 2 rows below it: the wall never ends in a vertical edge over open air.
+    for (let x = 0; x < w; x++) {
+      if (line[x] >= surface(x)) continue;
+      for (const n of [x - 1, x + 1]) {
+        if (n < 0 || n >= w) continue;
+        const ok = line[n] === line[x] || surface(n) <= line[x] + 2;
+        expect(ok, `wall at x=${x} (row ${line[x]}) ends over open air at x=${n} (line ${line[n]}, ground ${surface(n)})`).toBe(true);
+      }
+    }
+  });
+
+  it("leaves a wide valley between hills as sky", () => {
+    const w = 200, h = 120;
+    const g = new Uint8Array(w * h);
+    const top = (x: number) => (x < 40 || x > 160 ? 30 : 30 + Math.round(50 * Math.sin(((x - 40) / 120) * Math.PI)));
+    for (let x = 0; x < w; x++) for (let y = top(x); y < h; y++) g[y * w + x] = ROCK;
+    const line = groundLine(g, w, h);
+    for (let x = 0; x < w; x++) expect(line[x]).toBe(top(x));
+  });
+
   it("closes a generated shaft at its rim", () => {
     const w = 20;
     const g = grid(w, 80, 20);

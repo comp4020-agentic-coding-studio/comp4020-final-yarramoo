@@ -42,7 +42,7 @@ box says "Fly Postgres": the project uses SQLite on the Fly volume instead (D-00
 | Part | Code | What it does |
 |---|---|---|
 | **Simulation** | `sim/` (Rust, about 10,250 lines in `sim/src/`) | The whole game state and every rule: the cell grid and 64 x 64 chunks (`grid.rs`), players, spells, projectiles, bags and pickups (`entities.rs`, `spells.rs`), enemies and bosses (`enemy.rs`), world generation from a seed (`gen.rs`), counter-based randomness (`rng.rs`), hashing and snapshots (`hash.rs`, `snapshot.rs`). Exposes an integer-only C ABI (`lib.rs`: `init`, `push_input`, `step`, `state_hash`, `chunk_hashes`, `snapshot_write`, `restore`, read-only views). |
-| **Shared** | `shared/` | Code both sides import: the typed wasm loader (`sim.ts`), the binary protocol, version 9 (`protocol.ts`), input encodings (`inputs.ts`), the 16-byte room config (`room.ts`), the avatar's Pos rule (`avatar.ts`), achievements, stats and the server event catalogue. |
+| **Shared** | `shared/` | Code both sides import: the typed wasm loader (`sim.ts`), the binary protocol, version 10 (`protocol.ts`; chat frames `C_CHAT`/`S_CHAT`, D-229), input encodings (`inputs.ts`), the 16-byte room config (`room.ts`), the avatar's Pos rule (`avatar.ts`), achievements, stats and the server event catalogue. |
 | **Client** | `client/` | The main thread draws the menu (`menu.ts`, `menu/`) and the room page (`room.ts`: HUD, hotbar, input, sound). A Web Worker (`worker.ts`) owns the WebSocket, the sim and the playout buffer (`lockstep.ts`), predicts the local avatar (`avatar.ts`) and renders with WebGL2 into an OffscreenCanvas (`render.ts`); the main thread renders instead when OffscreenCanvas is missing (`room.ts:1366-1373`). |
 | **Server** | `server/` (Node 24) | `main.ts` serves HTTP (the client, `/api/players`, `/api/rooms`, `/api/live`, the dashboard, `/readme/`) and the WebSocket. One `World` per loaded room (`world.ts`) holds the tick clock (`clock.ts`), the closed-tick log, hash votes, claims and snapshots. A worker thread (`verify-worker.ts`) restores uploaded snapshots in the same `sim.wasm` to check them. SQLite through `node:sqlite` (`db.ts`). |
 | **Deploy** | `Dockerfile`, `fly.toml` | A three-stage image (Rust to `sim.wasm`, Vite client build, `node:24-slim` runtime) on one `shared-cpu-1x` machine with 256 MB and a 1 GB volume at `/data`, stopped when idle (`fly.toml`; D-002, D-003, D-008). |
@@ -133,7 +133,7 @@ by a machine check, not by good intentions:
 | 3 | No floating point in `sim/` | `#![deny(clippy::float_arithmetic)]` (`sim/src/lib.rs:2`), clippy with `-D warnings` on wasm32 in the gate and as test D11 (`tests/determinism/static.test.ts:33`). Fixed-point trig comes from a generated table (`sim/src/trig.rs`, D-075). |
 | 4 | No host imports | `WebAssembly.Module.imports(sim.wasm)` must be empty (`tests/determinism/static.test.ts:26-27`). A `canary` build adds exactly one import and must be caught (D10), which proves the check can fail (`sim/Cargo.toml`, `sim/src/sim.rs:242`). |
 | 5 | No `HashMap`/`HashSet`, clocks, threads or entropy | `sim/clippy.toml`: `disallowed-types` for both hash collections and `disallowed-methods` for `Instant::now` and `SystemTime::now`. |
-| 6 | Randomness is counter-based | One pure function, `rng(seed, tick, x, y, salt)` (`sim/src/rng.rs:9`), with one salt per use. New salts must be unique (`salts_are_unique`, `sim/tests/structures.rs:295`); eight older ones are known duplicates (D-217). |
+| 6 | Randomness is counter-based | One pure function, `rng(seed, tick, x, y, salt)` (`sim/src/rng.rs:9`), with one salt per use. New salts must be unique (`salts_are_unique`, `sim/tests/structures.rs:295`); the eight cell-rule salts that once duplicated generation's were renumbered 260-267 to 291-298 (D-217, closed by D-232). |
 | 7 | Hash fixed-width integers only | Hashes run over the `u8` planes (`sim/src/hash.rs`). Test D3 compares native Rust with wasm32 hash logs, which differ if anything depends on `usize` (`tests/determinism/static.test.ts:8,17`). |
 | 8 | Chunk sleeping is semantically invisible | Sleep on and off must produce the same hashes: `sim/tests/sleep.rs`, D7 in `tests/determinism/sleep.test.ts`, the restore case in `sim/tests/wake.rs`, and the hash-cache test `sim/tests/hash_cache.rs` (D-224). [entry 8](docs/engineering-decisions.md#8-chunk-sleeping-that-must-be-invisible), [entry 33](docs/engineering-decisions.md#33-waking-the-frozen-world-and-the-restore-that-would-have-split-it). |
 | 9 | Outputs never feed back as inputs | `events`, `entities` and the chunk-hash ring are read-only (`client/lockstep.ts:30`); the menu backdrop's camera windows are chosen offline, never from live entity positions ([entry 43](docs/engineering-decisions.md#43-the-menus-mobs-are-real-because-the-menu-plays)). Held by review. |
@@ -149,7 +149,7 @@ succeeded, so tests now assert what happened before trusting agreement ([entry 2
 
 ## 4. Key engineering decisions
 
-The full log has 223 rows; [`docs/engineering-decisions.md`](docs/engineering-decisions.md) tells 47 of them as
+The full log has 227 rows; [`docs/engineering-decisions.md`](docs/engineering-decisions.md) tells 48 of them as
 stories. These are the ones that shaped the architecture or cost real time, including the reversals and the bugs that
 taught something.
 
@@ -159,7 +159,7 @@ taught something.
 |---|---|---|
 | Server-paced lockstep, Rust in wasm, hard rules from day one | Bandwidth independent of world size; a small server; determinism made a property of the build, not of care | [entry 1](docs/engineering-decisions.md#1-server-paced-deterministic-lockstep), [entry 2](docs/engineering-decisions.md#2-a-rust-simulation-in-webassembly-with-hard-rules); D-006 |
 | A determinism harness (four engines, native, canary) before any game code | Every later change is judged against it | [entry 7](docs/engineering-decisions.md#7-a-determinism-harness-before-any-game-code); D-019, D-020 |
-| Counter-based RNG with one salt per use | No RNG state to snapshot or desync; order-independent | [entry 3](docs/engineering-decisions.md#3-counter-based-randomness); D-217 (eight duplicated salts, left as a correlation) |
+| Counter-based RNG with one salt per use | No RNG state to snapshot or desync; order-independent | [entry 3](docs/engineering-decisions.md#3-counter-based-randomness); D-217, D-232 (eight duplicated salts renumbered 291-298; generated worlds unchanged) |
 | A 16-byte `RoomConfig` replaced the `world_kind` byte, hashed into the state | Per-room rules; two clients with different configs diverge at tick 0 instead of agreeing silently | [entry 11](docs/engineering-decisions.md#11-a-config-replaces-the-world-kind-and-ends-a-compatibility-guarantee); D-132, D-133 |
 | Chunk sleeping, then frozen chunks that wake (no cap) | Big worlds at 60 Hz; a flood you walk away from finishes. The first restore test could not fail; the cold review found the split | [entry 8](docs/engineering-decisions.md#8-chunk-sleeping-that-must-be-invisible), [entry 33](docs/engineering-decisions.md#33-waking-the-frozen-world-and-the-restore-that-would-have-split-it); D-054, D-176 |
 | **Reversal:** cells update row by row across a band of chunks (D-191) | The user's screenshot of water standing in walls 64 cells apart. Not the active region, as D-173 had concluded for the same symptom: chunk-major order gave edge cells fewer moves per tick | [entry 39](docs/engineering-decisions.md#39-the-water-walls-were-the-scan-order-not-sleeping); D-173, D-191 |
@@ -176,6 +176,8 @@ taught something.
 | Deaths and kills by majority claim | The server never steps, so it cannot see a death | [entry 23](docs/engineering-decisions.md#23-an-achievement-the-sims-outputs-cannot-express); D-118 to D-121 |
 | Pause the world while a lone joiner catches up (after OpenTTD's `pause_on_join`) | A long log made a joiner chase a moving target | [entry 16](docs/engineering-decisions.md#16-snapshot-timing-and-the-correction); D-122, D-131 |
 | A slow player gets a notice; the room is not touched | Measured through a frame proxy at 300-2000 ms RTT, loss and blackouts: the server held 60 ticks/s and the other player was unaffected | D-226; [`slow-net-report.md`](docs/research/slow-net-report.md) |
+| Lava moves when `tick & 2 == 0`, so it is scanned in both row directions | On even ticks only, every lava move scanned left to right and a heap stood against one wall; a test is red on the old parity | D-233; [entry 39](docs/engineering-decisions.md#39-the-water-walls-were-the-scan-order-not-sleeping) (addendum) |
+| In-room chat is a server-relayed frame, never a sim input | Invariant 1: shared state changes only through `push_input`; the server relays, rate-limits (5 lines per 10 s) and never logs the body | D-229 |
 | Step by real time owed, not a fixed count per frame | A bisect blamed a CSS commit; the cause was that the worker's rAF ran at 3-9 Hz on a throttled page | D-215; [`n1-throttled-regression.md`](docs/research/n1-throttled-regression.md) |
 
 **Persistence**
@@ -207,6 +209,8 @@ taught something.
 | Camera, zoom, sky, ambient life and ice sliding are client-only | Cosmetics that cannot desync because they are never read back | D-055, D-085, D-196, D-212 |
 | The renderer is told the terrain, not left to guess from the height | Small cave rooms filled with sky | [entry 36](docs/engineering-decisions.md#36-the-renderer-that-guessed-what-kind-of-world-it-was-drawing); D-189 |
 | The menu backdrop is a real local sim with real mobs | Enemies only move near a live player, so a camera alone shows a frozen world | [entry 43](docs/engineering-decisions.md#43-the-menus-mobs-are-real-because-the-menu-plays); D-210 |
+| Sound by cause: the hurt cause is inferred client-side from events and the hitbox; one water voice follows moving water | Client-only and display-only (invariant 9); the sim reports a cause only on death | D-230 |
+| The backdrop's shaft rim is where the opening is still shaft-narrow, and the whole opening closes there | A dark block stood in the sky beside a hill at a cave mouth, seen only in a screenshot | D-234; [entry 45](docs/engineering-decisions.md#45-a-surface-you-can-read-and-what-only-a-screenshot-saw) |
 | Phones play; one backing pixel per cell on touch devices | Cost was the fragment shader per device pixel, not the sim | D-209, D-218 |
 
 **Capacity**
@@ -214,7 +218,7 @@ taught something.
 | Decision | Why | Links |
 |---|---|---|
 | Admission caps: 32 soft / 48 hard members, 16 loaded rooms, 200 MB load gate | Measured over real rooms with bots in the real image | D-144; `server/main.ts:88-99` |
-| **Finding, not fixed:** at the sustained 6.25%-of-a-core quota, snapshot verifies take 10-17 s against a 10 s timeout | The verify worker keeps one cached world, so with two or more rooms every verify regenerates | D-213; [`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md) |
+| A verify worker per occupied cave room, prewarmed at the first join. At the sustained 6.25%-of-a-core quota 1 room now holds (was 0) and verify rejections fell from 8-25 per run to 0; two rooms still don't (CPU-bound) | The single verify worker kept one cached world, so every verify regenerated and took 10-17 s against a 10 s timeout. Dropped wasm instances are not reclaimed, so one worker per room, not instances in one worker | D-213, D-228; [entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient); [`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md), [`warm-verify-report.md`](docs/research/warm-verify-report.md) |
 
 ## 5. Harness and skill-level interventions
 
@@ -243,7 +247,7 @@ the text, so the reason travels with the rule.
 | **`&&` is the gate; intermittent is a race** (`b862348`) | A merge was committed on a red `test:net` because the commit followed the test with `;` (`d24bf69`); a flaky test compared two independent clocks | The gate is chained on exit codes; `first_blood` failing one run in three was traced to a 27-cell blast reach against a 12-cell assumption (D-179) |
 | **An input must not cost unbounded work** (`3094d25`) | A radius-255 Paint disc cost every client millions of writes in one tick | Clamps in the sim; extended by D-223 when a review found the aggregate case |
 | **Server logging and identity rules; `server/` never imports `client/`** (`870410c`) | The crit 10 review found an image that would not boot: `shared/` imported client code that the runtime stage does not copy ([entry 20](docs/engineering-decisions.md#20-what-independent-reviews-caught-that-tests-missed)) | `tests/net/imports.test.ts`; `log.event`/`log.limited`, `log.ipTag`, plain names to players |
-| **Record the big decisions** (`8f4c105`) | A marker needs the reasoning, not 200 rows | 47 entries, with visible corrections (entries 16, 21 and 41 each keep theirs) |
+| **Record the big decisions** (`8f4c105`) | A marker needs the reasoning, not 200 rows | 48 entries, with visible corrections (entries 16, 21 and 41 each keep theirs) |
 | **Every `rm` names a literal absolute path** (`aedb377`) | Preventive: an empty variable turns `rm -rf $DIR/*` into `rm -rf /*`. No incident is recorded | Briefs carry the rule; worker reports cite it (`docs/research/r2b-worker-report.md:192`) |
 | **Log good ideas in `FUTURE.md`** (`ea38d62`) | Ideas from reviews and workers outlived their sessions only if written down | [`FUTURE.md`](FUTURE.md) has 73 entries; done ones are marked (for example D-125, D-126) |
 | **`PROCESS.md` has a length** (`ae2778a`) | A sibling deliverable's `PROCESS.md` grew to about 2,000 words against a 900-1,100 brief | `scripts/check-evidence.ts:61-90` fails over 1,100 words; CI runs it before every deploy |
@@ -273,7 +277,9 @@ of the reviewed harness.
 needs: the full gate (cargo, clippy, typecheck, determinism, net) for anything in `sim/`, `shared/`, the client's input
 path, test configs, lock files, the planner itself or **any path it doesn't recognise**; typecheck and net for
 server- or client-only changes; the evidence check for docs. **Why:** the full gate takes about 20 minutes and was
-being run for changes that cannot reach the sim (D-220). **Fails safe:** one full-tier path makes the whole change full,
+being run for changes that cannot reach the sim (D-220). A worker's gate also counts when nothing moved under it: if
+the branch forked from `multa`'s head and the staged merge equals the branch, the merged tree is what it gated
+(`a2c0ea8`; [`docs/skills.md`](docs/skills.md) lists the skills). **Fails safe:** one full-tier path makes the whole change full,
 and it skips whole steps, never single net files, because many net tests reach code through a spawned server.
 `tests/net/gate-plan.test.ts` was shown red against a planner that skips everything (`2fe4c58`).
 
@@ -333,7 +339,7 @@ project's own docs framed the votes that way, which is probably why a reader who
 - **Claims are checked against their own evidence.** The quality lead reported pile pickups going from 24/72 to 71/72;
   the committed file sums to 24/72 and the script was gone, so D-214 says so and rests the fix on the geometric test,
   the gate and a cold review. A track blamed random seeds for an intermittent test; the session model's probes (6
-  seeds, 11 quiet runs) pointed at load, and D-219 records the correction.
+  seeds, 11 quiet runs) pointed at load, and D-219 records the correction and D-231 closed it: the flake was the test's own wall-clock pacing.
 - **One heavy job at a time.** After 4 Nov's load-575 run, lead briefs say to check `pgrep` and `docker ps` before a gate
   or bench ([`overnight-2026-11-08.md`](docs/briefs/overnight-2026-11-08.md)), and measurements record the host load
   they ran under ([`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md), "Method and host load per run").
@@ -343,12 +349,13 @@ project's own docs framed the votes that way, which is probably why a reader who
 ## 6. Known limits and open issues
 
 - **Capacity at the Fly quota (D-213).** On the sustained 6.25%-of-a-core share, verifies time out with two or more
-  rooms; on burst credit 24-32 members across 4-6 rooms hold 60 ticks/s for about 30-65 minutes. A per-room warm
-  verify is briefed ([`warm-verify.md`](docs/briefs/warm-verify.md)) and not merged.
-- **An intermittent Survival test under load (D-219).** `claims-survival` passes quietly and fails only under a full
-  gate's load; the fix (wait on the sim's kill event, not wall-clock sleeps) is open.
-- **Duplicated salts (D-217).** Eight salt values are shared between generation and cell rules: a correlation, not a
-  desync. Renumbering would move every pinned world.
+  rooms; on burst credit 24-32 members across 4-6 rooms hold 60 ticks/s for about 30-65 minutes. Warm verify
+  (D-228, [entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient)) is merged: 1 room now holds
+  at the quota and verify rejections are 0, but two rooms still don't (CPU-bound).
+- **An intermittent Survival test under load (D-219), closed.** `claims-survival` passes quietly and fails only under a full
+  gate's load. **Closed (D-231):** the flake was the test's own wall-clock pacing, now paced by the server's ticks.
+- **Duplicated salts (D-217), closed (D-232).** The eight cell-rule salts were renumbered 291-298; generation keeps
+  260-267, so no pinned world moved. No pinned script covers those eight rules, so nothing pinned guards their behaviour.
 - **A lone client is its own majority (D-045).** With one voter, its hash is the truth. Determinism, not the vote, is
   the real protection.
 - **Not measured on real devices.** The ARM run of the determinism suite (D4) was never done; every engine comparison
@@ -366,8 +373,8 @@ project's own docs framed the votes that way, which is probably why a reader who
 | [`PROCESS.md`](PROCESS.md) | The process account for the brief, 900-1,100 words (owned by the user) |
 | [`docs/plan.md`](docs/plan.md) | The original design: architecture, sim spec (section 6), protocol (7), client (8), server (9), tests (12). Where it changed, it points at D-rows |
 | [`docs/plan-game-modes.md`](docs/plan-game-modes.md), [`docs/biomes-plan.md`](docs/biomes-plan.md) | Later plans: rooms, modes and the menu; biomes |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The complete decision log, D-001 to D-226, one row per change; later rows supersede earlier ones and say so |
-| [`docs/engineering-decisions.md`](docs/engineering-decisions.md) | 47 curated stories: the big decisions and challenges, with corrections kept visible |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The complete decision log, D-001 to D-234, one row per change; later rows supersede earlier ones and say so |
+| [`docs/engineering-decisions.md`](docs/engineering-decisions.md) | 48 curated stories: the big decisions and challenges, with corrections kept visible |
 | [`docs/research/`](docs/research) | Worker and lead reports (spend included), cold reviews (`review-*`), code and security reviews, measurements, playtests |
 | [`docs/briefs/`](docs/briefs) | What each agent was asked to do, with its cap |
 | [`docs/architecture/doc-index.md`](docs/architecture/doc-index.md) | A generated table of every research note and brief: date, kind, topic, D-rows cited |

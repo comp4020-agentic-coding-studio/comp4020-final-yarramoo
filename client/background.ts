@@ -10,14 +10,18 @@ import { MATERIAL_CLASS } from "../shared/names.ts";
 const NOT_GROUND = new Set([6, 7, 8, 9, 22]);
 /** Materials that make the ground line: solid terrain, not plants, buildings, liquids or gases. */
 export const GROUND: readonly boolean[] = MATERIAL_CLASS.map((c, id) => c === "solid" && !NOT_GROUND.has(id));
-/** How far either side a shaft looks for its rim, and how far below both rims a column must be to count. */
-export const SHAFT_REACH = 64;
+/** A shaft is an opening at most this wide (entrance worms are up to 2 x 16 across, plus the funnel at the mouth); a
+ * wider dip in the surface is a valley and shows sky. A column must be more than `SHAFT_MIN_DEPTH` below the rim. */
+export const SHAFT_MAX_W = 40;
 export const SHAFT_MIN_DEPTH = 12;
 
 /**
  * Per column, the y of the first cell that starts a run of 3 ground cells (solid terrain only), with generated
- * shafts closed at their rim: a column more than `SHAFT_MIN_DEPTH` below ground on both sides, within
- * `SHAFT_REACH` columns, takes the lower of the two rims, so a generated cave mouth shows cave wall, not sky.
+ * shafts closed at their rim, so a generated cave mouth shows cave wall, not sky. Walking up from a column's surface,
+ * the open run around it widens; the rim is the highest row at which that run is still at most `SHAFT_MAX_W` wide. A
+ * column more than `SHAFT_MIN_DEPTH` below its rim closes the whole run at the rim, so the wall meets the terrain on
+ * both sides instead of ending in a step in open air (9 Nov screenshot: the old rule closed only the columns more than
+ * 12 below the highest ground within 64 columns either side, leaving a flat block standing in the sky beside a hill).
  * Call it once on the freshly generated grid. `mat` is row-major, `w` by `h`.
  */
 export function groundLine(mat: Uint8Array, w: number, h: number): Uint16Array {
@@ -30,14 +34,18 @@ export function groundLine(mat: Uint8Array, w: number, h: number): Uint16Array {
     }
     raw[x] = y;
   }
-  const line = new Uint16Array(w);
+  const line = raw.slice();
   for (let x = 0; x < w; x++) {
-    let left = h;
-    for (let k = Math.max(0, x - SHAFT_REACH); k < x; k++) left = Math.min(left, raw[k]);
-    let right = h;
-    for (let k = x + 1; k < Math.min(w, x + SHAFT_REACH + 1); k++) right = Math.min(right, raw[k]);
-    const rim = Math.max(left, right);
-    line[x] = raw[x] - rim > SHAFT_MIN_DEPTH ? rim : raw[x];
+    // [l, r]: the open run at row y (every column in it is open there); it only widens going up.
+    let l = x, r = x, rim = raw[x], rl = x, rr = x;
+    for (let y = raw[x] - 1; y >= 0; y--) {
+      while (l > 0 && raw[l - 1] > y) l--;
+      while (r < w - 1 && raw[r + 1] > y) r++;
+      // Too wide, or open to the world's edge (no rim on that side): not a shaft from here up.
+      if (r - l + 1 > SHAFT_MAX_W || (l === 0 && raw[0] > y) || (r === w - 1 && raw[w - 1] > y)) break;
+      rim = y; rl = l; rr = r;
+    }
+    if (raw[x] - rim > SHAFT_MIN_DEPTH) for (let k = rl; k <= rr; k++) line[k] = Math.min(line[k], rim);
   }
   return line;
 }
