@@ -779,3 +779,6 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   net tests advance ticks by hand and are deterministic under any load (a small change to `World`'s `now`); a
   starvation hook for the net suite (an in-process busy-wait from a vitest setup file), since external CPU hogs never
   reproduce a loaded gate on macOS. **Source:** `docs/research/quality-2-report.md`, 8 Nov.
+- **Pin the newer cell rules** (D-232): a `perf_equiv` scenario that paints Mud, Salt, Snow and Thermite and casts Quake
+  (13) and Mudslide (14), so a change to those rules or their salts moves a pinned hash. Today nothing pinned covers
+  them. **Source:** `docs/research/salts-report.md`, 8 Nov.
