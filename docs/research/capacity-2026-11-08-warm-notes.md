@@ -15,3 +15,21 @@ Host load 2.7 before, 3.0 after (quiet).
 
 Window ran 213 s (summary fetch retries, 34, stretched it). The first verify still took 15.8 s (lane prewarm and the first
 snapshot during the join), every later one was 0.1-2 s. Lag p99 max 4.6 s is probably the join/prewarm phase; last sample 0.1 s.
+
+First attempt at run 2 (06:36) crashed on an unretried `/api/rooms`/`/api/players` fetch ("other side closed"; the bench only
+retried summary fetches); `rfetch` retry added (commit 46fe25d) and the run repeated. The JSON holds the repeat only.
+
+## Run 2: --cpus=0.0625, Scenario A (Survival M, 4 bots/room), MAXSTEPS=2
+Host load 2.5 before step 1, 2.8-3.0 after (quiet).
+
+| step | rooms | members | cpuCores | throttled periods | MB max | tps min | lag p99 max (last) | verify ms seen | accepted / rejected | lanes opened/refused | cold/warm |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| before 1 | 1 | 4 | 0.062 | 3205 | 94 | 57.7 | 6.2 s | 10.3-62.6 s | n/a / 8 | n/a | n/a |
+| after 1 | 1 | 4 | 0.062 | 655 | 107 | 59.0 | 0.51 s (0.30 s) | 0.7-4.1 s | 2 in window / 0 | 1 / 0 | 0 cold / 3 warm |
+| before 2 | 2 | 8 | 0.062 | 4934 | 142 | 45.7 | 25.5 s | 11.3-94.6 s | n/a / 25 | n/a | n/a |
+| after 2 | 2 | 8 | 0.062 | 997 | 163 | 57.7 | 5.2 s (1.8 s) | 0.4-9.6 s | 3+3 in window / 0 | 2 / 0 | 0 cold / 11 warm |
+
+Step 1 holds under the 7 Nov bar (tps 59.0 >= 58, all verifies accepted, none rejected, lag p99 under 1 s; the bench's own
+stricter 500 ms bar is marginally missed at 505 ms, which flagged the step as failing and so ran step 2). Step 2 does not hold:
+tps 57.7, lag p99 up to 5.2 s, though no verify was rejected. cgroup max 163 MB with two lanes against the 256 MB limit
+(before 142 MB without lanes); 0 refused.
