@@ -240,6 +240,8 @@ let lastSend = 0;
 
 function setNet(n: NetState) {
   net = n;
+  // gameFrame (and so the water sampler) runs only while live: anything else silences the water voice at once.
+  if (n !== "live") waterSilence();
   postStatus();
 }
 
@@ -540,6 +542,15 @@ let waterPrev: WaterSamples | null = null;
 let waterAt = -1e9;
 let waterLevel = 0;
 let waterSent = 0;
+/** Water voice to 0 now, from outside gameFrame (left live, tab hidden): otherwise it holds its last level. */
+function waterSilence() {
+  waterPrev = null;
+  waterLevel = 0;
+  if (waterSent !== 0) {
+    waterSent = 0;
+    send({ type: "ambient", water: 0, pan: 0 });
+  }
+}
 function ambientWater(sim: Sim, now: number, quiet: boolean, cx: number, cy: number) {
   if (now - waterAt < 200) return;
   waterAt = now;
@@ -1390,6 +1401,7 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "hidden":
       tabHidden = m.hidden;
+      if (m.hidden) waterSilence();
       if (m.hidden) { keys.left = false; keys.right = false; keys.up = false; }
       break;
     case "follow":
