@@ -1,7 +1,7 @@
 # Simulta: architecture and engineering decisions
 
 A guide for a marker, readable in about 15-20 minutes. It describes the code as it stands at `multa` commit
-`4e5fee2` (8 Nov 2026) and links out to the detail rather than repeating it. Every claim points at a file, a decision
+`b630cff` (8 Nov 2026) and links out to the detail rather than repeating it. Every claim points at a file, a decision
 row (`D-123`, in [`docs/DECISIONS.md`](docs/DECISIONS.md)), an engineering entry ([entry 1](docs/engineering-decisions.md#1-server-paced-deterministic-lockstep), in
 [`docs/engineering-decisions.md`](docs/engineering-decisions.md)), a research note or a commit (`git show <hash>`).
 Where the record was wrong and later corrected, this guide follows the correction.
@@ -43,7 +43,7 @@ box says "Fly Postgres": the project uses SQLite on the Fly volume instead (D-00
 |---|---|---|
 | **Simulation** | `sim/` (Rust, about 10,250 lines in `sim/src/`) | The whole game state and every rule: the cell grid and 64 x 64 chunks (`grid.rs`), players, spells, projectiles, bags and pickups (`entities.rs`, `spells.rs`), enemies and bosses (`enemy.rs`), world generation from a seed (`gen.rs`), counter-based randomness (`rng.rs`), hashing and snapshots (`hash.rs`, `snapshot.rs`). Exposes an integer-only C ABI (`lib.rs`: `init`, `push_input`, `step`, `state_hash`, `chunk_hashes`, `snapshot_write`, `restore`, read-only views). |
 | **Shared** | `shared/` | Code both sides import: the typed wasm loader (`sim.ts`), the binary protocol, version 9 (`protocol.ts`), input encodings (`inputs.ts`), the 16-byte room config (`room.ts`), the avatar's Pos rule (`avatar.ts`), achievements, stats and the server event catalogue. |
-| **Client** | `client/` | The main thread draws the menu (`menu.ts`, `menu/`) and the room page (`room.ts`: HUD, hotbar, input, sound). A Web Worker (`worker.ts`) owns the WebSocket, the sim and the playout buffer (`lockstep.ts`), predicts the local avatar (`avatar.ts`) and renders with WebGL2 into an OffscreenCanvas (`render.ts`); the main thread renders instead when OffscreenCanvas is missing (`room.ts:1329-1336`). |
+| **Client** | `client/` | The main thread draws the menu (`menu.ts`, `menu/`) and the room page (`room.ts`: HUD, hotbar, input, sound). A Web Worker (`worker.ts`) owns the WebSocket, the sim and the playout buffer (`lockstep.ts`), predicts the local avatar (`avatar.ts`) and renders with WebGL2 into an OffscreenCanvas (`render.ts`); the main thread renders instead when OffscreenCanvas is missing (`room.ts:1366-1373`). |
 | **Server** | `server/` (Node 24) | `main.ts` serves HTTP (the client, `/api/players`, `/api/rooms`, `/api/live`, the dashboard, `/readme/`) and the WebSocket. One `World` per loaded room (`world.ts`) holds the tick clock (`clock.ts`), the closed-tick log, hash votes, claims and snapshots. A worker thread (`verify-worker.ts`) restores uploaded snapshots in the same `sim.wasm` to check them. SQLite through `node:sqlite` (`db.ts`). |
 | **Deploy** | `Dockerfile`, `fly.toml` | A three-stage image (Rust to `sim.wasm`, Vite client build, `node:24-slim` runtime) on one `shared-cpu-1x` machine with 256 MB and a 1 GB volume at `/data`, stopped when idle (`fly.toml`; D-002, D-003, D-008). |
 
@@ -79,13 +79,14 @@ sequenceDiagram
   (`server/main.ts:81`, D-035) and `World.onClosed` broadcasts it before any bookkeeping (`server/world.ts:586-591`).
 - **The client's playout.** The worker keeps a buffer of `J = 2` ticks (`client/lockstep.ts:17`), steps by the real
   time owed rather than a fixed count per frame (D-215), and fast-forwards when more than two seconds behind (D-177).
-  The local avatar is predicted at once and reported as an integer `Pos` (`client/worker.ts:576`); everything else
+  The local avatar is predicted at once and reported as an integer `Pos` (`Avatar.quantised`, `client/avatar.ts:209-211`; sent at `client/worker.ts:586`); everything else
   waits for the server's tick, so a world action lands after about the round trip plus three ticks ([entry 5](docs/engineering-decisions.md#5-the-networking-ticks-playout-protocol-versions)).
-- **The sim's step order** is fixed and documented on `Sim::step` (`sim/src/sim.rs:198-251`, D-102): inputs, lobby,
-  entities, active region, cells, explosions, hazards, round end, falling islands.
+- **The sim's step order** is fixed in `Sim::step` (`sim/src/sim.rs:207-251`; its doc comment and D-102 list the first
+  six): inputs, lobby, entities, active region, cells, explosions, hazards, round end, then falling islands.
 - **Joining late.** WELCOME carries the room's seed and 16-byte config (D-142); the joiner generates the world, restores
-  the latest verified snapshot and replays the log after it (`World.join`, `server/world.ts:676`). A world with nobody
-  live pauses while a lone joiner catches up (D-122, D-131).
+  the latest verified snapshot and replays the log after it (`World.join`, `server/world.ts:676`). When nobody in the world
+  is live, the clock holds while a joiner with a log to replay catches up (D-122); a joiner with nothing to replay
+  never holds it (D-131).
 
 ### 2.3 How state is checked
 
@@ -108,16 +109,16 @@ Lockstep has no authority that knows the right answer, so the server checks agre
 - **Input validation.** A rate limit per connection (D-033), a Pos jump check per player and life
   (`shared/avatar.ts`, D-078, D-079), a per-IP paint rate on the server and a deterministic paint work budget inside
   the sim (D-223), and a refusal of any client whose protocol version or `sim.wasm` hash differs
-  (`server/main.ts:1237-1238`).
+  (`server/main.ts:1340-1341`).
 
 ### 2.4 What persists and what doesn't
 
 | Thing | Lives | Evidence |
 |---|---|---|
-| The two fixed worlds: the sandbox at `/sandbox` (world 0) and the game world (world 1) | Forever. A cold start (the machine stops when idle) restores the latest verified snapshot and replays `tick_log` after it. | D-004, D-041, D-064; `server/rooms.ts:181`; [entry 6](docs/engineering-decisions.md#6-persistence-on-a-machine-that-stops-when-idle) |
-| Rooms at `/r/<code>` (Survival, Deathmatch, Sandbox) | Deleted 2 minutes after the last member leaves, or 10 minutes after creation if nobody joined. Survival and Deathmatch are deliberately ephemeral. | D-188, `server/main.ts:104-106`, `server/rooms.ts:170-198`; [entry 35](docs/engineering-decisions.md#35-rooms-that-die-when-empty-and-why-empty-now-is-the-wrong-test-at-boot) |
+| The two fixed worlds: the sandbox at `/sandbox` (world 0) and the game world (world 1) | Forever. A cold start (the machine stops when idle) restores the latest verified snapshot and replays `tick_log` after it. | D-004, D-041, D-064; `server/rooms.ts:185`; [entry 6](docs/engineering-decisions.md#6-persistence-on-a-machine-that-stops-when-idle) |
+| Unowned rooms at `/r/<code>` (Survival, Deathmatch, Sandbox) | Deleted 2 minutes after the last member leaves, or 10 minutes after creation if nobody joined. Survival and Deathmatch are deliberately ephemeral. | D-188, `server/main.ts:104-106`, `server/rooms.ts:171-201`; [entry 35](docs/engineering-decisions.md#35-rooms-that-die-when-empty-and-why-empty-now-is-the-wrong-test-at-boot) |
 | Players (name, `sha256(token)`), `player_stats`, `achievements` | Outlive every room and every world reset. | D-065, D-091, D-115; `server/db.ts` |
-| A player-owned persistent sandbox | **Not on `multa` at this commit.** Briefed on 8 Nov ([`docs/briefs/owned-sandbox.md`](docs/briefs/owned-sandbox.md)) and being built on its own branch. | |
+| A player's own sandbox (one per player, shared by link; anyone with the link paints) | Until its owner deletes it (`DELETE /api/sandbox/:code`, owner's token only). The sweep and the public list skip owned rooms; an empty one unloads and reloads from its snapshot and log. At most 200 in total. | D-225; `server/rooms.ts:177`, `server/main.ts:113`, `server/main.ts:937`; [entry 47](docs/engineering-decisions.md#47-a-world-that-persists-because-someone-owns-it) |
 | Snapshot format | Version 19. Restore refuses any other version, so each generation change resets stored worlds; acceptable because the game is not yet declared live. | `sim/src/snapshot.rs:9-11`; D-194 |
 
 ## 3. The invariants and how each is enforced
@@ -128,7 +129,7 @@ by a machine check, not by good intentions:
 | # | Invariant | Enforced by |
 |---|---|---|
 | 1 | All logic that affects shared state lives in `sim/`; TypeScript writes sim state only through `push_input` | `shared/sim.ts` exposes only read-only views of the grid (D-029, which replaced a monkey-patch); the verify worker only restores and hashes (`server/verify-worker.ts:1-3`). Held by structure and review; no test checks it directly. |
-| 2 | The ABI takes and returns integers only | Every export in `sim/src/lib.rs` is `u32`/`i32`; aim is quantised in TypeScript (`quantiseAngle`, `client/spells.ts:46`) and Pos to 1/16 cell (`client/worker.ts:576`); the room config is 16 bytes (D-132). |
+| 2 | The ABI takes and returns integers only | Every export in `sim/src/lib.rs` is `u32`/`i32`; aim is quantised in TypeScript (`quantiseAngle`, `client/spells.ts:46`) and Pos to 1/16 cell (`client/avatar.ts:209-211`); the room config is 16 bytes (D-132). |
 | 3 | No floating point in `sim/` | `#![deny(clippy::float_arithmetic)]` (`sim/src/lib.rs:2`), clippy with `-D warnings` on wasm32 in the gate and as test D11 (`tests/determinism/static.test.ts:33`). Fixed-point trig comes from a generated table (`sim/src/trig.rs`, D-075). |
 | 4 | No host imports | `WebAssembly.Module.imports(sim.wasm)` must be empty (`tests/determinism/static.test.ts:26-27`). A `canary` build adds exactly one import and must be caught (D10), which proves the check can fail (`sim/Cargo.toml`, `sim/src/sim.rs:242`). |
 | 5 | No `HashMap`/`HashSet`, clocks, threads or entropy | `sim/clippy.toml`: `disallowed-types` for both hash collections and `disallowed-methods` for `Instant::now` and `SystemTime::now`. |
@@ -136,7 +137,7 @@ by a machine check, not by good intentions:
 | 7 | Hash fixed-width integers only | Hashes run over the `u8` planes (`sim/src/hash.rs`). Test D3 compares native Rust with wasm32 hash logs, which differ if anything depends on `usize` (`tests/determinism/static.test.ts:8,17`). |
 | 8 | Chunk sleeping is semantically invisible | Sleep on and off must produce the same hashes: `sim/tests/sleep.rs`, D7 in `tests/determinism/sleep.test.ts`, the restore case in `sim/tests/wake.rs`, and the hash-cache test `sim/tests/hash_cache.rs` (D-224). [entry 8](docs/engineering-decisions.md#8-chunk-sleeping-that-must-be-invisible), [entry 33](docs/engineering-decisions.md#33-waking-the-frozen-world-and-the-restore-that-would-have-split-it). |
 | 9 | Outputs never feed back as inputs | `events`, `entities` and the chunk-hash ring are read-only (`client/lockstep.ts:30`); the menu backdrop's camera windows are chosen offline, never from live entity positions ([entry 43](docs/engineering-decisions.md#43-the-menus-mobs-are-real-because-the-menu-plays)). Held by review. |
-| 10 | All clients in a world run the identical `sim.wasm` | The server hashes its wasm at start and refuses a HELLO with another hash (`server/main.ts:1238`); the `dev-server` skill exists because this bites after every rebuild. |
+| 10 | All clients in a world run the identical `sim.wasm` | The server hashes its wasm at start and refuses a HELLO with another hash (`server/main.ts:1341`); the `dev-server` skill exists because this bites after every rebuild. |
 | 11 | No server-side stepping, P2P, rollback, wasm threads or cell ownership | The server imports the sim only in the verify worker, which never calls `step` or `push_input` (`server/world.ts:1-3`, `server/verify.ts:3`). |
 
 **The determinism suite** (`pnpm test:determinism`, [entry 7](docs/engineering-decisions.md#7-a-determinism-harness-before-any-game-code) and [entry 40](docs/engineering-decisions.md#40-the-gate-how-a-lockstep-game-is-tested-and-what-the-tests-kept-missing)) runs the same input
@@ -148,7 +149,7 @@ succeeded, so tests now assert what happened before trusting agreement ([entry 2
 
 ## 4. Key engineering decisions
 
-The full log has 221 rows; [`docs/engineering-decisions.md`](docs/engineering-decisions.md) tells 46 of them as
+The full log has 223 rows; [`docs/engineering-decisions.md`](docs/engineering-decisions.md) tells 47 of them as
 stories. These are the ones that shaped the architecture or cost real time, including the reversals and the bugs that
 taught something.
 
@@ -161,7 +162,7 @@ taught something.
 | Counter-based RNG with one salt per use | No RNG state to snapshot or desync; order-independent | [entry 3](docs/engineering-decisions.md#3-counter-based-randomness); D-217 (eight duplicated salts, left as a correlation) |
 | A 16-byte `RoomConfig` replaced the `world_kind` byte, hashed into the state | Per-room rules; two clients with different configs diverge at tick 0 instead of agreeing silently | [entry 11](docs/engineering-decisions.md#11-a-config-replaces-the-world-kind-and-ends-a-compatibility-guarantee); D-132, D-133 |
 | Chunk sleeping, then frozen chunks that wake (no cap) | Big worlds at 60 Hz; a flood you walk away from finishes. The first restore test could not fail; the cold review found the split | [entry 8](docs/engineering-decisions.md#8-chunk-sleeping-that-must-be-invisible), [entry 33](docs/engineering-decisions.md#33-waking-the-frozen-world-and-the-restore-that-would-have-split-it); D-054, D-176 |
-| **Reversal:** cells update row by row across a band of chunks (D-191) | The user's screenshot of water standing in walls 64 cells apart. Not sleeping (an earlier belief, D-173): chunk-major order gave edge cells fewer moves per tick | [entry 39](docs/engineering-decisions.md#39-the-water-walls-were-the-scan-order-not-sleeping); D-173, D-191 |
+| **Reversal:** cells update row by row across a band of chunks (D-191) | The user's screenshot of water standing in walls 64 cells apart. Not the active region, as D-173 had concluded for the same symptom: chunk-major order gave edge cells fewer moves per tick | [entry 39](docs/engineering-decisions.md#39-the-water-walls-were-the-scan-order-not-sleeping); D-173, D-191 |
 | Every input has a bounded cost; then a per-tick paint work budget inside the sim | One huge Paint froze every client (`3094d25`); later a review showed many small paints could too | D-223; `sim/src/tuning.rs:399-408` |
 | Falling rock: crumbling v0, falling islands v0.5; full rigid bodies researched and not built | A rigid body in an integer lockstep sim costs more than the remaining time; v0 floated a block that every test passed | [entry 28](docs/engineering-decisions.md#28-rigid-bodies-falling-rock-in-a-lockstep-integer-sim-researched-not-built), [entry 29](docs/engineering-decisions.md#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight); D-165, D-190, D-192 |
 
@@ -174,6 +175,7 @@ taught something.
 | Pos checked per player and per life | A cold review found a two-message teleport through D-073's respawn rule | [entry 20](docs/engineering-decisions.md#20-what-independent-reviews-caught-that-tests-missed); D-078, D-079 |
 | Deaths and kills by majority claim | The server never steps, so it cannot see a death | [entry 23](docs/engineering-decisions.md#23-an-achievement-the-sims-outputs-cannot-express); D-118 to D-121 |
 | Pause the world while a lone joiner catches up (after OpenTTD's `pause_on_join`) | A long log made a joiner chase a moving target | [entry 16](docs/engineering-decisions.md#16-snapshot-timing-and-the-correction); D-122, D-131 |
+| A slow player gets a notice; the room is not touched | Measured through a frame proxy at 300-2000 ms RTT, loss and blackouts: the server held 60 ticks/s and the other player was unaffected | D-226; [`slow-net-report.md`](docs/research/slow-net-report.md) |
 | Step by real time owed, not a fixed count per frame | A bisect blamed a CSS commit; the cause was that the worker's rAF ran at 3-9 Hz on a throttled page | D-215; [`n1-throttled-regression.md`](docs/research/n1-throttled-regression.md) |
 
 **Persistence**
@@ -185,6 +187,7 @@ taught something.
 | **Outage:** the live sandbox went down on 18 Oct | `push(...frames)` overflowed the stack once the log passed about 130,000 ticks, because snapshots had stopped for days | [entry 15](docs/engineering-decisions.md#15-the-live-site-went-down-on-18-october), [entry 16](docs/engineering-decisions.md#16-snapshot-timing-and-the-correction); D-099, D-100, D-101 |
 | Keep the generated world in the sim to skip regeneration on restore | Restore cost; it later made verifies slow with many rooms (D-213) | [entry 17](docs/engineering-decisions.md#17-the-late-join-test-that-failed-after-the-world-cache); D-088 |
 | Rooms die when empty; random 64-bit room seeds | Rooms piled up forever; then every new room looked the same because sqlite reused ids | [entry 35](docs/engineering-decisions.md#35-rooms-that-die-when-empty-and-why-empty-now-is-the-wrong-test-at-boot); D-188, D-201 |
+| A world persists because someone owns it | The marking criteria ask for persistence; game rooms are ephemeral by design, so a player's own sandbox is the exception, deleted only by its owner | [entry 47](docs/engineering-decisions.md#47-a-world-that-persists-because-someone-owns-it); D-225 |
 
 **Generation and content**
 
@@ -216,7 +219,7 @@ taught something.
 ## 5. Harness and skill-level interventions
 
 Simulta was built almost entirely by AI agents: a session model (Opus) that plans, briefs, reviews and merges, and
-cheaper workers that implement. Of the 744 commits on `multa`, 443 carry a Sonnet co-author line, 291 Opus and 2 Haiku
+cheaper workers that implement. Of the 756 commits on `multa`, 446 carry a Sonnet co-author line, 300 Opus and 2 Haiku
 (`git log multa --format=%b | grep Co-Authored-By`). This section is the controls that made that work, each with
 what it is, the incident or need behind it, the artifact that holds it, and its effect. Everything here can be checked
 from committed files.
@@ -227,20 +230,20 @@ from committed files.
 
 ### 5.1 `CLAUDE.md` as a living harness
 
-[`CLAUDE.md`](CLAUDE.md) is the agent's standing instructions. It has been changed in 15 commits since the template
+[`CLAUDE.md`](CLAUDE.md) is the agent's standing instructions. It has been changed in 15 commits since the template commit
 (`git log --oneline -- CLAUDE.md`), almost always right after something went wrong. Each rule names its incident in
 the text, so the reason travels with the rule.
 
 | Rule (commit) | Incident or need | Effect, evidence |
 |---|---|---|
-| **Commit as you go, push every batch** (`ae2778a`) | In an earlier assignment a 2,400-line feature arc sat uncommitted and was rebuilt as three retroactive commits | 744 commits on `multa`. One slip is recorded honestly: M2b landed as one 1,000-line commit (`fb59b10`, D-046), after which briefs name commit boundaries as a checklist |
-| **A dispatch needs a cap** (`ae2778a`) | A research dispatch in this course ran 23 Opus subagents at maximum effort with no cap and spent a week's budget in about 20 minutes | Earlier worker briefs capped tool calls (53 briefs do); from 5 Nov every lead's brief also states a dollar cap and a worker limit (5.4) |
+| **Commit as you go, push every batch** (`ae2778a`) | In an earlier assignment a 2,400-line feature arc sat uncommitted and was rebuilt as three retroactive commits | 756 commits on `multa`. One slip is recorded honestly: M2b landed as one 1,000-line commit (`fb59b10`, D-046), after which briefs name commit boundaries as a checklist |
+| **A dispatch needs a cap** (`ae2778a`) | A research dispatch in this course ran 23 Opus subagents at maximum effort with no cap and spent a week's budget in about 20 minutes | Worker briefs cap tool calls (56 of the 66 briefs mention one); from 5 Nov every lead's brief also states a dollar cap and a worker limit (5.4) |
 | **Triage and delegate down** (`e7284ea`) | The session model is the expensive one | Haiku for mechanical work, Sonnet for implementation from a brief, the session model only for planning, briefs, review and merging. D-016 records that this overrode the handed-over plan's "don't fan out" |
-| **Architectural decisions go to review** (`86cf96c`) | The M3 cold review found a snapshot buffer overrun every test passed over (`d6f8921`, D-061) | 52 of the 63 briefs ask for an "Architectural decisions for review" section; 38 cold reviews in `docs/research/review-*.md` (5.5) |
+| **Architectural decisions go to review** (`86cf96c`) | The M3 cold review found a snapshot buffer overrun every test passed over (`d6f8921`, D-061) | 55 of the 66 briefs ask for an "Architectural decisions for review" section; 39 cold reviews in `docs/research/review-*.md` (5.5) |
 | **`&&` is the gate; intermittent is a race** (`b862348`) | A merge was committed on a red `test:net` because the commit followed the test with `;` (`d24bf69`); a flaky test compared two independent clocks | The gate is chained on exit codes; `first_blood` failing one run in three was traced to a 27-cell blast reach against a 12-cell assumption (D-179) |
 | **An input must not cost unbounded work** (`3094d25`) | A radius-255 Paint disc cost every client millions of writes in one tick | Clamps in the sim; extended by D-223 when a review found the aggregate case |
 | **Server logging and identity rules; `server/` never imports `client/`** (`870410c`) | The crit 10 review found an image that would not boot: `shared/` imported client code that the runtime stage does not copy ([entry 20](docs/engineering-decisions.md#20-what-independent-reviews-caught-that-tests-missed)) | `tests/net/imports.test.ts`; `log.event`/`log.limited`, `log.ipTag`, plain names to players |
-| **Record the big decisions** (`8f4c105`) | A marker needs the reasoning, not 200 rows | 46 entries, with visible corrections (entries 16, 21 and 41 each keep theirs) |
+| **Record the big decisions** (`8f4c105`) | A marker needs the reasoning, not 200 rows | 47 entries, with visible corrections (entries 16, 21 and 41 each keep theirs) |
 | **Every `rm` names a literal absolute path** (`aedb377`) | Preventive: an empty variable turns `rm -rf $DIR/*` into `rm -rf /*`. No incident is recorded | Briefs carry the rule; worker reports cite it (`docs/research/r2b-worker-report.md:192`) |
 | **Log good ideas in `FUTURE.md`** (`ea38d62`) | Ideas from reviews and workers outlived their sessions only if written down | [`FUTURE.md`](FUTURE.md) has 73 entries; done ones are marked (for example D-125, D-126) |
 | **`PROCESS.md` has a length** (`ae2778a`) | A sibling deliverable's `PROCESS.md` grew to about 2,000 words against a 900-1,100 brief | `scripts/check-evidence.ts:61-90` fails over 1,100 words; CI runs it before every deploy |
@@ -258,7 +261,7 @@ of the reviewed harness.
   so the lead re-runs every gate itself. Effect: one gate at a time, few agents, never edit under a running gate.
 - **`dev-server`** ([SKILL.md](.claude/skills/dev-server/SKILL.md), `f3d4034`): the server hashes `sim.wasm` once at
   start (invariant 10), so any rebuild leaves the user's server refusing fresh tabs with "new version, reload". On
-  5 Nov the agent rebuilt for a fix and left the old server up. Effect: rebuild, restart with the same data, join, then
+  5 Nov the agent rebuilt for a fix and left the old server up (the message of `f3d4034`). Effect: rebuild, restart with the same data, join, then
   tell the user; the agent's own checks use another port and data dir.
 - **`dev-tools`** ([SKILL.md](.claude/skills/dev-tools/SKILL.md), `c44eb37`): dev routes, URL flags and console hooks
   (`__devGoto`, `__devPaint`, ...), so an agent can reach a boss phase or biome in a browser instead of guessing. It
@@ -276,7 +279,7 @@ and it skips whole steps, never single net files, because many net tests reach c
 
 ### 5.4 Delegation by model tier, with dollar caps in every brief
 
-**What:** each piece of work is a brief in [`docs/briefs/`](docs/briefs) (63 of them, indexed in
+**What:** each piece of work is a brief in [`docs/briefs/`](docs/briefs) (66 of them, indexed in
 [`docs/architecture/doc-index.md`](docs/architecture/doc-index.md)). From the biomes run on 5 Nov ([`docs/biomes-plan.md`](docs/biomes-plan.md)) each Opus lead's plan or brief states a
 dollar cap, the number of workers (one at a time, Sonnet or Haiku, never dispatching further), the files each may
 touch, and how to read spend from the course proxy's `/api/me` at the start (B0), after each worker and every ~20 tool
@@ -292,6 +295,8 @@ live in the brief ([entry 41](docs/engineering-decisions.md#41-biomes-on-a-50-bu
 | Content track | $50 | about B0 + $40 | Per-biome cave walls cut at B0 + $34, brief kept | [`content-report.md`](docs/research/content-report.md) |
 | Code-only review | $25 | about $17.4 | A second (client) reviewer not dispatched | [`code-review-2026-11-08.md`](docs/research/code-review-2026-11-08.md) |
 | Review fixes | $35 | about $24 | One worker (the cold reviewer) | [`review-fixes-report.md`](docs/research/review-fixes-report.md) |
+| Owned sandbox | $40 | about $24 (entry 47) | None needed; 2 of 3 workers | [`owned-sandbox-report.md`](docs/research/owned-sandbox-report.md) |
+| Slow-connection notice | $25 | B0 + $21.7 | Stopped with the gate and screenshots owed and listed; the session model ran them on a quiet host (D-226) | [`slow-net-report.md`](docs/research/slow-net-report.md) |
 
 The overnight run of 8-9 Nov ran its tracks one at a time under one shared stop line for the week
 ([`overnight-2026-11-08.md`](docs/briefs/overnight-2026-11-08.md)), so cargo gates never collided.
@@ -314,33 +319,26 @@ project's own docs framed the votes that way, which is probably why a reader who
 ### 5.6 Red-first tests, and "a green test is not a working feature"
 
 - **Show the test red first.** A restore test painted water into dirt and passed on the buggy code ([entry 33](docs/engineering-decisions.md#33-waking-the-frozen-world-and-the-restore-that-would-have-split-it)); a wake
-  test woke its own chunk in setup ([entry 39](docs/engineering-decisions.md#39-the-water-walls-were-the-scan-order-not-sleeping)); a sleep test for the spells branch wrote cells after the only chunk mark
-  and blamed the branch (D-207). Reports now quote the red message, e.g. `expected 4596 to be <= 4096`
-  ([`review-fixes-report.md`](docs/research/review-fixes-report.md)) and "house at 44 has a floating cell at 77,49"
-  ([entry 45](docs/engineering-decisions.md#45-a-surface-you-can-read-and-what-only-a-screenshot-saw)).
-- **Open it and look.** All tests passed while size-S rooms drew as sandboxes and `/r/` links served a blank page
-  ([entry 29](docs/engineering-decisions.md#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight), [entry 31](docs/engineering-decisions.md#31-the-lobby-and-two-bugs-that-only-a-real-room-at-size-s-could-show)); while a cut-free rock block floated ([entry 29](docs/engineering-decisions.md#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight)); while every house and well drew cave wall behind
-  it ([entry 45](docs/engineering-decisions.md#45-a-surface-you-can-read-and-what-only-a-screenshot-saw)). Screenshots are committed (`docs/art/shots/`, `docs/research/shots/`).
-- **Measure before concluding.** Two workers saw a 267 x 150 canvas and blamed the headless browser; it had been broken
-  for a week, and reading the computed heights found it ([entry 26](docs/engineering-decisions.md#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)). The session model twice called the slime broken
-  from screenshots; measuring positions showed the slime was right (D-162, [entry 29](docs/engineering-decisions.md#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight)).
-- **Rehearse the merge in the real image.** Before crit 10, a merge built and booted on the deployed data found two
-  bugs no test could see (D-130, D-131, [entry 24](docs/engineering-decisions.md#24-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)). `CLAUDE.md` now says CI does not run on `multa`, so a merge to
-  `main` boots the real image first.
+  test woke its own chunk in setup ([entry 39](docs/engineering-decisions.md#39-the-water-walls-were-the-scan-order-not-sleeping)). Reports now quote the red message, e.g. "house at 44 has a floating
+  cell at 77,49" ([entry 45](docs/engineering-decisions.md#45-a-surface-you-can-read-and-what-only-a-screenshot-saw)).
+- **Open it and look, then measure.** All tests passed while size-S rooms drew as sandboxes and `/r/` links were blank
+  ([entry 31](docs/engineering-decisions.md#31-the-lobby-and-two-bugs-that-only-a-real-room-at-size-s-could-show)), while a cut-free rock block floated ([entry 29](docs/engineering-decisions.md#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight)), and while every ruin drew cave wall behind it
+  ([entry 45](docs/engineering-decisions.md#45-a-surface-you-can-read-and-what-only-a-screenshot-saw)). Looking can mislead too: two workers blamed the headless browser for a canvas that had been broken for a
+  week ([entry 26](docs/engineering-decisions.md#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)), and the session model twice called a correct slime broken until it measured positions (D-162).
+- **Rehearse the merge in the real image.** Before crit 10, booting the merged image on deployed data found two bugs
+  no test could see (D-130, D-131, [entry 24](docs/engineering-decisions.md#24-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)).
 
 ### 5.7 Verifying agents' claims, and load discipline
 
 - **Claims are checked against their own evidence.** The quality lead reported pile pickups going from 24/72 to 71/72;
   the committed file sums to 24/72 and the script was gone, so D-214 says so and rests the fix on the geometric test,
-  the gate and a cold review instead. A track blamed D-201's random seeds for an intermittent test; the session model's
-  probes (6 seeds, 11 quiet runs) showed load was the cause, and D-219 records the correction.
-- **One heavy job at a time.** After 4 Nov's load-575 run, every lead brief says to check `pgrep` and `docker ps`
-  before a gate or bench ([`overnight-2026-11-08.md`](docs/briefs/overnight-2026-11-08.md)), and measurements record the
-  host load they ran under: the capacity note has a load column for every run and marks which steps "may flatter the
-  server" ([`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md), "Method and host load per run").
-- **Agent playtesters.** Two Sonnet agents played as a newcomer and a Survival player and reported what they could and
-  could not judge ([`playtest-agents.md`](docs/briefs/playtest-agents.md),
-  [`playtest-agent-newcomer.md`](docs/research/playtest-agent-newcomer.md)).
+  the gate and a cold review. A track blamed random seeds for an intermittent test; the session model's probes (6
+  seeds, 11 quiet runs) pointed at load, and D-219 records the correction.
+- **One heavy job at a time.** After 4 Nov's load-575 run, lead briefs say to check `pgrep` and `docker ps` before a gate
+  or bench ([`overnight-2026-11-08.md`](docs/briefs/overnight-2026-11-08.md)), and measurements record the host load
+  they ran under ([`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md), "Method and host load per run").
+- **Agent playtesters.** Two Sonnet agents played as a newcomer and a Survival player and said what they could not
+  judge ([`playtest-agents.md`](docs/briefs/playtest-agents.md), [`playtest-agent-newcomer.md`](docs/research/playtest-agent-newcomer.md)).
 
 ## 6. Known limits and open issues
 
@@ -368,8 +366,8 @@ project's own docs framed the votes that way, which is probably why a reader who
 | [`PROCESS.md`](PROCESS.md) | The process account for the brief, 900-1,100 words (owned by the user) |
 | [`docs/plan.md`](docs/plan.md) | The original design: architecture, sim spec (section 6), protocol (7), client (8), server (9), tests (12). Where it changed, it points at D-rows |
 | [`docs/plan-game-modes.md`](docs/plan-game-modes.md), [`docs/biomes-plan.md`](docs/biomes-plan.md) | Later plans: rooms, modes and the menu; biomes |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The complete decision log, D-001 to D-224, one row per change; later rows supersede earlier ones and say so |
-| [`docs/engineering-decisions.md`](docs/engineering-decisions.md) | 46 curated stories: the big decisions and challenges, with corrections kept visible |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The complete decision log, D-001 to D-226, one row per change; later rows supersede earlier ones and say so |
+| [`docs/engineering-decisions.md`](docs/engineering-decisions.md) | 47 curated stories: the big decisions and challenges, with corrections kept visible |
 | [`docs/research/`](docs/research) | Worker and lead reports (spend included), cold reviews (`review-*`), code and security reviews, measurements, playtests |
 | [`docs/briefs/`](docs/briefs) | What each agent was asked to do, with its cap |
 | [`docs/architecture/doc-index.md`](docs/architecture/doc-index.md) | A generated table of every research note and brief: date, kind, topic, D-rows cited |

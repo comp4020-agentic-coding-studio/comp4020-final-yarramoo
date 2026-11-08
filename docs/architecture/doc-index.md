@@ -1,6 +1,6 @@
 # Index of research notes and briefs
 
-Generated 8 Nov 2026 from `docs/research/` and `docs/briefs/` (first lines of each file and the D-rows it cites).
+Generated 8 Nov 2026 (rows for files added later that day appended by the audit lead) from `docs/research/` and `docs/briefs/` (first lines of each file and the D-rows it cites).
 Dates are when the file was first committed.
 
 ## Research notes (`docs/research/`)
@@ -142,6 +142,12 @@ Dates are when the file was first committed.
 | [world-life-report.md](../research/world-life-report.md) | 2026-11-07 | worker report | World life: more green, passive creatures, small touches (Opus lead report) | - |
 | [x-enemies-report.md](../research/x-enemies-report.md) | 2026-11-05 | worker report | X2 enemies: Lava wisp, Frost sprite, and a Sand Colossus design | D-158 |
 | [x-spells-report.md](../research/x-spells-report.md) | 2026-11-05 | worker report | E3 spells: report (branch x-spells) | - |
+| [architecture-coldcheck.md](../research/architecture-coldcheck.md) | 2026-11-08 | cold review | Cold check of ARCHITECTURE.md against the code (AUDIT-2) | D-122, D-131, D-173, D-191 |
+| [architecture-audit-report.md](../research/architecture-audit-report.md) | 2026-11-08 | worker report | Architecture audit: lead report (spend, cold check, link check) | - |
+| [owned-menu-worker-report.md](../research/owned-menu-worker-report.md) | 2026-11-08 | worker report | owned-menu worker report | - |
+| [owned-sandbox-report.md](../research/owned-sandbox-report.md) | 2026-11-08 | worker report | Owned sandbox: a player's own persistent world (Opus lead report) | D-225 |
+| [review-owned-sandbox.md](../research/review-owned-sandbox.md) | 2026-11-08 | cold review | Review: owned persistent sandbox (server/ + shared/ diff vs multa) | - |
+| [slow-net-report.md](../research/slow-net-report.md) | 2026-11-08 | worker report | Slow connections: what happens, and a notice for the slow player | D-226 |
 
 ## Briefs (`docs/briefs/`)
 
@@ -210,3 +216,6 @@ Dates are when the file was first committed.
 | [warm-verify.md](../briefs/warm-verify.md) | 2026-11-08 | Brief WARMVERIFY: keep snapshot verification warm per room, then re-measure capacity (Opus lead) | - | D-014, D-088, D-201, D-213 |
 | [world-life.md](../briefs/world-life.md) | 2026-11-07 | Brief LIFE: more green, passive creatures, and little things that make the world feel... | $24, $30 | D-197, D-198, D-199, D-208, D-210, D-211 |
 | [x-experiments.md](../briefs/x-experiments.md) | 2026-11-05 | Brief X: three feature experiments (5 Nov morning) | 50 tool calls | D-153, D-156, D-157, D-159, D-167, D-175, D-181 |
+| [audit-coldcheck.md](../briefs/audit-coldcheck.md) | 2026-11-08 | Brief AUDIT-2 (Sonnet): cold-check ARCHITECTURE.md against the code | 90 tool calls | - |
+| [owned-menu.md](../briefs/owned-menu.md) | 2026-11-08 | Brief owned-menu (Sonnet): "My world" in the menu and on the room page | 40 tool calls | - |
+| [owned-review.md](../briefs/owned-review.md) | 2026-11-08 | Brief owned-review (Sonnet, read-only): cold review of the owned-sandbox server diff | 35 tool calls | - |
