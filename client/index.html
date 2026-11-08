@@ -46,6 +46,12 @@
     #catchup .fill { height: 100%; width: 0; background: #6eb5ff; transition: width 0.3s linear; }
     #catchup p { margin: 8px 0 0; font-size: 12px; color: #aab; }
     #note { color: #ffb86e; font-size: 12px; padding: 2px 12px; }
+    /* SLOWNET: the slow player's own notice, top centre over the stage. Never blocks input. */
+    #slowNotice { position: fixed; left: 50%; top: 52px; transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 12px; background: rgba(40, 30, 14, 0.92); border: 1px solid #a9772c; border-radius: 8px; color: #ffd9a0; font-size: 13px; z-index: 19; pointer-events: none; text-align: center; }
+    #slowNotice[hidden] { display: none; }
+    #slowNotice b { font-weight: 600; margin-right: 6px; }
+    #slowNotice span { color: #e8c48c; }
+    @media (max-width: 520px) { #slowNotice { top: 48px; font-size: 12px; padding: 5px 10px; } #slowNotice b, #slowNotice span { display: block; margin: 0; } }
     header nav { display: flex; gap: 10px; font-size: 12px; }
     header nav a { color: var(--dim); text-decoration: none; }
     header nav a[aria-current="page"] { color: var(--fg); }
@@ -208,6 +214,7 @@
       <p id="catchupEta"></p>
     </div>
     <div id="note" hidden></div>
+    <div id="slowNotice" role="status" aria-live="polite" hidden><b id="slowTitle"></b><span id="slowDetail"></span></div>
     <footer>
       <div id="toolSwitch" role="group" aria-label="Tool">
         <button type="button" id="toolBrush" aria-pressed="true">Brush</button>
