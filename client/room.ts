@@ -15,6 +15,7 @@ import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
 import { bossName, formatAchievement } from "./toasts.ts";
 import { renderChatLine } from "./chat.ts";
+import { MAX_CHAT_CHARS } from "../shared/protocol.ts";
 import { nextSlow, SLOW_IDLE, slowText, type SlowState } from "./slownet.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
@@ -607,6 +608,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     }
   }, 16);
   addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.key === "Shift") held.add("shift");
   });
   addEventListener("keyup", (e) => {
@@ -836,6 +838,42 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   chatEl.append(chatLog);
   if (localKind === null) stage.append(chatEl);
   const CHAT_MAX = 8;
+  // Desktop only: phones are read-only. `/` opens the box; the existing keydown handlers return early on an input target.
+  if (localKind === null && !matchMedia("(pointer: coarse)").matches) {
+    const input = document.createElement("input");
+    input.id = "chat-input";
+    input.type = "text";
+    input.maxLength = 120;
+    input.placeholder = "Say something (Enter to send, Esc to close)";
+    input.autocomplete = "off";
+    input.hidden = true;
+    chatEl.append(input);
+    const closeChat = () => {
+      input.value = "";
+      input.hidden = true;
+      input.blur();
+    };
+    addEventListener("keydown", (e) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      held.clear();
+      if (steersAvatar()) sendKeys();
+      input.hidden = false;
+      input.focus();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const text = input.value.trim();
+        if (text && Array.from(text).length <= MAX_CHAT_CHARS) send({ type: "chat", text });
+        closeChat();
+      } else if (e.key === "Escape") closeChat();
+    });
+    input.addEventListener("blur", () => {
+      input.value = "";
+      input.hidden = true;
+    });
+  }
   function addChat(name: string, text: string, history: boolean) {
     const el = renderChatLine(document, name, text, myName);
     if (history) el.classList.add("hist");
