@@ -162,7 +162,7 @@ describe("owned sandbox", () => {
     b.close();
   });
 
-  it("verifies across an unload and a reload, with no warm verify lane: a box world has no cached base to keep warm (D-214)", async () => {
+  it("verifies across an unload and a reload, with no warm verify lane: a box world has no cached base to keep warm (D-228)", async () => {
     const dir = tmp();
     const s = await boot(dir, { roomUnloadMs: 200, snapshotEveryTicks: 120 });
     const me = await register(s.port, "Warm");

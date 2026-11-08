@@ -269,7 +269,7 @@ describe("snapshots in the game world", () => {
   });
 
   // Both verify paths regenerate a game world off the tick thread. On the overflow worker (no lane: start-up, a room past
-  // the lane budget) the verify itself regenerates. On a room's warm lane (D-214) the generation runs at the first join
+  // the lane budget) the verify itself regenerates. On a room's warm lane (D-228) the generation runs at the first join
   // instead, and the verify is warm; the recorded window starts before the join, so it covers that generation too.
   for (const lanes of [false, true]) {
     it(`verifies a game snapshot in a worker (${lanes ? "warm lane: generated at join" : "overflow: cold"}): the tick clock does not stall, and a main-thread restore would`, async () => {

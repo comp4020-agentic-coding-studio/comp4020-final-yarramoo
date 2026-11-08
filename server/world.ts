@@ -730,7 +730,7 @@ export class World {
       timing,
     };
     this.members.set(conn, member);
-    // The first member: give this room a warm verify lane, generating its world now rather than in its first verify (D-214).
+    // The first member: give this room a warm verify lane, generating its world now rather than in its first verify (D-228).
     if (this.members.size === 1) this.verifier?.warm(this.verifyRoom());
     // A peer that failed during the catch-up is left at the next timer pass; a held clock would never close a tick to find out.
     if (!sentOk) this.dropped.push(conn);
@@ -1530,7 +1530,7 @@ export class World {
     this.checkUpload(tick);
   }
 
-  /** This room as the verifier sees it: its own seed and config, never an upload's (D-214). */
+  /** This room as the verifier sees it: its own seed and config, never an upload's (D-228). */
   private verifyRoom(): VerifyRoom {
     return { id: this.id, seed: this.seed, cfg: encodeConfig(this.cfg), size: this.cfg.size, caves: isCaves(this.cfg) };
   }

@@ -2,7 +2,7 @@
 // so the regeneration of a game world cannot stall the tick clock (D-061). It never calls step() or pushInput():
 // invariant 11 still holds.
 //
-// Warm verifies (D-214, D-213's recommendation 1). `restore` reuses the sim's cached pristine world (its `Base`, D-088)
+// Warm verifies (D-228, D-213's recommendation 1). `restore` reuses the sim's cached pristine world (its `Base`, D-088)
 // only when the snapshot has the seed and config of the last world that instance generated, and every room has its own
 // seed (D-201). With one shared worker, two rooms verifying in turn regenerated the world on every verify: 6-18 s at M
 // and 35-50 s at L on the Fly quota, against a 10 s timeout. So an occupied room gets its own worker, a "lane", which
@@ -31,7 +31,7 @@ export const VERIFY_WARM_BUDGET_BYTES = 100 * 1024 * 1024;
  *  instead of generating it again (cold review S2-2). An unload, a delete or a shutdown still releases it at once. */
 export const LANE_LINGER_MS = 60_000;
 /** A room whose lane timed out or crashed gets no new lane for this long, whatever its members do (review S2-4): a world
- *  too slow to generate, or one that crashes its worker, verifies on the overflow worker, as before D-214. */
+ *  too slow to generate, or one that crashes its worker, verifies on the overflow worker, as before D-228. */
 export const LANE_BAR_MS = 5 * 60_000;
 /** A worker's fixed cost (isolate, compiled module) before any world is generated, measured about 12 MB. */
 const LANE_FIXED_BYTES = 12 * 1024 * 1024;
@@ -269,7 +269,7 @@ export class SnapshotVerifier {
   private readonly lingerMs: number;
   private readonly barMs: number;
   private readonly now: () => number;
-  /** Rooms without a lane, and start-up checks: a one-shot worker, cold every time, as every verify was before D-214. */
+  /** Rooms without a lane, and start-up checks: a one-shot worker, cold every time, as every verify was before D-228. */
   private readonly overflow: Lane;
   /** Workers killed for exceeding a timeout (telemetry and tests). */
   timeouts = 0;

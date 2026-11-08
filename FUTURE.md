@@ -762,3 +762,9 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **Slow-connection follow-ups** (D-226): re-run the bandwidth and long-blackout phases of `tests/soak/slow-net.ts` on a
   quiet host; a specific message when the server closes a connection as too slow (not seen in the runs); dim a slow
   player's label for others only if playtests ask. **Source:** `docs/research/slow-net-report.md`, 8 Nov.
+- **Warm verify follow-ups** (D-228): defer a room's first snapshot request until its lane reports warm (the lag peaks
+  at the quota sit behind the lane's 4-16 s generation); shed the idlest lane when the room-load gate refuses a room;
+  lanes, lane MB and cold restores on the admin dashboard (the counters exist); keep the fixed game world's L lane from
+  filling the budget alone if rooms matter more; a sliding-window input limiter (the fixed 1 s window drops a burst a
+  loaded server reads late: `achievements-live.test.ts` "waterworks at exactly 100" fails that way under load, on
+  `multa` too). **Source:** `docs/research/warm-verify-report.md`, 8 Nov.

@@ -1,7 +1,7 @@
 // Runs in a worker thread (plan 7.5, D-061): decompress, restore and hash an uploaded snapshot, off the
 // thread that drives the tick clock. Restore regenerates a game world (about 400 ms at M on a full core, 35-50 s at L on
 // the Fly quota) unless this instance last generated the same seed and config (D-088), which is why each room keeps its
-// own worker (D-214). It restores, generates and hashes ONLY: it never calls step() or pushInput() (invariant 11).
+// own worker (D-228). It restores, generates and hashes ONLY: it never calls step() or pushInput() (invariant 11).
 import { parentPort, workerData } from "node:worker_threads";
 import { decompressSnapshot } from "../shared/protocol.ts";
 import { loadSim, type Sim } from "../shared/sim.ts";

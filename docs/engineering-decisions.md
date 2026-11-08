@@ -1723,3 +1723,25 @@ let a script pin registrations without limit; the fix skips owners outright and 
 
 **Evidence.** D-225; `docs/research/owned-sandbox-report.md`, `review-owned-sandbox.md`;
 `tests/net/owned-sandbox.test.ts` (8 tests, red without the server change; restart-a-day-later keeps the state hash).
+
+## 48. Warm verifies: necessary, not sufficient
+
+**What.** The 7 Nov capacity run (D-213) found that at Fly's sustained CPU quota no snapshot was ever accepted: every
+room has its own random seed, the one verify worker caches one generated world, so each verify regenerated it (6-18 s
+at M, 35-50 s at L, against a 10 s timeout). The fix (D-228) gives each occupied cave room its own verify worker,
+prewarmed at the first join, under a memory budget, terminated when the room unloads.
+
+**The challenge.** The obvious design, a map of sim instances in one worker, was measured and rejected: dropped wasm
+instances were not reclaimed (RSS 159 to 408 MB after five L replacements), so eviction would free nothing. The first
+session stopped at its cap with three red tests; the second found one was a test's fixed 120 s warm-up bound, one an
+assertion that the verify must be *slow* (it now wasn't), and one unrelated (a rate-limit window that drops a burst
+under load, on `multa` too). The cold review found that join/leave churn regenerated worlds on demand (now a 60 s
+linger), that a bar against regeneration loops was lifted by every last leave (now a 5-minute bar), and, checked against
+the sim, that box-terrain worlds have no cached base at all, so lanes are caves-only.
+
+**The result, honestly.** Rooms held at the quota went from 0 to 1, and verify rejections from 8-25 per run to 0. Two
+rooms still don't hold: the quota is CPU-bound, so warm verifies were necessary rather than sufficient. The showcase
+runs on burst credit (D-213: 24-32 members for 30-65 minutes on a full balance).
+
+**Evidence.** D-213, D-228; `docs/research/warm-verify-report.md`, `review-warm-verify.md`,
+`capacity-2026-11-08-warm-notes.md`; `tests/net/warm-verify.test.ts`; commits `68fb313`, `3c5cecd`, merge `ba65844`.

@@ -1,4 +1,7 @@
-# Warm verify lanes (D-2xx draft; implements D-213 recommendation 1): report
+# Warm verify lanes (D-228; implements D-213 recommendation 1): report
+
+> Merged as `ba65844` and recorded as **D-228**. The code and this report first cited it as "D-214", a number already
+> taken (the supply alcove); the code was renumbered at merge, mentions below are kept as written.
 
 Two sessions. **Session 1** (8 Nov, the original brief) designed and built the lanes and stopped at its cap with the gate
 red; its report is kept at the end. **Session 2** (8 Nov evening, backlog run item 1, Opus lead, cap $22) rebased,

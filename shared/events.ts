@@ -38,7 +38,7 @@ export const EVENT_NAMES = [
   "snapshot.accepted",
   "snapshot.rejected",
   "snapshot.abandoned",
-  // Warm verify lanes (D-214): one per occupied room, under a memory budget
+  // Warm verify lanes (D-228): one per occupied room, under a memory budget
   "verify.lane_opened",
   "verify.lane_refused",
   "verify.lane_closed",

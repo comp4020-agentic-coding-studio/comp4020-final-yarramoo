@@ -1,4 +1,4 @@
-// D-214: a warm snapshot-verify lane per occupied room. Before it, ONE verify worker kept one cached generated world, so
+// D-228: a warm snapshot-verify lane per occupied room. Before it, ONE verify worker kept one cached generated world, so
 // two rooms (each with its own seed, D-201) verifying in turn regenerated the world on every verify: 6-18 s at M and
 // 35-50 s at L on the Fly quota, against a 10 s timeout (docs/research/capacity-2026-11-07.md, D-213).
 import { afterEach, describe, expect, it } from "vitest";
@@ -33,7 +33,7 @@ function verifier(opts: ConstructorParameters<typeof SnapshotVerifier>[1] = {}):
   return v;
 }
 
-describe("warm verify lanes (D-214)", () => {
+describe("warm verify lanes (D-228)", () => {
   const A = room(101, 0xa11cen);
   const B = room(102, 0xb0bn);
   const snapA = snapshotOf(A.seed);

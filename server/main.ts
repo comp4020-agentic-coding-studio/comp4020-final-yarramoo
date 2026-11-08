@@ -98,7 +98,7 @@ export const MAX_LOADED_L_ROOMS = 4;
 /** Cgroup memory budget (capacity note's "budget 200 MB cgroup"): a lazy room load is refused above this, so a
  * burst of room creation cannot push the process into the kernel's OOM killer before the member caps would bite. */
 export const ROOM_LOAD_MEMORY_CAP_BYTES = 200 * 1024 * 1024;
-/** No warm verify lane opens if it would take cgroup memory past this (D-214): 40 MB under the room-load gate, so warm
+/** No warm verify lane opens if it would take cgroup memory past this (D-228): 40 MB under the room-load gate, so warm
  *  lanes give way to new rooms. A room without a lane still verifies, cold, as before. */
 export const VERIFY_LANE_MEMORY_CAP_BYTES = 160 * 1024 * 1024;
 /** How long a room (not the two fixed worlds) stays loaded after its last member leaves before it unloads. One
@@ -263,7 +263,7 @@ export interface ServerOptions {
   verifierWorkerUrl?: URL;
   /** Override LANE_WARM_TIMEOUT_MS (tests). */
   verifyWarmTimeoutMs?: number;
-  /** Override VERIFY_WARM_BUDGET_BYTES (tests: 0 turns warm lanes off, as before D-214). */
+  /** Override VERIFY_WARM_BUDGET_BYTES (tests: 0 turns warm lanes off, as before D-228). */
   verifyWarmBudgetBytes?: number;
   quiet?: boolean;
   /** Override ROOM_CREATES_PER_IP_HOUR (tests that create many rooms from one address). */
@@ -311,7 +311,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const log = new EventLog({ quiet: opts.quiet });
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
-  // A warm verify lane per occupied room (D-214), within its own budget and below the room-load gate, so lanes alone
+  // A warm verify lane per occupied room (D-228), within its own budget and below the room-load gate, so lanes alone
   // cannot push the server to the 200 MB at which it stops loading rooms.
   const verifier = db
     ? new SnapshotVerifier(wasmPath, {
