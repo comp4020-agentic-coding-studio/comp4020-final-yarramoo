@@ -1,10 +1,9 @@
 // What is under the mouse: a pure lookup, enemy over player over pickup/bag/heal over material. Display only (invariant 9):
 // nothing here becomes an input, and nothing is sent to the server.
 import { MATERIAL_NAMES, SPELL_NAMES } from "../shared/names.ts";
-import { ENT_BAG, ENT_ENEMY, ENT_HEAL, ENT_PICKUP, ENT_PLAYER, type EntityView } from "../shared/sim.ts";
+import { ENEMY_MAX_HP, ENT_BAG, ENT_ENEMY, ENT_HEAL, ENT_PICKUP, ENT_PLAYER, type EntityView } from "../shared/sim.ts";
 import { ENEMY_NAMES } from "./toasts.ts";
 
-const ENEMY_MAX_HP = [20, 30, 60, 90, 800, 40, 30, 600];
 /** Half-width and height (cells) of an enemy's hit box above its feet line, by kind. The Deep Mage is big. */
 const ENEMY_BOX: [number, number][] = [[4, 6], [4, 9], [5, 7], [5, 5], [12, 24], [4, 6], [4, 6], [6, 13]];
 const SLACK = 1.5;

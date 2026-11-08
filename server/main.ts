@@ -57,6 +57,7 @@ import { PaintRate, paintCost } from "./paintrate.ts";
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
+import { snapshotLayout } from "../shared/sim.ts";
 import { GAME_ID, SANDBOX_ID, World, type Peer } from "./world.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -307,6 +308,8 @@ const round2 = (n: number | undefined) => (n === undefined ? undefined : Math.ro
 export async function startServer(opts: ServerOptions = {}): Promise<RunningServer> {
   const wasmPath = opts.wasmPath ?? WASM_PATH;
   const hash = buildHash(wasmPath);
+  // Snapshot layout facts from the same build the hash names (review M4): no hand-held copy of the byte offsets.
+  const layout = snapshotLayout(new Uint8Array(readFileSync(wasmPath)));
   const clientDir = opts.clientDir ?? CLIENT_DIR;
   const log = new EventLog({ quiet: opts.quiet });
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
@@ -345,6 +348,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       devTeleport: tele.on,
       log,
       stats: playerStats,
+      snapshotLayout: layout,
     });
   const worlds = new Map<number, World>([[SANDBOX_ID, mk(SANDBOX_ID)], [GAME_ID, mk(GAME_ID)]]);
   const world = worlds.get(SANDBOX_ID)!;

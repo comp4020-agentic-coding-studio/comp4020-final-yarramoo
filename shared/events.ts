@@ -38,6 +38,7 @@ export const EVENT_NAMES = [
   "snapshot.accepted",
   "snapshot.rejected",
   "snapshot.abandoned",
+  "snapshot.unreadable",
   // Warm verify lanes (D-228): one per occupied room, under a memory budget
   "verify.lane_opened",
   "verify.lane_refused",

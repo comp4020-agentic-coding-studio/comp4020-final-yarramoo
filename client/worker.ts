@@ -44,6 +44,7 @@ import {
   EV_KNOCK,
   EV_PICKUP,
   EV_RESPAWN,
+  ENEMY_MAX_HP,
   loadSim,
   simBuildHash,
   type EntityView,
@@ -221,13 +222,12 @@ let lateChecked = false;
 let lateOffer = false;
 /** Last seen y of each enemy and when it was hit (ms), for the squash/stretch and the white flash. Render-only. */
 const enemySeen = new Map<number, { x: number; y: number; vy: number; hitAt: number; kind: number }>();
-/** Last time (ms) a worm rumble played, and the max hp of each enemy kind (render-only table mirroring tuning.rs). */
+/** Last time (ms) a worm rumble played. (Each enemy kind's max hp is `ENEMY_MAX_HP` in shared/sim.ts.) */
 let lastRumble = 0;
 /** Enemy owners with a bolt in flight last frame, so each new bolt crackles once (pruned every frame). */
 let enemyBoltSeen = new Set<number>();
 let bossPhase = 0;
 let bossHud: { kind: number; hp: number; max: number; phase: number; x: number; y: number } | null = null;
-const ENEMY_MAX_HP = [20, 30, 60, 90, 800, 40, 30, 600];
 /** Dev route only: the local single-player sim has an avatar for this player id. */
 const DEV_ID = 1;
 let lastFxAt = 0;

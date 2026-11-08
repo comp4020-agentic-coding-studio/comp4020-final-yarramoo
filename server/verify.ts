@@ -1,6 +1,7 @@
-// The ONE place the server loads sim.wasm (plan 7.5): restore an uploaded snapshot and hash it, in worker threads
+// The ONE place the server runs the sim (plan 7.5): restore an uploaded snapshot and hash it, in worker threads
 // so the regeneration of a game world cannot stall the tick clock (D-061). It never calls step() or pushInput():
-// invariant 11 still holds.
+// invariant 11 still holds. (main.ts also instantiates the build once at start, only to read three layout constants:
+// `snapshotLayout` in shared/sim.ts, review M4.)
 //
 // Warm verifies (D-228, D-213's recommendation 1). `restore` reuses the sim's cached pristine world (its `Base`, D-088)
 // only when the snapshot has the seed and config of the last world that instance generated, and every room has its own

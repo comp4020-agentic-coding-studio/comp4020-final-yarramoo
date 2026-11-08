@@ -1,9 +1,10 @@
 // One world (sandbox or game): connected clients, player ids, the closed-tick log, the tick clock, hash
 // checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
-// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
+// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread. The snapshot layout
+// (`WorldOptions.snapshotLayout`) is three constants main.ts reads from the wasm once at start, not a running sim.
 import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
-import { NUM_ENEMY_KINDS, NUM_SPELLS } from "../shared/sim.ts";
+import { NUM_ENEMY_KINDS, type SnapshotLayout } from "../shared/sim.ts";
 import { POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
   CHUNK_CELLS,
@@ -16,7 +17,6 @@ import {
   chatHasControl,
   chatIsBlank,
   MAX_CHAT_CHARS,
-  MAX_SNAPSHOT_RAW_GAME,
   encodeRequestSnapshot,
   encodeResync,
   encodeSnapshot,
@@ -263,6 +263,11 @@ export interface WorldOptions {
   log?: EventLog;
   /** Per-player counters; the world bumps `resyncs`. Optional so a bare World works in unit tests. */
   stats?: PlayerStats;
+  /**
+   * Where the running sim build puts players in a snapshot (`snapshotLayout` of the wasm main.ts hashes), for reading
+   * the active players of a stored game snapshot at cold start. Without it that read is logged as failed.
+   */
+  snapshotLayout?: SnapshotLayout;
 }
 
 export interface WorldStats {
@@ -348,6 +353,7 @@ export class World {
   private logWarned = 0;
   private readonly elog: EventLog;
   private readonly pstats?: PlayerStats;
+  private readonly layout?: SnapshotLayout;
   private nextPlayer = 1;
   /** Members whose send failed or whose queue overflowed: they get a Leave once the tick being closed is done. */
   private readonly dropped: number[] = [];
@@ -407,6 +413,7 @@ export class World {
     this.joinDeadlineMs = opts.joinDeadlineMs ?? JOIN_DEADLINE_MS;
     this.elog = opts.log ?? new EventLog({ quiet: true });
     this.pstats = opts.stats;
+    this.layout = opts.snapshotLayout;
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
     this.lastFlush = opts.now();
   }
@@ -567,8 +574,9 @@ export class World {
     // Not push(...frames): spreading ~130k+ ticks as arguments overflows the stack, and the app crashed on boot.
     for (const f of frames) this.log.push(f);
     // Who the restored state says is active: the snapshot's players, then the logged Joins and Leaves (S4).
-    const stillActive = this.kind === WORLD_GAME ? activeAfter(snap ? activePlayersIn(snap.data) : new Set<number>(), frames) : new Set<number>();
-    this.snapshotOnline = this.kind === WORLD_GAME ? (snap ? activePlayersIn(snap.data).size : 0) : Math.max(0, -net);
+    const atSnap = this.kind === WORLD_GAME && snap ? this.snapshotPlayers(snap.data, snap.tick) : new Set<number>();
+    const stillActive = this.kind === WORLD_GAME ? activeAfter(atSnap, frames) : new Set<number>();
+    this.snapshotOnline = this.kind === WORLD_GAME ? atSnap.size : Math.max(0, -net);
     this.online = this.kind === WORLD_GAME ? this.snapshotOnline + net : 0;
     this.clock.setClosed(base + frames.length);
     this.restoredWithTicks = base + frames.length > 0;
@@ -583,6 +591,22 @@ export class World {
     }
     this.leaveOrphans(stillActive);
     this.elog.event("world.loaded", { world: this.id, snapshot_tick: snap ? snap.tick : null, replayed_ticks: frames.length, tick: base + frames.length });
+  }
+
+  /**
+   * The active players of a stored game snapshot. A snapshot that cannot be read is logged (`snapshot.unreadable`) and
+   * counts as none active, as before review M4, when the failure was swallowed: its orphans then miss their Leave and
+   * stay awake until they rejoin and leave, so the log line is what tells anyone the layout or the stored bytes are wrong.
+   */
+  private snapshotPlayers(data: Uint8Array, tick: number): Set<number> {
+    try {
+      if (!this.layout) throw new Error("no snapshot layout (World built without snapshotLayout)");
+      return activePlayersIn(data, this.layout, maxSnapshotRawFor(this.cfg));
+    } catch (e) {
+      // Once a minute per room at most: a lazily loaded room loads again on every first HELLO after it unloads.
+      this.elog.limited(`snapshot_unreadable:${this.id}`, 60_000, "snapshot.unreadable", { world: this.id, tick, bytes: data.length, error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }, "error");
+      return new Set<number>();
+    }
   }
 
   /**
@@ -1646,23 +1670,25 @@ export class World {
   }
 }
 
-/** Active player ids in a compressed game snapshot, read from its entity section (layout in plan 6.11). */
-/** One player record in a snapshot: 21 fixed bytes, 6 per spell (charges u16, cooldown u32), 9 trailing (ready byte, sim/src/entities.rs PLAYER_BYTES). */
-const PLAYER_RECORD = 21 + 6 * NUM_SPELLS + 9;
-
-export function activePlayersIn(compressed: Uint8Array): Set<number> {
+/**
+ * Active player ids in a compressed game snapshot, read from its player section at offsets the sim build itself
+ * reports (`layout`, plan 6.11, review M4). Throws, never guesses, on anything it cannot read exactly: a stream that
+ * does not decompress within `maxRaw`, another magic or format version than the build's, or a player section that
+ * would run past the entity bytes.
+ */
+export function activePlayersIn(compressed: Uint8Array, layout: SnapshotLayout, maxRaw: number): Set<number> {
+  const raw = decompressSnapshot(compressed, maxRaw);
+  const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const H = layout.headerBytes;
+  if (raw.length < H + 8 || raw[0] !== 0x53 || raw[1] !== 0x41 || raw[2] !== 0x4e || raw[3] !== 0x44) throw new Error("not a snapshot");
+  const version = v.getUint16(4, true);
+  if (version !== layout.formatVersion) throw new Error(`snapshot format ${version}, this build reads ${layout.formatVersion}`);
+  const entityLen = v.getUint32(H, true);
+  if (H + 4 + entityLen > raw.length) throw new Error("entity section runs past the snapshot");
+  const n = v.getUint32(H + 4, true);
+  if (4 + n * layout.playerRecordBytes > entityLen) throw new Error(`${n} player records run past the entity section`);
   const out = new Set<number>();
-  try {
-    const raw = decompressSnapshot(compressed, MAX_SNAPSHOT_RAW_GAME);
-    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-    const ENTITY_AT = 70; // after the 70-byte header (format 4) comes the entity length u32, then the entity bytes
-    let o = ENTITY_AT + 4;
-    const n = v.getUint32(o, true);
-    o += 4;
-    for (let k = 0; k < n; k++, o += PLAYER_RECORD) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
-  } catch {
-    // an unreadable snapshot would already have failed verification; treat as none active
-  }
+  for (let k = 0, o = H + 8; k < n; k++, o += layout.playerRecordBytes) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
   return out;
 }
 

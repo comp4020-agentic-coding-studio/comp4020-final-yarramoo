@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { activePlayersIn } from "../../server/world.ts";
 import { encodeCast, encodeJoin, encodeLeave, encodePos } from "../../shared/inputs.ts";
-import { compressSnapshot } from "../../shared/protocol.ts";
-import { NUM_SPELLS } from "../../shared/sim.ts";
+import { compressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
+import { CAVES_PVP } from "../../shared/room.ts";
+import { snapshotLayout } from "../../shared/sim.ts";
 import { ENT_BAG, ENT_PICKUP, ENT_PLAYER, ENT_PROJECTILE, EV_DEATH, EV_PICKUP, loadSim } from "../../shared/sim.ts";
 import { wasmBytes } from "./helpers.ts";
 
-// server/world.ts reads active player ids straight out of a snapshot's entity bytes, at offsets
-// copied from the Rust layout (sim/src/entities.rs). If that layout changes, the server must not
-// quietly start reading garbage: this pins the parser to what the real sim writes.
+// server/world.ts reads active player ids straight out of a snapshot's entity bytes, at offsets the sim build reports
+// (`snapshotLayout`, review M4). This pins the parser, with those offsets, to what the real sim writes.
+const layout = snapshotLayout(wasmBytes);
+const CAP = maxSnapshotRawFor(CAVES_PVP);
 describe("server's snapshot entity parser matches the sim", () => {
   it("reads exactly the players the sim reports active", () => {
     const sim = loadSim(wasmBytes);
@@ -26,7 +28,7 @@ describe("server's snapshot entity parser matches the sim", () => {
     expect(sim.entities().filter((e) => e.type === ENT_PROJECTILE).length).toBeGreaterThan(0);
     const truth = new Set(sim.entities().filter((e) => e.type === ENT_PLAYER && e.active).map((e) => e.id));
     expect([...truth].sort((a, b) => a - b)).toEqual([3, 27, 81]);
-    expect(activePlayersIn(compressSnapshot(sim.snapshot()))).toEqual(truth);
+    expect(activePlayersIn(compressSnapshot(sim.snapshot()), layout, CAP)).toEqual(truth);
   });
 
   // The entity section is players, pickups, projectiles, bags, each behind a u32 count (sim/src/entities.rs). The
@@ -59,11 +61,11 @@ describe("server's snapshot entity parser matches the sim", () => {
     expect(bags.length).toBe(1);
 
     const snap = sim.snapshot();
-    const HEADER = 70;
+    const HEADER = layout.headerBytes;
     const dv = new DataView(snap.buffer, snap.byteOffset, snap.byteLength);
     const elen = dv.getUint32(HEADER, true);
     const e = new DataView(snap.buffer, snap.byteOffset + HEADER + 4, elen);
-    const [PLAYER, PICKUP, PROJECTILE, BAG] = [21 + 6 * NUM_SPELLS + 9, 13, 23, 2 + 2 + 2 * 12 + 4];
+    const [PLAYER, PICKUP, PROJECTILE, BAG] = [layout.playerRecordBytes, 13, 23, 2 + 2 + 2 * 12 + 4];
     let o = 0;
     const np = e.getUint32(o, true);
     o += 4 + np * PLAYER;
@@ -93,6 +95,6 @@ describe("server's snapshot entity parser matches the sim", () => {
     const sim = loadSim(wasmBytes);
     sim.init(5n, 1);
     sim.step();
-    expect(activePlayersIn(compressSnapshot(sim.snapshot())).size).toBe(0);
+    expect(activePlayersIn(compressSnapshot(sim.snapshot()), layout, CAP).size).toBe(0);
   });
 });

@@ -1,9 +1,10 @@
 // The client's spell table (HUD cooldown bars, cast-preview ghost) mirrors sim/src/tuning.rs. Read the Rust
 // source so a balance change that forgets the client fails here rather than looking subtly wrong.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { BOMB_RADIUS, DEATH_TICKS, DIG_RADIUS, DIG_REACH, HEALTH_MAX, SPELLS } from "../../client/spells.ts";
 import { quantiseAngle } from "../../client/spells.ts";
+import { ENEMY_MAX_HP, NUM_ENEMY_KINDS } from "../../shared/sim.ts";
 
 const rs = readFileSync(new URL("../../sim/src/tuning.rs", import.meta.url), "utf8");
 function arr(name: string): number[] {
@@ -13,13 +14,18 @@ function arr(name: string): number[] {
 }
 
 describe("client mirrors of sim constants", () => {
-  it("ENEMY_MAX_HP in worker.ts equals ENEMY_STATS hp in tuning.rs", () => {
-    const worker = readFileSync(new URL("../../client/worker.ts", import.meta.url), "utf8");
-    const mirror = worker.match(/const ENEMY_MAX_HP = \[([^\]]*)\]/)![1].split(",").map((x) => Number(x.trim()));
+  it("ENEMY_MAX_HP (shared/sim.ts) equals ENEMY_STATS hp, BOSS_HP and COLOSSUS_HP in tuning.rs, and is the only copy", () => {
     const stats = rs.match(/pub const ENEMY_STATS[^=]*= \[([\s\S]*?)\n\];/)![1];
     const hp = [...stats.matchAll(/EnemyStats \{ hp: (\d+)/g)].map((m) => Number(m[1]));
-    expect(hp.length).toBeGreaterThan(0);
-    expect(mirror).toEqual(hp);
+    expect(hp.length).toBe(NUM_ENEMY_KINDS);
+    expect([...ENEMY_MAX_HP]).toEqual(hp);
+    expect(ENEMY_MAX_HP[4]).toBe(Number(rs.match(/pub const BOSS_HP: u16 = (\d+);/)![1]));
+    expect(ENEMY_MAX_HP[7]).toBe(Number(rs.match(/pub const COLOSSUS_HP: u16 = (\d+);/)![1]));
+    // Review M4: the table was copied into worker.ts and hover.ts. No client file holds its own again.
+    for (const f of readdirSync(new URL("../../client/", import.meta.url), { recursive: true }) as string[]) {
+      if (!f.endsWith(".ts")) continue;
+      expect(readFileSync(new URL(`../../client/${f}`, import.meta.url), "utf8"), f).not.toMatch(/ENEMY_MAX_HP\s*(:[^=]*)?=|\[\s*20,\s*30,\s*60,\s*90,\s*800\b/);
+    }
   });
   it("worker.ts active-box overlay mirrors ACTIVE_W, ACTIVE_H (tuning.rs) and CHUNK (grid.rs)", () => {
     const worker = readFileSync(new URL("../../client/worker.ts", import.meta.url), "utf8");
