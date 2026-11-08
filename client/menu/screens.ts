@@ -2,6 +2,7 @@
 import { CONFIG_BYTES, CONFIG_FIELDS, SIZE_DIMS, SURVIVAL, encodeConfig, type RoomConfig } from "../../shared/room.ts";
 import { fetchLive, deathLine, relTime, startPoll, type Live } from "./live.ts";
 import type { Route } from "./router.ts";
+import { TOKEN_KEY, store } from "../storage.ts";
 
 export interface Ctx {
   root: HTMLElement;
@@ -64,6 +65,12 @@ function titleScreen(ctx: Ctx): () => void {
   const tag = el("p", "mn-tag", "A shared world of sand, water, fire and spells.");
   const btns = el("div", "mn-bigbtns");
   btns.append(button("New game", "big", () => ctx.go({ kind: "types" })), button("Join game", "big water", () => ctx.go({ kind: "join" })));
+
+  const mine = button("My world", "", () => {
+    ctx.ensureName().then(() => ctx.go({ kind: "mine" })).catch(() => {});
+  });
+  mine.classList.add("mn-mine");
+  btns.append(mine);
 
   const live = el("p", "mn-live");
   live.hidden = true;
@@ -376,10 +383,9 @@ function settingsScreen(type: GameType, ctx: Ctx): () => void {
   return () => panel.classList.remove("themed", type);
 }
 
-function shareScreen(code: string, ctx: Ctx): () => void {
-  const { panel } = ctx;
+/** The room code, link field and Copy button, shared by the share and "My world" screens. Returns a cleanup. */
+function shareBlock(panel: HTMLElement, code: string): () => void {
   const link = `${location.origin}/r/${code}`;
-  panel.append(heading("Room ready", "Private: only people with the link can join."));
   const codeBig = el("p", "mn-code", code);
   codeBig.setAttribute("aria-label", `Room code ${code.split("").join(" ")}`);
   const field = el("input", "mn-input mn-link");
@@ -407,13 +413,108 @@ function shareScreen(code: string, ctx: Ctx): () => void {
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link).then(done, fallback);
     else fallback();
   });
+  panel.append(codeBig, field, copy);
+  return () => {
+    if (timer) clearTimeout(timer);
+  };
+}
+
+function shareScreen(code: string, ctx: Ctx): () => void {
+  const { panel } = ctx;
+  panel.append(heading("Room ready", "Private: only people with the link can join."));
+  const stop = shareBlock(panel, code);
   const enter = button("Enter room", "moss", () => {
     ctx.ensureName().then(() => (location.href = `/r/${code}`)).catch(() => {});
   });
   enter.classList.add("big");
-  panel.append(codeBig, field, copy, el("p", "mn-fine", "Send the link to your friends, then enter."), enter, backRow(ctx));
+  panel.append(el("p", "mn-fine", "Send the link to your friends, then enter."), enter, backRow(ctx));
+  return stop;
+}
+
+interface OwnedWorld {
+  code: string;
+  name: string;
+}
+
+function mineScreen(ctx: Ctx): () => void {
+  const { panel } = ctx;
+  const auth = () => ({ authorization: `Bearer ${store.get(TOKEN_KEY) ?? ""}` });
+  let alive = true;
+  let stopBlock: (() => void) | null = null;
+  const clear = () => {
+    stopBlock?.();
+    stopBlock = null;
+    panel.replaceChildren();
+  };
+  const fail = (err: HTMLElement, status: number) => {
+    err.hidden = false;
+    err.textContent = status === 429 ? "Slow down a little, then try again." : status === 401 ? "Your player is not registered here. Reload and try again." : "Something went wrong. Try again.";
+  };
+  const showEmpty = (note?: string) => {
+    clear();
+    panel.append(heading("My world", "Your own sandbox. It stays until you delete it. Anyone with the link can paint in it."));
+    const err = el("p", "mn-err");
+    err.hidden = !note;
+    if (note) err.textContent = note;
+    const create = button("Create my world", "moss", () => {
+      create.disabled = true;
+      fetch("/api/sandbox", { method: "POST", headers: auth() })
+        .then(async (r) => {
+          if (!alive) return;
+          if (!r.ok) throw r.status;
+          const j = (await r.json()) as OwnedWorld;
+          showWorld(j);
+        })
+        .catch((e) => {
+          create.disabled = false;
+          fail(err, typeof e === "number" ? e : 0);
+        });
+    });
+    create.classList.add("big");
+    panel.append(create, err, backRow(ctx));
+  };
+  const showWorld = (w: OwnedWorld, confirming = false) => {
+    clear();
+    panel.append(heading(w.name, "Your own sandbox. Anyone with the link can paint in it."));
+    stopBlock = shareBlock(panel, w.code);
+    const err = el("p", "mn-err");
+    err.hidden = true;
+    const enter = button("Enter", "moss", () => (location.href = `/r/${w.code}`));
+    enter.classList.add("big");
+    if (!confirming) {
+      panel.append(enter, button("Delete world", "lava", () => showWorld(w, true)), err, backRow(ctx));
+      return;
+    }
+    const del = button("Delete", "lava", () => {
+      del.disabled = true;
+      fetch(`/api/sandbox/${w.code}`, { method: "DELETE", headers: auth() })
+        .then((r) => {
+          if (!alive) return;
+          if (!r.ok && r.status !== 404) throw r.status;
+          showEmpty();
+        })
+        .catch((e) => {
+          del.disabled = false;
+          fail(err, typeof e === "number" ? e : 0);
+        });
+    });
+    panel.append(el("p", "mn-err", "Really delete? This can't be undone."), del, button("Cancel", "", () => showWorld(w)), err, backRow(ctx));
+  };
+  panel.append(heading("My world"), el("p", "mn-fine", "Loading..."));
+  fetch("/api/sandbox", { headers: auth() })
+    .then(async (r) => {
+      if (!alive) return;
+      if (r.status === 404) return showEmpty();
+      if (!r.ok) throw r.status;
+      showWorld((await r.json()) as OwnedWorld);
+    })
+    .catch((e) => {
+      if (!alive) return;
+      showEmpty(e === 401 ? "Your player is not registered here. Reload and try again." : "Could not load your world. Try again.");
+    });
   return () => {
-    if (timer) clearTimeout(timer);
+    alive = false;
+    stopBlock?.();
   };
 }
 
@@ -529,6 +630,8 @@ export function renderScreen(r: Route, ctx: Ctx): (() => void) | void {
       return shareScreen(r.code, ctx);
     case "join":
       return joinScreen(ctx);
+    case "mine":
+      return mineScreen(ctx);
     default:
       return titleScreen(ctx);
   }
