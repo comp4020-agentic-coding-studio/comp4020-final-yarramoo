@@ -19,7 +19,7 @@ import {
   encodeSnapshotUpload,
 } from "../shared/protocol.ts";
 import { resolveSky } from "./sky.ts";
-import { decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
+import { CREATIVE, decodeConfig, encodeConfig, SURVIVAL } from "../shared/room.ts";
 import { MENU_BACKDROP } from "./menu/backdrop-config.ts";
 import {
   ENT_BAG,
@@ -62,7 +62,7 @@ import type { FromWorker, NetState, ToWorker } from "./protocol.ts";
 import { Renderer, type Camera, type Rect } from "./render.ts";
 import { groundLine } from "./background.ts";
 import { Ambient } from "./ambient.ts";
-import { hitboxTouchesLava, shouldSizzle } from "./hazard.ts";
+import { SPELL_SFX, damageSound, hurtCause, hurtClass, shouldPlayHurt, waterMotion, type HurtClass, type WaterSamples } from "./sound-cues.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
 import { shouldDraw } from "./phone.ts";
 
@@ -240,6 +240,8 @@ let lastSend = 0;
 
 function setNet(n: NetState) {
   net = n;
+  // gameFrame (and so the water sampler) runs only while live: anything else silences the water voice at once.
+  if (n !== "live") waterSilence();
   postStatus();
 }
 
@@ -534,7 +536,41 @@ function combatSignal(now: number, quiet: boolean) {
   lastCombatPost = now;
   send({ type: "combat" });
 }
-let lastSizzle = -1e9;
+const lastHurtAt: Record<HurtClass, number> = { hazard: -1e9, hit: -1e9 };
+// Ambient water (display only): sampled at most every 200 ms from the camera window.
+let waterPrev: WaterSamples | null = null;
+let waterAt = -1e9;
+let waterLevel = 0;
+let waterSent = 0;
+/** Water voice to 0 now, from outside gameFrame (left live, tab hidden): otherwise it holds its last level. */
+function waterSilence() {
+  waterPrev = null;
+  waterLevel = 0;
+  if (waterSent !== 0) {
+    waterSent = 0;
+    send({ type: "ambient", water: 0, pan: 0 });
+  }
+}
+function ambientWater(sim: Sim, now: number, quiet: boolean, cx: number, cy: number) {
+  if (now - waterAt < 200) return;
+  waterAt = now;
+  let target = 0, pan = 0;
+  if (quiet || tabHidden) {
+    waterPrev = null;
+  } else {
+    const r = waterMotion(sim.matView(), sim.width(), sim.height(), { x: cam.x, y: cam.y, w: cam.vw, h: cam.vh }, 2, waterPrev, cx, cy);
+    waterPrev = r.next;
+    target = r.level;
+    pan = r.pan;
+  }
+  // Attack fast, release slow.
+  waterLevel = target > waterLevel ? waterLevel + (target - waterLevel) * 0.7 : waterLevel * 0.8;
+  if (waterLevel < 0.01 && target === 0) waterLevel = 0;
+  if (Math.abs(waterLevel - waterSent) > 0.02 || (waterLevel === 0 && waterSent !== 0)) {
+    waterSent = waterLevel;
+    send({ type: "ambient", water: waterLevel, pan });
+  }
+}
 /** Place, step and send the avatar; return the overlay rectangles and steer the camera. Game world only. */
 function gameFrame(sim: Sim, dt: number, now: number, stepDt: number = dt): Rect[] {
   const ents = sim.entities();
@@ -544,16 +580,21 @@ function gameFrame(sim: Sim, dt: number, now: number, stepDt: number = dt): Rect
   const dead = !!mine && mine.health === 0;
   iAmDead = dead;
   if (mine && !dead) myDeathTick = null;
-  // Lava sizzle (display only): my health fell while lava touches my hitbox. Rate-limited; silent while replaying.
+  // Hurt sound by cause (display only, outputs only): my health fell. The cause is inferred from this frame's events
+  // (peeked, spellFx consumes them later) and the hitbox contents. Falling rock does no damage in the sim: no cue.
+  const quietNow = net === "catching-up" || !!ls?.fastForwarding;
   if (mine && !dead && !spectate) {
     const hurt = prevHealth !== null && prevHealth > mine.health;
-    const touching = hurt && hitboxTouchesLava(sim.matView(), w, h, mine.x, mine.y);
-    if (hurt && !touching) combatSignal(now, net === "catching-up" || !!ls?.fastForwarding);
-    if (prevHealth !== null && shouldSizzle(prevHealth, mine.health, touching, now, lastSizzle)) {
-      lastSizzle = now;
-      if (evLogOut.length < 100) evLogOut.push({ k: 900, p: myId, a: mine.health, b: 0, c: 0 }); // dev-route log only: a sizzle was requested
-      sfxBudget = Math.max(sfxBudget, 1);
-      sfxSelf("sizzle", net === "catching-up" || !!ls?.fastForwarding);
+    if (hurt) {
+      const cause = hurtCause({ events: pendingEvents, ents, myId, x: mine.x, y: mine.y, mat: sim.matView(), w, h });
+      const cls = hurtClass(cause);
+      if (cause !== 33) combatSignal(now, quietNow); // lava alone is not a fight (as before)
+      if (shouldPlayHurt(cls, now, lastHurtAt)) {
+        lastHurtAt[cls] = now;
+        if (cause === 33 && evLogOut.length < 100) evLogOut.push({ k: 900, p: myId, a: mine.health, b: 0, c: 0 }); // dev-route log only: a sizzle was requested
+        sfxBudget = Math.max(sfxBudget, 1);
+        sfxSelf(damageSound(cause), quietNow);
+      }
     }
   }
   prevHealth = mine && !dead && !spectate ? mine.health : null;
@@ -781,6 +822,8 @@ function gameFrame(sim: Sim, dt: number, now: number, stepDt: number = dt): Rect
     following = true;
   }
   isFollowing = following;
+  // Ambient rushing water: one persistent voice on the main thread; spectators hear it too (camera centre).
+  ambientWater(sim, now, net === "catching-up" || !!ls?.fastForwarding, avatar && avatarReady && !spectate ? avatar.x : cam.x + cam.vw / 2, avatar && avatarReady && !spectate ? avatar.y - 5 : cam.y + cam.vh / 2);
   if (now - lastPlayersPost >= 33) {
     lastPlayersPost = now;
     send({ type: "players", list, cam: { x: cam.x, y: cam.y }, following, energy: avatar?.energy ?? 0, energyMax: ENERGY_MAX, boss: bossHud, spells: spectate ? null : sim.playerView(myId), bags, lobby, late: lateOffer, evlog: evLogOut.splice(0),
@@ -869,7 +912,6 @@ const sfxSelf = (name: SfxName, quiet: boolean) => {
   sfxBudget--;
   send({ type: "sfx", name, vol: 1, pan: 0, mag: 0.5 });
 };
-const SPELL_SFX: SfxName[] = ["push", "blast", "water", "rose", "fire", "bomb", "dig", "flask", "flask", "wall", "flask", "hole"];
 
 /** Turn the queued sim events, the entities() view and the cast ghosts into particles and rectangles. */
 function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
@@ -946,7 +988,10 @@ function spellFx(ents: EntityView[], dt: number, now: number, rects: Rect[]) {
       const c = chestOf(e.player);
       if (c) {
         fx.burst(c.x, c.y, [0.9, 0.2, 0.2], 18, 0.04);
-        if (e.player === myId) sfxSelf("death", quiet);
+        if (e.player === myId) {
+          sfxSelf("death", quiet);
+          sfxSelf(damageSound(e.b), quiet);
+        }
         else sfxAt("death", c.x, c.y, 0.5, quiet);
       }
     } else if (e.kind === EV_RESPAWN) {
@@ -1227,7 +1272,7 @@ async function init(m: Extract<ToWorker, { type: "init" }>) {
   if (m.local) {
     const sim = loadSim(wasmBytes);
     menuBackdrop = m.local.cfg === "menu";
-    sim.init(BigInt(m.local.seed), m.local.cfg === "survival" ? encodeConfig(SURVIVAL) : menuBackdrop ? encodeConfig(MENU_BACKDROP) : m.local.kind);
+    sim.init(BigInt(m.local.seed), m.local.cfg === "survival" ? encodeConfig(SURVIVAL) : m.local.cfg === "creative" ? encodeConfig(CREATIVE) : menuBackdrop ? encodeConfig(MENU_BACKDROP) : m.local.kind);
     oneLife = m.local.cfg === "survival";
     localSim = sim;
     if (sim.width() > 512 && m.local.avatar) {
@@ -1356,6 +1401,7 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "hidden":
       tabHidden = m.hidden;
+      if (m.hidden) waterSilence();
       if (m.hidden) { keys.left = false; keys.right = false; keys.up = false; }
       break;
     case "follow":

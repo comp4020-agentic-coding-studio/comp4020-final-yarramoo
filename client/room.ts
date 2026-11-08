@@ -11,13 +11,13 @@ import { addPickedUp, isTap, swapSlots } from "./slots.ts";
 import { backingSize, gameView } from "./phone.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
-import { isMuted, play, setMuted, unlock } from "./sfx.ts";
+import { isMuted, play, setMuted, setWater, sfxCounts, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
 import { bossName, formatAchievement } from "./toasts.ts";
 import { renderChatLine } from "./chat.ts";
 import { MAX_CHAT_CHARS } from "../shared/protocol.ts";
 import { nextSlow, SLOW_IDLE, slowText, type SlowState } from "./slownet.ts";
-import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
+import { CLASSIC_SANDBOX, CAVES_PVP, CREATIVE, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -141,7 +141,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const worldId = target.worldId;
   // Dev route ?cfg=survival: the local sim runs the Survival preset (worker.ts), so the page must read the same
   // config, or a one-life death showed the old "respawning in 0 s" under the round banner.
-  const cfg = import.meta.env.DEV && params.get("world") === "game" && params.get("cfg") === "survival" ? SURVIVAL : target.cfg;
+  const cfg = import.meta.env.DEV && params.get("world") === "game" && params.get("cfg") === "survival" ? SURVIVAL : import.meta.env.DEV && params.get("world") === "game" && params.get("cfg") === "creative" ? CREATIVE : target.cfg;
   /** Is this an avatar-capable room (Deathmatch, Survival, Creative-with-avatars, or the old fixed game world)?
    * R3: the only sound test of "is this the avatar world" is the room's own config, never the id — a real
    * room's id is never 1. (`worldId === 1` survives only as a numeric join target below, never as a check.) */
@@ -690,6 +690,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         break;
       case "sfx":
         play(m.name, m.vol, m.pan, m.mag);
+        break;
+      case "ambient":
+        setWater(m.water, m.pan);
         break;
       case "toast":
         addToast(m.text);
@@ -1494,6 +1497,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     overview = ov;
     applyCamera();
   };
+  (window as unknown as Record<string, unknown>).__sfxCounts = sfxCounts;
   (window as unknown as Record<string, unknown>).__devPaint = (x: number, y: number, mat: number, r: number) => {
     if (!devAvatar) return;
     send({ type: "pointer", kind: "down", x, y, mat, radius: r, fillEmpty: false });

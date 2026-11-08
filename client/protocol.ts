@@ -118,6 +118,8 @@ export type FromWorker =
   | { type: "terrain"; cols: number; rows: number; mask: Uint8Array }
   /** A sound for the main thread to synthesise (client/sfx.ts). `vol` 0..1 and `pan` -1..1 are already worked out from the camera distance; `mag` 0..1 scales explosions. Never sent during replay. */
   | { type: "sfx"; name: SfxName; vol: number; pan: number; mag: number }
+  /** Ambient rushing water: level 0..1 and pan -1..1 for the one persistent voice (display only). */
+  | { type: "ambient"; water: number; pan: number }
   /** A line for the death feed, already formatted from a plain-name death event. */
   | { type: "toast"; text: string }
   /** Answer to "hover": the label for what is under the resting mouse, or null. Render-only. */
