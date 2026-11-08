@@ -69,6 +69,13 @@ export const MAX_MEMBERS_PER_WORLD = 64;
 /** Concurrent sockets per client address. */
 export const MAX_CONNS_PER_IP = 12;
 const MAX_FRAME_BYTES = 256;
+/**
+ * Review M1 (8 Nov): HASH and PING frames one connection may send per second. An honest client sends about one HASH
+ * and half a PING a second (a burst after a stall stays well under). The rest have their own gates: inputs
+ * MAX_INPUTS_PER_SEC, claims CLAIMS_PER_WINDOW, uploads expectsUpload, chunk hashes wantsChunkHashes, and LIVE is
+ * O(1) once a member is live and must never be dropped (it ends a catch-up hold). Past it the frame is dropped.
+ */
+export const MAX_CONTROL_FRAMES_PER_SEC = 20;
 /** Unsolicited CHUNK_HASHES frames one connection may send before it is closed (a reply that crosses a timeout). */
 export const MAX_UNASKED_CHUNK_FRAMES = 3;
 const TIMER_MS = 4;
@@ -1192,6 +1199,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
+    let controlStart = performance.now();
+    let controlInWindow = 0;
     /** CHUNK_HASHES frames nobody asked for: an honest client never sends one, so a few close the socket. */
     let unaskedChunks = 0;
     const helloTimer = setTimeout(() => ws.close(1008, "no hello"), HELLO_TIMEOUT_MS);
@@ -1277,7 +1286,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           const visitorId = who === "unknown" ? 0 : who.id;
           const visitorName = who === "unknown" ? "" : who.name;
           rooms?.markJoined(w.id, wallNow()); // N1: it has been joined (never_joined no longer applies) and is active now
-          const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
+          const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName, ipTag });
           const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
           joined = me;
           playerStats.bump(visitorId, STAT_SESSIONS);
@@ -1299,6 +1308,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               log.forget(`pos:${j.conn}`);
               log.forget(`bad:${j.conn}`);
               log.forget(`held:${j.conn}`);
+              log.forget(`ctl_rate:${j.conn}`);
               const ms = Date.now() - me.at;
               playerStats.bump(visitorId, STAT_PLAY_MS, ms);
               if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
@@ -1357,6 +1367,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
       const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.cfg) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.cfg) : MAX_FRAME_BYTES;
       if (buf.length > frameCap) return ws.close(1009, "frame too large");
+      if (msg.t === "hash" || msg.t === "ping") {
+        const now = performance.now();
+        if (now - controlStart >= 1000) {
+          controlStart = now;
+          controlInWindow = 0;
+        }
+        if (++controlInWindow > MAX_CONTROL_FRAMES_PER_SEC) {
+          log.limited(`ctl_rate:${joined.conn}`, 10_000, "input.rate_limited", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), limit: MAX_CONTROL_FRAMES_PER_SEC, what: msg.t }, "warn");
+          return;
+        }
+      }
 
       switch (msg.t) {
         case "ping":

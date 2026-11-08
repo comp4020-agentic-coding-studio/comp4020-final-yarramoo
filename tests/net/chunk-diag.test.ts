@@ -271,7 +271,8 @@ describe("chunk diagnosis on a bare World", () => {
     expect(r.peers[0].frames.length).toBe(before); // no request frame went out
     expect(r.log.recent().some((e) => e.ev === "desync.diag_skipped" && e.reason === "rate_limited")).toBe(true);
     r.advance(DIAG_WINDOW_MS); // a fresh window
-    r.hashRound(60 * 40, [a, b, bad], [bad]);
+    // A checkpoint at the current clock: the server ignores hashes older than HASH_WINDOW_TICKS (review M1).
+    r.hashRound(Math.floor(r.w.clock.lastClosed / 60) * 60, [a, b, bad], [bad]);
     expect((r.db.recentIncidents(1)[0].details.chunks as any).status).toBe("pending");
   });
 });
