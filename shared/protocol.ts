@@ -12,7 +12,11 @@ const GAME_CFG_BYTES = configForKind(1);
  * joining client inits its sim from the same bytes every member of the room shares, not a kind number that
  * only meant something for the two fixed worlds. HELLO is unchanged: its `worldId` field now names a room id.
  */
-export const PROTOCOL_VERSION = 9;
+/**
+ * v10 (Track E): C_CHAT and S_CHAT. A v9 client's decodeServer returns null on S_CHAT and closes its socket, so an
+ * old tab would be closed by every chat line; the bump refuses it once, up front, with "new version, reload".
+ */
+export const PROTOCOL_VERSION = 10;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -44,6 +48,14 @@ export const LIVE_LEN = 5;
  * A diagnostic report, never an input (invariant 9).
  */
 export const C_CHUNK_HASHES = 0x08;
+/**
+ * `text utf8` (Track E chat): a chat line for the room. Never a sim input (invariant 1): the server relays it to the
+ * room's members beside the lockstep, like S_PLAYER_NAME. At most MAX_CHAT_BYTES of text, so the frame fits the
+ * server's small-frame cap; the server refuses control characters and caps it at MAX_CHAT_CHARS.
+ */
+export const C_CHAT = 0x0a;
+export const MAX_CHAT_BYTES = 240;
+export const MAX_CHAT_CHARS = 120;
 export const CHUNK_HASHES_HEADER = 7;
 // Server -> client tags
 export const S_WELCOME = 0x81;
@@ -61,6 +73,13 @@ export const S_ACHIEVEMENT = 0x89;
 export const MAX_ACHIEVEMENT_ID_BYTES = 32;
 /** `tick u32`: send me your chunk hashes for this checkpoint (D-126). */
 export const S_REQUEST_CHUNK_HASHES = 0x8a;
+/**
+ * `flags u8, name_len u8, name utf8, text utf8`: a chat line relayed by the server. `name` is the sender's plain
+ * display name (never `name#id`); `flags` bit 0 marks a line replayed from the room's short history at join.
+ * Render-only, and only ever with textContent: the text is untrusted.
+ */
+export const S_CHAT = 0x8b;
+export const CHAT_HISTORY = 1;
 
 /** Hash checkpoint spacing; snapshot ticks are multiples of it. */
 export const HASH_EVERY = 60;
@@ -132,7 +151,8 @@ export type ClientMsg =
   | { t: "claim"; tick: number; victim: number; killer: number; cause: number; bag: number }
   | { t: "claim-event"; kind: number; tick: number; a: number; b: number; c: number; d: number; ids: number[] }
   | { t: "live"; tick: number }
-  | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array };
+  | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array }
+  | { t: "chat"; text: string };
 
 export type ServerMsg =
   | { t: "welcome"; playerId: number; seed: bigint; cfg: Uint8Array; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
@@ -145,7 +165,8 @@ export type ServerMsg =
   | { t: "resync"; tick: number; playersAtBase: number }
   | { t: "player-name"; player: number; name: string }
   | { t: "achievement"; id: string; tick: number }
-  | { t: "request-chunk-hashes"; tick: number };
+  | { t: "request-chunk-hashes"; tick: number }
+  | { t: "chat"; name: string; text: string; history: boolean };
 
 const te = new TextEncoder();
 const td = new TextDecoder("utf-8", { fatal: true });
@@ -365,6 +386,45 @@ export function encodeAchievement(id: string, tick: number): Uint8Array {
   return b;
 }
 
+/**
+ * True when `text` holds a character a chat line refuses: controls, line separators and every Unicode format
+ * character (\p{Cf}: bidi overrides, zero-widths, U+2060, U+FEFF, U+061C...). This also refuses emoji that need a
+ * zero-width joiner or tag characters (family emoji, subdivision flags): accepted, an invisible-text channel is worse.
+ */
+export function chatHasControl(text: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/u.test(text);
+}
+
+/** True when `text` has nothing a reader would see: only whitespace and blank-looking fillers (Hangul fillers, braille blank). */
+export function chatIsBlank(text: string): boolean {
+  return text.replace(/[\s\u115f\u1160\u3164\uffa0\u2800]/gu, "") === "";
+}
+
+/** The client's chat frame. Throws on text the server would refuse to carry (empty, or over MAX_CHAT_BYTES). */
+export function encodeChat(text: string): Uint8Array {
+  const n = te.encode(text);
+  if (n.length === 0 || n.length > MAX_CHAT_BYTES) throw new Error("chat length");
+  const b = new Uint8Array(1 + n.length);
+  b[0] = C_CHAT;
+  b.set(n, 1);
+  return b;
+}
+
+/** The server's relayed chat line. `name` is cleaned and capped like a player name; `text` is the server-checked line. */
+export function encodeChatLine(name: string, text: string, history = false): Uint8Array {
+  const nm = te.encode(cleanName(name));
+  const tx = te.encode(text);
+  if (tx.length === 0 || tx.length > MAX_CHAT_BYTES) throw new Error("chat length");
+  const b = new Uint8Array(3 + nm.length + tx.length);
+  b[0] = S_CHAT;
+  b[1] = history ? CHAT_HISTORY : 0;
+  b[2] = nm.length;
+  b.set(nm, 3);
+  b.set(tx, 3 + nm.length);
+  return b;
+}
+
 export function encodeResync(tick: number, playersAtBase = 0): Uint8Array {
   const b = new Uint8Array(7);
   b[0] = S_RESYNC;
@@ -479,6 +539,14 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
       for (let i = 0; i < n; i++) hashes[i] = v.getBigUint64(CHUNK_HASHES_HEADER + 8 * i, true);
       return { t: "chunk-hashes", tick: v.getUint32(1, true), hashes };
     }
+    case C_CHAT: {
+      if (b.length < 2 || b.length > 1 + MAX_CHAT_BYTES) return null;
+      try {
+        return { t: "chat", text: td.decode(b.subarray(1)) };
+      } catch {
+        return null;
+      }
+    }
     default:
       return null;
   }
@@ -556,6 +624,17 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
     case S_REQUEST_CHUNK_HASHES:
       if (b.length !== 5) return null;
       return { t: "request-chunk-hashes", tick: v.getUint32(1, true) };
+    case S_CHAT: {
+      if (b.length < 4) return null;
+      const n = b[2];
+      const textLen = b.length - 3 - n;
+      if (n > MAX_NAME_CHARS * 4 || textLen < 1 || textLen > MAX_CHAT_BYTES) return null;
+      try {
+        return { t: "chat", history: (b[1] & CHAT_HISTORY) !== 0, name: td.decode(b.subarray(3, 3 + n)), text: td.decode(b.subarray(3 + n)) };
+      } catch {
+        return null;
+      }
+    }
     default:
       return null;
   }

@@ -9,6 +9,7 @@ import {
   CLAIM_KILL,
   CLAIM_ROUND_START,
   CLAIM_ROUND_END,
+  encodeChat,
   encodeChunkHashes,
   encodeHash,
   encodeHello,
@@ -479,6 +480,9 @@ function connect() {
         break;
       case "achievement":
         send({ type: "achievement", id: m.id });
+        break;
+      case "chat":
+        send({ type: "chat", name: m.name, text: m.text, history: m.history });
         break;
       case "pong":
         pingMs = (performance.now() >>> 0) - m.ts;
@@ -1321,6 +1325,16 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
       }
       break;
     }
+    case "chat":
+      // Chat never touches push_input, lockstep or localSim (invariant 1); a local room has no socket.
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(encodeChat(m.text) as BufferSource);
+        } catch {
+          /* empty or oversized: dropped */
+        }
+      }
+      break;
     case "ready":
       if (spectate || !avatar || !avatarReady || net !== "live") break;
       if (localSim) localSim.pushInput(encodeReady(myId, m.ready ? 1 : 0));

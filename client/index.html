@@ -139,6 +139,13 @@
     #toasts div { font-size: 12px; line-height: 1.2; padding: 3px 7px; border-radius: 4px; background: rgba(11,14,20,.78); color: #fff; align-self: flex-start; overflow-wrap: anywhere; transition: opacity .6s; }
     #toasts div.ach { background: rgba(60,45,8,.88); border: 1px solid #f0b429; color: #ffe29a; }
     #toasts div.fade { opacity: 0; }
+    #chat { position: absolute; left: 8px; bottom: 56px; width: 300px; max-width: calc(100% - 16px); display: flex; flex-direction: column; gap: 3px; pointer-events: none; }
+    #chat-log { display: flex; flex-direction: column; gap: 2px; pointer-events: none; }
+    #chat-log div { font-size: 12px; line-height: 1.2; padding: 3px 7px; border-radius: 4px; background: rgba(11,14,20,.7); color: #fff; align-self: flex-start; overflow-wrap: anywhere; transition: opacity .6s; }
+    #chat-log div.hist { opacity: .6; }
+    #chat-log div.mention { border-left: 3px solid #f0b429; }
+    #chat-input { pointer-events: auto; font: 12px/1.2 inherit; padding: 4px 7px; border-radius: 4px; border: 1px solid var(--line); background: rgba(11,14,20,.9); color: #fff; }
+    #chat-log div.fade { opacity: 0; }
     #bags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
     #bags span { position: absolute; left: 0; top: 0; font-size: 11px; line-height: 1; padding: 1px 3px; border-radius: 3px; background: rgba(11,14,20,.75); color: #ffd98a; font-variant-numeric: tabular-nums; }
     @media (max-width: 480px) { #spells { justify-content: flex-start; } #death { font-size: 16px; } #toasts div { font-size: 11px; } }

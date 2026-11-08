@@ -14,6 +14,8 @@ import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
 import { bossName, formatAchievement } from "./toasts.ts";
+import { renderChatLine } from "./chat.ts";
+import { MAX_CHAT_CHARS } from "../shared/protocol.ts";
 import { nextSlow, SLOW_IDLE, slowText, type SlowState } from "./slownet.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
@@ -606,6 +608,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     }
   }, 16);
   addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.key === "Shift") held.add("shift");
   });
   addEventListener("keyup", (e) => {
@@ -698,6 +701,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         showRoundBanner(m.win);
         roundOutcome = m.win ? "win" : "lose";
         updateMood(camera.y, false);
+        break;
+      case "chat":
+        addChat(m.name, m.text, m.history);
         break;
       case "achievement": {
         const text = formatAchievement(m.id);
@@ -821,6 +827,65 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     while (toastsEl.children.length > TOAST_MAX) toastsEl.firstElementChild?.remove();
     setTimeout(() => el.classList.add("fade"), TOAST_MS - 600);
     setTimeout(() => el.remove(), TOAST_MS);
+  }
+  // Chat (networked rooms only): lines come back from the server, the sender's own included, so nothing is echoed locally.
+  let myName = "";
+  const chatEl = document.createElement("div");
+  chatEl.id = "chat";
+  const chatLog = document.createElement("div");
+  chatLog.id = "chat-log";
+  chatLog.setAttribute("aria-live", "polite");
+  chatEl.append(chatLog);
+  if (localKind === null) stage.append(chatEl);
+  const CHAT_MAX = 8;
+  // Desktop only: phones are read-only. `/` opens the box; the existing keydown handlers return early on an input target.
+  if (localKind === null && !matchMedia("(pointer: coarse)").matches) {
+    const input = document.createElement("input");
+    input.id = "chat-input";
+    input.type = "text";
+    input.maxLength = 120;
+    input.placeholder = "Say something (Enter to send, Esc to close)";
+    input.autocomplete = "off";
+    input.hidden = true;
+    chatEl.append(input);
+    const closeChat = () => {
+      input.value = "";
+      input.hidden = true;
+      input.blur();
+    };
+    addEventListener("keydown", (e) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      held.clear();
+      if (steersAvatar()) sendKeys();
+      input.hidden = false;
+      input.focus();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const text = input.value.trim();
+        if (text && Array.from(text).length <= MAX_CHAT_CHARS) send({ type: "chat", text });
+        closeChat();
+      } else if (e.key === "Escape") {
+        e.preventDefault(); // the menu router's Escape (Back) skips a handled key
+        closeChat();
+      }
+    });
+    input.addEventListener("blur", () => {
+      input.value = "";
+      input.hidden = true;
+    });
+  }
+  function addChat(name: string, text: string, history: boolean) {
+    const el = renderChatLine(document, name, text, myName);
+    if (history) el.classList.add("hist");
+    chatLog.append(el);
+    while (chatLog.children.length > CHAT_MAX) chatLog.firstElementChild?.remove();
+    const ms = history ? 6000 : 12000;
+    setTimeout(() => el.classList.add("fade"), ms - 600);
+    setTimeout(() => el.remove(), ms);
   }
   /** Shorter tile labels so twelve fit in one row; the full name is the tile's tooltip. */
   const SHORT_NAMES: Record<string, string> = { "Acid Flask": "Acid", "Oil Flask": "Oil", "Lava Flask": "Lava", "Black Hole": "Hole", "Mudslide": "Mud" };
@@ -1356,6 +1421,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   function start(token: string, name: string) {
+    myName = name;
     if (target.late && !spectate) {
       // F7: the round is under way or over. Offer Spectate / another room BEFORE joining: a join would stamp a dead player record.
       updateLobby(null, true);
