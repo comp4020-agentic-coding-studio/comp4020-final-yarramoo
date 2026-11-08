@@ -1,7 +1,7 @@
 # quality-2: the Survival claims test made load-proof (D-219), and the slow-net quiet re-run
 
 Lead: Opus, 8 Nov evening, branch `quality-2` from `multa` `a2c0ea8`. No workers dispatched (done directly; briefing
-would have cost more). Spend: B0 = $391.79.
+would have cost more). Spend: B0 = $391.79; $394.85 after Part A's gate; $395.68 at the last commit (about $3.9 of the $10 cap). No workers.
 
 ## Part A: D-219
 
@@ -67,11 +67,31 @@ the original's margin was already thin.
 
 ### Gate
 
-Planner: tier **tests** (typecheck + net). Result and log below.
+Planner: tier **tests** (typecheck + net). `pnpm typecheck && pnpm test:net`, commit chained on the exit code: **green, 558 passed, 1 skipped, 75 files** (`/tmp/q2-logs/g-tsc.log`, `/tmp/q2-logs/g-net.log`), committed `a638603`.
 
 ## Part B: slow-net quiet re-run
 
-(below)
+`pnpm build:client`, then the harness on port 8075 (its own server, data in `/tmp/slownet-data-*`) with `PHASES` =
+clean 20 s, bw4k 30, bw1500 30, clean3 20, blackout5 20, blackout12 30, clean4 15. That is the default list from
+bw4k on, with a clean lead-in. Raw summary: `docs/research/shots/slow-net/quiet-rerun-bw-blackout-2026-11-08.json`
+(copy of `/tmp/q2-logs/slownet-quiet.json`); log `/tmp/q2-logs/slownet-quiet.log`. **Load** was 2.4 at the start and
+16 at the end. Nothing else was running (no cargo, vitest or soak), so the rise came from the harness itself: its
+server plus two Chromiums. The clean client held 60 steps/s, lag p50 19-21 ticks in every phase, so it was not
+starved, unlike the loaded run (load 58).
+
+| Phase | Loaded run (Bo PING p50/max; Bo lag p50/max) | Quiet rerun | Changed? |
+|---|---|---|---|
+| 4 KB/s | 302/703 ms; 34/188 | 207/257 ms; 23/65 | yes: tails were load |
+| 1.5 KB/s | 244/617 ms; 27/89 | 298/610 ms; 25/61 | lag tail lower; PING similar |
+| 5 s blackout | lag 32/322 | lag 30/334; "Connection stalled" shown | no |
+| 12 s blackout | lag 184/1654; reconnect replay ~6 s | lag 39/729; 4002 at 10 s, rejoin and catch-up under 2 s | yes: replay was load |
+
+Server: 60 ticks/s, never held, zero resyncs and zero proxy backpressure pauses in every phase. The report's table rows
+were updated in place, the "(load)" marks replaced with "(quiet rerun; changed/unchanged)", and the owed note closed.
+
+**Thresholds (`client/slownet.ts`)**: they look right in the quiet numbers. At 1.5 KB/s, PING crossed `LAT_ON_MS`
+(600) only at its max (610) and never held for 4 s, so no "Slow connection" notice showed. That is correct for a link
+whose p50 is 298 ms. "Connection stalled" fired in both blackouts and on no clean or bandwidth phase. No change suggested.
 
 ## D-row draft (update to D-219)
 
