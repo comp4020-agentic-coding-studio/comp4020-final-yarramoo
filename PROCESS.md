@@ -17,15 +17,12 @@ skills, which mattered more as testing became a long and arduous task.
 
 I generated the initial plan over a back-and-forth chat with the Claude chatbot using 
 my personal subscription. I asked it to research specifically issues encountered in 
-making particle simulation games multiplayer.
-
-In this conversation I first started asking for architecture diagrams, 
+making particle simulation games multiplayer. In this conversation I first started asking for architecture diagrams, 
 which I continued to do over the course of development. After asking for the design to 
-be written as a prompt, I gave it to the harness which landed it in `docs/plan.md` - 
-the harness had access to the comp4020 course page and made some changes based on 
-assignment spec. 
+be written as a prompt, I gave it to the harness which landed it in `docs/plan.md`.
 
-
+I've picked the most interesting decisions and let Claude explain them below. These were the decisions 
+that would've taken me months to upskill enough to make intelligent decisions about.
 
 **Determinism.** Lockstep only works if every browser computes the identical world, bit for bit, forever. Three
 choices carry that. The simulation is Rust compiled to wasm, and its build forbids floats, clocks, randomness and
@@ -56,7 +53,7 @@ time and tokens required).
 
 These subagent delegations result in entries in `docs/briefs/`, which create a nice record 
 of features and things I've asked for. These documents could have been arranged more 
-systematically, but the files all have edit-dates which I guess makes it derivable? 
+systematically, but the files all have edit-dates which makes that information derivable. 
 The results of subagent R&D sat in `docs/research/` which is further documentation. 
 Additionally, a `DECISIONS.md` register records every engineering decision from start to 
 end. The quality of this document and its contribution to coherency of the project is 
@@ -77,16 +74,11 @@ documentation more centralised. The main outputs are `ARCHITECTURE.md` and
 
 ## Harness Interventions
 
-Almost every rule in `CLAUDE.md` was added right after something went wrong, and each one names its incident so the
-reason travels with the rule.
+`CLAUDE.md` was useful in two broad scenarios - informing the model of game invariants and good development practice, 
+such as git hygiene and agent dispatch principles around budgeting and model selection. It was also where I 
+instructed the harness to continually interact with running documents in the project like `FUTURE.md` and `engineering-decisions.md`. 
 
-- **Delegate down.** Haiku for mechanical work, Sonnet for implementation from a brief, the session model only for
-  planning, review and merging
-  ([`e7284ea`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e7284ea)).
-- **`&&` is the gate.** A merge went in on a red test run because the commit was chained with `;`
-  ([`d24bf69`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d24bf69)), so commits
-  now hang off the test's exit code
-  ([`b862348`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b862348)).
+It additionally gave me a way of enforcing that mistakes weren't repeated. 
 - **Cold reviews as a standing rule.** A reviewer with no context found a snapshot buffer overrun that every test had
   passed over ([`86cf96c`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/86cf96c)).
 - **Every `rm` names a literal path.** I caught an agent running `rm -rf $D/*` with `$D` read from a file; had the file been empty, that is `rm -rf /*`. That seemed dumb to me, so every `rm` now names an explicit path ([`aedb377`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/aedb377)).
