@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="980" viewBox="0 0 1760 980" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d6b4f"/></marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4b3fa8"/></marker>
+  </defs>
+  <rect width="1760" height="980" fill="#f7f5f0"/>
+  <text x="40" y="58" font-size="34" font-weight="bold" fill="#1d1d1d">Simulta: the parts and what runs where</text>
+  <text x="40" y="92" font-size="18" fill="#555">Every browser runs the identical sim.wasm on the same ordered inputs. The server orders, relays, checks and stores; it never steps the sim (invariant 11).</text>
+
+  <!-- Browser -->
+  <rect x="40" y="125" width="560" height="660" rx="14" fill="#efedfb" stroke="#4b3fa8" stroke-width="2"/>
+  <text x="62" y="160" font-size="24" font-weight="bold" fill="#4b3fa8">Browser (one per player or spectator)</text>
+  <text x="62" y="184" font-size="15" fill="#555">client/ (Vite build) + shared/</text>
+
+  <rect x="62" y="205" width="516" height="150" rx="10" fill="#fff" stroke="#9a92d6"/>
+  <text x="80" y="232" font-size="18" font-weight="bold" fill="#222">Main thread</text>
+  <text x="80" y="256" font-size="14" fill="#333">client/menu.ts, client/menu/*: hash-routed menu over a local</text>
+  <text x="80" y="275" font-size="14" fill="#333">  backdrop sim (D-210)</text>
+  <text x="80" y="298" font-size="14" fill="#333">client/room.ts: page, HUD, hotbar, keys and pointer, sfx, music</text>
+  <text x="80" y="321" font-size="14" fill="#333">Quantises aim and position to integers (invariant 2)</text>
+  <text x="80" y="342" font-size="14" fill="#333">WebGL2 fallback if OffscreenCanvas is missing</text>
+
+  <rect x="62" y="380" width="516" height="385" rx="10" fill="#fff" stroke="#9a92d6"/>
+  <text x="80" y="407" font-size="18" font-weight="bold" fill="#222">Web Worker  client/worker.ts</text>
+  <text x="80" y="431" font-size="14" fill="#333">Owns the WebSocket, the sim and the playout buffer</text>
+  <text x="80" y="452" font-size="14" fill="#333">client/lockstep.ts: queue closed ticks, J = 2 buffer, catch-up</text>
+  <text x="80" y="473" font-size="14" fill="#333">client/avatar.ts: predicts the local avatar, sends Pos</text>
+  <text x="80" y="494" font-size="14" fill="#333">client/render.ts: WebGL2 on an OffscreenCanvas</text>
+
+  <rect x="96" y="515" width="448" height="230" rx="10" fill="#fbeedd" stroke="#b5651d" stroke-width="2"/>
+  <text x="116" y="544" font-size="19" font-weight="bold" fill="#8a4a12">sim.wasm  (Rust, sim/)</text>
+  <text x="116" y="568" font-size="14" fill="#333">Integer-only C ABI (sim/src/lib.rs), zero host imports</text>
+  <text x="116" y="590" font-size="14" fill="#333">in:  init(seed, config)  push_input(bytes)  step()  restore()</text>
+  <text x="116" y="612" font-size="14" fill="#333">out: state_hash  chunk_hashes  snapshot_write</text>
+  <text x="116" y="634" font-size="14" fill="#333">       mat_ptr / aux_ptr  events  entities  (read-only)</text>
+  <text x="116" y="660" font-size="14" fill="#333">Grid of cells (28 materials + Empty), 64x64 chunks that sleep,</text>
+  <text x="116" y="681" font-size="14" fill="#333">players, spells, enemies, bosses, generation from a seed</text>
+  <text x="116" y="703" font-size="14" fill="#333">rng(seed, tick, x, y, salt): no stateful RNG</text>
+  <text x="116" y="725" font-size="14" fill="#333">Loaded through shared/sim.ts in browser, Node and tests</text>
+
+  <g transform="translate(120,0)">
+  <!-- Server -->
+  <rect x="700" y="125" width="520" height="660" rx="14" fill="#e3f3ec" stroke="#1d6b4f" stroke-width="2"/>
+  <text x="722" y="160" font-size="24" font-weight="bold" fill="#1d6b4f">Server (Node 24, one Fly machine)</text>
+  <text x="722" y="184" font-size="15" fill="#555">server/main.ts: HTTP + ws; shared-cpu-1x, 256 MB, auto-stop</text>
+
+  <rect x="722" y="205" width="476" height="96" rx="10" fill="#fff" stroke="#7fbfa5"/>
+  <text x="740" y="232" font-size="18" font-weight="bold" fill="#222">HTTP</text>
+  <text x="740" y="256" font-size="14" fill="#333">static client, /api/players (token), /api/rooms, /api/live,</text>
+  <text x="740" y="277" font-size="14" fill="#333">/dashboard (public aggregates; admin view by token), /readme/</text>
+
+  <rect x="722" y="318" width="476" height="330" rx="10" fill="#fff" stroke="#7fbfa5"/>
+  <text x="740" y="345" font-size="18" font-weight="bold" fill="#222">One World per loaded room  server/world.ts</text>
+  <text x="740" y="371" font-size="14" fill="#333">TickClock (server/clock.ts): 60 Hz, stamps inputs into the</text>
+  <text x="740" y="391" font-size="14" fill="#333">  open tick, closes and broadcasts it, logs it</text>
+  <text x="740" y="415" font-size="14" fill="#333">Validation: rate limits, Pos jump check (shared/avatar.ts),</text>
+  <text x="740" y="435" font-size="14" fill="#333">  paint budget per IP (server/paintrate.ts), HELLO build hash</text>
+  <text x="740" y="459" font-size="14" fill="#333">Hash votes every 60 ticks: one vote per player (voterKey,</text>
+  <text x="740" y="479" font-size="14" fill="#333">  D-221); a minority is sent RESYNC; chunk diagnosis</text>
+  <text x="740" y="503" font-size="14" fill="#333">Claims: deaths, kills, round start/end by majority of</text>
+  <text x="740" y="523" font-size="14" fill="#333">  registered visitors (D-118/119/171): stats, achievements</text>
+  <text x="740" y="547" font-size="14" fill="#333">Snapshots: asks one voter for an upload every 1800 ticks,</text>
+  <text x="740" y="567" font-size="14" fill="#333">  accepts it only if it restores to the majority hash</text>
+  <text x="740" y="591" font-size="14" fill="#333">Catch-up: WELCOME/RESYNC + snapshot + log since it</text>
+  <text x="740" y="615" font-size="14" fill="#333">Rooms (server/rooms.ts): create, list, codes; a room is</text>
+  <text x="740" y="635" font-size="14" fill="#333">  deleted 2 min after it empties (D-188)</text>
+
+  <rect x="722" y="668" width="476" height="96" rx="10" fill="#fbeedd" stroke="#b5651d" stroke-width="2"/>
+  <text x="740" y="695" font-size="18" font-weight="bold" fill="#8a4a12">Verify worker thread  server/verify-worker.ts</text>
+  <text x="740" y="719" font-size="14" fill="#333">The same sim.wasm: decompress, restore, hash. Never</text>
+  <text x="740" y="739" font-size="14" fill="#333">step() or push_input(). 10 s timeout (server/verify.ts)</text>
+
+  </g>
+  <g transform="translate(160,0)">
+  <!-- DB -->
+  <rect x="1300" y="125" width="260" height="660" rx="14" fill="#f6ead6" stroke="#8a5a14" stroke-width="2"/>
+  <text x="1320" y="160" font-size="24" font-weight="bold" fill="#8a5a14">SQLite</text>
+  <text x="1320" y="184" font-size="15" fill="#555">node:sqlite, WAL, /data</text>
+  <text x="1320" y="204" font-size="15" fill="#555">volume (D-002, D-039)</text>
+  <g font-size="15" fill="#222" font-family="Menlo, monospace">
+    <rect x="1320" y="225" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="250">worlds</text><text x="1334" y="270" font-size="12" font-family="Helvetica" fill="#555">seed, config, next player</text>
+    <rect x="1320" y="292" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="317">tick_log</text><text x="1334" y="337" font-size="12" font-family="Helvetica" fill="#555">every closed tick since snapshot</text>
+    <rect x="1320" y="359" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="384">snapshots</text><text x="1334" y="404" font-size="12" font-family="Helvetica" fill="#555">latest verified state</text>
+    <rect x="1320" y="426" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="451">rooms</text><text x="1334" y="471" font-size="12" font-family="Helvetica" fill="#555">code, mode, config, lifecycle</text>
+    <rect x="1320" y="493" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="518">players</text><text x="1334" y="538" font-size="12" font-family="Helvetica" fill="#555">name, sha256(token)</text>
+    <rect x="1320" y="560" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="585">player_stats</text><text x="1334" y="605" font-size="12" font-family="Helvetica" fill="#555">outlive any room</text>
+    <rect x="1320" y="627" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="652">achievements</text><text x="1334" y="672" font-size="12" font-family="Helvetica" fill="#555">once per player</text>
+    <rect x="1320" y="694" width="220" height="56" rx="8" fill="#fff" stroke="#d8b98a"/><text x="1334" y="719">desync_incidents</text><text x="1334" y="739" font-size="12" font-family="Helvetica" fill="#555">who diverged, which chunks</text>
+  </g>
+
+  </g>
+  <!-- arrows browser <-> server -->
+  <line x1="604" y1="440" x2="816" y2="440" stroke="#4b3fa8" stroke-width="3" marker-end="url(#p)"/>
+  <text x="616" y="428" font-size="13" fill="#4b3fa8">UPLOAD, CLAIM, LIVE</text>
+  <text x="616" y="410" font-size="13" fill="#4b3fa8">HELLO, INPUT, HASH,</text>
+  <line x1="816" y1="490" x2="604" y2="490" stroke="#1d6b4f" stroke-width="3" marker-end="url(#g)"/>
+  <text x="616" y="512" font-size="13" fill="#1d6b4f">WELCOME, TICK n,</text>
+  <text x="616" y="530" font-size="13" fill="#1d6b4f">SNAPSHOT, RESYNC</text>
+  <text x="616" y="474" font-size="12" fill="#555">binary WebSocket</text>
+  <text x="616" y="459" font-size="12" fill="#555">shared/protocol.ts v9</text>
+
+  <!-- server <-> verify -->
+  <line x1="1080" y1="648" x2="1080" y2="664" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <!-- server <-> db -->
+  <line x1="1344" y1="440" x2="1456" y2="440" stroke="#8a5a14" stroke-width="3" marker-end="url(#a)"/>
+  <line x1="1456" y1="480" x2="1344" y2="480" stroke="#8a5a14" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a)"/>
+  <text x="1352" y="428" font-size="12" fill="#8a5a14">log, snapshots</text>
+  <text x="1352" y="502" font-size="12" fill="#8a5a14">cold start:</text>
+  <text x="1352" y="518" font-size="12" fill="#8a5a14">restore + replay</text>
+
+  <!-- legend / persistence -->
+  <rect x="40" y="810" width="1680" height="140" rx="12" fill="#fff" stroke="#ccc"/>
+  <text x="62" y="842" font-size="18" font-weight="bold" fill="#222">What persists</text>
+  <text x="62" y="870" font-size="15" fill="#333">The two fixed worlds (sandbox id 0 at /sandbox, game world id 1) never die: a cold start restores the latest verified snapshot and replays tick_log after it (D-004, D-041).</text>
+  <text x="62" y="895" font-size="15" fill="#333">Rooms (/r/CODE: Survival, Deathmatch, Sandbox) are deleted 2 minutes after the last member leaves, or 10 minutes after creation if nobody joined (D-188).</text>
+  <text x="62" y="920" font-size="15" fill="#333">Players, their stats and achievements outlive every room. Orange boxes hold the same sim.wasm; the server refuses a client whose build hash differs (invariant 10).</text>
+</svg>
