@@ -294,9 +294,7 @@ fn wells_open_to_a_reachable_cave_or_hold_water_on_solid() {
 #[test]
 fn salts_are_unique() {
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/rng.rs")).unwrap();
-    // Some older salts already share values and changing one would move every pinned world, so they are left alone.
-    // Every salt declared from the content-W1 comment on (and any later one) must not equal any other salt.
-    let marker = src.lines().position(|l| l.contains("content-W1: surface ruins")).expect("marker comment");
+    // Every salt in the file must be unique (D-217): two uses sharing a salt draw correlated numbers.
     let mut all: Vec<(usize, String, u32)> = Vec::new();
     for (n, line) in src.lines().enumerate().filter(|(_, l)| l.trim_start().starts_with("pub const SALT_")) {
         let (name, rest) = line.trim_start()["pub const ".len()..].split_once(':').unwrap();
@@ -304,10 +302,13 @@ fn salts_are_unique() {
         all.push((n, name.to_string(), val));
     }
     assert!(all.len() > 100, "parsed only {} salts", all.len());
-    for (n, name, val) in all.iter().filter(|a| a.0 > marker) {
-        let clash: Vec<_> = all.iter().filter(|o| o.2 == *val && o.0 != *n).map(|o| o.1.clone()).collect();
-        assert!(clash.is_empty(), "{name} shares the salt {val} with {clash:?}");
+    let mut clashes: Vec<String> = Vec::new();
+    for (n, name, val) in all.iter() {
+        for (_, other, _) in all.iter().filter(|o| o.2 == *val && o.0 > *n) {
+            clashes.push(format!("{name} = {other} = {val}"));
+        }
     }
+    assert!(clashes.is_empty(), "salts declared twice: {clashes:#?}");
 }
 
 #[test]

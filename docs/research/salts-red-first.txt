@@ -1,0 +1,32 @@
+   Compiling xxhash-rust v0.8.19
+   Compiling sim v0.1.0 (/private/tmp/wt-salts/sim)
+    Finished `release` profile [optimized] target(s) in 35.45s
+     Running tests/structures.rs (target/release/deps/structures-6d24f7136c5b13f7)
+
+running 1 test
+test salts_are_unique ... FAILED
+
+failures:
+
+---- salts_are_unique stdout ----
+
+thread 'salts_are_unique' (24982555) panicked at tests/structures.rs:311:5:
+salts declared twice: [
+    "SALT_MUD_MOVE = SALT_GEN_BIOME = 260",
+    "SALT_SALT_DIAG = SALT_GEN_BIOME_R = 261",
+    "SALT_SALT_MELT = SALT_GEN_LAKE_X = 262",
+    "SALT_SNOW_DIAG = SALT_GEN_LEDGE = 263",
+    "SALT_SNOW_PACK = SALT_GEN_ICE_POOL_X = 264",
+    "SALT_THERMITE_DIAG = SALT_GEN_ICICLE = 265",
+    "SALT_THERMITE_EAT = SALT_GEN_MOSS = 266",
+    "SALT_QUAKE = SALT_GEN_MUSH = 267",
+]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    salts_are_unique
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test structures`

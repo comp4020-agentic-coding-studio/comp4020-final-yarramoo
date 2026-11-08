@@ -126,14 +126,6 @@ pub const SALT_GEN_ARENA_PILLAR: u32 = 252;
 pub const SALT_BOSS_SUMMON: u32 = 253;
 pub const SALT_BOSS_RING: u32 = 254;
 pub const SALT_PEBBLES_DIAG: u32 = 255;
-pub const SALT_MUD_MOVE: u32 = 260;
-pub const SALT_SALT_DIAG: u32 = 261;
-pub const SALT_SALT_MELT: u32 = 262;
-pub const SALT_SNOW_DIAG: u32 = 263;
-pub const SALT_SNOW_PACK: u32 = 264;
-pub const SALT_THERMITE_DIAG: u32 = 265;
-pub const SALT_THERMITE_EAT: u32 = 266;
-pub const SALT_QUAKE: u32 = 267;
 pub const SALT_PAINT_SEED: u32 = 256;
 /// Brief E: whether a killed enemy drops a heal.
 pub const SALT_HEAL_DROP: u32 = 257;
@@ -172,6 +164,16 @@ pub const SALT_GEN_HOUSE_RUIN: u32 = 287;
 pub const SALT_GEN_HOUSE_PROP: u32 = 288;
 pub const SALT_GEN_WELL_X: u32 = 289;
 pub const SALT_GEN_WELL_DIM: u32 = 290;
+/// Spells' cell rules (mud, salt, snow, thermite, quake). They were 260-267 and shared those values with the biome
+/// generation salts above; D-217 moved them here so every salt in this file is unique (`salts_are_unique`).
+pub const SALT_MUD_MOVE: u32 = 291;
+pub const SALT_SALT_DIAG: u32 = 292;
+pub const SALT_SALT_MELT: u32 = 293;
+pub const SALT_SNOW_DIAG: u32 = 294;
+pub const SALT_SNOW_PACK: u32 = 295;
+pub const SALT_THERMITE_DIAG: u32 = 296;
+pub const SALT_THERMITE_EAT: u32 = 297;
+pub const SALT_QUAKE: u32 = 298;
 
 #[cfg(test)]
 mod tests {
