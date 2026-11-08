@@ -162,6 +162,25 @@ describe("owned sandbox", () => {
     b.close();
   });
 
+  it("verifies across an unload and a reload, with no warm verify lane: a box world has no cached base to keep warm (D-214)", async () => {
+    const dir = tmp();
+    const s = await boot(dir, { roomUnloadMs: 200, snapshotEveryTicks: 120 });
+    const me = await register(s.port, "Warm");
+    const room = (await api(s.port, "POST", "/api/sandbox", me.token)).body;
+    const a = await connect(s.port, hex, { world: room.id, token: me.token });
+    await waitFor(() => s.worlds.get(room.id)!.stats.snapshotsAccepted >= 1, 20000, "a verified snapshot before the unload");
+    expect(s.verifier!.laneIds()).not.toContain(room.id);
+    a.close();
+    await waitFor(() => !s.worlds.has(room.id), 3000, "unloaded");
+    const b = await connect(s.port, hex, { world: room.id, token: me.token });
+    await waitFor(() => s.worlds.get(room.id)?.playerCount === 1, 5000, "reloaded");
+    const w = s.worlds.get(room.id)!;
+    await waitFor(() => w.stats.snapshotsAccepted >= 1, 20000, "a verified snapshot after the reload");
+    expect(w.stats.snapshotsRejected).toBe(0);
+    expect(s.verifier!.lanesOpened).toBe(0);
+    b.close();
+  });
+
   it("an owner who never joined a game world is not evicted, and nobody else is pinned (review N1)", async () => {
     let t = 1_000_000;
     const dir = tmp();

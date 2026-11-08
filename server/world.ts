@@ -30,8 +30,8 @@ import { MAX_CLIENT_INPUTS_PER_TICK, TickClock, type ClosedTick } from "./clock.
 import type { GameDb } from "./db.ts";
 import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
-import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
-import type { SnapshotVerifier } from "./verify.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig, isCaves, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import type { SnapshotVerifier, VerifyRoom } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
 /** The game world's seed. Fixed so every deploy regenerates the same world from the stored row. */
@@ -730,6 +730,8 @@ export class World {
       timing,
     };
     this.members.set(conn, member);
+    // The first member: give this room a warm verify lane, generating its world now rather than in its first verify (D-214).
+    if (this.members.size === 1) this.verifier?.warm(this.verifyRoom());
     // A peer that failed during the catch-up is left at the next timer pass; a held clock would never close a tick to find out.
     if (!sentOk) this.dropped.push(conn);
     if (playerId) {
@@ -789,6 +791,9 @@ export class World {
     if (this.waitingUpload?.memberId === conn) this.waitingUpload = null;
     if (this.members.size === 0) {
       this.claims.clear();
+      // Nobody left to upload: the room's verify lane lingers (`LANE_LINGER_MS`) for a quick rejoin, then gives its world
+      // of memory back (after any verify in flight answers).
+      this.verifier?.release(this.id);
       // Last one out. The sim is not ours to snapshot and the client is gone, so nothing to ask: the
       // next cold start replays the log since the last snapshot. Close the Leave tick and persist it now.
       this.clock.pause();
@@ -936,6 +941,7 @@ export class World {
   shutdown(): void {
     this.closing = true;
     for (const id of [...this.members.keys()]) this.leave(id);
+    this.verifier?.release(this.id, true); // unloaded, deleted or stopping: no linger
     this.clock.closeNow();
     this.flush();
   }
@@ -1524,6 +1530,11 @@ export class World {
     this.checkUpload(tick);
   }
 
+  /** This room as the verifier sees it: its own seed and config, never an upload's (D-214). */
+  private verifyRoom(): VerifyRoom {
+    return { id: this.id, seed: this.seed, cfg: encodeConfig(this.cfg), size: this.cfg.size, caves: isCaves(this.cfg) };
+  }
+
   private checkUpload(tick: number): void {
     const u = this.waitingUpload;
     if (!u || u.tick !== tick) return;
@@ -1543,14 +1554,14 @@ export class World {
     const gen = this.resetGen;
     this.verifying = true;
     void this.verifier
-      .check(u.data, maxSnapshotRawFor(this.cfg))
+      .check(u.data, maxSnapshotRawFor(this.cfg), this.verifyRoom())
       .then((r) => {
         if (gen !== this.resetGen) return; // the world was reset while this verified: the snapshot is from the old world
         this.verifying = false;
         this.stats.lastVerifyMs = this.now() - t0;
         if (this.closing || !this.db) return;
         // Say which: a verify that never finished (a timeout on a busy machine) is not a bad snapshot (ship check 5 Nov).
-        if (r.kind === "unavailable") return reject(`verify unavailable (${r.why ?? "worker gone"}) after ${Math.round(this.stats.lastVerifyMs)} ms`);
+        if (r.kind === "unavailable") return reject(`verify unavailable (${r.why ?? "worker gone"}, ${r.path ?? "?"}) after ${Math.round(this.stats.lastVerifyMs)} ms`);
         if (r.kind === "refused") return reject(`refused at ${r.stage ?? "?"}: ${r.error ?? "no message"}`);
         const got = r.v;
         if (got.tick !== tick) return reject("snapshot tick mismatch");
@@ -1562,7 +1573,7 @@ export class World {
         this.snapshot = { tick, data: u.data };
         this.snapshotOnline = this.onlineAt.get(tick) ?? 0;
         this.stats.snapshotsAccepted++;
-        this.elog.event("snapshot.accepted", { world: this.id, tick, bytes: u.data.length, raw_bytes: got.rawLength, verify_ms: Math.round(this.stats.lastVerifyMs) });
+        this.elog.event("snapshot.accepted", { world: this.id, tick, bytes: u.data.length, raw_bytes: got.rawLength, verify_ms: Math.round(this.stats.lastVerifyMs), verify_cold: !!got.cold, verify_path: r.path ?? null });
       })
       .catch((e) => {
         // A failed save (disk full) is a lost snapshot, not a dead process: the log keeps growing and the
