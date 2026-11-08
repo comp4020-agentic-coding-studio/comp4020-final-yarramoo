@@ -33,3 +33,18 @@ Step 1 holds under the 7 Nov bar (tps 59.0 >= 58, all verifies accepted, none re
 stricter 500 ms bar is marginally missed at 505 ms, which flagged the step as failing and so ran step 2). Step 2 does not hold:
 tps 57.7, lag p99 up to 5.2 s, though no verify was rejected. cgroup max 163 MB with two lanes against the 256 MB limit
 (before 142 MB without lanes); 0 refused.
+
+## Run 3: --cpus=0.0625, Scenario B (Deathmatch M, 8 bots/room), MAXSTEPS=2
+Host load 2.2 before step 1; step 2 began at load 10.8 (another job on the host, not ours) so step 2 is "under load"
+(its window ran 449 s) and is weaker evidence.
+
+| step | rooms | members | cpuCores | throttled periods | MB max | tps min | lag p99 max (last) | verify ms seen | accepted (window) / rejected | lanes opened/refused | cold/warm (cum.) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| before 1 | 1 | 8 | 0.062 | 2395 | 120 | 59.3 | 2.7 s | 0.3-8.8 s | n/a / 2 | n/a | n/a |
+| after 1 | 1 | 8 | 0.062 | 1053 | 112 | 58.2 | 5.7 s (0.9 s) | 0.3-5.3 s | 3 / 0 | 1 / 0 | 0 / 5 |
+| before 2 | 2 | 16 | n/a (did not complete) | | | | | | | | |
+| after 2 (under load) | 2 | 16 | 0.062 | 4490 | 187 | 49.3 | 15.1 s (9.6 s) | 0.3-24.4 s | 11+11 / 0 | 2 / 0 | 0 / 35 |
+
+Step 1: tps and rejections hold (58.2, 0 rejected, all warm) but lag p99 peaked at 5.7 s, so it does not hold under the 1 s
+bar (it did settle to 0.9 s). Step 2 does not hold (tps 49.3, lag to 15 s), though nothing was rejected and the bench completed
+where it did not before.
