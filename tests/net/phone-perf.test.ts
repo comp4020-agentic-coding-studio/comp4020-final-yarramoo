@@ -2,7 +2,7 @@
 // menu backdrop's draw cap and which menu screens pause it. The frame-time numbers are in tests/soak/phone-perf.ts.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { backingSize, coversBackdrop, shouldDraw } from "../../client/phone.ts";
+import { backingSize, coversBackdrop, gameView, PORTRAIT_VIEW, shouldDraw } from "../../client/phone.ts";
 
 describe("backingSize", () => {
   it("is CSS x DPR when not lean (desktop unchanged)", () => {
@@ -52,5 +52,35 @@ describe("wiring", () => {
     expect(readFileSync("client/menu-preview.ts", "utf8")).toMatch(/backingSize\(/);
     expect(readFileSync("client/menu-preview.ts", "utf8")).toMatch(/coversBackdrop\(/);
     expect(readFileSync("client/worker.ts", "utf8")).toMatch(/shouldDraw\(/);
+  });
+});
+
+describe("gameView (portrait camera)", () => {
+  const BASE = { w: 480, h: 270 };
+  it("keeps 480 x 270 on desktop and in landscape", () => {
+    expect(gameView(BASE, false, 390, 700)).toEqual(BASE);
+    expect(gameView(BASE, true, 844, 300)).toEqual(BASE);
+  });
+  it("shows more rows and bigger cells on an upright touch screen", () => {
+    const v = gameView(BASE, true, 390, 700);
+    expect(v.h).toBeGreaterThan(BASE.h);
+    expect(390 / v.w).toBeGreaterThan(1.3);
+  });
+  it("stays inside the sim's active box and divides by every zoom level", () => {
+    const tuning = readFileSync("sim/src/tuning.rs", "utf8");
+    const aw = Number(/pub const ACTIVE_W: i32 = (\d+);/.exec(tuning)![1]);
+    const ah = Number(/pub const ACTIVE_H: i32 = (\d+);/.exec(tuning)![1]);
+    expect(PORTRAIT_VIEW.w).toBeLessThanOrEqual(aw);
+    expect(PORTRAIT_VIEW.h).toBeLessThanOrEqual(ah);
+    for (const z of [1, 2, 3]) expect([PORTRAIT_VIEW.w % z, PORTRAIT_VIEW.h % z]).toEqual([0, 0]);
+  });
+  it("the room's camera goes through gameView", () => {
+    expect(readFileSync("client/room.ts", "utf8")).toMatch(/gameView\(/);
+  });
+});
+
+describe("portrait fill", () => {
+  it("a lean (touch) canvas scales to fit the stage instead of flooring to a whole multiple", () => {
+    expect(readFileSync("client/room.ts", "utf8")).toMatch(/const scale = k >= 1 && !leanCanvas \? k : fit;/);
   });
 });

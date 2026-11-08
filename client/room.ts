@@ -8,7 +8,7 @@ import { fadeAlpha, nearestPlayer, sortPlayers, stripToCamera, viewBracket, worl
 import { GAME_VIEW, MATERIALS, SANDBOX } from "./materials.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 import { addPickedUp, isTap, swapSlots } from "./slots.ts";
-import { backingSize } from "./phone.ts";
+import { backingSize, gameView } from "./phone.ts";
 import { BAR, DIG_REACH, DIG_RADIUS, HEALTH_MAX, INFINITE, SPELLS, quantiseAngle, BLAST_RADIUS } from "./spells.ts";
 import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
@@ -240,14 +240,18 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const ZOOM_MAX = 3;
   const camera: Camera = { x: 0, y: 0, vw: SANDBOX, vh: SANDBOX };
 
-  /** The window of the world on screen: the whole world for the sandbox, 480 x 270 cells for a game world. */
+  /** The game camera's size in cells at zoom 1: 480 x 270, or a taller window on an upright phone (client/phone.ts). */
+  const view = () => gameView(GAME_VIEW, matchMedia("(pointer: coarse)").matches, innerWidth, innerHeight);
+  let lastView = view();
+  /** The window of the world on screen: the whole world for the sandbox, `view()` cells for a game world. */
   function applyCamera() {
+    lastView = view();
     if (worldKind === 0 || overview) {
       camera.vw = worldW;
       camera.vh = worldH;
     } else {
-      camera.vw = GAME_VIEW.w / zoom;
-      camera.vh = GAME_VIEW.h / zoom;
+      camera.vw = view().w / zoom;
+      camera.vh = view().h / zoom;
     }
     camera.x = Math.max(0, Math.min(worldW - camera.vw, camera.x));
     camera.y = Math.max(0, Math.min(worldH - camera.vh, camera.y));
@@ -268,8 +272,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const cx = camera.x + camera.vw / 2;
     const cy = camera.y + camera.vh / 2;
     zoom = next;
-    camera.x = cx - GAME_VIEW.w / zoom / 2;
-    camera.y = cy - GAME_VIEW.h / zoom / 2;
+    camera.x = cx - view().w / zoom / 2;
+    camera.y = cy - view().h / zoom / 2;
     applyCamera();
   }
 
@@ -299,7 +303,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const ah = Math.max(64, stage.clientHeight - pad);
     const fit = Math.min(aw / camera.vw, ah / camera.vh);
     const k = Math.floor(fit);
-    const scale = k >= 1 ? k : fit;
+    // Phones fill the stage (fractional scale): a cell is ~4 device pixels at DPR 3, so an uneven column is invisible.
+    const scale = k >= 1 && !leanCanvas ? k : fit;
     const cssW = Math.round(camera.vw * scale);
     const cssH = Math.round(camera.vh * scale);
     // Phones: one backing pixel per cell, scaled up by CSS `pixelated` (client/phone.ts); the shader cost is per pixel.
@@ -640,8 +645,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         worldKind = m.kind;
         // Start the game-world camera on the spawn point: the centre of the surface.
         if (m.kind !== 0) {
-          camera.x = worldW / 2 - GAME_VIEW.w / 2;
-          camera.y = 230 - GAME_VIEW.h / 2 - 40;
+          camera.x = worldW / 2 - view().w / 2;
+          camera.y = 230 - view().h / 2 - 40;
         }
         worldCaves = m.caves;
         fallback?.setWorld(worldW, worldH, m.caves);
@@ -1364,6 +1369,13 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   new ResizeObserver(() => {
+    // A phone turned on its side swaps the camera window (client/phone.ts); re-centre it on the same point.
+    const v = view();
+    if (worldKind !== 0 && !overview && (v.w !== lastView.w || v.h !== lastView.h)) {
+      camera.x += (lastView.w - v.w) / zoom / 2;
+      camera.y += (lastView.h - v.h) / zoom / 2;
+      applyCamera();
+    }
     const s = layout();
     placeLabels();
     if (fallback) {
@@ -1463,8 +1475,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   function jumpTo(p: { id: number; x: number; y: number }) {
-    const vw = GAME_VIEW.w / zoom;
-    const vh = GAME_VIEW.h / zoom;
+    const vw = view().w / zoom;
+    const vh = view().h / zoom;
     jumpCamera(p.x - vw / 2, p.y - 10 - vh / 2, p.id);
   }
 
@@ -1487,7 +1499,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     // Jump to (and, for a spectator, follow) the player nearest the tap; with nobody, slide sideways and keep depth.
     const near = nearestPlayer(lastPlayers?.list ?? [], px, py, worldW, worldH, r.width, r.height);
     if (near) return jumpTo(near);
-    jumpCamera(stripToCamera(px, r.width, worldW, GAME_VIEW.w / zoom), camera.y);
+    jumpCamera(stripToCamera(px, r.width, worldW, view().w / zoom), camera.y);
   });
 
   /** Rebuild the list only when it changed, move the minimap a few times a second (not every frame). */

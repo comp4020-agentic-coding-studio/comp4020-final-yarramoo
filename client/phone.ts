@@ -25,3 +25,11 @@ export function coversBackdrop(kind: string): boolean {
   return kind === "settings" || kind === "join" || kind === "share";
 }
 
+/** The game camera's window in cells. Desktop and landscape keep 480 x 270. A touch screen held upright shows 288 x 312:
+ * 15% more rows and cells about 1.35 CSS px wide on a 390 px phone instead of 0.81 (the old view drew a cell smaller
+ * than a pixel and left most of the screen empty). Height stays under the sim's 320-row active box (`ACTIVE_H`,
+ * sim/src/tuning.rs), so the view never shows frozen chunks at its edges; both sides divide by 2 and 3 for zoom. */
+export const PORTRAIT_VIEW = { w: 288, h: 312 };
+export function gameView(base: { w: number; h: number }, touch: boolean, stageW: number, stageH: number): { w: number; h: number } {
+  return touch && stageH > stageW ? PORTRAIT_VIEW : base;
+}
