@@ -1,7 +1,7 @@
 # Brief: sound build (Sonnet worker, branch `sound`)
 
-You are a Sonnet implementation worker for the Opus lead of backlog item 3 (sound). **Cap: $8 of spend; stop and
-report at $8 even if unfinished.** Read spend with
+You are a Sonnet implementation worker for the Opus lead of backlog item 3 (sound). **Cap: $6 of spend; stop and
+report at $6 even if unfinished (finish the commit in hand first).** Read spend with
 `curl -sf https://strproxy.comp.anu.edu.au/api/me -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" | python3 -c "import json,sys;print(json.load(sys.stdin)['current_week_spend'])"`
 at the start (W0) and every ~20 tool calls; if the week reads $450 or more stop at once, commit what is green and report.
 **Never dispatch subagents.** Work only in `/tmp/wt-sound` (branch `sound`, already has `node_modules`). Never touch
