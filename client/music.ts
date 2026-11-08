@@ -8,7 +8,7 @@ import { DEEP_TOP, SHALLOW_TOP } from "../shared/stats.ts";
 
 export const MUSIC_KEY = "sand.music";
 
-export type Mood = "menu" | "surface" | "caves" | "deep" | "boss" | "fight" | "victory" | "defeat";
+export type Mood = "menu" | "sandbox" | "surface" | "caves" | "deep" | "boss" | "fight" | "victory" | "defeat";
 export type VoiceKind = "pad" | "mel" | "bass" | "pluck" | "drone" | "perc";
 
 export interface Note {
@@ -66,6 +66,17 @@ export const MOODS: Record<Mood, MoodDef> = {
       pad: { type: "triangle", cutoff: 900, attack: 1.2, release: 1.6, gain: 0.5 },
       mel: { type: "sine", cutoff: 3000, attack: 0.02, release: 1.4, gain: 0.55 },
       bass: { type: "sine", cutoff: 400, attack: 0.1, release: 0.8, gain: 0.5 },
+    },
+  },
+  // Cute and playful: C major pentatonic in a high register, music-box bells, light pluck, soft pad, no drone or drums.
+  sandbox: {
+    root: 60, scale: PENT_MAJOR, bpm: 108, beatsPerBar: 4, chords: [0, 3, 4, 1],
+    melDensity: 0.35, pluckDensity: 0.25, pad: true, drone: false, bassOstinato: false, perc: false,
+    voices: {
+      pad: { type: "triangle", cutoff: 1400, attack: 0.5, release: 1.0, gain: 0.22 },
+      mel: { type: "sine", cutoff: 4500, attack: 0.008, release: 0.55, gain: 0.4 },
+      pluck: { type: "triangle", cutoff: 3200, attack: 0.004, release: 0.4, gain: 0.3 },
+      bass: { type: "sine", cutoff: 500, attack: 0.03, release: 0.5, gain: 0.32 },
     },
   },
   // Light and curious: D lydian, a little quicker, plucky melody.
@@ -179,7 +190,9 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   const add = (voice: VoiceKind, midi: number, t: number, dur: number, vel: number) => {
     if (m.voices[voice] || voice === "perc") out.push({ voice, midi, t, dur: Math.min(dur, bars - t + 2), vel });
   };
-  if (m.pad) for (const off of [0, 2, 4]) add("pad", degreeToMidi(m, chord + off + 5), 0, bars + 0.5, 0.7);
+  const cute = mood === "sandbox";
+  // The cute mood keeps its pad in the middle register and its bass an octave down; the melody sits above both.
+  if (m.pad) for (const off of [0, 2, 4]) add("pad", degreeToMidi(m, chord + off + (cute ? 0 : 5)), 0, bars + 0.5, 0.7);
   if (m.drone) add("drone", degreeToMidi(m, chord), 0, bars + 1, 0.8);
   if (mood === "victory") {
     [0, 2, 4, 5, 7].forEach((d, i) => add("mel", degreeToMidi(m, d + 5), i * 0.5, 2, 0.8));
@@ -191,11 +204,26 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   } else if (m.perc) {
     // A slow pulse: bass thump on beats 1 and 3 (deep) or every beat (boss, with noise).
     for (let b = 0; b < bars; b += mood === "boss" ? 1 : 2) add("bass", degreeToMidi(m, chord), b, 0.6, 0.9);
+  } else if (cute) {
+    // Gentle bounce: root on beat 1, a softer octave-down fifth-ish on beat 3 (chord + 2 degrees).
+    add("bass", degreeToMidi(m, chord - 5), 0, 1.5, 0.6);
+    add("bass", degreeToMidi(m, chord - 3), 2, 1.5, 0.45);
   } else {
     add("bass", degreeToMidi(m, chord), 0, bars, 0.7);
   }
   if (m.perc) for (let b = 0; b < bars; b += 1) if (mood === "boss" || mood === "fight" || b % 2 === 0) add("perc", 0, b, 0.12, b === 0 ? 1 : 0.6);
-  if (m.melDensity > 0 && mood !== "victory" && mood !== "defeat") {
+  if (cute) {
+    // Toy-piano tune: a stepwise random walk above the chord tone, short bell notes, a little more likely on the beat.
+    let d = chord + 5 + [0, 1, 2][Math.floor(rng() * 3)];
+    for (let h = 0; h < bars * 2; h++) {
+      if (rng() < m.melDensity + (h % 2 === 0 ? 0.1 : -0.1)) {
+        const r = rng();
+        d += r < 0.4 ? 1 : r < 0.8 ? -1 : r < 0.9 ? 2 : -2;
+        d = Math.max(chord + 3, Math.min(chord + 8, d)); // keep within about an octave above the chord
+        add("mel", degreeToMidi(m, d), h * 0.5, 0.75, 0.5 + rng() * 0.3);
+      }
+    }
+  } else if (m.melDensity > 0 && mood !== "victory" && mood !== "defeat") {
     for (let h = 0; h < bars * 2; h++) {
       if (rng() < m.melDensity) {
         const d = chord + [0, 1, 2, 4, 5][Math.floor(rng() * 5)] + 5;
@@ -205,7 +233,7 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   }
   if (m.pluckDensity > 0) {
     for (let b = 0; b < bars; b++) {
-      if (rng() < m.pluckDensity) add("pluck", degreeToMidi(m, chord + [0, 2, 4, 7][Math.floor(rng() * 4)] + 5), b + (rng() < 0.5 ? 0 : 0.5), 1, 0.5 + rng() * 0.4);
+      if (rng() < m.pluckDensity) add("pluck", degreeToMidi(m, chord + [0, 2, 4, 7][Math.floor(rng() * 4)] + (cute ? 2 : 5)), b + (rng() < 0.5 ? 0 : 0.5), 1, 0.5 + rng() * 0.4);
     }
   }
   out.sort((a, b) => a.t - b.t);
@@ -225,7 +253,7 @@ export interface MoodInput {
   /** Camera centre y in cells. */
   y: number;
   bossAlive: boolean;
-  /** Sandbox world: always the gentle surface mood. */
+  /** Sandbox world: always the cute, playful "sandbox" mood, at any depth. */
   sandbox: boolean;
   /** Round outcome once known (a one-shot sting); null while playing. */
   round: "win" | "lose" | null;
@@ -255,8 +283,9 @@ export function stepMood(s: MoodState, inp: MoodInput, nowMs: number): MoodState
   if (s.sting) return s; // the round is over; stay with the sting's calm afterwards
   if (inp.round) return { mood: inp.round === "win" ? "victory" : "defeat", candidate: s.candidate, since: null, sting: true };
   if (inp.bossAlive) return { ...s, mood: "boss", candidate: "boss", since: null };
-  const want = inp.sandbox ? "surface" : depthMood(inp.y);
-  if (!inp.sandbox && inp.combatAt != null && nowMs - inp.combatAt < FIGHT_HOLD_MS) return { ...s, mood: "fight", since: null };
+  if (inp.sandbox) return { ...s, mood: "sandbox", candidate: "sandbox", since: null }; // no depth hold: the first step is already the tune
+  const want = depthMood(inp.y);
+  if (inp.combatAt != null && nowMs - inp.combatAt < FIGHT_HOLD_MS) return { ...s, mood: "fight", since: null };
   if (s.mood === "fight") return { ...s, mood: want, candidate: want, since: null }; // the hold ran out: straight back to the depth mood
   if (want === s.mood) return { ...s, candidate: want, since: null };
   if (want !== s.candidate || s.since === null) return { ...s, candidate: want, since: nowMs };
