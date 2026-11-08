@@ -1,7 +1,7 @@
 # Brief: re-measure server capacity with warm verify lanes (Sonnet worker)
 
 Written 8 Nov by the Opus lead of backlog item 1 (warm verify, D-213 recommendation 1, D-row draft D-214).
-**Model: Sonnet. Cap: $8. Stop and report at about 150 tool calls.** You never dispatch agents.
+**Model: Sonnet. Cap: $7. Stop and report at about 120 tool calls**, or when the lead's spend line is reached, whichever comes first. You never dispatch agents.
 
 ## Goal
 The same capacity scenarios as `docs/research/capacity-2026-11-07.md` (the "before"), on the branch's build (the "after"),
@@ -9,6 +9,8 @@ so the lead can state: **how many rooms/members hold at the sustained Fly quota 
 verify lanes**, and whether anything changed at `--cpus=1`. If nothing moves at the quota, that is a valid answer: say so.
 
 Read first: `docs/research/capacity-2026-11-07.md` (method, tables) and `docs/research/capacity-2026-11-07-bench-notes.md`;
+the branch's `docs/research/warm-verify-report.md` (what the lanes do: one worker per occupied **cave** room, prewarmed at
+the first join, lingering 60 s after the last leave; box rooms get none; budget 100 MB estimated, cgroup cap 160 MB);
 `tests/soak/capacity-ramp.ts` (the bench; `--scenario A|B --cpus 1|0.0625 [--idle]`, env `PORT`, `IMAGE`, `OUT`,
 `BOTS`, `MAXSTEPS`, `SETTLE_S`, `WINDOW_S`); `tests/soak/verify-micro.ts`; `server/verify.ts` (the lanes: a worker per
 occupied room, prewarmed at the first join; `verify.lane_*` events; the `snapshot.accepted` event now carries
@@ -42,9 +44,10 @@ occupied room, prewarmed at the first join; `verify.lane_*` events; the `snapsho
    8 rejected; step 2 45.7 tps, 25.5 s lag, 25 rejected).
 3. **Quota, Deathmatch M of 8**: `--cpus 0.0625 --scenario B`, `MAXSTEPS=2` (before: step 1 lag p99 2.7 s, 2 rejected,
    step 2 incomplete).
-4. **Full core**: `--cpus 1 --scenario A --idle` and `--cpus 1 --scenario B` (before: tables in the 7 Nov report).
-5. **Verify micro** (`tests/soak/verify-micro.ts`) only if money is left: it measures the worker job itself, which the
-   lanes do not change, so it is optional; say so if skipped.
+4. **Full core**: `--cpus 1 --scenario A --idle`, then `--cpus 1 --scenario B` only if the cap allows (before: tables
+   in the 7 Nov report). Memory with lanes is the thing to watch here (each M lane ~30 MB).
+5. **Skip the verify micro** (`tests/soak/verify-micro.ts`): it times the worker job itself, which the lanes do not
+   change; the 7 Nov cold/warm numbers stand. Say so in the notes.
 6. **Memory**: from the runs above, the cgroup max with lanes vs before (lanes hold ~30 MB per M room up to a 100 MB
    budget and a 160 MB cgroup cap; then rooms verify cold on the overflow worker). Note how many lanes opened and how many
    were refused per step (`verify.lane_opened` / `verify.lane_refused` in `docker logs`).
