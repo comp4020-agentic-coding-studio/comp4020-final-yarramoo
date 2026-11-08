@@ -1,0 +1,80 @@
+{
+ "A_cpus0.0625_2026-11-08T06-31-38-611Z": {
+  "startedAt": "2026-11-08T06:31:38.612Z",
+  "scenario": "A",
+  "mode": "survival",
+  "cpus": "0.0625",
+  "botsPerRoom": 2,
+  "image": "warm-app:3c5cecd",
+  "hostLoadBefore": "17:31  up 26 days, 22:33, 3 users, load averages: 3.20 3.38 6.06",
+  "steps": [
+   {
+    "step": 1,
+    "rooms": 1,
+    "members": 2,
+    "joinedAll": true,
+    "hostLoadBefore": "2.68 3.24 5.92",
+    "hostLoadAfter": "2.99 3.09 5.21",
+    "windowS": 213.5,
+    "windowExtended": false,
+    "cpuCores": 0.0615,
+    "nrThrottled": 2071,
+    "throttledUsec": 214493472,
+    "nrPeriods": 2134,
+    "memMbMean": 112.98,
+    "memMbMax": 116.68,
+    "memPeakMb": 118.35,
+    "rssMbSummary": 157,
+    "lagP99MsMax": 4601.15,
+    "lagP99MsLast": 99.88,
+    "summaryRetriesTotal": 34,
+    "summaryFetchMsMax": 5886.06,
+    "outBytesPerSecPerMember": 1429.2,
+    "dbBytesStart": 4096,
+    "dbBytesEnd": 397312,
+    "walBytesStart": 370832,
+    "walBytesEnd": 4136512,
+    "dbGrowthBytesPerMin": 1168792.85,
+    "botLagMaxMs": 28.62,
+    "botsClosed": 0,
+    "botRejects": [],
+    "roundsEndedSoFar": 0,
+    "verifyLog": {
+     "laneOpened": 1,
+     "laneRefused": 0,
+     "acceptedCold": 0,
+     "acceptedWarm": 7
+    },
+    "perRoom": [
+     {
+      "room": 2,
+      "online": 2,
+      "ticksPerSecMin": 57.9,
+      "ticksPerSecMean": 59.99,
+      "lastVerifyMsSeen": [
+       0,
+       15799,
+       563,
+       1582,
+       79,
+       278,
+       76,
+       2001
+      ],
+      "snapshotsAccepted": 7,
+      "snapshotsAcceptedAdvanced": 7,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 4535,
+      "hashFails": 0,
+      "resyncs": 0,
+      "round": "running",
+      "held": false
+     }
+    ]
+   }
+  ],
+  "failedAtStep": 1,
+  "finishedAt": "2026-11-08T06:36:01.676Z",
+  "hostLoadAfter": "17:36  up 26 days, 22:37, 3 users, load averages: 2.99 3.09 5.21"
+ }
+}
