@@ -413,6 +413,14 @@ export class World {
     return this.members.size;
   }
 
+  /** Connections that control an avatar (spectators and sandbox painters excluded): what `cfg.maxPlayers` caps (review M3). */
+  get avatarPlayers(): number {
+    if (this.kind !== WORLD_GAME) return 0;
+    let n = 0;
+    for (const m of this.members.values()) if (m.playerId) n++;
+    return n;
+  }
+
   /** True while the tick clock is held because every member is still catching up (D-122). */
   get held(): boolean {
     return this.heldSince !== null;

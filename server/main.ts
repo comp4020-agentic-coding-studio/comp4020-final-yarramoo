@@ -1281,6 +1281,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             discardIfFreshlyLoaded(w, wasWarm);
             return rej("unknown token", msg.worldId);
           }
+          // Review M3: the room's own player cap. A reload of a player already in (same token) replaces its old tab, so it
+          // never counts against itself; spectators and sandbox painters are not players (the member cap above covers them).
+          if (gamePlayer && who !== "unknown" && w.connOf(who.id) === null && w.avatarPlayers >= w.cfg.maxPlayers) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("room is full; spectate or try another room", msg.worldId);
+          }
           cancelUnload(w.id); // the join is now known to succeed: keep this room hot (review-r2b.md finding 2 —
           // this must not run any earlier, or a rejected join here could cancel a legitimate pending unload)
           const visitorId = who === "unknown" ? 0 : who.id;
