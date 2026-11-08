@@ -14,6 +14,7 @@ import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
 import { bossName, formatAchievement } from "./toasts.ts";
+import { nextSlow, SLOW_IDLE, slowText, type SlowState } from "./slownet.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
 
@@ -63,6 +64,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   const debugUi = new URLSearchParams(location.search).get("debug") === "1" || new URLSearchParams(location.search).has("stats");
   const note = $("note");
   const catchupCard = $("catchup");
+  const slowNotice = $("slowNotice");
+  let slow: SlowState = SLOW_IDLE;
   const catchupSamples: Sample[] = [];
 
   let selected = 4;
@@ -704,6 +707,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
       case "stats":
         lastStats = m;
         renderInfo();
+        renderSlow();
         break;
       case "net":
         lastNet = m;
@@ -1279,6 +1283,20 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     $("catchupBar").setAttribute("aria-valuenow", String(pct));
     $("catchupTicks").textContent = `${n.tick.toLocaleString()} of ${n.target.toLocaleString()} ticks`;
     $("catchupEta").textContent = `Time left: ${etaText(n.target - n.tick, replayRate(catchupSamples))}`;
+  }
+
+  /** SLOWNET: the slow player's own notice, from the stats cadence (every 500 ms). Only ever about this player. */
+  function renderSlow() {
+    const n = lastNet;
+    const st = lastStats;
+    if (!n || !st || localKind !== null) return;
+    slow = nextSlow(slow, { ms: performance.now(), state: n.state, pingMs: n.pingMs, stepsPerSec: st.stepsPerSec, buffered: st.buffered });
+    slowNotice.hidden = slow.shown === null;
+    if (slow.shown) {
+      const t = slowText(slow.shown, n.pingMs);
+      $("slowTitle").textContent = t.title;
+      $("slowDetail").textContent = t.detail;
+    }
   }
 
   function renderInfo() {
