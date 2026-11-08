@@ -975,6 +975,8 @@ impl Grid {
                     self.set(ny * self.w + nx, ICE, 1);
                     self.moved[ny * self.w + nx] = 1;
                     self.aux[i] -= 1;
+                    // The ice's own budget changed: its chunk may differ from the water's (review 8 Nov, S1).
+                    self.touch(i);
                     return;
                 }
             }
