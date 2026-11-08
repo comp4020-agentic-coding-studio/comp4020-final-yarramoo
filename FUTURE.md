@@ -782,3 +782,14 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **Pin the newer cell rules** (D-232): a `perf_equiv` scenario that paints Mud, Salt, Snow and Thermite and casts Quake
   (13) and Mudslide (14), so a change to those rules or their salts moves a pinned hash. Today nothing pinned covers
   them. **Source:** `docs/research/salts-report.md`, 8 Nov.
+- **Liquids that settle faster and flatter** (D-233): with lava on half the ticks under both scan directions, a heap
+  levels to a 1-3 row ripple that takes 10000-30000 ticks to smooth fully. A rule that lets a resting surface cell
+  slide when its neighbour's column is 2+ lower (not only when pushed) would finish the job sooner. Mud (every third
+  tick) has the same parity question as lava had, but it is a powder, so it falls into already-scanned rows: measure
+  before changing. **Source:** `docs/research/final-night-report.md`, 9 Nov.
+- **The exact sky mask (above) is still the real fix** for the backdrop (D-234): the shaft rule stays a heuristic
+  (an opening up to 40 wide closes, wider is a valley), and since D-211 the line is computed once at generation, so a
+  flood fill would cost once per world. **Source:** `docs/research/final-night-report.md`, 9 Nov.
+- **Export the entity section's record sizes too** (D-235): `PICKUP_BYTES`, `PROJECTILE_BYTES`, `BAG_BYTES`,
+  `ENEMY_BYTES`, `HEAL_BYTES`, so `entity-layout.test.ts` stops writing them by hand. **Source:**
+  `docs/research/layouts-report.md`, 9 Nov.

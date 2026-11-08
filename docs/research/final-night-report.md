@@ -52,3 +52,23 @@ starting work at $455).
 
 Full tier, chained on exit codes (`/tmp/fn-gate.sh`), queued behind the M4 lead's gate (one at a time): cargo green,
 clippy clean, typecheck clean, determinism 53/53, net 561/561. Committed `cba41a1` (D-233), `118d5b4` (D-234).
+
+### 2. M4 merged (D-235)
+
+The M4 lead finished at 01:33: `5c41bd7` (full gate green: cargo 478, det 53/53, net 567 + 1 skipped) and
+`1a20071` (review follow-ups, server tier), cold review `review-layouts.md` with no High or Medium. I read the code
+diff: three constant u32 exports (no imports, no state, no format bump), the server reads them once from the wasm it
+hashes (the instance never steps: invariant 11 holds), the client's ceiling is the room's own, one `ENEMY_MAX_HP`.
+`multa` had moved under it (D-233 in `sim/`), so the merged tree was re-gated, full tier: cargo green, clippy clean,
+typecheck clean, det 53/53, net 573/573. Committed `4ecc4cf`.
+
+### 3. Docs
+
+- PROCESS.md: the admin dashboard pointer (`/dashboard?token=<ADMIN_TOKEN>`, verified in `server/dashboard.ts`
+  `isAdmin`: `Authorization: Bearer` or `?token=`; the page forwards it to `/dashboard/stream`), two session-written
+  sentences condensed, 1095 words (`059d75a`).
+- ARCHITECTURE.md refreshed by a Sonnet worker ($4 cap, brief `docs/briefs/final-night-architecture.md`, notes
+  `final-night-architecture-notes.md`), diff reviewed: protocol 10, warm verify merged (1 room holds at the quota),
+  D-217/D-219 closed, rows for chat, sound, D-233, D-234. Went in with `118d5b4`.
+- DECISIONS D-233, D-234, D-235; engineering-decisions entries 39 and 45 got dated "Later" addenda; FUTURE: liquids
+  settling faster, a pointer to the existing exact-sky-mask entry, M4's record-size exports.
