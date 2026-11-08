@@ -149,7 +149,7 @@ succeeded, so tests now assert what happened before trusting agreement ([entry 2
 
 ## 4. Key engineering decisions
 
-The full log has 227 rows; [`docs/engineering-decisions.md`](docs/engineering-decisions.md) tells 48 of them as
+The full log has 228 rows; [`docs/engineering-decisions.md`](docs/engineering-decisions.md) tells 48 of them as
 stories. These are the ones that shaped the architecture or cost real time, including the reversals and the bugs that
 taught something.
 
@@ -188,6 +188,7 @@ taught something.
 | Cold start = restore the latest verified snapshot + replay the log | The machine stops whenever it idles | [entry 6](docs/engineering-decisions.md#6-persistence-on-a-machine-that-stops-when-idle); D-004, D-041 |
 | **Outage:** the live sandbox went down on 18 Oct | `push(...frames)` overflowed the stack once the log passed about 130,000 ticks, because snapshots had stopped for days | [entry 15](docs/engineering-decisions.md#15-the-live-site-went-down-on-18-october), [entry 16](docs/engineering-decisions.md#16-snapshot-timing-and-the-correction); D-099, D-100, D-101 |
 | Keep the generated world in the sim to skip regeneration on restore | Restore cost; it later made verifies slow with many rooms (D-213) | [entry 17](docs/engineering-decisions.md#17-the-late-join-test-that-failed-after-the-world-cache); D-088 |
+| The server reads a stored snapshot's layout from the sim build, not from copies | Three hand-held copies of binary facts (header size, player record, an hp table) could drift silently; a failed cold-start parse is now logged, not swallowed | D-235; [`layouts-report.md`](docs/research/layouts-report.md) |
 | Rooms die when empty; random 64-bit room seeds | Rooms piled up forever; then every new room looked the same because sqlite reused ids | [entry 35](docs/engineering-decisions.md#35-rooms-that-die-when-empty-and-why-empty-now-is-the-wrong-test-at-boot); D-188, D-201 |
 | A world persists because someone owns it | The marking criteria ask for persistence; game rooms are ephemeral by design, so a player's own sandbox is the exception, deleted only by its owner | [entry 47](docs/engineering-decisions.md#47-a-world-that-persists-because-someone-owns-it); D-225 |
 
@@ -373,7 +374,7 @@ project's own docs framed the votes that way, which is probably why a reader who
 | [`PROCESS.md`](PROCESS.md) | The process account for the brief, 900-1,100 words (owned by the user) |
 | [`docs/plan.md`](docs/plan.md) | The original design: architecture, sim spec (section 6), protocol (7), client (8), server (9), tests (12). Where it changed, it points at D-rows |
 | [`docs/plan-game-modes.md`](docs/plan-game-modes.md), [`docs/biomes-plan.md`](docs/biomes-plan.md) | Later plans: rooms, modes and the menu; biomes |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The complete decision log, D-001 to D-234, one row per change; later rows supersede earlier ones and say so |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The complete decision log, D-001 to D-235, one row per change; later rows supersede earlier ones and say so |
 | [`docs/engineering-decisions.md`](docs/engineering-decisions.md) | 48 curated stories: the big decisions and challenges, with corrections kept visible |
 | [`docs/research/`](docs/research) | Worker and lead reports (spend included), cold reviews (`review-*`), code and security reviews, measurements, playtests |
 | [`docs/briefs/`](docs/briefs) | What each agent was asked to do, with its cap |
