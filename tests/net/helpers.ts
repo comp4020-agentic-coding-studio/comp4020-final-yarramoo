@@ -4,7 +4,7 @@ import WebSocket from "ws";
 import { decodeConfig } from "../../shared/room.ts";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
 import { encodeCast, encodePaint, encodePos, encodeReady, KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../../shared/inputs.ts";
-import { decodeServer, encodeChunkHashes, encodeClaim, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END, CLAIM_ROUND_START, encodeHash, encodeHello, encodeInput, encodeLive, encodePing, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
+import { decodeServer, encodeChunkHashes, encodeChat, encodeClaim, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END, CLAIM_ROUND_START, encodeHash, encodeHello, encodeInput, encodeLive, encodePing, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
 import { ENT_PLAYER, EV_DEATH, EV_ENEMY_DEATH, EV_ROUND_END, EV_ROUND_START, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
@@ -57,6 +57,10 @@ export interface TestClient {
   names: Map<number, string>;
   /** Achievements the server sent this client, in order. */
   achievements: { id: string; tick: number }[];
+  /** Chat lines the server relayed to this client, in order (Track E). */
+  chats: { name: string; text: string; history: boolean }[];
+  /** Send a chat line (C_CHAT). */
+  chat(text: string): void;
   drain(): void;
   close(): void;
 }
@@ -86,6 +90,7 @@ export async function connect(
     playerId: 0,
     names: new Map<number, string>(),
     achievements: [] as { id: string; tick: number }[],
+    chats: [] as { name: string; text: string; history: boolean }[],
     counts: { ticks: 0, snapshots: 0, resyncs: 0, requests: 0 },
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
@@ -178,6 +183,9 @@ export async function connect(
         case "achievement":
           c.achievements.push({ id: m.id, tick: m.tick });
           break;
+        case "chat":
+          c.chats.push({ name: m.name, text: m.text, history: m.history });
+          break;
         case "reject":
           bad(new Error(m.reason));
           break;
@@ -193,6 +201,7 @@ export async function connect(
   c.raw = (kind, payload) => ws.send(encodeInput(++seq, kind, payload));
   c.sendLive = () => ws.send(encodeLive(c.ls.sim.tick()));
   c.localPaint = (mat, x, y, r) => void c.ls.sim.pushInput(simInputBytes({ player: c.playerId, kind: KIND_PAINT, payload: encodePaint(0, mat, x, y, x, y, r).subarray(5) }));
+  c.chat = (text) => ws.send(encodeChat(text));
   c.drain = () => void c.ls.run(1_000_000);
   c.close = () => ws.close();
   return c;

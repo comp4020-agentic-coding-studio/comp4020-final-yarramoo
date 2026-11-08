@@ -137,7 +137,9 @@ export class InputCounts {
   posRejected = 0;
   /** F6b: lobby Ready toggles (counted, never logged one by one). */
   readies = 0;
-  private win = { casts: new Map<string, number>(), paints: new Map<string, number>(), pos: 0, rejected: 0, readies: 0 };
+  /** Chat lines relayed (counted, never logged one by one, and never their text). */
+  chats = 0;
+  private win = { casts: new Map<string, number>(), paints: new Map<string, number>(), pos: 0, rejected: 0, readies: 0, chats: 0 };
 
   private static inc(m: Map<string, number>, k: string): void {
     m.set(k, (m.get(k) ?? 0) + 1);
@@ -159,19 +161,23 @@ export class InputCounts {
     this.readies++;
     this.win.readies++;
   }
+  chat(): void {
+    this.chats++;
+    this.win.chats++;
+  }
   reject(): void {
     this.rejected++;
     this.win.rejected++;
   }
   /** The current window without resetting it (for the dashboard). */
-  peekWindow(): { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number } {
+  peekWindow(): { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number; chats: number } {
     return this.win;
   }
   /** The window since the last call, or null when the connection sent nothing in it. */
-  takeWindow(): { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number } | null {
+  takeWindow(): { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number; chats: number } | null {
     const w = this.win;
-    if (w.pos === 0 && w.rejected === 0 && w.casts.size === 0 && w.paints.size === 0 && w.readies === 0) return null;
-    this.win = { casts: new Map(), paints: new Map(), pos: 0, rejected: 0, readies: 0 };
+    if (w.pos === 0 && w.rejected === 0 && w.casts.size === 0 && w.paints.size === 0 && w.readies === 0 && w.chats === 0) return null;
+    this.win = { casts: new Map(), paints: new Map(), pos: 0, rejected: 0, readies: 0, chats: 0 };
     return w;
   }
 }

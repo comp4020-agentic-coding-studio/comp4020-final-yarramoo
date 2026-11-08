@@ -12,6 +12,9 @@ import {
   decompressSnapshot,
   encodeRequestChunkHashes,
   encodePlayerName,
+  encodeChatLine,
+  chatHasControl,
+  MAX_CHAT_CHARS,
   MAX_SNAPSHOT_RAW_GAME,
   encodeRequestSnapshot,
   encodeResync,
@@ -76,6 +79,15 @@ const MAX_RESOLVED_DEATHS = 1024;
 export const CLAIMS_PER_WINDOW = 30;
 export const CLAIM_RATE_MS = 10_000;
 export const FLUSH_EVERY_MS = 1000;
+/**
+ * Chat (Track E): per registered player (not per connection, so a reconnect does not reset it), at most
+ * CHAT_PER_WINDOW lines per CHAT_RATE_MS. A late joiner gets the last CHAT_HISTORY_MAX lines younger than
+ * CHAT_HISTORY_MS, held in memory only (lost on unload or restart, cleared by a reset).
+ */
+export const CHAT_PER_WINDOW = 5;
+export const CHAT_RATE_MS = 10_000;
+export const CHAT_HISTORY_MAX = 20;
+export const CHAT_HISTORY_MS = 10 * 60_000;
 /** Chunk diagnosis of a desync (D-126): how long to wait for replies, how many may be open, and the request budget. */
 export const CHUNK_DIAG_WAIT_MS = 3000;
 export const MAX_OPEN_DIAGNOSES = 4;
@@ -288,6 +300,10 @@ export class World {
   readonly clock: TickClock;
   readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 };
   closing = false;
+  /** Chat: the recent lines a late joiner is sent (sender's plain name, text, world-clock time). Never logged, never state. */
+  private chatHistory: { name: string; text: string; at: number }[] = [];
+  /** Chat rate windows by registered player id (visitorId), so a reconnect does not refill the budget. */
+  private chatWindows = new Map<number, { start: number; n: number }>();
   /** True for the duration of reset(): stamp, join, onHash and onUpload refuse. */
   resetting = false;
   /** Called once per death a majority agreed on (the server turns it into stats and achievements). Never touches the sim. */
@@ -707,6 +723,8 @@ export class World {
     for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
     const sentOk = this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, encodeConfig(this.cfg), TICK_HZ, this.clock.lastClosed, base));
     for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
+    const chatCut = this.now() - CHAT_HISTORY_MS;
+    for (const c of this.chatHistory) if (c.at >= chatCut) this.trySend(peer, encodeChatLine(c.name, c.text, true));
     const counts = new InputCounts();
     const timing = new ConnTiming();
     const member: Member = {
@@ -749,6 +767,46 @@ export class World {
   connOf(playerId: number): number | null {
     for (const m of this.members.values()) if (m.playerId === playerId) return m.id;
     return null;
+  }
+
+  /**
+   * Chat (Track E): relay one line to every member, sender included, beside the lockstep. Never a sim input
+   * (invariant 1): nothing here touches the clock or the log. Only a registered visitor may chat (spectators too);
+   * the line must be free of control characters and at most MAX_CHAT_CHARS after trimming. The body is never
+   * logged: refusals log a reason, accepted lines are counted into input.summary. Returns what happened, for tests.
+   */
+  onChat(conn: number, raw: string): "sent" | "anonymous" | "empty" | "control" | "long" | "rate" | "closed" {
+    const m = this.members.get(conn);
+    if (!m || this.resetting) return "closed";
+    const refuse = (reason: "anonymous" | "empty" | "control" | "long") => {
+      m.counts.reject();
+      this.elog.limited(`chat_bad:${conn}`, 10_000, "input.rejected", { world: this.id, conn, who: this.whoOf(m), reason: `chat_${reason}` }, "warn");
+      return reason;
+    };
+    if (!m.visitorId || !m.visitorName) return refuse("anonymous");
+    if (chatHasControl(raw)) return refuse("control");
+    const text = raw.trim();
+    if (!text) return refuse("empty");
+    if (Array.from(text).length > MAX_CHAT_CHARS) return refuse("long");
+    const t = this.now();
+    let win = this.chatWindows.get(m.visitorId);
+    if (!win || t - win.start >= CHAT_RATE_MS) {
+      win = { start: t, n: 0 };
+      this.chatWindows.set(m.visitorId, win);
+    }
+    if (++win.n > CHAT_PER_WINDOW) {
+      m.counts.reject();
+      this.elog.limited(`chat_rate:${m.visitorId}`, 10_000, "input.rate_limited", { world: this.id, conn, who: this.whoOf(m), limit: CHAT_PER_WINDOW, what: "chat" }, "warn");
+      return "rate";
+    }
+    // Drop windows that have expired, so the map stays the size of the recent talkers.
+    if (this.chatWindows.size > 64) for (const [k, v] of this.chatWindows) if (t - v.start >= CHAT_RATE_MS) this.chatWindows.delete(k);
+    m.counts.chat();
+    const f = encodeChatLine(m.visitorName, text);
+    this.chatHistory.push({ name: m.visitorName, text, at: t });
+    if (this.chatHistory.length > CHAT_HISTORY_MAX) this.chatHistory.shift();
+    for (const o of this.members.values()) if (!this.trySend(o.peer, f)) this.dropped.push(o.id);
+    return "sent";
   }
 
   /** Tell everyone else (render-only; never state) who just arrived. */
@@ -971,6 +1029,8 @@ export class World {
         }
       }
       this.resetGen++;
+      this.chatHistory.length = 0;
+      this.chatWindows.clear();
       this.clock.reset();
       this.evaluateHold(); // no members now: ends any hold
       this.log.length = 0;

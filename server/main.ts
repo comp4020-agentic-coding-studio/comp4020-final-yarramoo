@@ -1212,7 +1212,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     lag: l.timing.lag(l.world.clock.lastClosed),
     step_p95_ms: round2(l.timing.stepP95Ms),
   });
-  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number }) => ({
+  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number; chats: number }) => ({
     world: l.world.id,
     who: l.who,
     conn: l.conn,
@@ -1220,6 +1220,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     paints: compactCounts(w.paints),
     pos: w.pos,
     readies: w.readies,
+    chats: w.chats,
     rejected: w.rejected,
     ...timingFields(l),
   });
@@ -1587,6 +1588,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);
+          return;
+        case "chat":
+          // Track E: relayed beside the lockstep, never stamped (invariant 1). World.onChat rate-limits, checks and logs.
+          w.onChat(joined.conn, msg.text);
           return;
         default:
           return ws.close(1002, "unexpected message");
