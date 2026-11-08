@@ -162,6 +162,36 @@ describe("owned sandbox", () => {
     b.close();
   });
 
+  it("an owner who never joined a game world is not evicted, and nobody else is pinned (review N1)", async () => {
+    let t = 1_000_000;
+    const dir = tmp();
+    const s = await boot(dir, { now: () => t });
+    const owner = await register(s.port, "Keeper");
+    const drifter = await register(s.port, "Drifter");
+    expect((await api(s.port, "POST", "/api/sandbox", owner.token)).status).toBe(201);
+    const d = new DatabaseSync(join(dir, "game.db"));
+    try {
+      expect(d.prepare("select joined_at j from players where id = ?").get(owner.id)).toEqual({ j: null });
+    } finally {
+      d.close();
+    }
+    // Both registrations are far past the eviction grace; only the one without a world goes.
+    expect(s.db!.evictUnjoined(Date.now() + 60 * MIN)).toBe(1);
+    expect((await api(s.port, "GET", "/api/sandbox", owner.token)).status).toBe(200);
+    expect((await api(s.port, "GET", "/api/sandbox", drifter.token)).status).toBe(401);
+  });
+
+  it("the total number of owned worlds is capped (review N1)", async () => {
+    const s = await boot(tmp(), { maxOwnedRooms: 2 });
+    const tokens = [];
+    for (const n of ["A", "B", "C"]) tokens.push((await register(s.port, n)).token);
+    expect((await api(s.port, "POST", "/api/sandbox", tokens[0])).status).toBe(201);
+    expect((await api(s.port, "POST", "/api/sandbox", tokens[1])).status).toBe(201);
+    expect((await api(s.port, "POST", "/api/sandbox", tokens[2])).status).toBe(503);
+    // An owner asking again still gets theirs at the cap.
+    expect((await api(s.port, "POST", "/api/sandbox", tokens[0])).status).toBe(200);
+  });
+
   it("survives a restart with its painted cells: a fresh client after the restart reaches the same hash", async () => {
     const dir = tmp();
     const s1 = await boot(dir, { snapshotEveryTicks: 120 });

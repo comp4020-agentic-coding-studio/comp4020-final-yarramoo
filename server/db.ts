@@ -303,11 +303,13 @@ export class GameDb {
   /** Delete registrations created before `cutoffMs` that never joined. Returns how many. */
   evictUnjoined(cutoffMs: number): number {
     // Name-only registrations (sandbox painters, spectators) may have stats rows; the FK needs them gone first.
+    // OWNED: a player who owns a sandbox is never evicted (its room row references it, and it is theirs for good).
+    const victims = "select id from players where joined_at is null and created_at < ? and id not in (select owner_player_id from rooms where owner_player_id is not null)";
     this.db.exec("BEGIN");
     try {
-      this.q("delete from player_stats where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
-      this.q("delete from achievements where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
-      const n = Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
+      this.q(`delete from player_stats where player_id in (${victims})`).run(cutoffMs);
+      this.q(`delete from achievements where player_id in (${victims})`).run(cutoffMs);
+      const n = Number(this.q(`delete from players where id in (${victims})`).run(cutoffMs).changes);
       this.db.exec("COMMIT");
       return n;
     } catch (e) {

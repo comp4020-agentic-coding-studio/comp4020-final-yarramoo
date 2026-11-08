@@ -198,6 +198,11 @@ export class RoomsStore {
     }
   }
 
+  /** OWNED: how many owned sandboxes exist (the server caps the total: each one lives until its owner deletes it). */
+  ownedCount(): number {
+    return (this.q("select count(*) as n from rooms where owner_player_id is not null").get() as { n: number }).n;
+  }
+
   /** OWNED: the player's own sandbox, or null. */
   ownedBy(playerId: number): RoomRow | null {
     const r = this.q(
@@ -225,9 +230,6 @@ export class RoomsStore {
         const r = this.q(
           "insert into rooms (code, name, mode, config, visibility, creator_player_id, created_at, last_active, owner_player_id) values (?, ?, 'sandbox', ?, 'unlisted', ?, ?, ?, ?)",
         ).run(code, clean, config, playerId, now, now, playerId);
-        // An owner is kept like a player who joined: `evictUnjoined` must never delete a registration a room row
-        // references (the foreign key would throw there and refuse every registration at the cap).
-        this.q("update players set joined_at = coalesce(joined_at, ?) where id = ?").run(now, playerId);
         return { room: this.getRoomById(Number(r.lastInsertRowid))!, created: true };
       } catch (e) {
         const m = String(e);

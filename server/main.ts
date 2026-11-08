@@ -108,6 +108,9 @@ export const ROOM_NEVER_JOINED_MS = 10 * 60_000;
 export const ROOM_SWEEP_MS = 60_000;
 /** Rooms one IP may create in a sliding hour (security probe S2). */
 export const ROOM_CREATES_PER_IP_HOUR = 10;
+/** OWNED: owned sandboxes in total. Each lives until its owner deletes it and pins a registration, so the total is
+ * capped (review N1); at 200 the rooms table stays small and a flood of fresh tokens cannot grow it without bound. */
+export const MAX_OWNED_ROOMS = 200;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -270,6 +273,8 @@ export interface ServerOptions {
   inputSummaryMs?: number;
   /** Admin token for /dashboard. Default ADMIN_TOKEN. Unset or empty disables the admin view. */
   adminToken?: string;
+  /** Override MAX_OWNED_ROOMS (tests). */
+  maxOwnedRooms?: number;
   /** Override ROOM_UNLOAD_MS (tests: a short timer to exercise unload-after-empty without waiting 2 minutes). */
   roomUnloadMs?: number;
   /** N1: override ROOM_NEVER_JOINED_MS. */
@@ -381,6 +386,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   /** Start (or restart) a room's empty-unload timer. A join before it fires cancels it via `cancelUnload`. */
   function scheduleUnload(w: World): void {
     if (w.id === SANDBOX_ID || w.id === GAME_ID) return;
+    if (w.closing || worlds.get(w.id) !== w) return; // already deleted or unloaded (an owner's delete closes its members)
     cancelUnload(w.id);
     const ms = opts.roomUnloadMs ?? ROOM_UNLOAD_MS;
     const t = setTimeout(() => {
@@ -403,7 +409,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
    * while a load is in flight or anyone is a member, so a join landing between a trigger and this call wins; once the
    * rows are gone, a later HELLO finds no row and is refused as an unknown room (nothing is resurrected).
    */
-  function deleteRoom(id: number, reason: "empty" | "never_joined" | "owner"): boolean {
+  function deleteRoom(id: number, reason: "empty" | "never_joined" | "owner", who?: string): boolean {
     if (!rooms || id === SANDBOX_ID || id === GAME_ID || loadingRooms.has(id)) return false;
     const w = worlds.get(id);
     // OWNED: the owner's delete does not wait for an empty room: its members are closed (4003, "deleted") first.
@@ -427,7 +433,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       tickSamples.delete(id);
     }
     rooms.deleteRoom(id);
-    log.event("room.deleted", { world: id, code: row.code, mode: row.mode, reason });
+    log.event("room.deleted", { world: id, code: row.code, mode: row.mode, reason, who });
     return true;
   }
 
@@ -934,6 +940,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
    * same-origin only, like POST /api/rooms; POST shares that route's per-IP hourly creation limit.
    */
   function ownedSandboxRoute(req: IncomingMessage, res: ServerResponse, code: string | null): void {
+    // Review N2: a database error (busy, disk) must answer 500, never escape the handler and take the process down. A
+    // delete that fails after the world was torn down leaves it unloaded with its rows intact: a valid state that the
+    // next join reloads, and the owner may retry the delete.
+    try {
+      ownedSandbox(req, res, code);
+    } catch (e) {
+      log.limited("owned_failed", 10_000, "db.write_failed", { what: "owned_sandbox", error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }, "error");
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: "server" }));
+    }
+  }
+
+  function ownedSandbox(req: IncomingMessage, res: ServerResponse, code: string | null): void {
     const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
     const json = (status: number, body: unknown) => res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
     const allow = code === null ? "GET, POST" : "DELETE";
@@ -943,24 +961,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     if (!rooms) return void json(503, { error: "rooms_unavailable" });
     if (req.method !== "GET" && !originOk(req)) {
-      log.limited(`owned:${ipTag}`, 10_000, "room.create_rejected", { reason: "origin", owned: true, ip_tag: ipTag }, "warn");
+      log.limited(`owned_origin:${ipTag}`, 10_000, "room.create_rejected", { reason: "origin", owned: true, ip_tag: ipTag }, "warn");
       return void json(403, { error: "origin" });
     }
     const me = bearerPlayer(req);
     if (!me) {
-      if (req.method === "DELETE") log.limited(`owned:${ipTag}`, 10_000, "room.delete_refused", { reason: "no_token", ip_tag: ipTag }, "warn");
+      if (req.method === "DELETE") log.limited(`owned_del:${ipTag}`, 10_000, "room.delete_refused", { reason: "no_token", ip_tag: ipTag }, "warn");
       return void json(401, { error: "unknown_token" });
     }
     if (code !== null) {
       const target = /^[A-Za-z0-9]{1,6}$/.test(code) ? rooms.getRoomByCode(code) : null;
       if (!target) return void json(404, { error: "not_found" });
       if (target.ownerPlayerId !== me.id) {
-        log.limited(`owned:${ipTag}`, 10_000, "room.delete_refused", { reason: "not_owner", world: target.id, who: `${me.name}#${me.id}`, ip_tag: ipTag }, "warn");
+        log.limited(`owned_del:${ipTag}`, 10_000, "room.delete_refused", { reason: "not_owner", world: target.id, who: `${me.name}#${me.id}`, ip_tag: ipTag }, "warn");
         return void json(403, { error: "not_owner" });
       }
-      if (!deleteRoom(target.id, "owner")) {
+      if (!deleteRoom(target.id, "owner", `${me.name}#${me.id}`)) {
         // Only a load in flight refuses an owner's delete; the client may simply retry.
-        log.limited(`owned:${ipTag}`, 10_000, "room.delete_refused", { reason: "busy", world: target.id, ip_tag: ipTag }, "warn");
+        log.limited(`owned_del:${ipTag}`, 10_000, "room.delete_refused", { reason: "busy", world: target.id, ip_tag: ipTag }, "warn");
         return void json(409, { error: "busy" });
       }
       return void json(200, { deleted: target.code });
@@ -969,12 +987,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     if (req.method === "GET") return void (mine ? json(200, ownedJson(mine)) : json(404, { error: "not_found" }));
     if (mine) return void json(200, { ...ownedJson(mine), created: false });
     if (!roomCreateAllowed(ipTag, Date.now())) {
-      log.limited(`owned:${ipTag}`, 10_000, "room.create_rejected", { reason: "ip_rate_limited", owned: true, ip_tag: ipTag }, "warn");
+      log.limited(`owned_create:${ipTag}`, 10_000, "room.create_rejected", { reason: "ip_rate_limited", owned: true, ip_tag: ipTag }, "warn");
       return void json(429, { error: "rate_limited" });
+    }
+    if (rooms.ownedCount() >= (opts.maxOwnedRooms ?? MAX_OWNED_ROOMS)) {
+      log.limited("owned_cap", 10_000, "room.create_rejected", { reason: "owned_cap", owned: true, ip_tag: ipTag }, "warn");
+      return void json(503, { error: "owned_cap" });
     }
     const r = rooms.ensureOwned(me.id, me.name, encodeConfig(CLASSIC_SANDBOX));
     if ("error" in r) {
-      log.limited(`owned:${ipTag}`, 10_000, "room.create_rejected", { reason: r.error, owned: true, ip_tag: ipTag }, "warn");
+      log.limited(`owned_create:${ipTag}`, 10_000, "room.create_rejected", { reason: r.error, owned: true, ip_tag: ipTag }, "warn");
       return void json(400, { error: r.error });
     }
     if (r.created) log.event("room.created", { room: r.room.id, mode: r.room.mode, visibility: r.room.visibility, owner: `${me.name}#${me.id}` });
