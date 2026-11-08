@@ -10,6 +10,7 @@ export const EVENT_NAMES = [
   "world.loaded",
   "world.reset",
   "process.minute",
+  "memory.source",
   // Identity
   "player.registered",
   "register.refused",

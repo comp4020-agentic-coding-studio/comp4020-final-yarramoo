@@ -218,7 +218,7 @@ taught something.
 
 | Decision | Why | Links |
 |---|---|---|
-| Admission caps: 32 soft / 48 hard members, 16 loaded rooms, 200 MB load gate | Measured over real rooms with bots in the real image | D-144; `server/main.ts:88-99` |
+| Admission caps: 32 soft / 48 hard members, 16 loaded rooms, a free-memory gate (80 MB free to load a room) | Measured over real rooms with bots in the real image; the memory gate was off on Fly until D-236 (below) | D-144, D-236; `server/main.ts`, `server/memory.ts` |
 | A verify worker per occupied cave room, prewarmed at the first join. At the sustained 6.25%-of-a-core quota 1 room now holds (was 0) and verify rejections fell from 8-25 per run to 0; two rooms still don't (CPU-bound) | The single verify worker kept one cached world, so every verify regenerated and took 10-17 s against a 10 s timeout. Dropped wasm instances are not reclaimed, so one worker per room, not instances in one worker | D-213, D-228; [entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient); [`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md), [`warm-verify-report.md`](docs/research/warm-verify-report.md) |
 
 ## 5. Harness and skill-level interventions
@@ -353,6 +353,13 @@ project's own docs framed the votes that way, which is probably why a reader who
   rooms; on burst credit 24-32 members across 4-6 rooms hold 60 ticks/s for about 30-65 minutes. Warm verify
   (D-228, [entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient)) is merged: 1 room now holds
   at the quota and verify rejections are 0, but two rooms still don't (CPU-bound).
+- **The memory gates were off in production until 9 Nov (D-236).** The room-load gate and the warm-lane cap read cgroup
+  v2's `memory.current`, which Docker provides but the Fly VM (cgroup v1, unlimited root cgroup) lacks, so on Fly both
+  silently skipped their check. A live test on 9 Nov with 3 Survival rooms x 4 bots OOM-killed the machine. The gates
+  now read the first source with a real limit (cgroup v2, cgroup v1, `/proc/meminfo`, process RSS), log it at start,
+  and refuse a room load with under 80 MB free and a warm lane that would leave under 56 MB. On the 210 MB VM that is
+  two M rooms with one warm lane; past that a join gets "server busy". The reserves come from one crash, not a measured
+  ramp on the VM ([entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient)).
 - **An intermittent Survival test under load (D-219), closed.** `claims-survival` passes quietly and fails only under a full
   gate's load. **Closed (D-231):** the flake was the test's own wall-clock pacing, now paced by the server's ticks.
 - **Duplicated salts (D-217), closed (D-232).** The eight cell-rule salts were renumbered 291-298; generation keeps
