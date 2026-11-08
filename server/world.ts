@@ -1,6 +1,7 @@
 // One world (sandbox or game): connected clients, player ids, the closed-tick log, the tick clock, hash
 // checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
-// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
+// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread. The snapshot layout
+// (`WorldOptions.snapshotLayout`) is three constants main.ts reads from the wasm once at start, not a running sim.
 import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
 import { NUM_ENEMY_KINDS, type SnapshotLayout } from "../shared/sim.ts";

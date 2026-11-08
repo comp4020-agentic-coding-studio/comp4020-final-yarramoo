@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Lockstep } from "../../client/lockstep.ts";
 import { GameDb } from "../../server/db.ts";
 import { EventLog } from "../../server/log.ts";
-import { GAME_ID, World } from "../../server/world.ts";
+import { activePlayersIn, GAME_ID, World } from "../../server/world.ts";
 import { encodeJoin, encodeLeave } from "../../shared/inputs.ts";
 import { compressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
 import { CAVES_PVP, SIZE_DIMS } from "../../shared/room.ts";
@@ -61,10 +61,10 @@ describe("cold start reads the stored snapshot's players, and logs a snapshot it
     return { db, build };
   }
 
-  async function load(data: Uint8Array | undefined, snapshotLayout: SnapshotLayout | undefined) {
+  async function load(data: Uint8Array | undefined, given: SnapshotLayout | undefined) {
     const { db, build } = await stored(data);
     const log = new EventLog({ quiet: true });
-    const w = new World({ id: GAME_ID, now: () => 0, db, simBuild: build, log, snapshotLayout });
+    const w = new World({ id: GAME_ID, now: () => 0, db, simBuild: build, log, snapshotLayout: given });
     await w.load();
     return log.recent().filter((e) => e.ev === "snapshot.unreadable" || e.ev === "world.cold_start");
   }
@@ -91,6 +91,30 @@ describe("cold start reads the stored snapshot's players, and logs a snapshot it
     const evs = await load(undefined, undefined);
     expect(evs.map((e) => e.ev)).toEqual(["snapshot.unreadable"]);
     expect(String(evs[0].error)).toMatch(/no snapshot layout/);
+  });
+});
+
+describe("activePlayersIn throws on a section that runs past its bounds", () => {
+  /** A real game snapshot's raw bytes, with `edit` applied, compressed again. */
+  function edited(edit: (v: DataView) => void): Uint8Array {
+    const sim = loadSim(wasmBytes);
+    sim.init(5n, 1);
+    sim.pushInput(encodeJoin(3));
+    sim.step();
+    const raw = sim.snapshot();
+    edit(new DataView(raw.buffer, raw.byteOffset, raw.byteLength));
+    return compressSnapshot(raw);
+  }
+  const cap = maxSnapshotRawFor(CAVES_PVP);
+
+  it("an entity length past the end of the snapshot", () => {
+    expect(() => activePlayersIn(edited((v) => v.setUint32(layout.headerBytes, 0x7fffffff, true)), layout, cap)).toThrow(/entity section runs past/);
+  });
+  it("a player count whose records run past the entity section", () => {
+    expect(() => activePlayersIn(edited((v) => v.setUint32(layout.headerBytes + 4, 0xffffffff, true)), layout, cap)).toThrow(/player records run past/);
+  });
+  it("the unedited snapshot reads", () => {
+    expect(activePlayersIn(edited(() => {}), layout, cap)).toEqual(new Set([3]));
   });
 });
 

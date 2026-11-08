@@ -24,7 +24,7 @@ describe("client mirrors of sim constants", () => {
     // Review M4: the table was copied into worker.ts and hover.ts. No client file holds its own again.
     for (const f of readdirSync(new URL("../../client/", import.meta.url), { recursive: true }) as string[]) {
       if (!f.endsWith(".ts")) continue;
-      expect(readFileSync(new URL(`../../client/${f}`, import.meta.url), "utf8"), f).not.toMatch(/ENEMY_MAX_HP\s*(:[^=]*)?=/);
+      expect(readFileSync(new URL(`../../client/${f}`, import.meta.url), "utf8"), f).not.toMatch(/ENEMY_MAX_HP\s*(:[^=]*)?=|\[\s*20,\s*30,\s*60,\s*90,\s*800\b/);
     }
   });
   it("worker.ts active-box overlay mirrors ACTIVE_W, ACTIVE_H (tuning.rs) and CHUNK (grid.rs)", () => {
