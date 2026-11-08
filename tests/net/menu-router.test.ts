@@ -9,6 +9,7 @@ describe("menu router", () => {
     ["#new/survival", { kind: "settings", type: "survival" }],
     ["#new/deathmatch", { kind: "settings", type: "deathmatch" }],
     ["#join", { kind: "join" }],
+    ["#mine", { kind: "mine" }],
     ["#share/ABC123", { kind: "share", code: "ABC123" }],
     ["#share/abc123", { kind: "share", code: "ABC123" }],
   ];
@@ -30,6 +31,7 @@ describe("menu router", () => {
     expect(parentRoute({ kind: "settings", type: "deathmatch" })).toEqual({ kind: "types" });
     expect(parentRoute({ kind: "types" })).toEqual({ kind: "title" });
     expect(parentRoute({ kind: "join" })).toEqual({ kind: "title" });
+    expect(parentRoute({ kind: "mine" })).toEqual({ kind: "title" });
     expect(parentRoute({ kind: "share", code: "ABC123" })).toEqual({ kind: "title" });
   });
 });
