@@ -33,8 +33,10 @@ it prints:
   full. `tests/net/gate-plan.test.ts` pins that (it was shown red against a planner that skips everything).
 - It skips **whole steps**, never single test files: many net tests reach code through a spawned server or the wasm,
   not imports, so narrowing the net suite by file would miss them.
-- **A merge to `multa` runs the tier of everything the merge brings in** (`node scripts/gate-plan.ts <the base the
-  branch forked from>`), not just the last commit. **Before every push**, at least the tier of everything since the
+- **A merge to `multa` runs the tier of what the merge brings in**: after `git merge --no-commit <branch>`, run
+  `node scripts/gate-plan.ts --files $(git diff --cached --name-only HEAD)`. Not the branch's fork point: that also
+  counts work merged and gated on `multa` since the branch forked (8 Nov: slow-net looked full-tier from its fork point
+  only because owned-sandbox had landed in between; what it added was client-tier). **Before every push**, at least the tier of everything since the
   last push.
 - It says why a change is full (`full because: ...`): put the tier in the commit message.
 - If you change what a path can affect (e.g. a client file starts producing inputs), add it to `FULL` in the planner.

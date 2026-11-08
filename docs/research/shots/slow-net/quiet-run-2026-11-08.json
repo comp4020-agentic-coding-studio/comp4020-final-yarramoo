@@ -1,0 +1,249 @@
+{
+ "room": {
+  "id": 2,
+  "code": "RCJY7J",
+  "name": "Slow net",
+  "mode": "survival",
+  "visibility": "public"
+ },
+ "summary": [
+  {
+   "phase": "clean",
+   "shape": {
+    "rtt": 0,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60.1,
+   "held": false,
+   "A": {
+    "lagP50": 21.9,
+    "lagMax": 41.8,
+    "sps": 60,
+    "spsMin": 50,
+    "pingP50": 116,
+    "states": {
+     "live": 160
+    },
+    "seesBoLateMs": 175
+   },
+   "B": {
+    "lagP50": 18.8,
+    "lagMax": 42.7,
+    "sps": 60,
+    "pingP50": 120,
+    "pingMax": 134,
+    "bufMax": 6,
+    "states": {
+     "live": 160
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 100,
+    "notice": []
+   },
+   "serverEvents": {}
+  },
+  {
+   "phase": "rtt800",
+   "shape": {
+    "rtt": 800,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60.1,
+   "held": false,
+   "A": {
+    "lagP50": 20.6,
+    "lagMax": 45.7,
+    "sps": 60,
+    "spsMin": 47.7,
+    "pingP50": 151,
+    "states": {
+     "live": 400
+    },
+    "seesBoLateMs": 550
+   },
+   "B": {
+    "lagP50": 44.6,
+    "lagMax": 70.9,
+    "sps": 60,
+    "pingP50": 850,
+    "pingMax": 1156,
+    "bufMax": 7,
+    "states": {
+     "live": 400
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 575,
+    "notice": [
+     "Slow connection1.0 s round trip: others see your moves late",
+     "Slow connection800 ms round trip: others see your moves late",
+     "Slow connection1.2 s round trip: others see your moves late",
+     "Slow connection850 ms round trip: others see your moves late",
+     "Slow connection830 ms round trip: others see your moves late"
+    ]
+   },
+   "serverEvents": {}
+  },
+  {
+   "phase": "blackout",
+   "shape": {
+    "rtt": 100,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "blackout": 5,
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 18.8,
+    "lagMax": 40,
+    "sps": 60,
+    "spsMin": 58.4,
+    "pingP50": 7,
+    "states": {
+     "live": 120
+    },
+    "seesBoLateMs": 4050
+   },
+   "B": {
+    "lagP50": 171,
+    "lagMax": 348.3,
+    "sps": 0,
+    "pingP50": 831,
+    "pingMax": 1600,
+    "bufMax": 11,
+    "states": {
+     "live": 116,
+     "catching-up": 4
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 4700,
+    "notice": [
+     "Slow connection830 ms round trip: others see your moves late",
+     "Connection stalledNo updates from the server: reconnecting if it does not come back"
+    ]
+   },
+   "serverEvents": {
+    "snapshot.requested": 1
+   }
+  }
+ ],
+ "errors": [],
+ "events": [
+  {
+   "t": 1794113767607,
+   "ev": "room.created",
+   "f": {
+    "t": "2026-11-08T04:56:07.606Z",
+    "lvl": "info",
+    "ev": "room.created",
+    "room": 2,
+    "mode": "survival",
+    "visibility": "public"
+   }
+  },
+  {
+   "t": 1794113768662,
+   "ev": "player.registered",
+   "f": {
+    "t": "2026-11-08T04:56:08.662Z",
+    "lvl": "info",
+    "ev": "player.registered",
+    "player": 1
+   }
+  },
+  {
+   "t": 1794113768746,
+   "ev": "room.loaded",
+   "f": {
+    "t": "2026-11-08T04:56:08.746Z",
+    "lvl": "info",
+    "ev": "room.loaded",
+    "world": 2,
+    "code": "RCJY7J",
+    "mode": "survival",
+    "size": 0
+   }
+  },
+  {
+   "t": 1794113768757,
+   "ev": "join",
+   "f": {
+    "t": "2026-11-08T04:56:08.757Z",
+    "lvl": "info",
+    "ev": "join",
+    "world": 2,
+    "who": "Ana#1",
+    "visitor": 1,
+    "name": "Ana",
+    "conn": 1,
+    "role": "player",
+    "online": 1,
+    "tick": 0,
+    "ip_tag": "bc9393",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like "
+   }
+  },
+  {
+   "t": 1794113768995,
+   "ev": "player.registered",
+   "f": {
+    "t": "2026-11-08T04:56:08.995Z",
+    "lvl": "info",
+    "ev": "player.registered",
+    "player": 2
+   }
+  },
+  {
+   "t": 1794113769071,
+   "ev": "join",
+   "f": {
+    "t": "2026-11-08T04:56:09.071Z",
+    "lvl": "info",
+    "ev": "join",
+    "world": 2,
+    "who": "Bo#2",
+    "visitor": 2,
+    "name": "Bo",
+    "conn": 2,
+    "role": "player",
+    "online": 2,
+    "tick": 19,
+    "ip_tag": "bc9393",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like "
+   }
+  },
+  {
+   "t": 1794113798723,
+   "ev": "snapshot.requested",
+   "f": {
+    "t": "2026-11-08T04:56:38.723Z",
+    "lvl": "info",
+    "ev": "snapshot.requested",
+    "world": 2,
+    "tick": 1920,
+    "from_tick": 1800,
+    "who": "Ana#1"
+   }
+  },
+  {
+   "t": 1794113803997,
+   "ev": "snapshot.accepted",
+   "f": {
+    "t": "2026-11-08T04:56:43.997Z",
+    "lvl": "info",
+    "ev": "snapshot.accepted",
+    "world": 2,
+    "tick": 1920,
+    "bytes": 7207,
+    "raw_bytes": 288253,
+    "verify_ms": 1212
+   }
+  }
+ ],
+ "pausedReads": 0
+}

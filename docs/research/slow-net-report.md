@@ -157,3 +157,12 @@ test, because the server was not touched.
   confusion; the measurements say it is not needed.
 - Close code 1013 ("too slow") currently falls through to a silent reconnect. A specific note would help if it is
   ever seen in production logs (it never fired here).
+
+---
+**Session model's quiet check (8 Nov, load ~2):** a short run of the harness on the merged build
+(`PHASES` clean 8 s, rtt800 20 s, a 5 s blackout; `docs/research/shots/slow-net/quiet-run-2026-11-08.json`):
+the server held 60 ticks/s with no resyncs; the clean player stepped at 60/s with lag ~20 ticks throughout; the slow
+player's notice read "Slow connection 830 ms round trip: others see your moves late" at 800 ms
+(`shots/slow-net/sn-shot-rtt800.png`) and "Connection stalled" in the blackout (`sn-shot-blackout.png`); none on the
+clean phase. This confirms the main finding on a quiet host. The bandwidth and long-blackout phases taken under load
+are still not re-run.

@@ -759,3 +759,6 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **Owned world follow-ups** (D-225): "Open my world" straight from the title screen; renaming it; an optional reset
   to empty; the dead-link page still titles itself "Game world" for any unknown code (pre-existing). **Source:**
   `docs/research/owned-sandbox-report.md`, 8 Nov.
+- **Slow-connection follow-ups** (D-226): re-run the bandwidth and long-blackout phases of `tests/soak/slow-net.ts` on a
+  quiet host; a specific message when the server closes a connection as too slow (not seen in the runs); dim a slow
+  player's label for others only if playtests ask. **Source:** `docs/research/slow-net-report.md`, 8 Nov.
