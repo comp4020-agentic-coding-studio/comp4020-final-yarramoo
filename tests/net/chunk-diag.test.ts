@@ -80,6 +80,8 @@ function rig() {
   };
   const advance = (ms: number) => {
     t += ms;
+    // F7: real clients ping every 2 s, so the liveness timeout never fires on them; the fake peers are always heard.
+    for (const id of w.members.keys()) w.heard(id);
     w.tick();
   };
   const arr = (changes: Record<number, bigint> = {}): BigUint64Array => {
@@ -90,6 +92,8 @@ function rig() {
   /** Everyone reports a state hash for `tick`; `badIds` report a different one. */
   const hashRound = (tick: number, ids: number[], badIds: number[]) => {
     for (const id of ids) w.members.get(id)!.minHashTick = 0;
+    // F7: a member may resync only 3 times a minute; these tests make many desyncs in one fake minute to probe the diagnosis limits.
+    for (const id of ids) w.members.get(id)!.resyncAt = [];
     for (const id of ids) w.onHash(id, tick, badIds.includes(id) ? 0xbadn : 0x600dn);
   };
   const chunks = (id = 0) => (db.recentIncidents(50).at(id)!.details.chunks as Record<string, any>);
@@ -267,7 +271,8 @@ describe("chunk diagnosis on a bare World", () => {
     expect(r.peers[0].frames.length).toBe(before); // no request frame went out
     expect(r.log.recent().some((e) => e.ev === "desync.diag_skipped" && e.reason === "rate_limited")).toBe(true);
     r.advance(DIAG_WINDOW_MS); // a fresh window
-    r.hashRound(60 * 40, [a, b, bad], [bad]);
+    // A checkpoint at the current clock: the server ignores hashes older than HASH_WINDOW_TICKS (review M1).
+    r.hashRound(Math.floor(r.w.clock.lastClosed / 60) * 60, [a, b, bad], [bad]);
     expect((r.db.recentIncidents(1)[0].details.chunks as any).status).toBe("pending");
   });
 });

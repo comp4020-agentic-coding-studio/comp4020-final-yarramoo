@@ -25,6 +25,27 @@ describe("avatar controller", () => {
     expect(MAX_SPEED_FIXED).toBeLessThan(MAX_AVATAR_SPEED);
   });
 
+  it("keeps sliding on ice after the key is released, and stops within a cell or two on rock", () => {
+    const slide = (floor: number) => {
+      const mat = new Uint8Array(W * H);
+      for (let y = 100; y < H; y++) mat.fill(3, y * W, (y + 1) * W);
+      for (let x = 20; x < 140; x++) mat[100 * W + x] = floor; // the walking surface: row 100
+      const g: Grid = { mat, w: W, h: H };
+      const a = new Avatar(30, 100);
+      a.onGround = true;
+      run(a, g, 60, { ...idle, right: true });
+      const x0 = a.x;
+      run(a, g, 200);
+      return { x0, slid: a.x - x0, top: a.vx };
+    };
+    const ice = slide(18);
+    const rock = slide(3);
+    expect(rock.slid).toBeLessThan(2.5);
+    expect(ice.slid).toBeGreaterThan(8);
+    expect(ice.top).toBe(0); // the snap-to-zero still applies, so it does stop eventually
+    expect(Math.abs(ice.x0 - 30)).toBeLessThan(MAX_SPEED_FIXED * 60 / 16 + 1); // no faster than walking
+  });
+
   it("falls onto the floor and stands there on a 1/16 grid", () => {
     const g = world();
     const a = new Avatar(20, 80);
@@ -100,6 +121,42 @@ describe("avatar controller", () => {
     expect(b.x).toBeGreaterThan(32);
   });
 
+  it("lava is heavier than water: sinks at its own pace, slower walking, weaker swim-up (note 6)", () => {
+    const deep = (m: number) => {
+      const g = world();
+      for (let y = 40; y < 100; y++) for (let x = 160; x < 180; x++) g.mat[y * W + x] = m; // a 60-deep pool
+      return g;
+    };
+    const dive = (m: number, k = idle) => {
+      const a = new Avatar(170, 60);
+      run(a, deep(m), 30, k);
+      return a;
+    };
+    const lava = dive(14);
+    expect(lava.inLiquid).toBe(true);
+    expect(lava.y).toBeGreaterThan(60); // it sinks into lava
+    expect(lava.vy).toBeLessThan(0.35); // ...slowly: a lower top speed than water's 0.7
+    expect(dive(5).vy).toBeGreaterThan(0.6); // water as before
+    // Holding up in lava: a weak swim that does not lift you out like water does.
+    const lift = (m: number) => {
+      const a = new Avatar(170, 90);
+      run(a, deep(m), 60, { ...idle, up: true });
+      return 90 - a.y;
+    };
+    expect(lift(14)).toBeLessThan(lift(5) / 2);
+    // Walking in lava is slower than in water.
+    const wade = (m: number) => {
+      const g = world();
+      for (let y = 90; y < 100; y++) for (let x = 20; x < 120; x++) g.mat[y * W + x] = m;
+      const a = new Avatar(20, 100);
+      a.onGround = true;
+      run(a, g, 60, { ...idle, right: true });
+      return a.x - 20;
+    };
+    expect(wade(14)).toBeLessThan(wade(5) * 0.8);
+    expect(SPEED_LIMIT_OK).toBe(true);
+  });
+
   it("speed never exceeds the limit over a long random run", () => {
     const g = world();
     const a = new Avatar(100, 50);
@@ -113,5 +170,23 @@ describe("avatar controller", () => {
       py = a.y;
     }
     expect(worst).toBeLessThan(MAX_AVATAR_SPEED);
+  });
+});
+
+// Every material id pinned to how the controller treats it. A new material must be added here and in
+// MATERIAL_CLASS (shared/names.ts), or the first assertion fails.
+import { isGas, isLiquid, isSolid } from "../../client/avatar.ts";
+import { MATERIAL_NAMES } from "../../shared/names.ts";
+
+describe("avatar material classes", () => {
+  const E = "empty", S = "solid", L = "liquid", G = "gas";
+  const want = [E, S, S, S, S, L, S, S, S, S, G, G, G, S, L, L, L, G, S, S, S, S, S, S, S, S, S, S, S];
+  it("pins every material id 0-28 to exactly one class", () => {
+    expect(Object.keys(MATERIAL_NAMES).length).toBe(want.length);
+    for (let m = 0; m < want.length; m++) {
+      const got = m === 0 ? E : isSolid(m) ? S : isLiquid(m) ? L : isGas(m) ? G : "none";
+      expect(got, `${m} ${MATERIAL_NAMES[m]}`).toBe(want[m]);
+      if (m > 0) expect([isSolid(m), isLiquid(m), isGas(m)].filter(Boolean).length, `${m} exactly one`).toBe(1);
+    }
   });
 });

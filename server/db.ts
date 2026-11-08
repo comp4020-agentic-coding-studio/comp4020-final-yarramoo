@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const SNAPSHOTS_KEPT = 5;
-export const SNAPSHOT_FORMAT_VERSION = 3;
+export const SNAPSHOT_FORMAT_VERSION = 19; // mirrors FORMAT_VERSION in sim/src/snapshot.rs (pinned by tests/net/spells-table.test.ts)
 
 /** Applied in order; PRAGMA user_version is the number applied. Append only, never edit. */
 const MIGRATIONS: string[] = [
@@ -76,7 +76,44 @@ const MIGRATIONS: string[] = [
     primary key (player_id, achievement)
   );
   `,
+  // R2a (plan-game-modes.md "Server: rooms instead of two fixed worlds"): rooms are created and listed, but
+  // joining still goes through the existing two fixed worlds (R2b wires rooms into the socket path). A
+  // room's id doubles as its eventual world id once R2b loads it, so this table deliberately mirrors
+  // `worlds` rather than replacing it. No lifecycle columns yet (archived_at etc.) — that's R2b's job.
+  `
+  create table rooms (
+    id integer primary key,
+    code text unique not null,
+    name text not null,
+    mode text not null check (mode in ('survival','deathmatch','creative','sandbox')),
+    config blob not null,
+    visibility text not null check (visibility in ('public','unlisted')),
+    creator_player_id integer references players(id),
+    created_at integer not null,
+    last_active integer not null
+  );
+  create index rooms_visibility_last_active on rooms (visibility, last_active desc);
+  create index rooms_creator_created on rooms (creator_player_id, created_at);
+  `,
+  // F7: a Survival room whose round a majority of clients reported over. It leaves the public list and GET /api/rooms/:code says so.
+  `alter table rooms add column ended_at integer;`,
+  // N1: a room dies when nobody has been in it for a while. first_joined_at is null until a member first joins (a room
+  // nobody ever joined gets 10 minutes; a played one 2 minutes after last_active). Rooms that already hold play are
+  // backfilled so they are judged as played, not as never joined.
+  `
+  alter table rooms add column first_joined_at integer;
+  update rooms set first_joined_at = last_active where id in (select world_id from tick_log union select world_id from snapshots);
+  `,
+  // OWNED (8 Nov): a player's own persistent sandbox. Null for every other room (Survival, Deathmatch, a shared
+  // sandbox room), which stay ephemeral; the partial unique index makes "one per player" a database fact.
+  `
+  alter table rooms add column owner_player_id integer references players(id);
+  create unique index rooms_owner on rooms (owner_player_id) where owner_player_id is not null;
+  `,
 ];
+
+/** Incident rows kept (the newest). */
+export const MAX_INCIDENT_ROWS = 1000;
 
 export interface WorldRow {
   id: number;
@@ -266,11 +303,13 @@ export class GameDb {
   /** Delete registrations created before `cutoffMs` that never joined. Returns how many. */
   evictUnjoined(cutoffMs: number): number {
     // Name-only registrations (sandbox painters, spectators) may have stats rows; the FK needs them gone first.
+    // OWNED: a player who owns a sandbox is never evicted (its room row references it, and it is theirs for good).
+    const victims = "select id from players where joined_at is null and created_at < ? and id not in (select owner_player_id from rooms where owner_player_id is not null)";
     this.db.exec("BEGIN");
     try {
-      this.q("delete from player_stats where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
-      this.q("delete from achievements where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
-      const n = Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
+      this.q(`delete from player_stats where player_id in (${victims})`).run(cutoffMs);
+      this.q(`delete from achievements where player_id in (${victims})`).run(cutoffMs);
+      const n = Number(this.q(`delete from players where id in (${victims})`).run(cutoffMs).changes);
       this.db.exec("COMMIT");
       return n;
     } catch (e) {
@@ -366,7 +405,10 @@ export class GameDb {
     const r = this.q("insert into desync_incidents (world_id, tick, details, created_at) values (?, ?, ?, ?)").run(
       worldId, tick, JSON.stringify(details), Date.now(),
     );
-    return Number(r.lastInsertRowid);
+    // F7: keep the last MAX_INCIDENT_ROWS only, so a desync storm cannot grow the table without bound.
+    const id = Number(r.lastInsertRowid);
+    this.q("delete from desync_incidents where id <= ?").run(id - MAX_INCIDENT_ROWS);
+    return id;
   }
 
   updateIncident(id: number, details: unknown): void {

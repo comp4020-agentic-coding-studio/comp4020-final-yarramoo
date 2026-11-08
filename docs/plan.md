@@ -154,9 +154,9 @@ Each tick runs in this order:
 1. Apply this tick's inputs, in the order given.
 2. Update entities: players (official positions from inputs, health, timers), then projectiles (in spawn order), then pickups.
 3. Update cells:
-   - Iterate active and awake chunks sorted by `cy` descending (bottom first).
-   - Within a chunk, scan rows from bottom to top.
-   - The x direction alternates with tick parity: even ticks go left→right, odd ticks right→left. The order of chunks within a row follows the same parity.
+   - Iterate bands of chunks (one chunk row each) sorted by `cy` descending (bottom first).
+   - Within a band, scan rows from bottom to top, and run each row across every active and awake chunk of the band before the next row (D-191; chunk by chunk, liquids stood in walls on chunk edges). A chunk woken during its band's pass joins at its next row.
+   - The x direction alternates with tick parity: even ticks go left→right, odd ticks right→left. The order of chunks within a band follows the same parity.
    - Skip any cell already set in `moved`.
 4. Resolve deferred effects (explosions queued during the tick) in queue order.
 5. Emit events. Increment the tick.

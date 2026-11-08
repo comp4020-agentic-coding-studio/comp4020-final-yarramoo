@@ -3,14 +3,15 @@
 // chunk, and width()/height() give the world, so a sim change to CHUNK or a world size fails here.
 import { describe, expect, it } from "vitest";
 import { loadSim } from "../../shared/sim.ts";
-import { chunkCountFor, chunkGridFor, WORLD_GAME, WORLD_SANDBOX } from "../../shared/protocol.ts";
+import { chunkCountFor, chunkGridFor } from "../../shared/protocol.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig } from "../../shared/room.ts";
 import { wasmBytes } from "./helpers.ts";
 
 describe("the protocol's chunk grid matches the sim", () => {
-  for (const [name, kind, seed] of [["sandbox", WORLD_SANDBOX, 1n], ["game", WORLD_GAME, 5n]] as const) {
+  for (const [name, kind, seed] of [["sandbox", CLASSIC_SANDBOX, 1n], ["game", CAVES_PVP, 5n]] as const) {
     it(`${name}: grid, count and chunk size agree with the real wasm`, () => {
       const sim = loadSim(wasmBytes);
-      sim.init(seed, kind);
+      sim.init(seed, encodeConfig(kind));
       const { cw, ch } = chunkGridFor(kind);
       expect(sim.chunkHashes().length).toBe(chunkCountFor(kind));
       expect(cw * ch).toBe(chunkCountFor(kind));

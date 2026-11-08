@@ -1,7 +1,7 @@
 // Playout buffer and apply loop (plan 7.1). No DOM, no worker APIs: shared by the worker and the Node tests.
 // The sim only ever advances through closed ticks from the server: push that tick's inputs in the listed
 // order, then step once. TypeScript writes sim state only through push_input (invariant 1).
-import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawFor, simInputBytes, WORLD_GAME, WORLD_SANDBOX, type TickInput } from "../shared/protocol.ts";
+import { compressSnapshot, decompressSnapshot, HASH_EVERY, maxSnapshotRawForDims, simInputBytes, type TickInput } from "../shared/protocol.ts";
 import type { Sim } from "../shared/sim.ts";
 
 /** Review M4b S2: a Knock older than this many ticks behind the live edge is dropped (a stalled tab's backlog). */
@@ -19,7 +19,7 @@ export const MAX_EXTRA = 4;
 export class Lockstep {
   readonly sim: Sim;
   private readonly queue = new Map<number, TickInput[]>();
-  private received = 0;
+  received = 0;
   /** Latest closed tick the server has told us about (WELCOME, then every TICK). */
   latestClosed = 0;
   /** Replay target from WELCOME: until sim.tick() reaches it we are fast-forwarding. */
@@ -64,9 +64,9 @@ export class Lockstep {
 
   /** Start from a server snapshot: replace the sim state (restore) and expect ticks from snapshot tick + 1. */
   loadSnapshot(compressed: Uint8Array, tick: number): void {
-    // The world's size (set by init before any snapshot arrives) tells which ceiling applies.
-    const kind = this.sim.width() * this.sim.height() > 512 * 512 ? WORLD_GAME : WORLD_SANDBOX;
-    this.sim.restore(decompressSnapshot(compressed, maxSnapshotRawFor(kind)));
+    // The room's own ceiling, the one the server checks uploads against (`maxSnapshotRawFor(cfg)`): `init` set the
+    // sim to the room's size before any snapshot arrives, and the size is all the ceiling depends on (review M4).
+    this.sim.restore(decompressSnapshot(compressed, maxSnapshotRawForDims(this.sim.width(), this.sim.height())));
     if (this.sim.tick() !== tick) throw new Error(`snapshot tick mismatch: ${this.sim.tick()} vs ${tick}`);
     this.queue.clear();
     this.received = tick;
@@ -151,4 +151,48 @@ export function reactToTick(ls: Lockstep, tick: number, wantSnapshotAt: number):
     out.snapshot = { hash: out.hash ?? ls.sim.stateHash(), data: ls.compressedSnapshot() };
   }
   return out;
+}
+
+/** Ticks one frame may step from the 60 Hz accumulator, before the playout extra (N1, 8 Nov). The worker's frame is
+ * requestAnimationFrame on an OffscreenCanvas, which follows the page's frame rate: a 4x-throttled page ran it at
+ * 3-10 Hz, and the old cap of 4 steps a frame (plus MAX_EXTRA), with frame time clamped to 250 ms, could not reach the
+ * server's 60 ticks/s, so the client fell behind for good. 30 steps and 500 ms cover frame rates down to 2 Hz. */
+export const MAX_FRAME_STEPS = 30;
+/** The most real time one frame's steps may owe (the worker's visual smoothing keeps its own 250 ms clamp). */
+export const MAX_STEP_DT_MS = 500;
+/** Fast-forward budget per frame: at least 12 ms, and most of a long frame, so a slow page catches up too. The worker is
+ * its own thread and draws only every FF_DRAW_INTERVAL_MS while catching up, so a long slice blocks nothing but itself. */
+export const FF_BUDGET_MIN_MS = 12;
+export const FF_BUDGET_MAX_MS = 400;
+export const ffBudgetMs = (dtMs: number): number => Math.min(FF_BUDGET_MAX_MS, Math.max(FF_BUDGET_MIN_MS, dtMs * 0.8));
+
+/** A live client this many ticks behind (2 s) is not keeping up by stepping a frame's worth: it fast-forwards instead. */
+export const CATCHUP_THRESHOLD = 120;
+
+/**
+ * One frame of the replay driver. `catching` is the worker's "catching-up" state. A live client whose backlog has
+ * grown past CATCHUP_THRESHOLD (a tab that was hidden, whose frames stopped but whose socket kept receiving) is
+ * switched to catching-up with the target at the tick received so far, exactly like a fresh connect. Returns the
+ * new state and how many ticks ran.
+ */
+export function driveFrame(
+  ls: Lockstep,
+  catching: boolean,
+  base: number,
+  budgetMs: number,
+  now: () => number = () => performance.now(),
+): { catching: boolean; ran: number; entered: boolean } {
+  let entered = false;
+  if (!catching && ls.buffered > CATCHUP_THRESHOLD) {
+    ls.catchUpTarget = ls.received;
+    catching = true;
+    entered = true;
+  }
+  const before = ls.simTick;
+  if (catching) {
+    ls.fastForward(budgetMs, now);
+    if (!ls.fastForwarding) catching = false;
+    return { catching, ran: ls.simTick - before, entered };
+  }
+  return { catching, ran: ls.run(ls.plan(base)), entered };
 }

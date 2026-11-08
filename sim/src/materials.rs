@@ -15,16 +15,69 @@ pub const SMOKE: u8 = 11;
 pub const STEAM: u8 = 12;
 pub const GUNPOWDER: u8 = 13;
 pub const LAVA: u8 = 14;
+pub const OIL: u8 = 15;
+pub const ACID: u8 = 16;
+pub const GAS: u8 = 17;
+pub const ICE: u8 = 18;
+pub const GLASS: u8 = 19;
+pub const COAL: u8 = 20;
+/// Crumbled rock (falling rock v0): a powder that moves like Sand. Not paintable, structural or flammable.
+pub const PEBBLES: u8 = 21;
+/// Inert static solid (the mine's rooms): structural like Rock, but acid does not eat it. Paintable.
+pub const BRICK: u8 = 22;
+/// Static, not structural, flammable slowly (the grotto's lining). Paintable.
+pub const MOSS: u8 = 23;
+/// Static, not structural, flammable (the grotto's giant mushroom caps). Paintable.
+pub const MUSHROOM: u8 = 24;
+/// Experiment E3 materials. Mud: a slow powder that dries to Dirt beside Fire or Lava. Salt: a powder that melts Ice and
+/// is spent dissolving into Water. Snow: a light powder that melts near heat and packs to Ice under weight. Thermite:
+/// a powder that, once lit by Fire or Lava, turns adjacent Rock, Dirt, Glass, Ice, Coal and Wood to Lava.
+pub const MUD: u8 = 25;
+pub const SALT: u8 = 26;
+pub const SNOW: u8 = 27;
+pub const THERMITE: u8 = 28;
 
-/// Materials that `Paint` may place: everything except Bedrock, the world boundary.
+/// Materials that `Paint` may place: everything except Bedrock (the world boundary), Stem and Flower (they
+/// only grow from Seeds) and Pebbles (only from crumbled rock).
 pub fn paintable(m: u8) -> bool {
-    matches!(m, EMPTY | ROCK..=LAVA)
+    matches!(m, EMPTY | ROCK..=SEED | FIRE..=COAL | BRICK..=MUSHROOM | MUD..=THERMITE)
 }
 
 pub fn is_gas(m: u8) -> bool {
-    matches!(m, FIRE | SMOKE | STEAM)
+    matches!(m, FIRE | SMOKE | STEAM | GAS)
+}
+
+pub fn is_liquid(m: u8) -> bool {
+    matches!(m, WATER | LAVA | OIL | ACID)
+}
+
+/// Fill-empty paint mode may write over this cell: Empty itself, or a gas (Fire/Smoke/Steam/Gas), which the
+/// plan's own wording ("paint sand without erasing rock") treats as not really "there" — never a solid,
+/// liquid or Bedrock (plan-game-modes.md "Sandspiel-style brushes").
+pub fn fill_empty_writable(m: u8) -> bool {
+    m == EMPTY || is_gas(m)
 }
 
 pub fn is_flammable(m: u8) -> bool {
-    matches!(m, WOOD | SEED | STEM | FLOWER)
+    matches!(m, WOOD | SEED | STEM | FLOWER | OIL | GAS | MOSS | MUSHROOM)
+}
+
+/// Movement classes, mirroring `shared/names.ts` `MATERIAL_CLASS` (a test parses that file and pins this).
+pub const CLASS_EMPTY: u8 = 0;
+pub const CLASS_SOLID: u8 = 1;
+pub const CLASS_LIQUID: u8 = 2;
+pub const CLASS_GAS: u8 = 3;
+
+pub fn material_class(m: u8) -> u8 {
+    match m {
+        EMPTY => CLASS_EMPTY,
+        WATER | LAVA | OIL | ACID => CLASS_LIQUID,
+        FIRE | SMOKE | STEAM | GAS => CLASS_GAS,
+        _ => CLASS_SOLID,
+    }
+}
+
+/// Enemies (slimes) cannot enter solid cells; they wade through liquid and gas. Unknown ids count as solid.
+pub fn blocks_enemy(m: u8) -> bool {
+    material_class(m) == CLASS_SOLID
 }

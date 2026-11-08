@@ -16,6 +16,7 @@ export const EVENT_NAMES = [
   "admin.refused",
   // Connection
   "hello.rejected",
+  "hello.failed",
   "join",
   "leave",
   "replaced",
@@ -23,6 +24,8 @@ export const EVENT_NAMES = [
   // Input
   "input.summary",
   "pos.rejected",
+  "dev.teleport",
+  "dev.teleport_refused",
   "input.rate_limited",
   "input.rejected",
   // Consistency
@@ -35,6 +38,21 @@ export const EVENT_NAMES = [
   "snapshot.accepted",
   "snapshot.rejected",
   "snapshot.abandoned",
+  "snapshot.unreadable",
+  // Warm verify lanes (D-228): one per occupied room, under a memory budget
+  "verify.lane_opened",
+  "verify.lane_refused",
+  "verify.lane_closed",
+  // Rooms (R2a: table and HTTP API. R2b: lazy load/unload on the socket path)
+  "room.created",
+  "room.create_rejected",
+  "room.loaded",
+  "room.unloaded",
+  "room.deleted",
+  // OWNED: a player's persistent sandbox (create/find/delete by its owner); refusals are rate limited
+  "room.delete_refused",
+  "world.tick_failed",
+  "db.write_failed",
   // Housekeeping
   "tick_log.flush_failed",
   "identity.evicted",
@@ -49,6 +67,13 @@ export const EVENT_NAMES = [
   // Later (M5/M6): reserved names only. Nothing emits these yet.
   "claim.death",
   "claim.kill",
+  "claim.round_start",
+  "claim.round_end",
+  "round.start",
+  "round.end",
+  "enemy.kill",
+  "boss.killed",
+  "resync.refused",
   "claim.unresolved",
   "achievement.awarded",
 ] as const;

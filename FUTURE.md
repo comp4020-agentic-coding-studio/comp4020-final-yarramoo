@@ -216,3 +216,580 @@ input as it reaches the server, not only for your own.
 ## Bag fade-out and per-bag lifetime (from M5 slice 4)
 
 Bags expire after 90 s but the view carries no `expires_at`, so the client cannot blink or fade a bag that is about to vanish. Adding the expiry tick to `ENT_BAG` would let the sprite flash in its last 10 s. Also worth doing: a spell-coloured breakdown of a bag's contents on hover, instead of only the total.
+
+## Arena extras: rounds, king of the hill, capture the bag
+
+Timed arena rounds with a round-end scoreboard; a marked hill zone that scores points per second held (a sim-side counter); a capture-the-bag variant built on dropped bags.
+
+- **Source:** the game-modes research (`docs/research/game-modes-design.md`), from .io games, Minecraft minigame servers and Worms.
+- **Why:** a fighting mode needs a loop and a reason to move. These are out of scope for the free-for-all arena (plan U3) but are the obvious next step.
+
+## Private arena rooms and a per-player PvP toggle
+
+Room codes that spin up a fresh arena world per group, and a Terraria-style visible PvP flag inside shared worlds.
+
+- **Source:** the game-modes research, Terraria and Entangled Worlds.
+- **Why:** friends could fight without strangers. The server can carry extra 1024x768 worlds (`docs/research/game-modes-capacity.md`), but lazy load and unload of empty worlds would have to be built first.
+
+## Share a creative build
+
+Export a region of the creative world as a PNG or a link (a Sandspiel-style gallery).
+
+- **Source:** the game-modes research, from Sandspiel.
+- **Why:** gives creative play an outcome to show off; rendering only, no sim change.
+
+## Sandspiel cloner/wind tools, new materials, spray density
+
+A cloner brush (copy a region and stamp it elsewhere), a wind tool (a directional force on gas/particles),
+new materials (ice, oil, gas), and a spray-density slider for the existing brushes.
+
+- **Source:** `docs/plan-game-modes.md`'s "Sandspiel-style brushes" section ("Out of scope, kept in
+  FUTURE.md"), explicitly deferred past R4 (this slice built the fill-empty flag and the brush/spell switch
+  only). Logged here as its own entry since the plan named it but no FUTURE.md row existed yet.
+- **Why:** these round out the Sandspiel feel but each needs real sim work (a cloner needs a bounded
+  region-copy input shape; wind needs a new per-cell force pass; new materials need their own `grid.rs`
+  update rules) rather than reusing the existing Paint/disc machinery R4's fill-empty flag did, so they are
+  real slices of their own, not small additions.
+
+## pickup_respawn has no sim-side effect
+
+The `pickup_respawn` config field (0 off, 1 on) is validated, hashed and round-trips correctly, but nothing
+in `sim/src/sim.rs` reads it: pickups are generated once per world and always recharge on the fixed
+`PICKUP_RESPAWN` (3600-tick) timer in `tuning.rs` regardless of the field's value.
+
+- **Source:** R4 worker, found while wiring `cfg.all_spells()`/damage into sim rules and reading every
+  pickup-related path per the brief's "respawn/pickup-respawn fields confirmed working for non-Deathmatch
+  values" instruction. Creative's `pickup_respawn: 1` happens to match today's only behaviour (always
+  respawn), so nothing broke, but a future Survival-shaped preset needing `pickup_respawn: 0` ("pickups that
+  never come back", per the plan's Presets table) will find the field currently does nothing.
+- **Why:** this is exactly the kind of latent gap a new preset with a genuinely different value would
+  surface; better to log it now than have R6 (Survival) discover it mid-slice.
+
+## Creative two-player interaction has no "who built what" attribution
+
+Testing Creative with two simultaneous painters (one fill-empty building a pile over rock, one casting
+unlimited spells) showed both work correctly side by side, but there is no way to tell afterward who placed
+a given cell — `grid.aux` carries per-cell metadata already (chunk/plant state) but not a "last painter"
+tag, and invariant 11 (no per-cell ownership tags) forbids adding one for gameplay reasons anyway.
+
+- **Source:** R4 worker, manual two-context check (one fill-empty painter, one caster) while verifying
+  commit 3's damage-off behaviour.
+- **Why:** a griefing/moderation feature (undo the last N cells a specific player placed) would need this,
+  but invariant 11 exists for a reason (no new hashed per-cell state, bounded work); any version of this
+  would need its own design pass, not a quick addition.
+
+## Dig preview and depth-scaled digging
+
+Show Blast's dig disc in the aim preview, and make digging slower in deep bands or in harder materials.
+
+- **Source:** the Blast-dig worker (21 Oct night), building R1's starting dig.
+- **Why:** players can't see where the 4-cell disc lands (6 cells along the aim); slower deep digging keeps Bomb worth finding.
+
+## Cheaper empty ticks
+
+Coalesce or compress tick frames per member; empty ticks cost about 420 B/s per member for nothing.
+
+- **Source:** the capacity measurement (`docs/research/capacity-rooms.md`).
+- **Why:** member count and CPU bind capacity, and a Fly machine may start with only a 5 s burst balance.
+
+## Natural-looking traversal: backbone worms instead of repair shafts
+
+Gen v2's box-fit repair carves near-vertical radius-6 shafts that read as pipes (`docs/art/shots/gen-v2-seed8-2026-10-21.png`, the shaft near x=380). A wandering minimum-radius backbone worm per entrance (cave-gen-v2 step 2, skipped because the repair alone passed) would make the guaranteed path look like a cave. Also check pickup reachability in the repair. (The traversal test keeps its own copy of the box-fit flood on purpose: an independent check cannot share a bug with `gen::box_reach`.)
+
+- **Source:** reviewing the gen v2 worker's output and the preview of seed 8.
+- **Why:** the repair is a correctness backstop; the look of the caves is what players see.
+
+## One shared byte-vector file for the config encoders
+
+The config round-trip vectors are hard-coded twice (`sim/tests/config.rs`, `tests/net/room.test.ts`). A single `tests/fixtures/room-vectors.json` that both read (the Rust side with the script.rs mini-parser) would make drift impossible rather than merely tested. Not done in R0a because the brief allowed either and the table is 3 vectors plus a mutation list.
+
+- **Source:** R0a worker, while writing the round-trip test.
+- **Why:** R1 and R2 add fields and presets; a third copy is where the encoders would quietly diverge.
+
+## Property test: decode never accepts what encode cannot produce
+
+Fuzz random 16-byte arrays through `RoomConfig::decode` and `decodeConfig` and assert they agree, and that every accepted config re-encodes to the same bytes. Catches a range off by one in either language.
+
+- **Source:** R0a worker.
+- **Why:** the server validates in TS and the sim in Rust; they must refuse exactly the same configs or a room could be created that no client can init.
+
+## A `gen-report` dev tool for per-size tuning
+
+Print, per (seed, size), the body-reachable depth and the open fraction by band, as a table, so S and M's scaled bands/targets (`Scale::new` in `sim/src/gen.rs`) can be tuned by numbers instead of only by eye in `gen-preview.html`. Run it in CI so a future generator change that quietly breaks traversal at one size shows up as a diff, not just a test pass/fail.
+
+- **Source:** `docs/research/cave-gen-v2.md`'s own FUTURE idea, generalised to every size by the R1 worker (22 Oct).
+- **Why:** R1 scaled every absolute L constant (bands, pile counts, repair depth) by a linear height ratio and an area ratio with hand-picked floors; those floors (`scale_count`'s 6/8/10) are guesses, not measurements, and a report would make retuning them fast.
+
+## Room creation latency doesn't scale down with world size
+
+Caves generation measured (native, release, R1): S (512x512) 85 ms, M (1024x768) 91.5 ms, L (2048x1536) 245.6 ms. S is barely cheaper than M despite 1/4 the area, and both are a sizeable fraction of L's cost despite being much smaller. The likely cause is `Scale::new`'s count floors (sand/gunpowder/water/lava/tree counts have a minimum, so small worlds still place close to as many discrete features as a big one) plus fixed-cost passes (the noise-field setup, the repair-traversal box-fit flood) that don't shrink with the grid in this size range.
+
+- **Source:** R1 worker's gen-time measurement (brief's "note any surprising cost").
+- **Why:** R2 measures room creation latency on the real server; if S/M rooms are expected to be proportionally fast because they're small, this finding says otherwise, and a `gen-report` (above) would make the cost breakdown visible per pass rather than only as a wall-clock total.
+
+## Scale the surface/wall margins proportionally at small sizes, not just the feature density
+
+R1 scaled material pile/pool x-spans as `w - <L's margin constant>` (clamped to a floor), keeping the same absolute wall clearance as L rather than the same proportion of the width. At S (512 wide) this margin is a much bigger slice of the world than at L; scaling the margin itself, not just the span, might look more visually consistent once someone's eyeballed the S/M previews side by side with L.
+
+- **Source:** R1 worker, flagged as the more-reversible choice taken under budget ("Architectural decisions for review" item 2, `docs/research/r1-worker-report.md`).
+- **Why:** cosmetic, not safety-critical (doesn't affect the traversal guarantee), so it's a good candidate for a later polish pass once there's a preview to judge by eye.
+
+## IP-based rate limiting for anonymous room creation
+
+R2a's `MAX_ROOMS_PER_CREATOR_PER_DAY` only tracks `creator_player_id`, so an anonymous creator (no registered
+player yet, since joining still goes through the two fixed worlds in this slice) has no cap at all. Once R2b
+makes joining real, an anonymous creator even makes sense as a concept worth limiting, and it should probably
+be limited by IP (`log.ipTag`-style hashing, not raw storage) the same way `/api/players` registration and
+`/ws` connections already are, rather than by a player id that doesn't exist yet.
+
+- **Source:** R2a worker, flagged by the brief itself ("the session model, once joining is real, is where an
+  anonymous creator even makes sense to rate-limit by IP").
+- **Why:** without it, R2b's room creation is open to an unlimited-room flood from one address until identity
+  is wired into the HTTP API path too.
+
+## Live player counts and a real sort for the public room list
+
+`RoomsStore.listPublicRooms()` currently sorts by `last_active` descending only, with a
+`// TODO(R2b): sort by live player count first` left in place, because no room is joinable yet in R2a so
+there is no live count to sort by. Once R2b loads rooms into `World` instances, the list should sort by
+member count first (matching the plan's "sorted by players, then most recent") and `GET /api/rooms` should
+include that count per the plan's API shape.
+
+- **Source:** R2a worker, per the brief's explicit instruction not to invent a fake count this slice.
+- **Why:** the room browser (R3) will want "busiest rooms first" to actually mean something. **Update (R2b):**
+  rooms now load into real `World` instances with a live `playerCount`, so this is now buildable — `GET
+  /api/rooms` would need to join against the in-memory `worlds` map (not stored in `RoomsStore`, which only
+  ever sees the database) for a room that's currently loaded, and fall back to 0 for an unloaded one.
+
+## Reserve the rooms table's id space properly, in server/db.ts
+
+R2b found that `rooms.id` (`integer primary key`, no `AUTOINCREMENT`) hands the very first room ever created
+id 1 — colliding with the fixed `GAME_ID`. The workaround (two idempotent placeholder rows for ids 0/1,
+inserted from `server/main.ts` at startup) works but lives outside the schema file because `server/db.ts` was
+out of this brief's "Files you may touch" list. The real fix belongs in `server/db.ts`: either add
+`AUTOINCREMENT` to the `rooms` table (forces monotonically increasing ids, but doesn't itself skip 0/1) and
+seed `sqlite_sequence` past 1 in a migration, or keep the placeholder-row approach but move it into a
+migration so it runs once, in the schema, rather than as an idempotent insert on every boot.
+
+- **Source:** R2b worker, flagged in "Architectural decisions for review" as a workaround from outside the
+  file it belongs in, not the real fix.
+- **Why:** `server/db.ts` migrations are append-only; whoever next touches that file should fold this in
+  rather than leaving the startup-time workaround as the permanent home for an id-space reservation.
+
+## Per-mode room lifecycle timing (Creative archive/delete, Deathmatch/Survival delete-on-empty)
+
+R2b built the unload-when-empty *mechanism* (one uniform 2-minute timer, any room, any mode) deliberately
+without the mode-specific timing the plan calls for: Creative's 1-hour-archive/7-day-delete, Deathmatch's
+delete-as-soon-as-empty (no archive snapshot at all), Survival's delete-on-win-or-empty. This is the brief's
+own named deferred follow-up, logged here so it isn't lost between slices.
+
+- **Source:** `docs/briefs/r2b-protocol-and-lifecycle.md`'s own scope boundary; confirmed still open after
+  R2b landed only the uniform timer.
+- **Why:** without it, every room (including a Creative room someone wants to keep) unloads from memory after
+  2 minutes empty just like a Deathmatch room — which is fine (unloading just means "not in RAM right now,"
+  not "deleted"; a join reloads it from its stored row), but nothing yet implements the archive step
+  (recompress at level 9, drop the tick log and older snapshots) or the delete-on-win/delete-on-empty rules
+  that actually remove a room's row.
+
+## A real per-room seed, not the room's own id
+
+R2b needed every member of a room to agree on a seed without a database round trip adding real entropy, and
+`rooms` has no `seed` column yet (`server/db.ts` is append-only migrations, out of scope this slice). The
+room's own id is unique and stable, so it doubles as the seed for now — flagged in the worker report as the
+more reversible choice taken under budget. A real random seed, generated at room-creation time and stored
+alongside the config (closer to the plan's "a room is a seed plus a config"), is the proper fix, and also
+closes a minor griefing angle: with id-as-seed, a creator who can predict or choose the next room id can
+predict or choose the room's starting cave layout.
+
+- **Source:** R2b worker, "Architectural decisions for review."
+- **Why:** a `seed` column is a one-line migration once `server/db.ts` is back in scope for a slice; doing it
+  now would have meant touching a file outside this brief's list for a cosmetic-not-yet-urgent gap (the game
+  is not live, so no deployed room's layout needs to survive this change).
+
+## A debug route to force `World.requestSnapshot()` for test benches
+
+R2c's capacity-rooms bench needed to force a verify on 4 fresh rooms but found no way to reach
+`World.requestSnapshot()` from outside the server process — no HTTP route calls it, so the bench instead waits
+out a natural `SNAPSHOT_EVERY_TICKS` cycle (up to 30 s per room). That's workable but slow and a little fragile
+(a 75 s wait budget that could, on a bad run, time out before a cycle fires). A test-only route gated behind
+`ADMIN_TOKEN` (same gate `/dashboard` already uses) that calls `requestSnapshot()` on a named world id would let
+any future soak bench force a verify in milliseconds instead of waiting on the clock, without adding any new
+unauthenticated surface.
+
+- **Source:** R2c worker (`docs/briefs/r2c-capacity-remeasure.md`), building `tests/soak/capacity-rooms.ts`.
+- **Why:** every future capacity/soak bench that wants to measure "memory/CPU right after a verify" pays the
+  same up-to-30s wait this one did; a gated debug route removes that tax once, cheaply.
+
+## Capacity benches should run N>=3 times by default, not once
+
+This slice's own numbers are the argument: 4 runs of an identical 24-bots/4-rooms scenario landed at 171.82,
+95.74, 103.90 and 104.86 MB cgroup memory — one run in four nearly 70 MB higher than the rest, for reasons not
+yet identified (see `docs/research/capacity-rooms.md`'s R2c section). A single run would have reported either
+"borderline" or "comfortable" depending on luck. Worth considering making multi-run-by-default (and reporting
+the spread, not just one number) the house style for every future capacity bench, not just this one.
+
+- **Source:** R2c worker, measuring `docs/research/capacity-rooms.md`'s R2c section.
+- **Why:** a capacity number that silently picks its best (or only) run is exactly the kind of overconfident
+  result CLAUDE.md's "treat a red check as authoritative" spirit warns against for correctness; the same logic
+  applies to a measurement that looks green by chance.
+
+## Live preview on the menu (M1's "yes, it stays") still needs building
+
+R3 built the menu shell, mode cards, room list, create sheet with a real joinable room, the name sheet and the
+first-visit hint, but not the muted spectator preview of the busiest public room behind the hero text (plan's
+commit 6, M1: "the live preview stays live"). It needs: a second worker (or a lightweight second connection
+multiplexed through the existing one) run on the menu page itself as a spectator, a "busiest public room"
+selection, and a fallback to `/sandbox` if nothing else is live — plus a measurement that it doesn't meaningfully
+slow the menu's first paint on a cold phone visit (the plan's own 5-second framing). It's blocked on one more
+thing: `GET /api/rooms` doesn't return live player counts yet (an R2a/R2b TODO, explicitly out of scope for
+R2a/R2b and for R3's own room list, which the plan says is fine to ship counts-free) — "busiest" needs exactly
+that number, so this probably wants to land together with whichever slice finally adds live counts to the room
+list, rather than inventing a one-off count just for the preview.
+
+- **Source:** R3 worker (`docs/briefs/r3-menu.md`), stopped before commit 6 per its own conditional wording.
+- **Why:** the user has already said yes to live preview (M1, 21 Oct); it's not cut, just not yet built, and the
+  room-list live-count dependency is worth not rediscovering from scratch next time.
+
+## Full touch controls for avatar modes
+
+The menu shows "Watch" instead of "Join" for Deathmatch/Survival/avatar-Creative rooms on a touch device
+(generalizing D-011's existing game-world behaviour to every avatar-capable mode), so phones stay spectate-only
+for PvP. Real touch controls (movement stick, a cast gesture) would let phones actually play avatar modes, which
+the plan already calls out as future work rather than this milestone's job.
+
+- **Source:** `docs/plan-game-modes.md`, "Phones" section, restated here so it's tracked alongside the rest of
+  R3's deferrals rather than only living in the plan doc.
+- **Why:** a marker on a phone is exactly who D-011 and this menu are both designed around; full touch support
+  would widen who can actually play, not just watch.
+
+## Sound: a volume slider, ambient beds, per-material impacts
+
+A volume slider beside the mute button; a quiet ambient bed (drips in the caves, wind on the surface);
+impact sounds by the material hit (sand hiss, water plop, rock clack), read from the impact cell.
+
+- **Source:** the juice worker's report (`docs/research/juice-worker-report.md`), 31 Oct.
+- **Why:** sound is most of the feel in a sand game, and these are client-only.
+
+## Respect `prefers-reduced-motion` for screen shake
+
+- **Source:** the juice worker's report, 31 Oct.
+- **Why:** the shake is now on knocks, Blast casts and explosions, which is a lot for some players.
+
+## Enemy spawners (an extension to one-shot enemies)
+
+Nests that respawn enemies on timers, or waves that spawn near players, on top of the one-shot,
+generator-placed enemies Survival gets first.
+
+- **Source:** the user, 31 Oct ("we may also add in spawners later, but let's treat that as an
+  extension"), and `docs/research/enemies-design.md` section 4.
+- **Why:** respawning would let enemies work in Deathmatch or a co-op endless mode. Wave spawning near
+  players would make a wave mode possible. Both need a respawn timer in hashed state, plus a rule that
+  never spawns in view.
+
+## Rigid bodies: rock that falls when cut free
+
+v0: crumble a freed island into falling powder. v0.5: drop small islands straight down in the grid. v1: a
+translation-only `Body` entity. v2: rotation. **v0.5 shipped 5 Nov (D-192); v1 and v2 not planned (the user: too
+much work for the gain).**
+
+- **Source:** the user, 31 Oct; research in `docs/research/rigid-bodies.md`; engineering-decisions entry 28.
+- **Why:** it's the Noita moment of cutting a chunk free and watching it fall. v0 is cheap (about half a day,
+  no snapshot change); rotation (v2) is 5+ days of high-risk work in fixed point.
+
+## Teleport (skipped from F3)
+
+A deep-pickup bolt that moves the caster to the last body-sized open spot along its path.
+
+- **Source:** the F3 brief (`docs/briefs/fun3-spells.md`), skipped by the worker for lack of budget
+  (`docs/research/f3-worker-report.md`).
+- **Why:** an escape and traversal spell. The open question is the server's Pos validation:
+  `maxPosJump` (D-067, D-078) would reject the jump unless the sim's teleport is visible to the server, or
+  the client opens a new baseline the way a respawn does. Settle that before building it.
+
+## Falling rock: logs, not sand, and v1 bodies
+
+**Done in v0.5 (D-190):** a cut tree falls as Wood. Still open: a large freed dirt mass becomes Pebbles, not
+falling dirt (the user, 5 Nov). Originally: a cut tree crumbled to sand (D-165); it could fall as Wood instead, so it still burns. Beyond that, the
+research's v1 (a translation-only `Body` entity that falls as one piece) and v2 (rotation).
+
+- **Source:** falling rock v0 and its review (`docs/research/review-falling-rock.md`), 1 Nov.
+- **Why:** sand everywhere loses the material identity that makes the sim fun. A collapsed overhang can
+  also plug a shaft on the guaranteed path; sand digs, but a gen-time check would be kinder.
+
+## Shared simulation work between players (reviewed, not recommended)
+
+Idea: a client simulates in real time only the chunks near it; far chunks are simulated by whichever player
+is near them, and a client walking towards one asks the server for an up-to-date copy.
+
+- **Source:** the user, 3 Nov, while deciding how to fix liquids freezing at the active region's edge. The
+  session model's critical review, given at the time, recommended against it. Recorded so the reasoning
+  isn't lost.
+- **Why not (for now):**
+  - It ends lockstep: when no two clients hold the same world, hashes can't be compared, and desyncs go
+    undetected.
+  - Skipped chunks still feed simulated ones every tick (a flood crossing in), so neighbours' data would have
+    to stream continuously.
+  - The server never steps the sim (invariant 11), so "an up-to-date chunk" can only come from another
+    client. One bad client could corrupt everyone's world unchecked.
+  - Nobody near a chunk means it either freezes (the original bug) or someone simulates it anyway (no
+    saving).
+  - It's weeks of work: ownership and handover, a chunk protocol, mid-history joins, trust.
+- **What to do instead if load is a problem:** cap the woken chunks per tick, step woken chunks at a lower
+  rate (every 2nd or 4th tick), or cap world size. All keep lockstep. Brief W's load test
+  (`docs/research/wake-load-results.md`) decides whether any of it is needed.
+
+## Dev overlay for chunk sleeping (done for the active box; sleeping still to add)
+
+The active-box overlay (`?activebox=1`) shows the active and frozen chunks. Extending it to tint sleeping
+chunks (and woken ones, after brief W) would show at a glance which chunks are costing CPU.
+
+- **Source:** brief A's worker report, 3 Nov.
+- **Why:** sleeping bugs and load problems are invisible otherwise; the active-box overlay found the liquid
+  walls' cause in minutes.
+
+## A world-sweep test for falling rock
+
+Dig at a grid of sites across several Survival seeds and assert that no Rock ever becomes a powder unless it
+was really cut free.
+
+- **Source:** brief B's worker report, 3 Nov. The probe took about 4 s natively.
+- **Why:** both falling-rock bugs so far (D-165's arena cut, D-174's thin strips) were found by eye, not by
+  a test. A sweep would catch the next one.
+
+## Grain variation for Pebbles
+
+Give Pebbles a per-cell shade in the shader, so a heap reads as gravel rather than flat grey.
+
+- **Source:** brief B's worker report, 3 Nov.
+- **Why:** cheap and client-only, and it makes "rock that fell" more obvious.
+
+## Music for the game and the main menu
+
+A music track for the menu and one (or a few) for play, ideally changing with depth: calm at the surface,
+darker in the caves, and a boss theme for the Deep Mage's arena. It needs a mute or volume control next to the
+existing Sound button, and a separate setting from sound effects.
+
+- **Source:** the user, 4 Nov (added to the list while away at work).
+- **Why:** sound is most of a game's feel, and the menu is currently silent. Two cheap options, both
+  client-only (no sim or protocol change):
+  - **Synthesised, like the sound effects:** `client/sfx.ts` already makes every effect with WebAudio and
+    ships no audio files. A small generative sequencer (a few chords and a pentatonic melody, a slow
+    arpeggio) could do the same with zero download. Its mood follows the camera's depth band
+    (`SHALLOW_TOP`/`DEEP_TOP`) and the boss bar. Low risk and fits the existing style.
+  - **Audio files:** composed or licensed loops (CC0 or CC-BY, credited in the README) as compressed `.ogg`
+    or `.mp3` in `client/public/`. Richer sound, but it adds download weight and a licence trail.
+- **Notes:** browsers block audio until the first click or key, so the menu track can only start after an
+  interaction (the existing Sound button already handles that). Respect the mute state in `localStorage`.
+  Crossfade between tracks rather than cutting. Pairs with the "volume slider and ambient beds" entry above.
+
+## Let surface shimmer freeze, so woken chunks don't accumulate
+
+Woken chunks holding liquid never return to frozen: a free water surface keeps swapping cells, and lava and acid
+are volatile. Over a long session the running chunk count only grows (D-176). A rule that treats pure surface
+shimmer as quiet (part of the hash, since it's semantic outside the active set) would let them settle.
+
+- **Source:** brief W's load test and report, 4 Nov.
+- **Why:** the worst case built is cheap today (1.7 ms p95 native), but a long session with many floods has no
+  ceiling short of the whole grid.
+
+## A bounded falling-rock check with hazards present
+
+`generated_worlds_are_stable_across_seeds_and_sizes` now strips generated acid, lava and gunpowder (D-176), so it
+no longer covers terrain beside them. A second check could keep the hazards and assert that only cells near a
+hazard changed.
+
+- **Source:** review W F5, 4 Nov.
+
+## A server-side "away" state for silent players
+
+A player whose tab is hidden sends nothing (D-177) but still counts for the lobby's ready-up and the active
+region. The server could mark a member with no input for a few minutes as away.
+
+- **Source:** brief F's report, 4 Nov.
+
+## Music: duck under loud effects, a volume slider, avatar depth
+
+Lower the music briefly under explosions; a volume slider instead of on/off; pick the depth mood from the
+avatar rather than the camera, with a calm mood for spectators.
+
+- **Source:** brief J's report, 4 Nov.
+
+## Shallow lava should count as "in" lava
+
+The avatar controller only checks rows -1 and -5 of the body's middle column (`client/avatar.ts` `liquidAt`), so
+lava less than 2 cells deep doesn't slow or sink the player.
+
+- **Source:** brief F's report (playtest note 6), 4 Nov. Left alone in that slice.
+
+## Identify the cyan bracket from playtest note 12
+
+The hollow light-cyan bracket in `docs/art/playtest-2026-11-03/cant-pick-up.png` was never identified. The
+"can't pick up" itself was explained by catch-up (D-177), so it may be Ice or Glass cells. Check the cell's
+material if it shows up again.
+
+- **Source:** playtest note 12, 3 Nov.
+
+## A fresh snapshot instead of replaying a huge backlog
+
+A client more than about 20,000 ticks behind could ask for a snapshot rather than fast-forward through the
+whole log. It needs a server decision about when to hand one out (the resync path exists).
+
+- **Source:** brief F, item 1(c), skipped as more than a few lines, 4 Nov.
+
+## HUD leftovers from the UI review
+
+A small bar above your own avatar while it takes damage or levitates; picking 2x or 3x scale (or a wider
+`GAME_VIEW`) by window size to cut the side margins; collapsing zero-count consumables until first found.
+
+- **Source:** the UI review (playtest note 10) and brief H1's report, 4 Nov.
+
+## The live menu, and a read-only spectator connection
+
+The `menu-live` branch (brief HM, unmerged; D-184) adds live player counts and a busiest-first sort to
+`GET /api/rooms`, and shows the busiest room's stored snapshot behind the menu. A real live view needs a spectator
+connection that isn't a member: not in Who, the ready-up or capacity, never holding the clock or keeping a room
+loaded, and fed the log tail instead of the whole log.
+
+- **Source:** brief HM's live worker (`docs/research/hm-live-report.md` on `menu-live`), 4 Nov.
+- **Why:** the counts are worth having in the room list on their own (cherry-pick `9b7ff00` minus the preview
+  route). A true spectator would also serve phones (D-011) and the showcase.
+
+## Menu backdrop polish
+
+Fatter water streams, pause the scene while a sheet is open, reset by restoring a start snapshot instead of
+restarting the worker, and a second scene for variety.
+
+- **Source:** brief HM's local worker report, 4 Nov.
+
+## Playtest feedback, 5 Nov (the user's list, not yet scheduled)
+
+From the user's `feedback.txt` after the water fix. The pickup bug and the small items (lava sound, fight music,
+coal blast damage, spell slots by pickup order) were offered for before the deadline; the rest are here.
+
+- **Cave biomes and structures.** Greenery, moss and mushrooms (burn slowly); wooden support beams that burn
+  slowly and can ignite coal piles; a man-made Brick material for rooms and platforms in large open spaces; icy
+  biomes with frozen lakes where walking slides. **Why:** variety and hazards to use against enemies and players.
+  Each is gen plus sim work and a format bump; ice sliding touches the client avatar controller and the server's
+  Pos validation.
+- **Large lava pools** that players can push each other or mobs into. **Why:** environmental kills. Watch the
+  sleeping cost of big lakes (D-172 lets quiet lava sleep).
+- **A livelier surface.** A small mountain or lake, trees with greenery, shrubs, tame animals (a new passive
+  enemy kind). **Why:** the first thing a player sees is a flat strip.
+- **Sandbox rooms.** The same create/share interface as game rooms, public or private, with a chosen expiry
+  within 24 hours. **Why:** the shared sandbox is one world for everyone. Rooms already exist for game modes
+  (D-188 expiry, "unlisted" visibility), so this is mostly menu and config work.
+- **Large freed dirt falls as dirt**, not Pebbles (see "Falling rock" above).
+
+## Biome follow-ups (from the biomes lead's report, 6 Nov)
+
+- **The surface** (hills, a lake, tree canopies, shrubs, sand traps): cut for budget, brief ready in
+  `docs/briefs/biomes-surface.md`. Tame animals: a passive enemy kind, below the cut line.
+- **Rooms on more mine halls**: about 1 in 4 halls has a level floor; filling or bridging lake floors would give more.
+- **A rock bridge across each lava lake**, and lava lakes as the boss arena's moat.
+- **Enemies slide on ice** (a sim rule: slimes keep their hop velocity on Ice).
+- **Pick biome sites before the worms and the arena**, so the cave network is built around them, not repaired after.
+- **Generation time**: L went from 270 ms to 515-860 ms; a bounded local reachability check per site instead of
+  whole-grid floods would win most of it back.
+- **Source:** `docs/research/biomes-report.md` and `biomes-mine-fix-report.md`. **Why:** each was out of the $50.
+
+## Dev tools and rendering follow-ups (6 Nov, from the sky and dev-tools workers)
+
+- **A hitbox overlay** for players and enemies, drawn beside `__activeBox`'s rects (`pushActiveBox`,
+  `client/worker.ts`), from a hitbox table mirrored from `sim/src/entities.rs` and pinned by a test like
+  `spells-table.test.ts`. Drawing only (invariant 9). **Why:** there is none, and contact damage and pickup reach
+  are argued about by eye. **Source:** `.claude/skills/dev-tools/SKILL.md` "Not available".
+- **`__devGive(spell)` / `__devHeal`** dev hooks, to test a spell without finding its pickup. **Source:** the
+  dev-tools worker.
+- **The remote teleport hooks under vite**: the dev block in `client/room.ts` replaces them, so
+  `SIMULTA_DEV_TELEPORT` only works from a built client. The user is fine with this (6 Nov); fix only if it bites.
+- **An exact sky mask**: flood "open to sky" from the top row instead of the rim heuristic, so very wide pits
+  (over ~128 columns) and open-sided cliff caves get the right background. And a `plant` material class in
+  `shared/names.ts` to replace the renderer's hardcoded plant ids. **Source:** `docs/research/sky-report.md`.
+- **Per-biome cave back walls** (icy blue in the ice caves, warm red near lava lakes). **Source:** the sky
+  worker's report; the wall is one function of depth today.
+- **A wooden scaffold or lean-to against a mine hall's wall** for halls with no level stretch (7 in 32 M worlds still
+  get no beams), and a generation-report test that prints the `place_biome_halls` undo count per size so it is
+  tracked. **Source:** `docs/research/mine-wood-report.md`, 6 Nov.
+- **More frost sprites per ice cave**: scale `ANCHOR_NEAR` and the spawn pocket with the site radius (L gets 0-2 of
+  the designed 6). And **frost trails that freeze a lava lake's surface into a bridge**. **Source:**
+  `docs/research/int-enemies-report.md`, 6 Nov.
+
+## Colossus balance and mechanics (INT-2, 6 Nov)
+- Balance the Colossus: 600 hp with 2 hp per sand cell re-formed every 8 ticks is a guess; run a budget pass like `boss-budget.md` and consider whether water should do more than the shared weakness (turning its sand to mud so it cannot re-form).
+- Seeds 1, 6, 10, 12, 16 roll the Colossus, 2-5 roll the Mage: show the boss on the room card or lobby ("Boss: Sand Colossus") so players know before descending.
+- **The new materials in generation** (salt flats, snow on the surface, mud near water) now that each has a sleep
+  test; **a hotbar that scrolls or wraps below ~480 px** (it clips at 390 px with six slots, a full bag is nine);
+  **a sim test helper that writes cells and marks their chunks**, so a test cannot start two different worlds again.
+  **Source:** `docs/research/int-spells-report.md`, 6 Nov.
+- **Phone play follow-ups** (D-209): a floating left thumb-stick instead of fixed arrow buttons; aim assist (snap to
+  the nearest enemy within a cone); in portrait the world is a thin strip under a lot of empty space, so a taller
+  camera window (more rows) or a landscape prompt would use the screen; buttons scaled to the viewport. **Source:**
+  `docs/research/phone-play-report.md` and the session model's look at its screenshots, 7 Nov.
+- **Menu follow-ups** (D-210): a 30 fps draw cap for the menu backdrop on phones, and pausing it while a settings
+  panel covers the scene (throttled 390 px rendering hit 167 ms frames); persist the public death log across restarts;
+  per-mode counts in `/api/live`; remember the last type/size/visibility per browser, and "same settings again" on
+  the share screen; size and max players in Join rows. **Source:** `docs/research/menu-redesign-report.md`, 7 Nov.
+- **Per-biome cave walls from the generator** (icy behind ice caves, warm near lava): the background is now captured
+  from the generated world (D-211), so the generator's own sites could tint it. **Source:** the session model, 7 Nov.
+- **World life follow-ups** (D-212): rabbits as a passive sim kind (brief ready: `docs/briefs/life-w2-rabbits.md`
+  on the branch; review its id, the `MAX_ENEMIES` raise to 80 and lobby stepping first) and birds that take off when a
+  player nears a tree; a Leaf material so hover reads "Leaves" (format bump); brighter fireflies (faint at night);
+  tuft density by surface length; bigger crowns for tall trees. **Source:** `docs/research/world-life-report.md`, 7 Nov.
+- **Capacity follow-ups** (D-213): a verify sim per loaded room so verifies stay warm (with a test that two rooms'
+  verifies don't regenerate), a longer verify timeout or adaptive cadence, CPU throttling and cgroup memory on
+  `/api/summary`, a dev-only "verify now" trigger for benches, and a real-Fly rehearsal watching the CPU quota balance.
+  **Source:** `docs/research/capacity-2026-11-07.md`, 7 Nov.
+- **Ruins follow-ups** (D-216, D-217): house interiors worth entering (a table, a chest pickup, a ladder to the roof
+  gap); drawing water from a well into a bag; per-biome cave walls (client brief ready:
+  `docs/briefs/content-w3-cave-walls.md`); renumber the duplicated salts 260-267 at the next deliberate generation
+  change. **Source:** `docs/research/content-report.md`, 8 Nov.
+- **Independent code review, 8 Nov** (`docs/research/code-review-2026-11-08.md`, read from the code only): 2 high, 7
+  medium, 12 low, and 14 ranked improvements for a future session. Most urgent: hash votes count sockets, so spectators
+  or extra tabs can outvote players and supply the stored snapshot (H1, confirmed in code); Paint has no aggregate
+  work budget (H2); `update_ice` writes `aux` without `touch`, so a joiner's chunk hash goes stale across a chunk edge
+  (S1, confirmed, a one-line fix); old-tick HASH frames grow server state without limit (M1); `max_players` is never
+  enforced (M3).
+- **Phones and tests** (D-218, D-219): a floating thumb-stick (brief in `docs/research/phoneperf-report.md`); a
+  real-device frame-time measurement; **a `startServer` option to fix room seeds in tests** so
+  `claims-survival.test.ts` stops playing a random world each run (D-201 made it intermittent). **Source:** track C, 8 Nov.
+- **Review follow-ups** (D-221 to D-224): stream the catch-up over timer passes instead of the slack (review
+  improvement 9); M4, export binary layout facts from the wasm instead of copying them by hand in TypeScript (brief in
+  `docs/research/review-fixes-report.md`); L2-L8 from the review; count dropped HASH/PING frames on the dashboard.
+  **Source:** `docs/research/review-fixes-report.md`, 8 Nov.
+- **Owned world follow-ups** (D-225): "Open my world" straight from the title screen; renaming it; an optional reset
+  to empty; the dead-link page still titles itself "Game world" for any unknown code (pre-existing). **Source:**
+  `docs/research/owned-sandbox-report.md`, 8 Nov.
+- **Slow-connection follow-ups** (D-226): ~~re-run the bandwidth and long-blackout phases quietly~~ (done, D-231); a specific message when the server closes a connection as too slow (not seen in the runs); dim a slow
+  player's label for others only if playtests ask. **Source:** `docs/research/slow-net-report.md`, 8 Nov.
+- **Warm verify follow-ups** (D-228): defer a room's first snapshot request until its lane reports warm (the lag peaks
+  at the quota sit behind the lane's 4-16 s generation); shed the idlest lane when the room-load gate refuses a room;
+  lanes, lane MB and cold restores on the admin dashboard (the counters exist); keep the fixed game world's L lane from
+  filling the budget alone if rooms matter more; a sliding-window input limiter (the fixed 1 s window drops a burst a
+  loaded server reads late: `achievements-live.test.ts` "waterworks at exactly 100" fails that way under load, on
+  `multa` too). **Source:** `docs/research/warm-verify-report.md`, 8 Nov.
+- **Chat follow-ups** (D-229): a refusal frame so the sender sees "slow down" or "too long" instead of a silent drop;
+  phone input (a chat button opening the same input); mute a player (a client-side ignore list by name); a sound on a
+  mention; a per-IP cap on top of the per-player one and a sliding window (review L3, L4); allow U+200D between two
+  emoji so ZWJ emoji pass. **Source:** `docs/research/chat-report.md`, 8 Nov.
+- **Sound follow-ups** (D-230): a sim `EV_HURT {victim, amount, cause}` event for an exact cause (and other players'
+  hurts); falling-rock damage with a `crush` sound, if rock should hurt at all; a pin test of the contact-knock
+  signature against `tuning.rs`; a volume slider (only mute today); tune the water voice and the 19 new recipes by
+  ear; quiet cues for chat lines and achievements. **Source:** `docs/research/sound-report.md`, 8 Nov.
+- **Test clock and starvation** (D-231): a test-steppable world clock (`startServer({ worldNow })`) so scripted-play
+  net tests advance ticks by hand and are deterministic under any load (a small change to `World`'s `now`); a
+  starvation hook for the net suite (an in-process busy-wait from a vitest setup file), since external CPU hogs never
+  reproduce a loaded gate on macOS. **Source:** `docs/research/quality-2-report.md`, 8 Nov.
+- **Pin the newer cell rules** (D-232): a `perf_equiv` scenario that paints Mud, Salt, Snow and Thermite and casts Quake
+  (13) and Mudslide (14), so a change to those rules or their salts moves a pinned hash. Today nothing pinned covers
+  them. **Source:** `docs/research/salts-report.md`, 8 Nov.
+- **Liquids that settle faster and flatter** (D-233): with lava on half the ticks under both scan directions, a heap
+  levels to a 1-3 row ripple that takes 10000-30000 ticks to smooth fully. A rule that lets a resting surface cell
+  slide when its neighbour's column is 2+ lower (not only when pushed) would finish the job sooner. Mud (every third
+  tick) has the same parity question as lava had, but it is a powder, so it falls into already-scanned rows: measure
+  before changing. **Source:** `docs/research/final-night-report.md`, 9 Nov.
+- **The exact sky mask (above) is still the real fix** for the backdrop (D-234): the shaft rule stays a heuristic
+  (an opening up to 40 wide closes, wider is a valley), and since D-211 the line is computed once at generation, so a
+  flood fill would cost once per world. **Source:** `docs/research/final-night-report.md`, 9 Nov.
+- **Export the entity section's record sizes too** (D-235): `PICKUP_BYTES`, `PROJECTILE_BYTES`, `BAG_BYTES`,
+  `ENEMY_BYTES`, `HEAL_BYTES`, so `entity-layout.test.ts` stops writing them by hand. **Source:**
+  `docs/research/layouts-report.md`, 9 Nov.

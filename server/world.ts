@@ -1,9 +1,11 @@
 // One world (sandbox or game): connected clients, player ids, the closed-tick log, the tick clock, hash
 // checks, snapshots and persistence. Each world has its own clock, log and snapshots. Never steps the sim
-// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread.
+// (invariant 11); the only sim use is SnapshotVerifier.restore, which runs in a worker thread. The snapshot layout
+// (`WorldOptions.snapshotLayout`) is three constants main.ts reads from the wasm once at start, not a running sim.
 import { EventLog } from "./log.ts";
 import { KIND_JOIN, KIND_LEAVE } from "../shared/inputs.ts";
-import { GAME_H, GAME_W, POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
+import { NUM_ENEMY_KINDS, type SnapshotLayout } from "../shared/sim.ts";
+import { POS_ONE, POS_PAYLOAD_LEN, PosBaselines } from "../shared/avatar.ts";
 import {
   CHUNK_CELLS,
   chunkCountFor,
@@ -11,7 +13,10 @@ import {
   decompressSnapshot,
   encodeRequestChunkHashes,
   encodePlayerName,
-  MAX_SNAPSHOT_RAW_GAME,
+  encodeChatLine,
+  chatHasControl,
+  chatIsBlank,
+  MAX_CHAT_CHARS,
   encodeRequestSnapshot,
   encodeResync,
   encodeSnapshot,
@@ -29,7 +34,8 @@ import { MAX_CLIENT_INPUTS_PER_TICK, TickClock, type ClosedTick } from "./clock.
 import type { GameDb } from "./db.ts";
 import { ConnTiming, InputCounts, type PlayerStats } from "./stats.ts";
 import { STAT_RESYNCS } from "../shared/stats.ts";
-import type { SnapshotVerifier } from "./verify.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX, encodeConfig, isCaves, SIZE_DIMS, type RoomConfig } from "../shared/room.ts";
+import type { SnapshotVerifier, VerifyRoom } from "./verify.ts";
 
 export const SANDBOX_SEED = 1n;
 /** The game world's seed. Fixed so every deploy regenerates the same world from the stored row. */
@@ -48,7 +54,21 @@ export const MAX_LOG_TICKS = 200_000;
 export const WARN_LOG_TICKS = 100_000;
 /** Drop a client whose socket send queue grows past this: it is not keeping up. */
 export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+/**
+ * Review M2 (8 Nov): the most extra queue a catch-up burst may add on top of MAX_BUFFERED_BYTES. The burst (WELCOME or
+ * RESYNC, the snapshot, every logged tick) is sent in one synchronous loop, during which nothing drains: measured, the
+ * queue grows by every byte sent. Without slack a world whose snapshot plus log passed 8 MiB dropped every joiner
+ * partway through its own catch-up. 64 MiB is several million logged ticks; past that the joiner is still dropped.
+ */
+export const MAX_CATCHUP_SLACK_BYTES = 64 * 1024 * 1024;
 export const HASH_WAIT_MS = 2000;
+/**
+ * Review M1 (8 Nov): a HASH is accepted only for a checkpoint at most this many ticks before `lastClosed`, and the
+ * majority hash is kept for the same window. Older ticks would open checkpoints nobody else reports and leave truth
+ * entries forever. 30 checkpoints (30 s) is far past an honest client's lag: a live client more than 2 s behind
+ * fast-forwards, and replayed ticks send no HASH.
+ */
+export const HASH_WINDOW_TICKS = 30 * HASH_EVERY;
 /** A death claim is accepted for a tick at most this long ago, and an open tally is dropped after this long (D-121). */
 export const CLAIM_WINDOW_MS = 10_000;
 export const CLAIM_WINDOW_TICKS = 10 * TICK_HZ;
@@ -60,6 +80,15 @@ const MAX_RESOLVED_DEATHS = 1024;
 export const CLAIMS_PER_WINDOW = 30;
 export const CLAIM_RATE_MS = 10_000;
 export const FLUSH_EVERY_MS = 1000;
+/**
+ * Chat (Track E): per registered player (not per connection, so a reconnect does not reset it), at most
+ * CHAT_PER_WINDOW lines per CHAT_RATE_MS. A late joiner gets the last CHAT_HISTORY_MAX lines younger than
+ * CHAT_HISTORY_MS, held in memory only (lost on unload or restart, cleared by a reset).
+ */
+export const CHAT_PER_WINDOW = 5;
+export const CHAT_RATE_MS = 10_000;
+export const CHAT_HISTORY_MAX = 20;
+export const CHAT_HISTORY_MS = 10 * 60_000;
 /** Chunk diagnosis of a desync (D-126): how long to wait for replies, how many may be open, and the request budget. */
 export const CHUNK_DIAG_WAIT_MS = 3000;
 export const MAX_OPEN_DIAGNOSES = 4;
@@ -75,6 +104,23 @@ export const MAX_CHUNKS_RECORDED = 64;
  * no one playing, so this only ever delays an empty room; a hostile client costs at most this per connection.
  */
 export const CATCHUP_HOLD_MAX_MS = 120_000;
+/**
+ * S2: a member that has not gone live (LIVE or a valid HASH) is closed once it has sent no frame for this long
+ * ("never_live"). A catching-up client pings every 2 s, so one that is really replaying keeps `lastHeard` fresh and
+ * is never closed by this; a socket that says HELLO and then nothing is. Set to the catch-up hold's maximum.
+ */
+export const JOIN_DEADLINE_MS = 120_000;
+/** A member still not live this many deadlines after it began catching up is closed even if it keeps pinging. */
+export const JOIN_HARD_MULTIPLE = 4;
+/** F7: at most this many resyncs per member per RESYNC_BUDGET_MS; past it the socket is closed with CLOSE_OUT_OF_SYNC. */
+export const RESYNC_BUDGET = 3;
+export const RESYNC_BUDGET_MS = 60_000;
+export const CLOSE_OUT_OF_SYNC = 4001;
+/** F7: a live member silent this long is closed (CLOSE_SILENT) and leaves normally. Catching-up members are exempt. */
+export const LIVENESS_MS = 10_000;
+export const CLOSE_SILENT = 4002;
+/** A gap this long between tick() calls means the server stalled, not the clients. */
+export const TICK_STALL_MS = 2_000;
 export const SNAPSHOT_EVERY_TICKS = 1800;
 /** A requested snapshot tick is at least this far ahead of the clock. */
 export const SNAPSHOT_LEAD_TICKS = 120;
@@ -105,6 +151,8 @@ export interface Member {
   visitorId: number;
   /** The registered display name, "" when anonymous. Logs only: players only ever see `name`. */
   visitorName: string;
+  /** The connection's salted IP tag (log.ipTag), "" when unknown. The sandbox counts hash votes per tag (review H1). */
+  ipTag: string;
   /** What this connection has sent, for input.summary and the leave summary. Read-only for everyone else. */
   counts: InputCounts;
   /** Ping RTT and HASH timing for this connection (shared with main.ts's live entry). */
@@ -118,6 +166,10 @@ export interface Member {
   lastBadTick: number;
   claimWindowStart: number;
   claimsInWindow: number;
+  /** F7: when any frame last arrived from this connection (world clock), for the liveness timeout. */
+  lastHeard: number;
+  /** F7: world-clock times of this member's recent resyncs, for the budget. */
+  resyncAt: number[];
 }
 
 /** One death that a majority of eligible clients agreed on. Ids are sim player ids, which are visitor ids in the game world. */
@@ -129,10 +181,36 @@ export interface ResolvedDeath {
   bag: number;
 }
 
+/** F7: one enemy kill a majority agreed on. The killer is a player id (0: nobody credited); `x`, `y` are 1/16 cell. */
+export interface ResolvedKill {
+  tick: number;
+  killer: number;
+  x: number;
+  y: number;
+  kind: number;
+}
+/** F7: the round's end as a majority agreed it. `alive` is the sim's own alive set at the end (ascending ids); `players` how many the sim holds. */
+export interface ResolvedRoundEnd {
+  tick: number;
+  win: boolean;
+  players: number;
+  alive: number[];
+}
+export interface ResolvedRoundStart {
+  tick: number;
+  active: number;
+}
+
+/** An open tally. `group` names the thing being claimed (rivals share it, so one wins); `key` the exact content. */
 interface ClaimTally {
-  death: ResolvedDeath;
+  group: string;
+  tick: number;
   votes: Set<number>;
   firstAt: number;
+  /** Fires once, when the tally resolves. */
+  fire: () => void;
+  /** Log fields for an unresolved tally. */
+  what: Record<string, string | number>;
 }
 
 interface Checkpoint {
@@ -159,6 +237,14 @@ interface SnapshotRequest {
 
 export interface WorldOptions {
   id?: number;
+  /**
+   * The room's config (R2b). The two fixed worlds (ids 0/1) still default from `worldKindOf` when omitted, so
+   * startup's eager `mk(SANDBOX_ID)`/`mk(GAME_ID)` is unchanged; every lazily-loaded room passes its own config,
+   * decoded from the `rooms` row, since a bare "kind" no longer says what rules apply (R0a/D-132).
+   */
+  cfg?: RoomConfig;
+  /** This room's own seed (its row's `seed` column); the two fixed worlds keep their hardcoded seeds when omitted. */
+  seed?: bigint;
   now: () => number;
   db?: GameDb;
   verifier?: SnapshotVerifier;
@@ -170,9 +256,18 @@ export interface WorldOptions {
   warnLogTicks?: number;
   /** Override CATCHUP_HOLD_MAX_MS (tests). */
   catchupHoldMaxMs?: number;
+  /** Override JOIN_DEADLINE_MS (tests). */
+  joinDeadlineMs?: number;
+  /** Dev only (server/devteleport.ts): accept a Pos jump of any size. Never set in production. */
+  devTeleport?: boolean;
   log?: EventLog;
   /** Per-player counters; the world bumps `resyncs`. Optional so a bare World works in unit tests. */
   stats?: PlayerStats;
+  /**
+   * Where the running sim build puts players in a snapshot (`snapshotLayout` of the wasm main.ts hashes), for reading
+   * the active players of a stored game snapshot at cold start. Without it that read is logged as failed.
+   */
+  snapshotLayout?: SnapshotLayout;
 }
 
 export interface WorldStats {
@@ -195,6 +290,13 @@ export class World {
   readonly id: number;
   seed: bigint;
   readonly kind: number;
+  /**
+   * This world's config: a lazily-loaded room's own stored config, or (R0a) the fixed preset for ids 0/1 when
+   * none is passed. `acceptPos` and every size-derived cap (chunk grid, snapshot ceiling) read this, not a
+   * hardcoded constant, so a room's own size always governs its own bounds (R2b fixes the pre-existing bug
+   * where `acceptPos` used the L-sized `GAME_W`/`GAME_H` for every world).
+   */
+  readonly cfg: RoomConfig;
   /** log[i] is the encoded TICK frame for tick logBase + 1 + i: only ticks after the latest verified snapshot. */
   readonly log: Uint8Array[] = [];
   logBase = 0;
@@ -204,10 +306,36 @@ export class World {
   readonly clock: TickClock;
   readonly stats: WorldStats = { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 };
   closing = false;
+  /** Chat: the recent lines a late joiner is sent (sender's plain name, text, world-clock time). Never logged, never state. */
+  private chatHistory: { name: string; text: string; at: number }[] = [];
+  /** Chat rate windows by registered player id (visitorId), so a reconnect does not refill the budget. */
+  private chatWindows = new Map<number, { start: number; n: number }>();
   /** True for the duration of reset(): stamp, join, onHash and onUpload refuse. */
   resetting = false;
   /** Called once per death a majority agreed on (the server turns it into stats and achievements). Never touches the sim. */
   onDeathResolved: ((d: ResolvedDeath) => void) | null = null;
+  /** F7: the same for an enemy kill, the round's start and the round's end (all majority claims; the server never steps the sim). */
+  onKillResolved: ((k: ResolvedKill) => void) | null = null;
+  onRoundStartResolved: ((r: ResolvedRoundStart) => void) | null = null;
+  onRoundEndResolved: ((r: ResolvedRoundEnd) => void) | null = null;
+  /** F7: a majority has agreed the Survival round started / ended. In memory only: a restart forgets `roundRunning` (the
+   * lobby gate then stays shut until the next start claim, which cannot come, so see main.ts); `roundEnded` is also
+   * persisted on the room row by main.ts. */
+  roundRunning = false;
+  roundEnded = false;
+  /** F7: this world was loaded from the database with closed ticks. roundRunning is memory-only, so after a restart this
+   * stands in for it (a restored lobby may then be credited early; a restored running round is never denied). */
+  restoredWithTicks = false;
+  /** F7 review: the round is under way as far as the server can tell: a start claim resolved, or a restored Survival room that has ticks. */
+  roundActive(): boolean {
+    return this.cfg.round === 1 && !this.roundEnded && (this.roundRunning || this.restoredWithTicks);
+  }
+  private lastTickAt = -1;
+  /** F7: may Pos/Cast inputs count towards stats? Not while a Survival lobby is open (no start claim resolved yet).
+   * The claim lags the real start by up to a second, so the first moments of a round are not credited. */
+  creditsStats(): boolean {
+    return this.cfg.round !== 1 || this.roundRunning || this.roundEnded || this.restoredWithTicks;
+  }
   /** Test and telemetry hook: called after each closed tick has been broadcast. */
   onTickClosed: ((tick: number) => void) | null = null;
 
@@ -219,11 +347,13 @@ export class World {
   private readonly maxLogTicks: number;
   private readonly warnLogTicks: number;
   private readonly holdMaxMs: number;
+  private readonly joinDeadlineMs: number;
   private heldSince: number | null = null;
   /** Which of the two log-length warnings (0 none, 1 warn level, 2 cap) have fired since the log last shrank. */
   private logWarned = 0;
   private readonly elog: EventLog;
   private readonly pstats?: PlayerStats;
+  private readonly layout?: SnapshotLayout;
   private nextPlayer = 1;
   /** Members whose send failed or whose queue overflowed: they get a Leave once the tick being closed is done. */
   private readonly dropped: number[] = [];
@@ -259,10 +389,19 @@ export class World {
   /** `tick:victim` of deaths already resolved, so a late or conflicting claim is not counted twice. Oldest first. */
   private readonly resolvedDeaths = new Map<string, string>();
 
+  private readonly devTeleport: boolean;
+
   constructor(opts: WorldOptions) {
     this.id = opts.id ?? SANDBOX_ID;
-    this.kind = worldKindOf(this.id) ?? WORLD_SANDBOX;
-    this.seed = this.id === GAME_ID ? GAME_SEED : SANDBOX_SEED;
+    this.devTeleport = opts.devTeleport === true;
+    // A lazily-loaded room (R2b) carries its own config from its `rooms` row; the two fixed worlds keep their
+    // R0a presets when none is passed, so their boot path (mk(SANDBOX_ID)/mk(GAME_ID) in server/main.ts) is
+    // unchanged. `kind` (the existing WORLD_SANDBOX/WORLD_GAME switch every avatar/Pos/Cast code path already
+    // reads) is derived from `cfg.avatars`, not the id, so it generalizes to any room without widening that
+    // switch into a full per-mode taxonomy (deliberately deferred; see the brief's scope boundary).
+    this.cfg = opts.cfg ?? (worldKindOf(this.id) === WORLD_GAME ? CAVES_PVP : CLASSIC_SANDBOX);
+    this.kind = this.cfg.avatars === 1 ? WORLD_GAME : WORLD_SANDBOX;
+    this.seed = opts.seed ?? (this.id === GAME_ID ? GAME_SEED : SANDBOX_SEED);
     this.now = opts.now;
     this.db = opts.db;
     this.verifier = opts.verifier;
@@ -271,8 +410,10 @@ export class World {
     this.maxLogTicks = opts.maxLogTicks ?? MAX_LOG_TICKS;
     this.warnLogTicks = opts.warnLogTicks ?? WARN_LOG_TICKS;
     this.holdMaxMs = opts.catchupHoldMaxMs ?? CATCHUP_HOLD_MAX_MS;
+    this.joinDeadlineMs = opts.joinDeadlineMs ?? JOIN_DEADLINE_MS;
     this.elog = opts.log ?? new EventLog({ quiet: true });
     this.pstats = opts.stats;
+    this.layout = opts.snapshotLayout;
     this.clock = new TickClock(opts.now, (t) => this.onClosed(t), TICK_HZ);
     this.lastFlush = opts.now();
   }
@@ -294,6 +435,14 @@ export class World {
 
   get playerCount(): number {
     return this.members.size;
+  }
+
+  /** Connections that control an avatar (spectators and sandbox painters excluded): what `cfg.maxPlayers` caps (review M3). */
+  get avatarPlayers(): number {
+    if (this.kind !== WORLD_GAME) return 0;
+    let n = 0;
+    for (const m of this.members.values()) if (m.playerId) n++;
+    return n;
   }
 
   /** True while the tick clock is held because every member is still catching up (D-122). */
@@ -378,7 +527,7 @@ export class World {
         // worker timing out on a busy 256 MB machine, a crash, no verifier) says nothing about the snapshot,
         // so refuse to start and let the platform restart us with the volume untouched (D-014, review M5
         // slice 3 N2). Before this, a timeout here reset the live sandbox.
-        const r = this.verifier ? await this.verifier.check(snap.data, maxSnapshotRawFor(this.kind)) : { kind: "unavailable" as const };
+        const r = this.verifier ? await this.verifier.check(snap.data, maxSnapshotRawFor(this.cfg)) : { kind: "unavailable" as const };
         if (r.kind === "unavailable") {
           this.elog.event("world.build_changed", { world: this.id, outcome: "verify_unavailable", snapshot_tick: snap.tick }, "error");
           throw new Error(`world ${this.id}: could not verify the stored snapshot under the new build; not resetting`);
@@ -425,10 +574,12 @@ export class World {
     // Not push(...frames): spreading ~130k+ ticks as arguments overflows the stack, and the app crashed on boot.
     for (const f of frames) this.log.push(f);
     // Who the restored state says is active: the snapshot's players, then the logged Joins and Leaves (S4).
-    const stillActive = this.kind === WORLD_GAME ? activeAfter(snap ? activePlayersIn(snap.data) : new Set<number>(), frames) : new Set<number>();
-    this.snapshotOnline = this.kind === WORLD_GAME ? (snap ? activePlayersIn(snap.data).size : 0) : Math.max(0, -net);
+    const atSnap = this.kind === WORLD_GAME && snap ? this.snapshotPlayers(snap.data, snap.tick) : new Set<number>();
+    const stillActive = this.kind === WORLD_GAME ? activeAfter(atSnap, frames) : new Set<number>();
+    this.snapshotOnline = this.kind === WORLD_GAME ? atSnap.size : Math.max(0, -net);
     this.online = this.kind === WORLD_GAME ? this.snapshotOnline + net : 0;
     this.clock.setClosed(base + frames.length);
+    this.restoredWithTicks = base + frames.length > 0;
     this.lastRequestTick = base;
     if (rewrite) {
       this.elog.event("world.log_repaired", { world: this.id, after_tick: base, kept_ticks: frames.length }, "warn");
@@ -440,6 +591,22 @@ export class World {
     }
     this.leaveOrphans(stillActive);
     this.elog.event("world.loaded", { world: this.id, snapshot_tick: snap ? snap.tick : null, replayed_ticks: frames.length, tick: base + frames.length });
+  }
+
+  /**
+   * The active players of a stored game snapshot. A snapshot that cannot be read is logged (`snapshot.unreadable`) and
+   * counts as none active, as before review M4, when the failure was swallowed: its orphans then miss their Leave and
+   * stay awake until they rejoin and leave, so the log line is what tells anyone the layout or the stored bytes are wrong.
+   */
+  private snapshotPlayers(data: Uint8Array, tick: number): Set<number> {
+    try {
+      if (!this.layout) throw new Error("no snapshot layout (World built without snapshotLayout)");
+      return activePlayersIn(data, this.layout, maxSnapshotRawFor(this.cfg));
+    } catch (e) {
+      // Once a minute per room at most: a lazily loaded room loads again on every first HELLO after it unloads.
+      this.elog.limited(`snapshot_unreadable:${this.id}`, 60_000, "snapshot.unreadable", { world: this.id, tick, bytes: data.length, error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }, "error");
+      return new Set<number>();
+    }
   }
 
   /**
@@ -483,8 +650,13 @@ export class World {
    * Send one frame, enforcing the queue cap at send time (review M4a S2): a slow reader is closed before it holds
    * megabytes, not only at the next tick close. False means the peer is unusable and must be dropped.
    */
-  private trySend(peer: Peer, frame: Uint8Array): boolean {
-    if (peer.buffered() > MAX_BUFFERED_BYTES) {
+  /** Review M2: a peer's catch-up burst in bytes, allowed on top of the cap until its queue first drains under it. */
+  private readonly catchupSlack = new WeakMap<Peer, number>();
+
+  private trySend(peer: Peer, frame: Uint8Array, slack = this.catchupSlack.get(peer) ?? 0): boolean {
+    const queued = peer.buffered();
+    if (slack && queued <= MAX_BUFFERED_BYTES && !this.inCatchUp) this.catchupSlack.delete(peer);
+    if (queued > MAX_BUFFERED_BYTES + slack) {
       try {
         peer.close(1013, "too slow");
       } catch {
@@ -542,7 +714,7 @@ export class World {
    * id from the players table (the same person always controls the same entity); a spectator (`playerId` 0)
    * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
-  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
+  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string; ipTag?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
     if (this.resetting) throw new Error("world is resetting");
     // A joiner replays the log after the snapshot. With none to replay it is live from the start and holds nothing:
     // otherwise the first visitor to an empty world froze it until their LIVE arrived, and any client that never
@@ -560,6 +732,9 @@ export class World {
     if (prior !== null) {
       const old = this.members.get(prior);
       this.members.delete(prior);
+      // As in leave(): a replaced snapshot source will never upload (review L1).
+      if (this.request?.memberId === prior) this.request = null;
+      if (this.waitingUpload?.memberId === prior) this.waitingUpload = null;
       if (old) this.elog.event("replaced", { world: this.id, who: this.whoOf(old), conn: old.id });
       try {
         old?.peer.close(4000, "replaced by a newer connection");
@@ -571,8 +746,10 @@ export class World {
     const conn = this.nextSeq++;
     const names: [number, string][] = [];
     for (const m of this.members.values()) if (m.playerId && m.name) names.push([m.playerId, m.name]);
-    const sentOk = this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, this.kind, TICK_HZ, this.clock.lastClosed, base));
+    const sentOk = this.sendCatchUp(peer, (base) => encodeWelcome(playerId, this.seed, encodeConfig(this.cfg), TICK_HZ, this.clock.lastClosed, base));
     for (const [id, name] of names) this.trySend(peer, encodePlayerName(id, name));
+    const chatCut = this.now() - CHAT_HISTORY_MS;
+    for (const c of this.chatHistory) if (c.at >= chatCut) this.trySend(peer, encodeChatLine(c.name, c.text, true));
     const counts = new InputCounts();
     const timing = new ConnTiming();
     const member: Member = {
@@ -581,6 +758,7 @@ export class World {
       name: this.kind === WORLD_GAME ? (opts.name ?? "") : "",
       visitorId: opts.visitorId ?? 0,
       visitorName: opts.visitorName ?? "",
+      ipTag: opts.ipTag ?? "",
       peer,
       seq: conn,
       minHashTick: this.clock.lastClosed,
@@ -589,10 +767,14 @@ export class World {
       lastBadTick: 0,
       claimWindowStart: 0,
       claimsInWindow: 0,
+      lastHeard: this.now(),
+      resyncAt: [],
       counts,
       timing,
     };
     this.members.set(conn, member);
+    // The first member: give this room a warm verify lane, generating its world now rather than in its first verify (D-228).
+    if (this.members.size === 1) this.verifier?.warm(this.verifyRoom());
     // A peer that failed during the catch-up is left at the next timer pass; a held clock would never close a tick to find out.
     if (!sentOk) this.dropped.push(conn);
     if (playerId) {
@@ -614,6 +796,46 @@ export class World {
     return null;
   }
 
+  /**
+   * Chat (Track E): relay one line to every member, sender included, beside the lockstep. Never a sim input
+   * (invariant 1): nothing here touches the clock or the log. Only a registered visitor may chat (spectators too);
+   * the line must be free of control characters and at most MAX_CHAT_CHARS after trimming. The body is never
+   * logged: refusals log a reason, accepted lines are counted into input.summary. Returns what happened, for tests.
+   */
+  onChat(conn: number, raw: string): "sent" | "anonymous" | "empty" | "control" | "long" | "rate" | "closed" {
+    const m = this.members.get(conn);
+    if (!m || this.resetting) return "closed";
+    const refuse = (reason: "anonymous" | "empty" | "control" | "long") => {
+      m.counts.reject();
+      this.elog.limited(`chat_bad:${conn}`, 10_000, "input.rejected", { world: this.id, conn, who: this.whoOf(m), reason: `chat_${reason}` }, "warn");
+      return reason;
+    };
+    if (!m.visitorId || !m.visitorName) return refuse("anonymous");
+    if (chatHasControl(raw)) return refuse("control");
+    const text = raw.trim();
+    if (chatIsBlank(text)) return refuse("empty");
+    if (Array.from(text).length > MAX_CHAT_CHARS) return refuse("long");
+    const t = this.now();
+    let win = this.chatWindows.get(m.visitorId);
+    if (!win || t - win.start >= CHAT_RATE_MS) {
+      win = { start: t, n: 0 };
+      this.chatWindows.set(m.visitorId, win);
+    }
+    if (++win.n > CHAT_PER_WINDOW) {
+      m.counts.reject();
+      this.elog.limited(`chat_rate:${m.visitorId}`, 10_000, "input.rate_limited", { world: this.id, conn, who: this.whoOf(m), limit: CHAT_PER_WINDOW, what: "chat" }, "warn");
+      return "rate";
+    }
+    // Drop windows that have expired, so the map stays the size of the recent talkers.
+    if (this.chatWindows.size > 64) for (const [k, v] of this.chatWindows) if (t - v.start >= CHAT_RATE_MS) this.chatWindows.delete(k);
+    m.counts.chat();
+    const f = encodeChatLine(m.visitorName, text);
+    this.chatHistory.push({ name: m.visitorName, text, at: t });
+    if (this.chatHistory.length > CHAT_HISTORY_MAX) this.chatHistory.shift();
+    for (const o of this.members.values()) if (!this.trySend(o.peer, f)) this.dropped.push(o.id);
+    return "sent";
+  }
+
   /** Tell everyone else (render-only; never state) who just arrived. */
   private broadcastName(conn: number, playerId: number, name: string): void {
     const f = encodePlayerName(playerId, name);
@@ -623,13 +845,24 @@ export class World {
   }
 
   /** False when a send failed part-way: the peer is unusable. */
+  private inCatchUp = false;
+
   private sendCatchUp(peer: Peer, header: (playersAtBase: number) => Uint8Array): boolean {
     const base = this.snapshot ? (this.onlineAt.get(this.snapshot.tick) ?? this.snapshotOnline) : 0;
-    if (!this.trySend(peer, header(base))) return false;
     const sf = this.snapshotFrame();
-    if (sf && !this.trySend(peer, sf)) return false;
-    for (const f of this.log) if (!this.trySend(peer, f)) return false;
-    return true;
+    let burst = sf?.length ?? 0;
+    for (const f of this.log) burst += f.length;
+    const slack = Math.min(burst, MAX_CATCHUP_SLACK_BYTES);
+    this.catchupSlack.set(peer, slack);
+    this.inCatchUp = true;
+    try {
+      if (!this.trySend(peer, header(base), slack)) return false;
+      if (sf && !this.trySend(peer, sf, slack)) return false;
+      for (const f of this.log) if (!this.trySend(peer, f, slack)) return false;
+      return true;
+    } finally {
+      this.inCatchUp = false;
+    }
   }
 
   leave(conn: number): void {
@@ -641,6 +874,9 @@ export class World {
     if (this.waitingUpload?.memberId === conn) this.waitingUpload = null;
     if (this.members.size === 0) {
       this.claims.clear();
+      // Nobody left to upload: the room's verify lane lingers (`LANE_LINGER_MS`) for a quick rejoin, then gives its world
+      // of memory back (after any verify in flight answers).
+      this.verifier?.release(this.id);
       // Last one out. The sim is not ours to snapshot and the client is gone, so nothing to ask: the
       // next cold start replays the log since the last snapshot. Close the Leave tick and persist it now.
       this.clock.pause();
@@ -673,13 +909,55 @@ export class World {
       this.stats.posRejected++;
       return false;
     };
-    if (facing > 1 || x < 0 || y < 0 || x >= GAME_W * POS_ONE || y >= GAME_H * POS_ONE) return bad();
+    // R2b: bound against this room's own size, not the fixed GAME_W/GAME_H (L's dimensions), which wrongly
+    // accepted or rejected Pos in every non-L room once R1 made S/M sizes real (the brief's pre-existing bug).
+    const [w, h] = SIZE_DIMS[this.cfg.size];
+    if (facing > 1 || x < 0 || y < 0 || x >= w * POS_ONE || y >= h * POS_ONE) return bad();
     const openTick = this.clock.lastClosed + 1;
     // One baseline per life (D-078): a claimed life + 1 starts its own baseline and cannot move the real one.
     let bl = this.lastPosOf.get(m.playerId);
     if (!bl) this.lastPosOf.set(m.playerId, (bl = new PosBaselines()));
-    if (!bl.accept(x, y, life, openTick)) return bad();
+    if (!bl.accept(x, y, life, openTick)) {
+      if (!this.devTeleport) return bad();
+      bl.force(x, y, life, openTick);
+      this.elog.limited(`teleport:${m.id}:${Math.floor(this.now() / 60_000)}`, 60_000, "dev.teleport", { world: this.id, who: this.whoOf(m), tick: openTick });
+    }
     return true;
+  }
+
+  /** Any frame from `conn` arrived: it is alive. */
+  heard(conn: number): void {
+    const m = this.members.get(conn);
+    if (m) m.lastHeard = this.now();
+  }
+
+  /** S2: close members that never became live: silent past the deadline, or still not live after JOIN_HARD_MULTIPLE of them. */
+  private reapNeverLive(t: number): void {
+    for (const m of this.members.values()) {
+      if (m.live) continue;
+      if (t - m.lastHeard < this.joinDeadlineMs && t - m.catchupSince < this.joinDeadlineMs * JOIN_HARD_MULTIPLE) continue;
+      this.elog.limited(`never_live:${m.id}`, 10_000, "leave", { world: this.id, who: this.whoOf(m), reason: "never_live" }, "warn");
+      try {
+        m.peer.close(CLOSE_SILENT, "never became live");
+      } catch {
+        // already gone
+      }
+      this.dropped.push(m.id);
+    }
+  }
+
+  /** Close members that are live (past their replay) but have sent nothing for LIVENESS_MS; they leave through `leave`. */
+  private reapSilent(t: number): void {
+    for (const m of this.members.values()) {
+      if (!m.live || t - m.lastHeard < LIVENESS_MS) continue;
+      this.elog.limited(`silent:${m.id}`, 10_000, "leave", { world: this.id, who: this.whoOf(m), reason: "silent" }, "warn");
+      try {
+        m.peer.close(CLOSE_SILENT, "no frames for 10 s");
+      } catch {
+        // already gone
+      }
+      this.dropped.push(m.id);
+    }
   }
 
   stamp(input: TickInput): number {
@@ -701,6 +979,16 @@ export class World {
 
   /** Called from the server's timer. */
   tick(): void {
+    // Review S4: a stalled event loop reads every client as silent, because their frames are still queued. After a long gap
+    // between sweeps, forgive everyone and skip the sweep.
+    const nowT = this.now();
+    const stalled = this.lastTickAt >= 0 && nowT - this.lastTickAt > TICK_STALL_MS;
+    this.lastTickAt = nowT;
+    if (stalled) for (const m of this.members.values()) m.lastHeard = nowT;
+    // Before the drain below, so the members it closes are left this tick. A world held for a replaying member is
+    // exactly where a silent socket sits, and a held clock returns early below, so reaping after the drain queued
+    // them in `dropped` without ever calling `leave`: the slot stayed held (session model, quiet rerun, 5 Nov).
+    if (!stalled) this.reapNeverLive(nowT);
     // A member whose send failed is left at once, not only at the next tick close, which a held clock never reaches.
     while (this.dropped.length) this.leave(this.dropped.shift()!);
     if (this.heldSince !== null) this.evaluateHold(); // the safety valve's deadline
@@ -711,6 +999,7 @@ export class World {
       this.lastFlush = t;
       this.flush();
     }
+    if (!stalled) this.reapSilent(t);
     this.resolveDue(t);
     this.sweepDiagnoses(t);
     if (t - this.lastClaimSweep >= CLAIM_SWEEP_MS) {
@@ -721,10 +1010,21 @@ export class World {
     this.checkLogLength();
   }
 
+  /** Incident rows are diagnostics, not state: a database error here is logged and the world carries on. */
+  private safeDb<T>(f: () => T): T | undefined {
+    try {
+      return f();
+    } catch (e) {
+      this.elog.limited(`db_write_failed:${this.id}`, 10_000, "db.write_failed", { world: this.id, what: "incident", error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }, "error");
+      return undefined;
+    }
+  }
+
   /** SIGTERM path: stop taking inputs, close the open tick, write everything. */
   shutdown(): void {
     this.closing = true;
     for (const id of [...this.members.keys()]) this.leave(id);
+    this.verifier?.release(this.id, true); // unloaded, deleted or stopping: no linger
     this.clock.closeNow();
     this.flush();
   }
@@ -760,6 +1060,8 @@ export class World {
         }
       }
       this.resetGen++;
+      this.chatHistory.length = 0;
+      this.chatWindows.clear();
       this.clock.reset();
       this.evaluateHold(); // no members now: ends any hold
       this.log.length = 0;
@@ -784,6 +1086,9 @@ export class World {
       this.claims.clear();
       this.resolvedDeaths.clear();
       this.seenPlayers.clear();
+      this.roundRunning = false;
+      this.roundEnded = false;
+      this.restoredWithTicks = false;
       Object.assign(this.stats, { snapshotsAccepted: 0, snapshotsRejected: 0, resyncs: 0, incidents: 0, flushes: 0, posRejected: 0, lastVerifyMs: 0, hashPasses: 0, hashFails: 0 });
       this.elog.event("world.reset", { world: this.id, by, old_tick: oldTick, members: victims.length }, "warn");
       return { oldTick, closed: victims.length };
@@ -806,9 +1111,26 @@ export class World {
 
   // ---- hash checks (plan 7.4) -----------------------------------------------------------------
 
+  /**
+   * Review H1 (8 Nov): who may define the majority hash. In a world with avatars, one vote per registered player
+   * (`playerId` is the visitor id there, and one connection per player); spectators get none. In the sandbox, where
+   * every painter may be anonymous, one vote per IP tag, so one address's twelve tabs are one vote. A member with no
+   * vote is still compared against the majority and resynced when it differs; it can never make it.
+   */
+  voterKey(m: Member): string | null {
+    if (this.kind === WORLD_GAME) return m.playerId ? `p${m.playerId}` : null;
+    return m.ipTag ? `ip${m.ipTag}` : `c${m.id}`;
+  }
+
+  /** Test and dashboard view: open checkpoints and kept majority hashes (review M1: both stay bounded). */
+  hashState(): { checkpoints: number; truth: number } {
+    return { checkpoints: this.checkpoints.size, truth: this.truth.size };
+  }
+
   onHash(memberId: number, tick: number, hash: bigint, stepP95Ms?: number, buffered?: number): void {
     const m = this.members.get(memberId);
     if (this.resetting || !m || tick % HASH_EVERY !== 0 || tick <= m.minHashTick || tick > this.clock.lastClosed) return;
+    if (tick < this.clock.lastClosed - HASH_WINDOW_TICKS) return; // review M1: too old to compare or keep
     m.timing.lastHashTick = tick;
     if (!m.live) {
       m.live = true; // a HASH past minHashTick proves it replayed that far
@@ -832,34 +1154,42 @@ export class World {
   }
 
   private tryResolve(tick: number, cp: Checkpoint, t: number): void {
+    // Wait only for members who vote: a spectator's late HASH is compared against the stored truth instead.
     let waiting = false;
-    for (const m of this.members.values()) if (m.minHashTick < tick && !cp.hashes.has(m.id)) waiting = true;
+    for (const m of this.members.values()) if (m.minHashTick < tick && !cp.hashes.has(m.id) && this.voterKey(m) !== null) waiting = true;
     if (waiting && t - cp.firstAt < HASH_WAIT_MS) return;
     this.checkpoints.delete(tick);
-    // Majority; a tie goes to the group holding the longest-connected reporter.
-    const groups = new Map<bigint, { n: number; best: number }>();
-    for (const [id, h] of cp.hashes) {
-      const seq = this.members.get(id)?.seq ?? Number.MAX_SAFE_INTEGER;
-      const g = groups.get(h) ?? { n: 0, best: Number.MAX_SAFE_INTEGER };
-      g.n++;
-      g.best = Math.min(g.best, seq);
-      groups.set(h, g);
-    }
-    let truth: bigint | null = null;
-    let win: { n: number; best: number } | null = null;
-    for (const [h, g] of groups) {
-      if (!win || g.n > win.n || (g.n === win.n && g.best < win.best)) {
-        win = g;
-        truth = h;
-      }
-    }
-    if (truth === null) return;
+    const truth = majority(this.votesOf(cp));
+    if (truth === null) return; // nobody with a vote reported: nothing to compare against
     this.truth.set(tick, truth);
-    this.truth.delete(tick - 30 * HASH_EVERY);
+    // Keep the window only (review M1): a resolved old tick used to stay for good.
+    for (const k of this.truth.keys()) if (k < this.clock.lastClosed - HASH_WINDOW_TICKS) this.truth.delete(k);
     const bad = new Map([...cp.hashes].filter(([, h]) => h !== truth));
     if (bad.size) this.diverged(tick, truth, bad, cp.hashes);
     else this.stats.hashPasses++;
     this.checkUpload(tick);
+  }
+
+  /**
+   * One vote per voter key (review H1): each key's hash is its own members' majority, a tie going to the
+   * longest-connected member, and the vote carries that member's connection order for the tie between keys.
+   */
+  private votesOf(cp: Checkpoint): { hash: bigint; seq: number }[] {
+    const perKey = new Map<string, { hash: bigint; seq: number }[]>();
+    for (const [id, h] of cp.hashes) {
+      const m = this.members.get(id);
+      const key = m ? this.voterKey(m) : null;
+      if (!m || key === null) continue; // a member who left, or one with no vote
+      const list = perKey.get(key) ?? [];
+      list.push({ hash: h, seq: m.seq });
+      perKey.set(key, list);
+    }
+    const votes: { hash: bigint; seq: number }[] = [];
+    for (const list of perKey.values()) {
+      const hash = majority(list);
+      if (hash !== null) votes.push({ hash, seq: Math.min(...list.filter((v) => v.hash === hash).map((v) => v.seq)) });
+    }
+    return votes;
   }
 
   private diverged(tick: number, truth: bigint, bad: Map<number, bigint>, all?: Map<number, bigint>): void {
@@ -878,7 +1208,7 @@ export class World {
     };
     // A client compared against a truth that is already known has no agreeing peer to diff against (D-126).
     if (!all) details.chunks = { status: "unavailable", reason: "no_reference" };
-    const incidentId = this.db?.recordIncident(this.id, tick, details) ?? null;
+    const incidentId = this.safeDb(() => this.db?.recordIncident(this.id, tick, details)) ?? null;
     // Requests first, then the resync, in one synchronous run: a client replays from scratch on RESYNC and that
     // empties its chunk-hash ring, so it must see the request before the RESYNC. Neither waits for any reply.
     if (all) this.startDiagnosis(tick, incidentId, details, all, bad);
@@ -886,7 +1216,7 @@ export class World {
       m.lastBadTick = tick;
       this.resync(m);
     }
-    this.elog.event("desync", { world: this.id, tick, who: members.map((m) => this.whoOf(m)).join(","), agreeing: all ? all.size - bad.size : null, uas: members.map((m) => (m.peer.userAgent ?? "").slice(0, 40)).join("|") }, "warn");
+    this.elog.limited(`desync:${this.id}`, 5_000, "desync", { world: this.id, tick, who: members.map((m) => this.whoOf(m)).join(","), agreeing: all ? all.size - bad.size : null, uas: members.map((m) => (m.peer.userAgent ?? "").slice(0, 40)).join("|") }, "warn");
   }
 
   // ---- chunk diagnosis (plan 6.10, D-126) ----------------------------------------------------------
@@ -895,7 +1225,7 @@ export class World {
   private startDiagnosis(tick: number, incidentId: number | null, details: Record<string, unknown>, all: Map<number, bigint>, bad: Map<number, bigint>): void {
     const skip = (reason: string): void => {
       details.chunks = { status: "unavailable", reason };
-      if (incidentId !== null) this.db?.updateIncident(incidentId, details);
+      if (incidentId !== null) this.safeDb(() => this.db?.updateIncident(incidentId, details));
       this.elog.limited(`diag_skipped:${this.id}`, 10_000, "desync.diag_skipped", { world: this.id, tick, reason }, "warn");
     };
     const t = this.now();
@@ -939,7 +1269,7 @@ export class World {
       this.elog.limited(`chunk_unsolicited:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOfConn(memberId), reason: "chunk_hashes_unsolicited", tick }, "warn");
       return;
     }
-    d.replies.set(memberId, hashes.length === chunkCountFor(this.kind) ? hashes : null);
+    d.replies.set(memberId, hashes.length === chunkCountFor(this.cfg) ? hashes : null);
     this.maybeFinish(d, this.now());
   }
 
@@ -953,7 +1283,7 @@ export class World {
     for (const id of d.asked.keys()) if (this.members.has(id) && !d.replies.has(id)) waiting = true;
     if (waiting && !timedOut) return;
     this.diagnoses.delete(d.tick);
-    const grid = chunkGridFor(this.kind);
+    const grid = chunkGridFor(this.cfg);
     const base = { tick: d.tick, grid, asked: d.asked.size, answered: [...d.replies.values()].filter((r) => r !== null).length };
     const unavailable = (reason: string): void => this.finishDiagnosis(d, { status: "unavailable", reason, ...base }, null);
     // The reference: the array most agreeing members sent; a tie goes to the group with the longest-connected sender.
@@ -1017,7 +1347,7 @@ export class World {
 
   private finishDiagnosis(d: Diagnosis, chunks: Record<string, unknown>, indices: number[] | null): void {
     d.details.chunks = chunks;
-    if (d.incidentId !== null) this.db?.updateIncident(d.incidentId, d.details);
+    if (d.incidentId !== null) this.safeDb(() => this.db?.updateIncident(d.incidentId!, d.details));
     const first = chunks.first as { index: number; cx: number; cy: number } | null | undefined;
     this.elog.limited(
       `desync_chunks:${this.id}`,
@@ -1040,10 +1370,24 @@ export class World {
 
   /** Latest verified snapshot plus every closed tick after it, through the same path as a late join. */
   private resync(m: Member): void {
+    const t = this.now();
+    m.resyncAt = m.resyncAt.filter((x) => t - x < RESYNC_BUDGET_MS);
+    if (m.resyncAt.length >= RESYNC_BUDGET) {
+      // A member that cannot stay in sync costs the whole room a replay each time: close it and let the client say "reload".
+      this.elog.limited(`resync_refused:${m.id}`, 10_000, "resync.refused", { world: this.id, who: this.whoOf(m), budget: RESYNC_BUDGET }, "warn");
+      try {
+        m.peer.close(CLOSE_OUT_OF_SYNC, "out of sync, reload");
+      } catch {
+        // already gone
+      }
+      this.dropped.push(m.id);
+      return;
+    }
+    m.resyncAt.push(t);
     this.stats.resyncs++;
     m.counts.resyncs++;
     this.pstats?.bump(m.visitorId, STAT_RESYNCS);
-    this.elog.event("resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
+    this.elog.limited(`resync:${m.id}`, 10_000, "resync", { world: this.id, who: this.whoOf(m), tick: this.clock.lastClosed }, "warn");
     m.minHashTick = this.clock.lastClosed;
     m.live = false;
     m.catchupSince = this.now();
@@ -1052,6 +1396,8 @@ export class World {
     if (this.waitingUpload?.memberId === m.id) this.waitingUpload = null;
     if (this.request?.memberId === m.id) this.request = null;
     if (!this.sendCatchUp(m.peer, (base) => encodeResync(this.clock.lastClosed, base))) this.dropped.push(m.id);
+    // The client's replay starts from scratch; labels are not in the log, so say who everyone is again (as after WELCOME).
+    for (const o of this.members.values()) if (o.playerId && o.name) this.trySend(m.peer, encodePlayerName(o.playerId, o.name));
   }
 
   // ---- death claims (plan 10, D-120/D-121) -------------------------------------------------------
@@ -1062,12 +1408,73 @@ export class World {
    * target at that tick (the same test as HASH). A claim is a report, never a sim input (invariant 9).
    */
   onClaim(memberId: number, claimed: ResolvedDeath): void {
+    const m = this.admitClaim(memberId, claimed.tick);
+    if (!m) return;
+    // Only players this world has seen join can die or kill: a forged id must never reach player_stats (a foreign key).
+    if (!this.seenPlayers.has(claimed.victim)) {
+      this.elog.limited(`claim_unknown:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_unknown_player" }, "warn");
+      return;
+    }
+    // An unknown killer is not refused (the death is real) but is credited to nobody.
+    const d: ResolvedDeath = this.seenPlayers.has(claimed.killer) ? claimed : { ...claimed, killer: 0 };
+    const key = `${d.tick}:${d.victim}:${d.killer}:${d.cause}:${d.bag}`;
+    this.vote(memberId, m, `${d.tick}:${d.victim}`, key, d.tick, () => this.onDeathResolved?.({ ...d }), { victim: d.victim });
+  }
+
+  /** F7: an enemy kill. Rivals are claims about the same enemy (same tick and position) naming a different killer or kind. */
+  onKillClaim(memberId: number, k: ResolvedKill): void {
+    const m = this.admitClaim(memberId, k.tick);
+    if (!m) return;
+    // Review S3: the kind becomes a stat name and the position a map key, so both must be what the sim could emit.
+    const [ww, wh] = SIZE_DIMS[this.cfg.size];
+    if (k.kind >= NUM_ENEMY_KINDS || k.x < 0 || k.y < 0 || k.x >= ww * 16 || k.y >= wh * 16) return void this.badClaim(memberId, m, "claim_bad_kill");
+    const kk: ResolvedKill = this.seenPlayers.has(k.killer) ? k : { ...k, killer: 0 };
+    const group = `k:${kk.tick}:${kk.x}:${kk.y}`;
+    this.vote(memberId, m, group, `${group}:${kk.killer}:${kk.kind}`, kk.tick, () => this.onKillResolved?.({ ...kk }), { kind: "kill" });
+  }
+
+  /** F7: the round started. One group for the whole room, so a rival start claim at another tick is a dissent. */
+  onRoundStartClaim(memberId: number, r: ResolvedRoundStart): void {
+    const m = this.admitClaim(memberId, r.tick);
+    if (!m) return;
+    if (this.cfg.round !== 1 || this.roundRunning || this.roundEnded) return void this.badClaim(memberId, m, "claim_no_round");
+    this.vote(memberId, m, "rs", `rs:${r.tick}:${r.active}`, r.tick, () => {
+      this.roundRunning = true;
+      this.onRoundStartResolved?.({ ...r });
+    }, { kind: "round_start" });
+  }
+
+  /**
+   * F7: the round ended. `alive` is whatever the client's sim reported as alive at the end (the sim's own rule, not
+   * recomputed here); it is part of the key, so the majority must agree on the set. Ids the world never saw are refused.
+   */
+  onRoundEndClaim(memberId: number, r: ResolvedRoundEnd): void {
+    const m = this.admitClaim(memberId, r.tick);
+    if (!m) return;
+    // Review S2: only a started, not yet ended round can end, and only once (a flood of kills cannot evict this).
+    if (!this.roundActive()) return void this.badClaim(memberId, m, "claim_no_round");
+    for (const id of r.alive) if (!this.seenPlayers.has(id)) return void this.badClaim(memberId, m, "claim_unknown_player");
+    if (r.win && r.alive.length === 0) return void this.badClaim(memberId, m, "claim_win_nobody_alive"); // a win needs a survivor
+    const alive = [...new Set(r.alive)].sort((a, b) => a - b);
+    this.vote(memberId, m, "re", `re:${r.tick}:${r.win ? 1 : 0}:${r.players}:${alive.join(",")}`, r.tick, () => {
+      this.roundEnded = true;
+      this.roundRunning = false;
+      this.onRoundEndResolved?.({ tick: r.tick, win: r.win, players: r.players, alive });
+    }, { kind: "round_end" });
+  }
+
+  private badClaim(memberId: number, m: Member, reason: string): void {
+    this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason }, "warn");
+  }
+
+  /** Shared admission for every claim kind: the world is live, the voter registered and under its rate, the tick plausible. */
+  private admitClaim(memberId: number, tick: number): Member | null {
     const m = this.members.get(memberId);
-    if (this.resetting || !m || this.kind !== WORLD_GAME) return;
+    if (this.resetting || !m || this.kind !== WORLD_GAME) return null;
     // Only a registered visitor may vote: an anonymous socket is free, a registration is rate limited (D-119).
     if (!m.visitorId) {
       this.elog.limited(`claim_anon:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_anonymous" }, "warn");
-      return;
+      return null;
     }
     const t = this.now();
     if (t - m.claimWindowStart >= CLAIM_RATE_MS) {
@@ -1076,31 +1483,27 @@ export class World {
     }
     if (++m.claimsInWindow > CLAIMS_PER_WINDOW) {
       this.elog.limited(`claim_rate:${memberId}`, 10_000, "input.rate_limited", { world: this.id, conn: memberId, who: this.whoOf(m), limit: CLAIMS_PER_WINDOW, what: "claim" }, "warn");
-      return;
+      return null;
     }
-    // Only players this world has seen join can die or kill: a forged id must never reach player_stats (a foreign key).
-    if (!this.seenPlayers.has(claimed.victim)) {
-      this.elog.limited(`claim_unknown:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_unknown_player" }, "warn");
-      return;
-    }
-    // An unknown killer is not refused (the death is real) but is credited to nobody.
-    const d: ResolvedDeath = this.seenPlayers.has(claimed.killer) ? claimed : { ...claimed, killer: 0 };
     const last = this.clock.lastClosed;
     // A future tick cannot have happened yet; an old one, or one from before this client's replay target, is not a witness.
-    if (d.tick > last || d.tick < last - CLAIM_WINDOW_TICKS || d.tick <= m.minHashTick || d.tick < 1) {
-      this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_tick", tick: d.tick, closed: last }, "warn");
-      return;
+    if (tick > last || tick < last - CLAIM_WINDOW_TICKS || tick <= m.minHashTick || tick < 1) {
+      this.elog.limited(`claim_bad:${memberId}`, 10_000, "input.rejected", { world: this.id, conn: memberId, who: this.whoOf(m), reason: "claim_tick", tick, closed: last }, "warn");
+      return null;
     }
-    const key = `${d.tick}:${d.victim}:${d.killer}:${d.cause}:${d.bag}`;
-    const won = this.resolvedDeaths.get(`${d.tick}:${d.victim}`);
+    return m;
+  }
+
+  private vote(memberId: number, m: Member, group: string, key: string, tick: number, fire: () => void, what: Record<string, string | number>): void {
+    const won = this.resolvedDeaths.get(group);
     if (won !== undefined) {
-      if (won !== key) this.elog.limited("claim_dissent", 10_000, "claim.unresolved", { world: this.id, tick: d.tick, victim: d.victim, reason: "dissent", who: this.whoOf(m) }, "warn");
+      if (won !== key) this.elog.limited("claim_dissent", 10_000, "claim.unresolved", { world: this.id, tick, reason: "dissent", who: this.whoOf(m), ...what }, "warn");
       return;
     }
     let tally = this.claims.get(key);
     if (!tally) {
       if (this.claims.size >= MAX_OPEN_CLAIMS) this.claims.delete(this.claims.keys().next().value!);
-      this.claims.set(key, (tally = { death: { ...d }, votes: new Set(), firstAt: t }));
+      this.claims.set(key, (tally = { group, tick, votes: new Set(), firstAt: this.now(), fire, what }));
     }
     tally.votes.add(memberId); // a Set: the same connection voting again changes nothing
     this.tryResolveClaim(key, tally);
@@ -1118,33 +1521,32 @@ export class World {
     const seen = new Set<number>();
     for (const id of tally.votes) {
       const m = this.members.get(id);
-      if (m && m.visitorId && m.minHashTick < tally.death.tick) seen.add(m.visitorId);
+      if (m && m.visitorId && m.minHashTick < tally.tick) seen.add(m.visitorId);
     }
     return seen.size;
   }
 
   private tryResolveClaim(key: string, tally: ClaimTally): void {
-    const d = tally.death;
-    const need = Math.ceil(this.eligibleAt(d.tick) / 2);
+    const need = Math.ceil(this.eligibleAt(tally.tick) / 2);
     const votes = this.liveVotes(tally);
     if (need < 1 || votes < need) return;
-    // Conflicting claims for the same death mean someone desynced. Only a strictly larger group than every rival wins;
+    // Conflicting claims for the same event mean someone desynced. Only a strictly larger group than every rival wins;
     // a tie waits for the timeout and is then dropped. (With two eligible clients one vote is a majority, so the first
     // claim wins; the dissenter is logged when its claim arrives.)
     let rival = 0;
-    for (const [k, o] of this.claims) if (k !== key && o.death.tick === d.tick && o.death.victim === d.victim) rival = Math.max(rival, this.liveVotes(o));
+    for (const [k, o] of this.claims) if (k !== key && o.group === tally.group) rival = Math.max(rival, this.liveVotes(o));
     if (rival >= votes) return;
-    const pair = `${d.tick}:${d.victim}`;
     for (const [k, o] of this.claims) {
-      if (k !== key && o.death.tick === d.tick && o.death.victim === d.victim) {
+      if (k !== key && o.group === tally.group) {
         this.claims.delete(k);
-        this.elog.limited("claim_conflict", 10_000, "claim.unresolved", { world: this.id, tick: d.tick, victim: d.victim, reason: "conflict", agreeing: votes, disagreeing: o.votes.size }, "warn");
+        this.elog.limited("claim_conflict", 10_000, "claim.unresolved", { world: this.id, tick: tally.tick, reason: "conflict", agreeing: votes, disagreeing: o.votes.size, ...tally.what }, "warn");
       }
     }
     this.claims.delete(key);
-    this.resolvedDeaths.set(pair, key);
+    // The round markers are plain booleans (roundRunning / roundEnded), not entries in the FIFO a flood of kills could evict.
+    if (tally.group !== "rs" && tally.group !== "re") this.resolvedDeaths.set(tally.group, key);
     if (this.resolvedDeaths.size > MAX_RESOLVED_DEATHS) this.resolvedDeaths.delete(this.resolvedDeaths.keys().next().value!);
-    this.onDeathResolved?.({ ...d });
+    tally.fire();
   }
 
   /** Re-check open claims (members may have left, shrinking the quorum) and drop the ones that never reached it. */
@@ -1155,7 +1557,7 @@ export class World {
       this.tryResolveClaim(key, tally);
       if (this.claims.has(key) && t - tally.firstAt >= CLAIM_WINDOW_MS) {
         this.claims.delete(key);
-        this.elog.limited("claim_unresolved", 10_000, "claim.unresolved", { world: this.id, tick: tally.death.tick, victim: tally.death.victim, votes: tally.votes.size, eligible: this.eligibleAt(tally.death.tick) }, "warn");
+        this.elog.limited("claim_unresolved", 10_000, "claim.unresolved", { world: this.id, tick: tally.tick, votes: tally.votes.size, eligible: this.eligibleAt(tally.tick), ...tally.what }, "warn");
       }
     }
   }
@@ -1178,12 +1580,14 @@ export class World {
     this.requestSnapshot();
   }
 
-  /** Ask the longest-connected live client that has not disagreed recently for a snapshot at a future tick. */
+  /** Ask the longest-connected live voter that has not disagreed recently for a snapshot at a future tick. */
   requestSnapshot(): boolean {
     if (this.request || !this.db) return false;
     const last = this.clock.lastClosed;
     let ref: Member | null = null;
     for (const m of this.members.values()) {
+      // Review H1: only a voter supplies the snapshot (a player, in a world with avatars), never a spectator.
+      if (this.voterKey(m) === null) continue;
       if (last - m.lastBadTick < 3 * this.snapshotEvery && m.lastBadTick) continue;
       // Only a live member: a replaying client sends no HASH and would ignore the request (D-100).
       const h = m.timing.lastHashTick;
@@ -1211,6 +1615,11 @@ export class World {
     this.checkUpload(tick);
   }
 
+  /** This room as the verifier sees it: its own seed and config, never an upload's (D-228). */
+  private verifyRoom(): VerifyRoom {
+    return { id: this.id, seed: this.seed, cfg: encodeConfig(this.cfg), size: this.cfg.size, caves: isCaves(this.cfg) };
+  }
+
   private checkUpload(tick: number): void {
     const u = this.waitingUpload;
     if (!u || u.tick !== tick) return;
@@ -1230,13 +1639,16 @@ export class World {
     const gen = this.resetGen;
     this.verifying = true;
     void this.verifier
-      .hashOf(u.data, maxSnapshotRawFor(this.kind))
-      .then((got) => {
+      .check(u.data, maxSnapshotRawFor(this.cfg), this.verifyRoom())
+      .then((r) => {
         if (gen !== this.resetGen) return; // the world was reset while this verified: the snapshot is from the old world
         this.verifying = false;
         this.stats.lastVerifyMs = this.now() - t0;
         if (this.closing || !this.db) return;
-        if (!got) return reject("does not decompress, or the sim refused to restore it");
+        // Say which: a verify that never finished (a timeout on a busy machine) is not a bad snapshot (ship check 5 Nov).
+        if (r.kind === "unavailable") return reject(`verify unavailable (${r.why ?? "worker gone"}, ${r.path ?? "?"}) after ${Math.round(this.stats.lastVerifyMs)} ms`);
+        if (r.kind === "refused") return reject(`refused at ${r.stage ?? "?"}: ${r.error ?? "no message"}`);
+        const got = r.v;
         if (got.tick !== tick) return reject("snapshot tick mismatch");
         if (got.hash !== u.hash || got.hash !== truth) return reject("restored hash differs from the claimed and majority hash");
         if (this.snapshot && tick <= this.snapshot.tick) return;
@@ -1246,7 +1658,7 @@ export class World {
         this.snapshot = { tick, data: u.data };
         this.snapshotOnline = this.onlineAt.get(tick) ?? 0;
         this.stats.snapshotsAccepted++;
-        this.elog.event("snapshot.accepted", { world: this.id, tick, bytes: u.data.length, raw_bytes: got.rawLength, verify_ms: Math.round(this.stats.lastVerifyMs) });
+        this.elog.event("snapshot.accepted", { world: this.id, tick, bytes: u.data.length, raw_bytes: got.rawLength, verify_ms: Math.round(this.stats.lastVerifyMs), verify_cold: !!got.cold, verify_path: r.path ?? null });
       })
       .catch((e) => {
         // A failed save (disk full) is a lost snapshot, not a dead process: the log keeps growing and the
@@ -1258,20 +1670,25 @@ export class World {
   }
 }
 
-/** Active player ids in a compressed game snapshot, read from its entity section (layout in plan 6.11). */
-export function activePlayersIn(compressed: Uint8Array): Set<number> {
+/**
+ * Active player ids in a compressed game snapshot, read from its player section at offsets the sim build itself
+ * reports (`layout`, plan 6.11, review M4). Throws, never guesses, on anything it cannot read exactly: a stream that
+ * does not decompress within `maxRaw`, another magic or format version than the build's, or a player section that
+ * would run past the entity bytes.
+ */
+export function activePlayersIn(compressed: Uint8Array, layout: SnapshotLayout, maxRaw: number): Set<number> {
+  const raw = decompressSnapshot(compressed, maxRaw);
+  const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const H = layout.headerBytes;
+  if (raw.length < H + 8 || raw[0] !== 0x53 || raw[1] !== 0x41 || raw[2] !== 0x4e || raw[3] !== 0x44) throw new Error("not a snapshot");
+  const version = v.getUint16(4, true);
+  if (version !== layout.formatVersion) throw new Error(`snapshot format ${version}, this build reads ${layout.formatVersion}`);
+  const entityLen = v.getUint32(H, true);
+  if (H + 4 + entityLen > raw.length) throw new Error("entity section runs past the snapshot");
+  const n = v.getUint32(H + 4, true);
+  if (4 + n * layout.playerRecordBytes > entityLen) throw new Error(`${n} player records run past the entity section`);
   const out = new Set<number>();
-  try {
-    const raw = decompressSnapshot(compressed, MAX_SNAPSHOT_RAW_GAME);
-    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-    const ENTITY_AT = 55; // after the 55-byte header comes the entity length u32, then the entity bytes
-    let o = ENTITY_AT + 4;
-    const n = v.getUint32(o, true);
-    o += 4;
-    for (let k = 0; k < n; k++, o += 65) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
-  } catch {
-    // an unreadable snapshot would already have failed verification; treat as none active
-  }
+  for (let k = 0, o = H + 8; k < n; k++, o += layout.playerRecordBytes) if (raw[o + 4] === 1) out.add(v.getUint32(o, true));
   return out;
 }
 
@@ -1304,4 +1721,24 @@ function presenceDelta(frame: Uint8Array): number {
     o += 7 + v.getUint16(o + 5, true);
   }
   return d;
+}
+
+/** The hash most votes agree on; a tie goes to the group holding the lowest connection order (longest connected). */
+export function majority(votes: readonly { hash: bigint; seq: number }[]): bigint | null {
+  const groups = new Map<bigint, { n: number; best: number }>();
+  for (const v of votes) {
+    const g = groups.get(v.hash) ?? { n: 0, best: Number.MAX_SAFE_INTEGER };
+    g.n++;
+    g.best = Math.min(g.best, v.seq);
+    groups.set(v.hash, g);
+  }
+  let truth: bigint | null = null;
+  let win: { n: number; best: number } | null = null;
+  for (const [h, g] of groups) {
+    if (!win || g.n > win.n || (g.n === win.n && g.best < win.best)) {
+      win = g;
+      truth = h;
+    }
+  }
+  return truth;
 }

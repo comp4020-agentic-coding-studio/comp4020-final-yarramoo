@@ -1,9 +1,22 @@
 // Binary WebSocket protocol (plan 7.2). Little-endian, u8 type tag first. Shared by client and server.
 import { unzlibSync, zlibSync } from "fflate";
+import { configForKind, CONFIG_BYTES, SIZE_DIMS, type RoomConfig } from "./room.ts";
+
+const SANDBOX_CFG_BYTES = configForKind(0);
+const GAME_CFG_BYTES = configForKind(1);
 
 // Pure and environment-free. Decoders return null for a malformed or truncated frame; they never throw.
 
-export const PROTOCOL_VERSION = 8;
+/**
+ * v9 (R2b): WELCOME carries the room's 16-byte config (byte 13..28) instead of a bare world-kind byte, so a
+ * joining client inits its sim from the same bytes every member of the room shares, not a kind number that
+ * only meant something for the two fixed worlds. HELLO is unchanged: its `worldId` field now names a room id.
+ */
+/**
+ * v10 (Track E): C_CHAT and S_CHAT. A v9 client's decodeServer returns null on S_CHAT and closes its socket, so an
+ * old tab would be closed by every chat line; the bump refuses it once, up front, with "new version, reload".
+ */
+export const PROTOCOL_VERSION = 10;
 export const TICK_HZ = 60;
 
 // Client -> server tags
@@ -15,6 +28,17 @@ export const C_SNAPSHOT_UPLOAD = 0x05;
 /** `tick u32, victim u32, killer u32, cause u8, bag u8`: one EV_DEATH the client's sim emitted. A report, never an input. */
 export const C_CLAIM = 0x06;
 export const CLAIM_LEN = 15;
+/**
+ * F7: a generalised claim about a sim outcome other than a death. `kind u8, tick u32, a u32, b u32, c u32, d u32, n u8, ids u32[n]`.
+ * Kinds: CLAIM_KILL (a killer, b x, c y in 1/16 cell, d enemy kind: EV_ENEMY_DEATH carries no id, its position is the identity),
+ * CLAIM_ROUND_START (a active players), CLAIM_ROUND_END (a result 1 win / 0 loss, b players in the sim, ids = players alive, ascending). A report, never an input. EV_DEATH keeps C_CLAIM.
+ */
+export const C_CLAIM_EVENT = 0x09;
+export const CLAIM_EVENT_HEADER = 23;
+export const MAX_CLAIM_IDS = 32;
+export const CLAIM_KILL = 1;
+export const CLAIM_ROUND_START = 2;
+export const CLAIM_ROUND_END = 3;
 /** `tick u32`: "I have finished replaying to my WELCOME or RESYNC tick" (D-122). Lets the server stop holding the clock for me. */
 export const C_LIVE = 0x07;
 export const LIVE_LEN = 5;
@@ -24,6 +48,14 @@ export const LIVE_LEN = 5;
  * A diagnostic report, never an input (invariant 9).
  */
 export const C_CHUNK_HASHES = 0x08;
+/**
+ * `text utf8` (Track E chat): a chat line for the room. Never a sim input (invariant 1): the server relays it to the
+ * room's members beside the lockstep, like S_PLAYER_NAME. At most MAX_CHAT_BYTES of text, so the frame fits the
+ * server's small-frame cap; the server refuses control characters and caps it at MAX_CHAT_CHARS.
+ */
+export const C_CHAT = 0x0a;
+export const MAX_CHAT_BYTES = 240;
+export const MAX_CHAT_CHARS = 120;
 export const CHUNK_HASHES_HEADER = 7;
 // Server -> client tags
 export const S_WELCOME = 0x81;
@@ -41,6 +73,13 @@ export const S_ACHIEVEMENT = 0x89;
 export const MAX_ACHIEVEMENT_ID_BYTES = 32;
 /** `tick u32`: send me your chunk hashes for this checkpoint (D-126). */
 export const S_REQUEST_CHUNK_HASHES = 0x8a;
+/**
+ * `flags u8, name_len u8, name utf8, text utf8`: a chat line relayed by the server. `name` is the sender's plain
+ * display name (never `name#id`); `flags` bit 0 marks a line replayed from the room's short history at join.
+ * Render-only, and only ever with textContent: the text is untrusted.
+ */
+export const S_CHAT = 0x8b;
+export const CHAT_HISTORY = 1;
 
 /** Hash checkpoint spacing; snapshot ticks are multiples of it. */
 export const HASH_EVERY = 60;
@@ -60,22 +99,39 @@ export const WORLD_GAME = 1;
 /** HELLO flag: watch only (no avatar, no Join, no inputs). Phones use this in the game world (D-011). */
 export const HELLO_SPECTATE = 1;
 
-/** Snapshot size ceilings by world id (0 sandbox, 1 game): world kind decides how big a snapshot can be. */
-export const maxSnapshotRawFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_SNAPSHOT_RAW_GAME : MAX_SNAPSHOT_RAW);
-export const maxUploadFrameFor = (worldKind: number): number => (worldKind === WORLD_GAME ? MAX_UPLOAD_FRAME_GAME : MAX_UPLOAD_FRAME);
-/** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */
-export const MAX_SOCKET_PAYLOAD = Math.max(MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME);
-/** Chunk side in cells (sim CHUNK) and the grid each world kind has: 512x512 sandbox = 8x8, 2048x1536 game = 32x24. */
-export const CHUNK_CELLS = 64;
-export const chunkGridFor = (worldKind: number): { cw: number; ch: number } => (worldKind === WORLD_GAME ? { cw: 32, ch: 24 } : { cw: 8, ch: 8 });
-export const chunkCountFor = (worldKind: number): number => {
-  const g = chunkGridFor(worldKind);
+/**
+ * Ceilings that depend on the room, computed from its config (R0a): the size gives the chunk grid, the grid gives the
+ * snapshot cap, and the cap bounds decompression (zip-bomb guard) before anything is read. A chunk is 8194 bytes in a
+ * snapshot (2-byte index, mat and aux planes); 128 KiB covers the header, up to 1024 players and the pickups.
+ * Reproduces the old per-kind numbers exactly: classic sandbox 1 MiB, caves 7 MiB.
+ */
+const MIB = 1 << 20;
+export const SNAPSHOT_CHUNK_BYTES = 8194;
+export const SNAPSHOT_OVERHEAD = 128 * 1024;
+/** The chunk grid of a room: `cw x ch` chunks of CHUNK_CELLS. */
+export const chunkGridFor = (cfg: RoomConfig): { cw: number; ch: number } => {
+  const [w, h] = SIZE_DIMS[cfg.size];
+  return { cw: w / CHUNK_CELLS, ch: h / CHUNK_CELLS };
+};
+export const chunkCountFor = (cfg: RoomConfig): number => {
+  const g = chunkGridFor(cfg);
   return g.cw * g.ch;
 };
+/** Uncompressed snapshot ceiling for a world of `w x h` cells (a client knows its sim's size once `init` has run). */
+export const maxSnapshotRawForDims = (w: number, h: number): number =>
+  Math.ceil(((w / CHUNK_CELLS) * (h / CHUNK_CELLS) * SNAPSHOT_CHUNK_BYTES + SNAPSHOT_OVERHEAD) / MIB) * MIB;
+/** Uncompressed snapshot ceiling for a room. */
+export const maxSnapshotRawFor = (cfg: RoomConfig): number => maxSnapshotRawForDims(...SIZE_DIMS[cfg.size]);
+/** Compressed SNAPSHOT_UPLOAD frame ceiling: a worst-case all-live world compresses at least 2:1 (see MAX_UPLOAD_FRAME_GAME). */
+export const maxUploadFrameFor = (cfg: RoomConfig): number => Math.max(1, Math.ceil(maxSnapshotRawFor(cfg) / 2 / MIB)) * MIB;
+/** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */
+export const MAX_SOCKET_PAYLOAD = Math.max(MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME);
+/** Chunk side in cells (sim CHUNK). */
+export const CHUNK_CELLS = 64;
 /** The most chunks any world has (sim.ts MAX_CHUNKS): the decoder's own bound, whatever the world. */
 export const MAX_CHUNK_COUNT = 4096;
-/** The only length a CHUNK_HASHES frame for this world may have, at most (the server's per-world frame cap). */
-export const maxChunkHashesFrameFor = (worldKind: number): number => CHUNK_HASHES_HEADER + 8 * chunkCountFor(worldKind);
+/** The only length a CHUNK_HASHES frame for this room may have, at most (the server's per-world frame cap). */
+export const maxChunkHashesFrameFor = (cfg: RoomConfig): number => CHUNK_HASHES_HEADER + 8 * chunkCountFor(cfg);
 export const HASH_LEN = 32;
 export const TOKEN_LEN = 32;
 export const MAX_REASON_BYTES = 200;
@@ -96,11 +152,13 @@ export type ClientMsg =
   | { t: "hash"; tick: number; hash: bigint; stepP95: number; buffered: number }
   | { t: "snapshot-upload"; tick: number; hash: bigint; data: Uint8Array }
   | { t: "claim"; tick: number; victim: number; killer: number; cause: number; bag: number }
+  | { t: "claim-event"; kind: number; tick: number; a: number; b: number; c: number; d: number; ids: number[] }
   | { t: "live"; tick: number }
-  | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array };
+  | { t: "chunk-hashes"; tick: number; hashes: BigUint64Array }
+  | { t: "chat"; text: string };
 
 export type ServerMsg =
-  | { t: "welcome"; playerId: number; seed: bigint; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
+  | { t: "welcome"; playerId: number; seed: bigint; cfg: Uint8Array; worldKind: number; tickHz: number; tick: number; playersAtBase: number }
   | { t: "reject"; reason: string }
   | { t: "tick"; tick: number; inputs: TickInput[] }
   | { t: "pong"; ts: number }
@@ -110,7 +168,8 @@ export type ServerMsg =
   | { t: "resync"; tick: number; playersAtBase: number }
   | { t: "player-name"; player: number; name: string }
   | { t: "achievement"; id: string; tick: number }
-  | { t: "request-chunk-hashes"; tick: number };
+  | { t: "request-chunk-hashes"; tick: number }
+  | { t: "chat"; name: string; text: string; history: boolean };
 
 const te = new TextEncoder();
 const td = new TextDecoder("utf-8", { fatal: true });
@@ -152,18 +211,42 @@ export function encodePing(ts: number): Uint8Array {
   return b;
 }
 
-/** `playersAtBase`: players online as of the first tick the client will replay (UI presence count only). */
-export function encodeWelcome(playerId: number, seed: bigint, worldKind: number, tickHz: number, tick: number, playersAtBase = 0): Uint8Array {
-  const b = new Uint8Array(21);
+/**
+ * v9 (R2b) layout, 36 bytes fixed:
+ * `tag u8(0), playerId u32(1..5), seed u64(5..13), config 16 bytes(13..29), tickHz u8(29), tick u32(30..34),
+ * playersAtBase u16(34..36)`. `cfg` replaces the old bare `worldKind: u8` at byte 13 so a joiner inits its sim
+ * from the room's actual config, not a kind number that only ever meant something for the two fixed worlds.
+ */
+export function encodeWelcome(playerId: number, seed: bigint, cfg: Uint8Array, tickHz: number, tick: number, playersAtBase = 0): Uint8Array {
+  if (cfg.length !== CONFIG_BYTES) throw new Error("bad welcome config length");
+  const b = new Uint8Array(36);
   const v = view(b);
   b[0] = S_WELCOME;
   v.setUint32(1, playerId, true);
   v.setBigUint64(5, BigInt.asUintN(64, seed), true);
-  b[13] = worldKind;
-  b[14] = tickHz;
-  v.setUint32(15, tick, true);
-  v.setUint16(19, Math.min(0xffff, playersAtBase), true);
+  b.set(cfg, 13);
+  b[29] = tickHz;
+  v.setUint32(30, tick, true);
+  v.setUint16(34, Math.min(0xffff, playersAtBase), true);
   return b;
+}
+
+/**
+ * Back-compat `worldKind` for WELCOME decode (R2b): the two fixed worlds' configs map back to their old kind
+ * byte exactly, so `client/`'s existing call sites (still reading `m.worldKind`, unchanged in this slice —
+ * R3 wires real room ids into the client) keep working unmodified. -1 for any other config: only a real joined
+ * room (not `/sandbox` or the cave world) can produce one, and nothing in `client/` joins a real room yet.
+ */
+function kindOfWelcomeConfig(cfg: Uint8Array): number {
+  if (bytesEqual(cfg, SANDBOX_CFG_BYTES)) return WORLD_SANDBOX;
+  if (bytesEqual(cfg, GAME_CFG_BYTES)) return WORLD_GAME;
+  return -1;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 export function encodeReject(reason: string): Uint8Array {
@@ -218,6 +301,23 @@ export function encodeClaim(tick: number, victim: number, killer: number, cause:
   b[13] = cause & 255;
   b[14] = bag & 255;
   return b;
+}
+
+/** CLAIM_EVENT: see C_CLAIM_EVENT. At most MAX_CLAIM_IDS ids are sent. */
+export function encodeClaimEvent(kind: number, tick: number, a: number, b: number, c: number, d: number, ids: readonly number[] = []): Uint8Array {
+  const n = Math.min(ids.length, MAX_CLAIM_IDS);
+  const out = new Uint8Array(CLAIM_EVENT_HEADER + 4 * n);
+  const v = view(out);
+  out[0] = C_CLAIM_EVENT;
+  out[1] = kind & 255;
+  v.setUint32(2, tick >>> 0, true);
+  v.setUint32(6, a >>> 0, true);
+  v.setUint32(10, b >>> 0, true);
+  v.setUint32(14, c >>> 0, true);
+  v.setUint32(18, d >>> 0, true);
+  out[22] = n;
+  for (let i = 0; i < n; i++) v.setUint32(CLAIM_EVENT_HEADER + 4 * i, ids[i] >>> 0, true);
+  return out;
 }
 
 /** LIVE: the tick the client's sim has reached after catching up. Informational: the server only needs the message. */
@@ -286,6 +386,45 @@ export function encodeAchievement(id: string, tick: number): Uint8Array {
   b[1] = n.length;
   b.set(n, 2);
   view(b).setUint32(2 + n.length, tick >>> 0, true);
+  return b;
+}
+
+/**
+ * True when `text` holds a character a chat line refuses: controls, line separators and every Unicode format
+ * character (\p{Cf}: bidi overrides, zero-widths, U+2060, U+FEFF, U+061C...). This also refuses emoji that need a
+ * zero-width joiner or tag characters (family emoji, subdivision flags): accepted, an invisible-text channel is worse.
+ */
+export function chatHasControl(text: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/u.test(text);
+}
+
+/** True when `text` has nothing a reader would see: only whitespace and blank-looking fillers (Hangul fillers, braille blank). */
+export function chatIsBlank(text: string): boolean {
+  return text.replace(/[\s\u115f\u1160\u3164\uffa0\u2800]/gu, "") === "";
+}
+
+/** The client's chat frame. Throws on text the server would refuse to carry (empty, or over MAX_CHAT_BYTES). */
+export function encodeChat(text: string): Uint8Array {
+  const n = te.encode(text);
+  if (n.length === 0 || n.length > MAX_CHAT_BYTES) throw new Error("chat length");
+  const b = new Uint8Array(1 + n.length);
+  b[0] = C_CHAT;
+  b.set(n, 1);
+  return b;
+}
+
+/** The server's relayed chat line. `name` is cleaned and capped like a player name; `text` is the server-checked line. */
+export function encodeChatLine(name: string, text: string, history = false): Uint8Array {
+  const nm = te.encode(cleanName(name));
+  const tx = te.encode(text);
+  if (tx.length === 0 || tx.length > MAX_CHAT_BYTES) throw new Error("chat length");
+  const b = new Uint8Array(3 + nm.length + tx.length);
+  b[0] = S_CHAT;
+  b[1] = history ? CHAT_HISTORY : 0;
+  b[2] = nm.length;
+  b.set(nm, 3);
+  b.set(tx, 3 + nm.length);
   return b;
 }
 
@@ -384,6 +523,14 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
     case C_CLAIM:
       if (b.length !== CLAIM_LEN) return null;
       return { t: "claim", tick: v.getUint32(1, true), victim: v.getUint32(5, true), killer: v.getUint32(9, true), cause: b[13], bag: b[14] };
+    case C_CLAIM_EVENT: {
+      if (b.length < CLAIM_EVENT_HEADER) return null;
+      const n = b[22];
+      if (n > MAX_CLAIM_IDS || b.length !== CLAIM_EVENT_HEADER + 4 * n) return null;
+      const ids: number[] = [];
+      for (let i = 0; i < n; i++) ids.push(v.getUint32(CLAIM_EVENT_HEADER + 4 * i, true));
+      return { t: "claim-event", kind: b[1], tick: v.getUint32(2, true), a: v.getUint32(6, true), b: v.getUint32(10, true), c: v.getUint32(14, true), d: v.getUint32(18, true), ids };
+    }
     case C_LIVE:
       if (b.length !== LIVE_LEN) return null;
       return { t: "live", tick: v.getUint32(1, true) };
@@ -395,6 +542,14 @@ export function decodeClient(b: Uint8Array): ClientMsg | null {
       for (let i = 0; i < n; i++) hashes[i] = v.getBigUint64(CHUNK_HASHES_HEADER + 8 * i, true);
       return { t: "chunk-hashes", tick: v.getUint32(1, true), hashes };
     }
+    case C_CHAT: {
+      if (b.length < 2 || b.length > 1 + MAX_CHAT_BYTES) return null;
+      try {
+        return { t: "chat", text: td.decode(b.subarray(1)) };
+      } catch {
+        return null;
+      }
+    }
     default:
       return null;
   }
@@ -404,17 +559,20 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
   if (b.length < 1) return null;
   const v = view(b);
   switch (b[0]) {
-    case S_WELCOME:
-      if (b.length !== 21) return null;
+    case S_WELCOME: {
+      if (b.length !== 36) return null;
+      const cfg = b.slice(13, 29);
       return {
         t: "welcome",
         playerId: v.getUint32(1, true),
         seed: v.getBigUint64(5, true),
-        worldKind: b[13],
-        tickHz: b[14],
-        tick: v.getUint32(15, true),
-        playersAtBase: v.getUint16(19, true),
+        cfg,
+        worldKind: kindOfWelcomeConfig(cfg),
+        tickHz: b[29],
+        tick: v.getUint32(30, true),
+        playersAtBase: v.getUint16(34, true),
       };
+    }
     case S_REJECT:
       if (b.length - 1 > MAX_REASON_BYTES) return null;
       try {
@@ -469,6 +627,17 @@ export function decodeServer(b: Uint8Array): ServerMsg | null {
     case S_REQUEST_CHUNK_HASHES:
       if (b.length !== 5) return null;
       return { t: "request-chunk-hashes", tick: v.getUint32(1, true) };
+    case S_CHAT: {
+      if (b.length < 4) return null;
+      const n = b[2];
+      const textLen = b.length - 3 - n;
+      if (n > MAX_NAME_CHARS * 4 || textLen < 1 || textLen > MAX_CHAT_BYTES) return null;
+      try {
+        return { t: "chat", history: (b[1] & CHAT_HISTORY) !== 0, name: td.decode(b.subarray(3, 3 + n)), text: td.decode(b.subarray(3 + n)) };
+      } catch {
+        return null;
+      }
+    }
     default:
       return null;
   }

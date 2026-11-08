@@ -2,6 +2,8 @@
 #![deny(clippy::float_arithmetic)]
 #![allow(clippy::result_unit_err)]
 
+pub mod config;
+pub mod enemy;
 pub mod entities;
 pub mod gen;
 pub mod grid;
@@ -24,9 +26,19 @@ struct Global(UnsafeCell<Option<Sim>>);
 unsafe impl Sync for Global {}
 static G: Global = Global(UnsafeCell::new(None));
 
+/// Snapshot bytes built by `snapshot_size`, kept for the `snapshot_write` that follows it. Any other export
+/// goes through `with`, which drops it, so it can never outlive a state change.
+struct SnapCache(UnsafeCell<Option<Vec<u8>>>);
+// SAFETY: as `Global`.
+unsafe impl Sync for SnapCache {}
+static SNAP: SnapCache = SnapCache(UnsafeCell::new(None));
+
 fn with<R>(f: impl FnOnce(&mut Sim) -> R) -> Option<R> {
     // SAFETY: single-threaded; no re-entrancy (no host imports call back in).
-    unsafe { (*G.0.get()).as_mut().map(f) }
+    unsafe {
+        *SNAP.0.get() = None;
+        (*G.0.get()).as_mut().map(f)
+    }
 }
 
 unsafe fn slice<'a>(ptr: u32, len: u32) -> &'a [u8] {
@@ -36,14 +48,25 @@ unsafe fn out_slice<'a>(ptr: u32, len: usize) -> &'a mut [u8] {
     core::slice::from_raw_parts_mut(ptr as usize as *mut u8, len)
 }
 
+/// Start a world from a seed and a 16-byte room config (written with `alloc` first, as inputs are). Returns 0, or
+/// -1 for a config that fails `RoomConfig::decode` or has no terrain yet. Integers only.
 #[no_mangle]
-pub extern "C" fn init(seed_lo: u32, seed_hi: u32, world_kind: u32) -> i32 {
+pub extern "C" fn init(seed_lo: u32, seed_hi: u32, cfg_ptr: u32, cfg_len: u32) -> i32 {
     let seed = u64::from(seed_lo) | (u64::from(seed_hi) << 32);
-    let Ok(k) = u8::try_from(world_kind) else { return -1 };
-    match Sim::new(seed, k) {
+    // A wrong length is refused before the read, so a hostile length cannot run past the buffer.
+    if cfg_len as usize != config::CONFIG_BYTES {
+        return -1;
+    }
+    // SAFETY: caller guarantees the range is valid linear memory (it was just written with `alloc`).
+    let b = unsafe { slice(cfg_ptr, cfg_len) };
+    let Some(cfg) = config::RoomConfig::decode(b) else { return -1 };
+    match Sim::new(seed, cfg) {
         Some(s) => {
             // SAFETY: see `with`.
-            unsafe { *G.0.get() = Some(s) };
+            unsafe {
+                *SNAP.0.get() = None;
+                *G.0.get() = Some(s);
+            }
             0
         }
         None => -1,
@@ -105,18 +128,36 @@ pub extern "C" fn chunk_hashes(out_ptr: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn snapshot_size() -> u32 {
-    with(|s| snapshot::size(s) as u32).unwrap_or(0)
+    // SAFETY: single-threaded, no re-entrancy.
+    unsafe {
+        *SNAP.0.get() = None;
+        match (*G.0.get()).as_ref() {
+            Some(s) => {
+                let v = snapshot::write(s);
+                let n = v.len() as u32;
+                *SNAP.0.get() = Some(v);
+                n
+            }
+            None => 0,
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn snapshot_write(out_ptr: u32) -> u32 {
-    with(|s| {
-        let v = snapshot::write(s);
-        // SAFETY: caller allocated `snapshot_size()` bytes.
-        unsafe { out_slice(out_ptr, v.len()) }.copy_from_slice(&v);
-        v.len() as u32
-    })
-    .unwrap_or(0)
+    // SAFETY: single-threaded, no re-entrancy. The cache is only ever the bytes of the current state: every
+    // other export clears it before touching the sim.
+    let cached = unsafe { (*SNAP.0.get()).take() };
+    let v = match cached {
+        Some(v) => v,
+        None => match unsafe { (*G.0.get()).as_ref() } {
+            Some(s) => snapshot::write(s),
+            None => return 0,
+        },
+    };
+    // SAFETY: caller allocated `snapshot_size()` bytes.
+    unsafe { out_slice(out_ptr, v.len()) }.copy_from_slice(&v);
+    v.len() as u32
 }
 
 #[no_mangle]
@@ -124,13 +165,16 @@ pub extern "C" fn restore(ptr: u32, len: u32) -> i32 {
     // SAFETY: caller guarantees the range is valid linear memory.
     let b = unsafe { slice(ptr, len) };
     // SAFETY: see `with`.
-    let old = unsafe { (*G.0.get()).take() };
+    let old = unsafe {
+        *SNAP.0.get() = None;
+        (*G.0.get()).take()
+    };
     let prev = old.as_ref().and_then(|o| o.base.as_ref());
     match snapshot::restore_with(b, prev) {
         Ok(mut s) => {
             // Keep at most one base: the one just generated, else the one that matched (moved, not copied).
             if s.base.is_none() {
-                s.base = old.and_then(|mut o| o.base.take()).filter(|b| b.seed == s.seed && b.world_kind == s.world_kind);
+                s.base = old.and_then(|mut o| o.base.take()).filter(|b| b.seed == s.seed && b.cfg == s.cfg.encode());
             }
             // SAFETY: see `with`.
             unsafe { *G.0.get() = Some(s) };
@@ -188,7 +232,7 @@ pub extern "C" fn entities(out_ptr: u32, max: u32) -> u32 {
     with(|s| {
         // SAFETY: caller provides `max` records of ENTITY_BYTES.
         let o = unsafe { out_slice(out_ptr, max as usize * entities::ENTITY_BYTES) };
-        entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, s.tick, o, max as usize) as u32
+        entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &s.heals, s.round_tail(), s.cfg.round == 1, s.tick, o, max as usize) as u32
     })
     .unwrap_or(0)
 }
@@ -206,6 +250,25 @@ pub extern "C" fn set_sleep_enabled(on: u32) {
 #[no_mangle]
 pub extern "C" fn ran_chunks() -> u32 {
     with(|s| s.grid.ran_chunks).unwrap_or(0)
+}
+
+/// Snapshot layout facts for TypeScript readers (review M4): the server's `activePlayersIn` reads the player section
+/// of a stored snapshot without running the sim, and takes these from the wasm rather than holding copies. A snapshot
+/// is `HEADER` bytes, then the entity section's byte length u32, then the entity bytes, which start with the player
+/// count u32 and `PLAYER_BYTES` per player (`id u32, active u8, ...`). Constants, integers only (invariant 2).
+#[no_mangle]
+pub extern "C" fn snapshot_format_version() -> u32 {
+    u32::from(snapshot::FORMAT_VERSION)
+}
+
+#[no_mangle]
+pub extern "C" fn snapshot_header_bytes() -> u32 {
+    snapshot::HEADER as u32
+}
+
+#[no_mangle]
+pub extern "C" fn player_record_bytes() -> u32 {
+    entities::PLAYER_BYTES as u32
 }
 
 /// HUD view of one player's spells, written to `out_ptr` (`PLAYER_VIEW_BYTES` bytes: charges u16[6],

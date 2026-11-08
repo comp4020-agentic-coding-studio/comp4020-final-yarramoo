@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compare } from "./compare.ts";
 import { m5Missing } from "./m5-coverage.ts";
-import { castScript, m5Script, readWasm, sharedScript, wasmPath } from "./helpers.ts";
+import { bossScript, castScript, m5Script, survivalScript, tiersScript, readWasm, sharedScript, wasmPath } from "./helpers.ts";
 import { run } from "./run.ts";
 
 const wasm = readWasm(wasmPath);
@@ -76,5 +76,42 @@ describe("Node determinism", () => {
     const d = compare(a, b);
     expect(d?.tick).toBe(a.hashes[7][0]);
     expect(d?.chunks).toEqual([3]);
+  });
+
+  // F4: a Survival world with slimes, hit and hitting back. D1 (two instances) and D6 (batching) agree, and the
+  // script really hurt and killed slimes (so the enemy code ran, not just generation).
+  const surv = survivalScript().script;
+  it("D1/D6 with slimes: instances and batchings agree, and slimes were hurt", () => {
+    const a = run(readWasm(wasmPath), surv, {}, { collectEvents: true });
+    const b = run(readWasm(wasmPath), surv);
+    const seven = run(readWasm(wasmPath), surv, {}, { batching: { kind: "batch", k: 7 } });
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    expect(compare(a, seven, ["each", "k=7"])).toBeNull();
+    expect(a.events!.filter((e) => e.kind === 11).length).toBeGreaterThanOrEqual(3);
+  });
+
+  // F5: an imp fires at a player and a worm tunnels to another. D1/D6 agree, an enemy-owned bolt (owner high bit)
+  // impacted, and the worm reached its player (a contact knock, which needs the tunnel: the player is inside rock).
+  const tiers = tiersScript().script;
+  it("D1/D6 with imps and worms: agree, an imp bolt flew and a worm dug to its player", () => {
+    const a = run(readWasm(wasmPath), tiers, {}, { collectEvents: true });
+    const b = run(readWasm(wasmPath), tiers);
+    const seven = run(readWasm(wasmPath), tiers, {}, { batching: { kind: "batch", k: 7 } });
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    expect(compare(a, seven, ["each", "k=7"])).toBeNull();
+    expect(a.events!.some((e) => e.kind === 6 && e.player >= 0x80000000)).toBe(true);
+    expect(a.events!.some((e) => e.kind === 5 && e.player === 2 && e.b === -24)).toBe(true);
+  });
+
+  // F6: the boss fight. D1/D6 agree, the boss took damage. It reaches phase 3 or dies (scripted stance, see helpers.ts).
+  const bossRun = bossScript().script;
+  it("D1/D6 with the boss: agree, and the fight reaches phase 3 or the boss's death", () => {
+    const a = run(readWasm(wasmPath), bossRun, {}, { collectEvents: true });
+    const b = run(readWasm(wasmPath), bossRun);
+    const seven = run(readWasm(wasmPath), bossRun, {}, { batching: { kind: "batch", k: 7 } });
+    expect(compare(a, b, ["run1", "run2"])).toBeNull();
+    expect(compare(a, seven, ["each", "k=7"])).toBeNull();
+    expect(a.events!.filter((e) => e.kind === 11).length).toBeGreaterThanOrEqual(5);
+    expect(a.events!.some((e) => (e.kind === 14 && e.b === 3) || (e.kind === 12 && e.c === 4))).toBe(true);
   });
 });

@@ -19,10 +19,18 @@ mise.local.toml
 # Claude Code's project directory is machine-local: settings in here can hold
 # your course API key, and this repo goes public when you ship. Your tracked
 # harness is CLAUDE.md (and any AGENTS.md), not this directory.
-.claude/
+.claude/*
+# Except project skills: plain instructions, no settings or keys (5 Nov).
+!.claude/skills/
 
 # local sqlite data
 .data/
 sim/target/
 sim/target-canary/
 tests/determinism/.cache/
+
+# Session handover notes: local only, not part of the submission
+HANDOVER.md
+
+# Local admin notes (URL and token): never committed
+ADMIN.local.md

@@ -1,10 +1,11 @@
 // A real-protocol test client: real sim, shared playout module, WebSocket to the real server.
 import { readFileSync } from "node:fs";
 import WebSocket from "ws";
+import { decodeConfig } from "../../shared/room.ts";
 import { Lockstep, reactToTick } from "../../client/lockstep.ts";
-import { encodeCast, encodePaint, encodePos, KIND_CAST, KIND_PAINT, KIND_POS } from "../../shared/inputs.ts";
-import { decodeServer, encodeChunkHashes, encodeClaim, encodeHash, encodeHello, encodeInput, encodeLive, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
-import { EV_DEATH, loadSim, simBuildHash } from "../../shared/sim.ts";
+import { encodeCast, encodePaint, encodePos, encodeReady, KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../../shared/inputs.ts";
+import { decodeServer, encodeChunkHashes, encodeChat, encodeClaim, encodeClaimEvent, CLAIM_KILL, CLAIM_ROUND_END, CLAIM_ROUND_START, encodeHash, encodeHello, encodeInput, encodeLive, encodePing, encodeSnapshotUpload, simInputBytes } from "../../shared/protocol.ts";
+import { ENT_PLAYER, EV_DEATH, EV_ENEMY_DEATH, EV_ROUND_END, EV_ROUND_START, loadSim, simBuildHash } from "../../shared/sim.ts";
 
 export const WASM = "sim/target/wasm32-unknown-unknown/release/sim.wasm";
 export const wasmBytes = new Uint8Array(readFileSync(WASM));
@@ -48,10 +49,18 @@ export interface TestClient {
   move(xCells: number, yCells: number, facing?: number, life?: number): void;
   /** Send a Cast for the game world: `angle` is already a u16 (65536 per turn, 0 along +x, growing downwards). */
   cast(spell: number, angle: number, seq: number): void;
+  /** Send a lobby Ready toggle (0 or 1). */
+  ready(r: number): void;
+  /** Send a raw game-world input of `kind` with `payload` (after kind and player), for hostile-input tests. */
+  raw(kind: number, payload: Uint8Array): void;
   /** Names the server told this client about, by player id. */
   names: Map<number, string>;
   /** Achievements the server sent this client, in order. */
   achievements: { id: string; tick: number }[];
+  /** Chat lines the server relayed to this client, in order (Track E). */
+  chats: { name: string; text: string; history: boolean }[];
+  /** Send a chat line (C_CHAT). */
+  chat(text: string): void;
   drain(): void;
   close(): void;
 }
@@ -65,7 +74,10 @@ export async function connect(
   ws.binaryType = "nodebuffer";
   let seq = 0;
   let seed = 0n;
-  let kind = 0;
+  // R2b: WELCOME carries the room's 16-byte config, not a bare kind; `sim.init` accepts either, and the real
+  // config is what every member of a real room must share to init identically (a bare kind only ever worked
+  // for the two fixed worlds, which still round-trip through it fine since their configs ARE the old presets).
+  let cfg: Uint8Array = new Uint8Array(0);
   let wantAt = 0;
   let corrupt = false;
   const c = {
@@ -78,6 +90,7 @@ export async function connect(
     playerId: 0,
     names: new Map<number, string>(),
     achievements: [] as { id: string; tick: number }[],
+    chats: [] as { name: string; text: string; history: boolean }[],
     counts: { ticks: 0, snapshots: 0, resyncs: 0, requests: 0 },
     snapshotTicks: [] as number[],
     uploads: opts.uploads ?? true,
@@ -91,15 +104,24 @@ export async function connect(
 
   const fresh = (target: number) => {
     const sim = loadSim(wasmBytes);
-    sim.init(seed, kind);
+    sim.init(seed, cfg);
     c.ls = new Lockstep(sim);
     c.ls.catchUpTarget = target;
     c.ls.onStepped = (tick) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (tick % 20 === 0) c.hashes.set(tick, c.ls.sim.stateHash()); // local record, for comparing clients
       // Like the real client (D-120): one CLAIM per EV_DEATH past the replay target, never for a replayed tick.
-      if (c.claims && tick > c.ls.catchUpTarget && c.ls.sim.width() > 512) {
-        for (const e of c.ls.sim.events()) if (e.kind === EV_DEATH) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c));
+      if (c.claims && tick > c.ls.catchUpTarget && decodeConfig(cfg)?.avatars === 1) {
+        for (const e of c.ls.sim.events()) {
+          if (e.kind === EV_DEATH) ws.send(encodeClaim(tick, e.player, e.a, e.b, e.c));
+          // F7: the same claims the real client sends (client/worker.ts), from the events this Node sim emits.
+          else if (e.kind === EV_ENEMY_DEATH) ws.send(encodeClaimEvent(CLAIM_KILL, tick, e.player, e.a, e.b, e.c));
+          else if (e.kind === EV_ROUND_START) ws.send(encodeClaimEvent(CLAIM_ROUND_START, tick, e.a, 0, 0, 0));
+          else if (e.kind === EV_ROUND_END) {
+            const ps = c.ls.sim.entities().filter((q) => q.type === ENT_PLAYER);
+            ws.send(encodeClaimEvent(CLAIM_ROUND_END, tick, e.a, ps.length, 0, 0, ps.filter((q) => q.health > 0).map((q) => q.id).sort((x, y) => x - y)));
+          }
+        }
       }
       // Like the real client: LIVE the moment the replay target is reached (D-122). `holdLive` lets a test withhold it.
       if (tick === c.ls.catchUpTarget && !c.holdLive) ws.send(encodeLive(tick));
@@ -115,6 +137,10 @@ export async function connect(
 
   await new Promise<void>((ok, bad) => {
     ws.on("open", () => ws.send(encodeHello(unhex(hashHex), opts.world ?? 0, opts.token, opts.spectate ? 1 : 0)));
+    // Like the real client (client/worker.ts), ping every 2 s. Without it, a test client that is slow to send anything
+    // under a loaded full-suite run was closed by the server's liveness timeout (F7) and its test timed out.
+    const pinger = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send(encodePing(Math.round(performance.now()) >>> 0)), 2000);
+    ws.on("close", () => clearInterval(pinger));
     ws.on("error", bad);
     ws.on("message", (d: Buffer) => {
       const m = decodeServer(new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
@@ -122,7 +148,7 @@ export async function connect(
       switch (m.t) {
         case "welcome":
           seed = m.seed;
-          kind = m.worldKind;
+          cfg = m.cfg;
           fresh(m.tick);
           c.playerId = m.playerId;
           if (m.tick === 0 && !c.holdLive) ws.send(encodeLive(0));
@@ -157,6 +183,9 @@ export async function connect(
         case "achievement":
           c.achievements.push({ id: m.id, tick: m.tick });
           break;
+        case "chat":
+          c.chats.push({ name: m.name, text: m.text, history: m.history });
+          break;
         case "reject":
           bad(new Error(m.reason));
           break;
@@ -168,8 +197,11 @@ export async function connect(
   c.move = (x, y, facing = 0, life = 0) =>
     ws.send(encodeInput(++seq, KIND_POS, encodePos(0, life, Math.round(x * 16), Math.round(y * 16), facing).subarray(5)));
   c.cast = (spell, angle, castSeq) => ws.send(encodeInput(++seq, KIND_CAST, encodeCast(0, spell, angle, castSeq).subarray(5)));
+  c.ready = (r) => ws.send(encodeInput(++seq, KIND_READY, encodeReady(0, r).subarray(5)));
+  c.raw = (kind, payload) => ws.send(encodeInput(++seq, kind, payload));
   c.sendLive = () => ws.send(encodeLive(c.ls.sim.tick()));
   c.localPaint = (mat, x, y, r) => void c.ls.sim.pushInput(simInputBytes({ player: c.playerId, kind: KIND_PAINT, payload: encodePaint(0, mat, x, y, x, y, r).subarray(5) }));
+  c.chat = (text) => ws.send(encodeChat(text));
   c.drain = () => void c.ls.run(1_000_000);
   c.close = () => ws.close();
   return c;

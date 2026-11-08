@@ -72,6 +72,8 @@ export interface IncidentRow {
 export interface DashboardDeps {
   /** Admin only: the newest desync incidents. */
   recentIncidents?(limit: number): IncidentRow[];
+  /** Admin only (R2a): stored room counts by mode, so rooms are visible without `sqlite3 game.db`. */
+  roomCounts?(): { total: number; byMode: Record<string, number> };
   /** Admin player page: null for an unknown id. */
   playerDetail?(id: number): PlayerDetail | null;
   /** Admin player index: one page of rows, plus how many are listed in all (capped). */
@@ -121,6 +123,7 @@ export function createDashboard(deps: DashboardDeps) {
         send("conns", deps.connections());
         send("achievements", deps.recentAchievements());
         send("incidents", deps.recentIncidents?.(INCIDENT_ROWS) ?? []);
+        send("rooms", deps.roomCounts?.() ?? { total: 0, byMode: {} });
       }
     };
     let unsub: (() => void) | undefined;
@@ -230,7 +233,7 @@ function renderSummary(s){
   const w=$("worlds");w.replaceChildren();
   for(const x of s.worlds){const c=document.createElement("div");c.className="card";const h=document.createElement("h3");h.textContent=x.world===0?"Sandbox (world 0)":"Game (world "+x.world+")";const dl=document.createElement("dl");
     row(dl,"online",x.online);if(x.held)row(dl,"clock","held: waiting for a joiner to catch up","warn");row(dl,"tick",x.lastTick);row(dl,"ticks/s",x.ticksPerSec);row(dl,"hash passed",x.hashPasses,"ok");row(dl,"hash failed",x.hashFails,x.hashFails?"bad":"");
-    row(dl,"resyncs",x.resyncs);row(dl,"snapshots ok / rejected",x.snapshotsAccepted+" / "+x.snapshotsRejected,x.snapshotsRejected?"warn":"");
+    row(dl,"resyncs",x.resyncs);if(x.round)row(dl,"round",x.round);row(dl,"snapshots ok / rejected",x.snapshotsAccepted+" / "+x.snapshotsRejected,x.snapshotsRejected?"warn":"");
     row(dl,"last snapshot",(x.snapshotBytes/1024).toFixed(1)+" KB @ "+x.snapshotTick);row(dl,"last verify",x.lastVerifyMs+" ms");row(dl,"log since snapshot",x.ticksSinceSnapshot+" ticks",x.ticksSinceSnapshot>20000?"warn":"");c.append(h,dl);w.append(c)}
   const p=s.process,pc=$("proc");pc.replaceChildren();const dl=document.createElement("dl");
   row(dl,"achievements today",s.achievementsToday);row(dl,"RSS / 256 MB",p.rssMb+" MB",meter(p.rssMb,256,200));row(dl,"heap",p.heapMb+" MB");row(dl,"event-loop lag p99",p.lagP99Ms+" ms",p.lagP99Ms>50?"warn":"");
@@ -264,6 +267,13 @@ function renderInc(list){
   if(latest){g.style.gridTemplateColumns="repeat("+latest.grid.cw+",12px)";const bad=new Set(latest.chunks);
     for(let i=0;i<latest.grid.cw*latest.grid.ch;i++){const c=document.createElement("i");if(bad.has(i))c.className="d"+(latest.first&&latest.first.index===i?" f":"");c.title="chunk "+i;g.append(c)}}
 }
+function renderRooms(r){
+  const c=$("rooms");const dl=document.createElement("dl");
+  const row2=(k,v)=>{const dt=document.createElement("dt");dt.textContent=k;const dd=document.createElement("dd");dd.textContent=v;dl.append(dt,dd)};
+  row2("stored rooms",r.total);
+  for(const m of Object.keys(r.byMode).sort())row2(m,r.byMode[m]);
+  c.replaceChildren(dl);
+}
 const feed=$("feed"),MAXROWS=300;
 function passes(e){
   const w=$("fworld").value;if(w!=="all"&&String(e.world)!==w)return false;
@@ -286,6 +296,7 @@ function connect(){
   es.addEventListener("conns",(m)=>renderConns(JSON.parse(m.data)));
   es.addEventListener("achievements",(m)=>renderAch(JSON.parse(m.data)));
   es.addEventListener("incidents",(m)=>renderInc(JSON.parse(m.data)));
+  es.addEventListener("rooms",(m)=>renderRooms(JSON.parse(m.data)));
   es.addEventListener("backlog",(m)=>{feed.replaceChildren();for(const e of JSON.parse(m.data))addLog(e)});
   es.addEventListener("log",(m)=>addLog(JSON.parse(m.data)));
 }
@@ -307,14 +318,15 @@ connect();
 `;
 
 function dashboardPage(build: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard</title><style>${CSS}</style></head><body><main>
-<header><h1>Dashboard</h1><span class="muted">build ${esc(build)}</span><span id="uptime" class="muted"></span><span id="conn" class="warn">connecting...</span><a href="/">game</a></header>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Simulta: dashboard</title><style>${CSS}</style></head><body><main>
+<header><h1>Simulta dashboard</h1><span class="muted">build ${esc(build)}</span><span id="uptime" class="muted"></span><span id="conn" class="warn">connecting...</span><a href="/">game</a></header>
 <h2>Worlds</h2><div id="worlds" class="grid"></div>
 <h2>Process</h2><div id="proc" class="card"></div>
 <section id="admin" hidden><h2>Connections (<span id="nconns">0</span>)</h2>
 <div class="box"><table><thead><tr><th>who</th><th>k/d</th><th>ach.</th><th>world</th><th>role</th><th>for</th><th>rtt p95</th><th>tick lag</th><th>step p95</th><th>buffered</th><th>window</th><th>session</th></tr></thead><tbody id="conns"></tbody></table></div>
 <h2>Recent achievements</h2>
 <div class="box"><table><thead><tr><th>who</th><th>achievement</th><th>world</th><th>tick</th><th>when</th></tr></thead><tbody id="ach"></tbody></table></div>
+<h2>Rooms (R2a: stored only, not yet joinable)</h2><div id="rooms" class="card"></div>
 <h2>Desync incidents</h2>
 <div class="box"><table><thead><tr><th>when</th><th>world</th><th>tick</th><th>diverged</th><th>chunks</th><th>first diverging chunk</th><th>count</th></tr></thead><tbody id="inc"></tbody></table></div>
 <p id="incgridcap" class="muted"></p><div id="incgrid" class="cgrid"></div>

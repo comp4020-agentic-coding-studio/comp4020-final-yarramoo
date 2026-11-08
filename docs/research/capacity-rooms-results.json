@@ -1,0 +1,366 @@
+{
+ "run_2026-10-24T05-48-31-000Z": {
+  "startedAt": "2026-10-24T05:48:31.001Z",
+  "holdS": 30,
+  "botsPerRoom": 6,
+  "baseline": {
+   "rssMbSummary": 102,
+   "cgroupMemMb": 114.54
+  },
+  "rooms": [
+   {
+    "id": 2,
+    "code": "LWT55M",
+    "size": 1
+   },
+   {
+    "id": 3,
+    "code": "VKTYWE",
+    "size": 1
+   },
+   {
+    "id": 4,
+    "code": "6RNH3U",
+    "size": 0
+   },
+   {
+    "id": 5,
+    "code": "8E423L",
+    "size": 0
+   }
+  ],
+  "joinedAll": true,
+  "verified": true,
+  "onlineTotal": 24,
+  "rssMbLast": 154,
+  "cgroupMemMbPostVerify": 171.82,
+  "cgroupMemMbPeak": 172.71,
+  "passUnder200MB": true,
+  "perRoom": [
+   {
+    "room": 2,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 2789,
+    "lastVerifyMs": 791,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 3,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3424,
+    "lastVerifyMs": 171,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 4,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3433,
+    "lastVerifyMs": 48,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 5,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3440,
+    "lastVerifyMs": 100,
+    "hashFails": 0,
+    "resyncs": 0
+   }
+  ],
+  "botsClosed": 0,
+  "botRejects": [],
+  "finishedAt": "2026-10-24T05:49:30.532Z"
+ },
+ "run_2026-10-24T05-49-38-946Z": {
+  "startedAt": "2026-10-24T05:49:38.947Z",
+  "holdS": 30,
+  "botsPerRoom": 6,
+  "baseline": {
+   "rssMbSummary": 102,
+   "cgroupMemMb": 47.95
+  },
+  "rooms": [
+   {
+    "id": 2,
+    "code": "BPTJTB",
+    "size": 1
+   },
+   {
+    "id": 3,
+    "code": "B4Z74A",
+    "size": 1
+   },
+   {
+    "id": 4,
+    "code": "6FQYVE",
+    "size": 0
+   },
+   {
+    "id": 5,
+    "code": "Y26H5W",
+    "size": 0
+   }
+  ],
+  "joinedAll": true,
+  "verified": true,
+  "onlineTotal": 24,
+  "rssMbLast": 145,
+  "cgroupMemMbPostVerify": 95.74,
+  "cgroupMemMbPeak": 96.92,
+  "passUnder200MB": true,
+  "perRoom": [
+   {
+    "room": 2,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 2791,
+    "lastVerifyMs": 632,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 3,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 59.9,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3424,
+    "lastVerifyMs": 183,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 4,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3432,
+    "lastVerifyMs": 29,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 5,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 59.9,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3438,
+    "lastVerifyMs": 106,
+    "hashFails": 0,
+    "resyncs": 0
+   }
+  ],
+  "botsClosed": 0,
+  "botRejects": [],
+  "finishedAt": "2026-10-24T05:50:37.839Z"
+ },
+ "run_2026-10-24T05-50-49-372Z": {
+  "startedAt": "2026-10-24T05:50:49.373Z",
+  "holdS": 30,
+  "botsPerRoom": 6,
+  "baseline": {
+   "rssMbSummary": 103,
+   "cgroupMemMb": 49.36
+  },
+  "rooms": [
+   {
+    "id": 2,
+    "code": "ECTAVC",
+    "size": 1
+   },
+   {
+    "id": 3,
+    "code": "Z639JX",
+    "size": 1
+   },
+   {
+    "id": 4,
+    "code": "T7XFT7",
+    "size": 0
+   },
+   {
+    "id": 5,
+    "code": "QE9D8A",
+    "size": 0
+   }
+  ],
+  "joinedAll": true,
+  "verified": true,
+  "onlineTotal": 24,
+  "rssMbLast": 154,
+  "cgroupMemMbPostVerify": 103.9,
+  "cgroupMemMbPeak": 104.49,
+  "passUnder200MB": true,
+  "perRoom": [
+   {
+    "room": 2,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60.1,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 2361,
+    "lastVerifyMs": 905,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 3,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60.1,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3425,
+    "lastVerifyMs": 181,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 4,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60.1,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3431,
+    "lastVerifyMs": 50,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 5,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60.1,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3442,
+    "lastVerifyMs": 89,
+    "hashFails": 0,
+    "resyncs": 0
+   }
+  ],
+  "botsClosed": 0,
+  "botRejects": [],
+  "finishedAt": "2026-10-24T05:51:48.330Z"
+ },
+ "run_2026-10-24T05-52-41-258Z": {
+  "startedAt": "2026-10-24T05:52:41.259Z",
+  "holdS": 30,
+  "botsPerRoom": 6,
+  "baseline": {
+   "rssMbSummary": 104,
+   "cgroupMemMb": 49.61
+  },
+  "rooms": [
+   {
+    "id": 2,
+    "code": "Q772BA",
+    "size": 1
+   },
+   {
+    "id": 3,
+    "code": "PCDJS3",
+    "size": 1
+   },
+   {
+    "id": 4,
+    "code": "F29AH4",
+    "size": 0
+   },
+   {
+    "id": 5,
+    "code": "3YAQMC",
+    "size": 0
+   }
+  ],
+  "joinedAll": true,
+  "verified": true,
+  "onlineTotal": 24,
+  "rssMbLast": 155,
+  "cgroupMemMbPostVerify": 104.86,
+  "cgroupMemMbPeak": 107.32,
+  "passUnder200MB": true,
+  "perRoom": [
+   {
+    "room": 2,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 2357,
+    "lastVerifyMs": 823,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 3,
+    "size": 1,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3259,
+    "lastVerifyMs": 170,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 4,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3436,
+    "lastVerifyMs": 54,
+    "hashFails": 0,
+    "resyncs": 0
+   },
+   {
+    "room": 5,
+    "size": 0,
+    "online": 6,
+    "ticksPerSec": 60,
+    "snapshotsAccepted": 1,
+    "snapshotsRejected": 0,
+    "snapshotBytes": 3443,
+    "lastVerifyMs": 98,
+    "hashFails": 0,
+    "resyncs": 0
+   }
+  ],
+  "botsClosed": 0,
+  "botRejects": [],
+  "finishedAt": "2026-10-24T05:53:40.177Z"
+ }
+}

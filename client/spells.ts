@@ -23,11 +23,23 @@ export const SPELLS: SpellInfo[] = [
   { name: SPELL_NAMES[3], colour: [1, 0.45, 0.7], cooldown: 10, speed: 768 / 256, gravity: 10 / 256, enabled: true },
   { name: SPELL_NAMES[4], colour: [1, 0.55, 0.12], cooldown: 15, speed: 896 / 256, gravity: 4 / 256, enabled: true },
   { name: SPELL_NAMES[5], colour: [0.8, 0.25, 0.25], cooldown: 60, speed: 640 / 256, gravity: 20 / 256, enabled: true },
+  { name: SPELL_NAMES[6], colour: [0.7, 0.5, 0.3], cooldown: 18, speed: 0, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[7], colour: [0.45, 0.9, 0.2], cooldown: 25, speed: 768 / 256, gravity: 10 / 256, enabled: true },
+  { name: SPELL_NAMES[8], colour: [0.35, 0.25, 0.1], cooldown: 20, speed: 768 / 256, gravity: 10 / 256, enabled: true },
+  { name: SPELL_NAMES[9], colour: [0.55, 0.55, 0.6], cooldown: 45, speed: 0, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[10], colour: [1, 0.35, 0.05], cooldown: 60, speed: 768 / 256, gravity: 10 / 256, enabled: true },
+  { name: SPELL_NAMES[11], colour: [0.35, 0.1, 0.6], cooldown: 120, speed: 384 / 256, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[12], colour: [0.6, 0.9, 1], cooldown: 30, speed: 896 / 256, gravity: 4 / 256, enabled: true },
+  { name: SPELL_NAMES[13], colour: [0.6, 0.45, 0.3], cooldown: 90, speed: 0, gravity: 0, enabled: true },
+  { name: SPELL_NAMES[14], colour: [0.4, 0.27, 0.15], cooldown: 30, speed: 768 / 256, gravity: 10 / 256, enabled: true },
 ];
 if (SPELLS.length !== NUM_SPELLS) throw new Error("spell table out of step with the sim");
 
-/** Spell slots on the bar, in key order 1..4. */
-export const BAR: number[] = [0, 1, 2, 3, 4, 5];
+/** Spell slots on the bar, in bar order (keys 1-9, then Q/E or the wheel to cycle). */
+export const BAR: number[] = [0, 1, 6, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14];
+/** Spell id of Wall (index into SPELLS / SPELL_NAMES). */
+export const SPELL_WALL = SPELL_NAMES.indexOf("Wall");
+export const SPELL_QUAKE = SPELL_NAMES.indexOf("Quake");
 export const INFINITE = 0xffff;
 
 /** Aim angle as the sim wants it: u16, 65536 per turn, 0 along +x, growing towards +y (down the screen). */
@@ -43,3 +55,8 @@ export const DEATH_TICKS = 180;
 export const HEALTH_MAX = 100;
 /** Bomb blast radius in cells (tuning.rs BOMB_RADIUS); an explosion this big shakes the screen. */
 export const BOMB_RADIUS = 18;
+/** Dig's capsule: radius and reach in cells (tuning.rs DIG_RADIUS and DIG_REACH). Only the aim preview reads these. */
+export const DIG_RADIUS = 7;
+export const DIG_REACH = 14;
+/** Blast's reach in cells (tuning.rs BLAST_RADIUS_CELLS); its cone has a 45 degree half-angle. Only the aim preview reads it. */
+export const BLAST_RADIUS = 24;

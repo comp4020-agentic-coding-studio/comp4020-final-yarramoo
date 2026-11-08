@@ -36,8 +36,11 @@ const casts = (spell: number, n: number) => (s: StatMap) => (s[castStat(spell)] 
 export const FIRST_BLOOD_KILLS = 1;
 export const FIVE_KILLS = 5;
 export const BACK_FROM_THE_DEAD_DEATHS = 10;
-/** `EV_DEATH.b` values for an environmental death (CAUSE_FIRE, CAUSE_LAVA, CAUSE_GUNPOWDER in shared/sim.ts). */
-export const SHOVE_CAUSES: readonly number[] = [6, 7, 8];
+/** `EV_DEATH.b` values for an environmental death (CAUSE_FIRE, CAUSE_LAVA, CAUSE_GUNPOWDER, CAUSE_ACID in shared/sim.ts). */
+export const SHOVE_CAUSES: readonly number[] = [32, 33, 34, 35];
+
+/** F7 thresholds. */
+export const EXTERMINATOR_KILLS = 50;
 
 export const ACHIEVEMENTS: readonly Achievement[] = [
   {
@@ -63,6 +66,11 @@ export const ACHIEVEMENTS: readonly Achievement[] = [
   { id: "first_blood", name: "First blood", description: "Get a credited kill", source: "claim" },
   { id: "shoved_to_doom", name: "Shoved to their doom", description: "Get a credited kill on someone who dies to fire, lava or gunpowder", source: "claim" },
   { id: "five_kills", name: "Five kills", description: "Get 5 credited kills", source: "claim" },
+  { id: "slime_slayer", name: "Slime slayer", description: "Kill your first enemy", source: "claim" },
+  { id: "exterminator", name: "Exterminator", description: `Kill ${EXTERMINATOR_KILLS} enemies`, source: "claim" },
+  { id: "deep_mage_slain", name: "Boss slain", description: "Be in a party that defeats the boss", source: "claim" },
+  { id: "last_one_standing", name: "Last one standing", description: "Be alive at the win when the rest of your party died", source: "claim" },
+  { id: "solo_descent", name: "Solo descent", description: "Defeat the boss alone", source: "claim" },
   { id: "back_from_the_dead", name: "Back from the dead", description: "Die 10 times", source: "claim" },
 ];
 

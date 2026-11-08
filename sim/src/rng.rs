@@ -36,6 +36,46 @@ pub const SALT_LAVA_DIAG: u32 = 21;
 pub const SALT_LAVA_SIDE: u32 = 22;
 pub const SALT_LAVA_IGNITE: u32 = 23;
 
+pub const SALT_OIL_DIAG: u32 = 200;
+pub const SALT_OIL_SIDE: u32 = 201;
+pub const SALT_ACID_DIAG: u32 = 202;
+pub const SALT_ACID_SIDE: u32 = 203;
+pub const SALT_ACID_EAT: u32 = 204;
+pub const SALT_ACID_DILUTE: u32 = 205;
+pub const SALT_MGAS_DIR: u32 = 206;
+pub const SALT_ICE_FREEZE: u32 = 207;
+pub const SALT_ICE_MELT: u32 = 208;
+pub const SALT_LAVA_GLASS: u32 = 209;
+/// F4 enemies: placement and the slime's AI draws (one salt per use).
+pub const SALT_GEN_ENEMY_X: u32 = 240;
+pub const SALT_GEN_ENEMY_Y: u32 = 241;
+pub const SALT_ENEMY_HOP: u32 = 242;
+pub const SALT_ENEMY_IDLE: u32 = 243;
+pub const SALT_GEN_IMP_X: u32 = 244;
+pub const SALT_GEN_IMP_Y: u32 = 245;
+pub const SALT_GEN_ACID_SLIME_X: u32 = 246;
+pub const SALT_GEN_ACID_SLIME_Y: u32 = 247;
+pub const SALT_GEN_WORM_X: u32 = 248;
+pub const SALT_GEN_WORM_Y: u32 = 249;
+pub const SALT_COAL_IGNITE: u32 = 210;
+pub const SALT_COAL_EMIT: u32 = 211;
+pub const SALT_COAL_SMOKE: u32 = 212;
+pub const SALT_GEN_OIL_X: u32 = 220;
+pub const SALT_GEN_OIL_Y: u32 = 221;
+pub const SALT_GEN_OIL_D: u32 = 222;
+pub const SALT_GEN_OIL_LAYER: u32 = 223;
+pub const SALT_GEN_ACID_X: u32 = 224;
+pub const SALT_GEN_ACID_Y: u32 = 225;
+pub const SALT_GEN_ACID_D: u32 = 226;
+pub const SALT_GEN_GASP_PICK: u32 = 227;
+pub const SALT_GEN_GASP_R: u32 = 228;
+pub const SALT_GEN_ICE_PICK: u32 = 229;
+pub const SALT_GEN_ICE_CELL: u32 = 230;
+pub const SALT_GEN_COAL_X: u32 = 231;
+pub const SALT_GEN_COAL_Y: u32 = 232;
+pub const SALT_GEN_COAL_DIR: u32 = 233;
+pub const SALT_GEN_COAL_LEN: u32 = 234;
+
 pub const SALT_GEN_SURF_A: u32 = 100;
 pub const SALT_GEN_SURF_B: u32 = 101;
 pub const SALT_GEN_SURF_C: u32 = 102;
@@ -73,12 +113,67 @@ pub const SALT_GEN_SPOT_X: u32 = 132;
 pub const SALT_GEN_SPOT_Y: u32 = 133;
 pub const SALT_GEN_LINK: u32 = 134;
 pub const SALT_GEN_ENTRANCE_BAND: u32 = 135;
+pub const SALT_GEN_CHAMBER: u32 = 136;
 pub const SALT_STEM_LEAN: u32 = 143;
 pub const SALT_STEM_BRANCH: u32 = 144;
 pub const SALT_STEM_BLOOM: u32 = 145;
 pub const SALT_SPAWN_X: u32 = 140;
 pub const SALT_PICKUP_SPELL: u32 = 141;
 pub const SALT_BURST: u32 = 142;
+pub const SALT_GEN_ARENA: u32 = 250;
+pub const SALT_GEN_ARENA_SIDE: u32 = 251;
+pub const SALT_GEN_ARENA_PILLAR: u32 = 252;
+pub const SALT_BOSS_SUMMON: u32 = 253;
+pub const SALT_BOSS_RING: u32 = 254;
+pub const SALT_PEBBLES_DIAG: u32 = 255;
+pub const SALT_PAINT_SEED: u32 = 256;
+/// Brief E: whether a killed enemy drops a heal.
+pub const SALT_HEAL_DROP: u32 = 257;
+/// Biomes (generation only): site pick, site radius, lava-lake basin x, lava ledges, ice-cave pool x, icicles.
+pub const SALT_GEN_BIOME: u32 = 260;
+pub const SALT_GEN_BIOME_R: u32 = 261;
+pub const SALT_GEN_LAKE_X: u32 = 262;
+pub const SALT_GEN_LEDGE: u32 = 263;
+pub const SALT_GEN_ICE_POOL_X: u32 = 264;
+pub const SALT_GEN_ICICLE: u32 = 265;
+pub const SALT_GEN_MOSS: u32 = 266;
+pub const SALT_GEN_MUSH: u32 = 267;
+pub const SALT_GEN_MINE: u32 = 268;
+/// X2 enemy placement: wisp / frost-sprite x and y in the band fallback, and the biome-anchored picks (anchor cell, offsets).
+pub const SALT_GEN_WISP_X: u32 = 270;
+pub const SALT_GEN_WISP_Y: u32 = 271;
+pub const SALT_GEN_FROST_X: u32 = 272;
+pub const SALT_GEN_FROST_Y: u32 = 273;
+pub const SALT_GEN_BIOME_ENEMY: u32 = 274;
+/// INT-2: which boss a Survival world gets (Deep Mage or Sand Colossus), and the Colossus's shed / shower draws.
+pub const SALT_BOSS_KIND: u32 = 275;
+pub const SALT_COLOSSUS_SHED: u32 = 276;
+pub const SALT_COLOSSUS_SHOWER: u32 = 277;
+/// world-life W1: surface greenery at generation (canopy size and ragged edge, shrub and tuft placement and shape).
+pub const SALT_GEN_CANOPY_R: u32 = 278;
+pub const SALT_GEN_CANOPY_EDGE: u32 = 279;
+pub const SALT_GEN_SHRUB_X: u32 = 280;
+pub const SALT_GEN_SHRUB_DIM: u32 = 281;
+pub const SALT_GEN_TUFT_PATCH: u32 = 282;
+pub const SALT_GEN_TUFT_X: u32 = 283;
+pub const SALT_GEN_TUFT_DIM: u32 = 284;
+/// content-W1: surface ruins (houses: x, size, roof and ruin, props) and wells (x, size).
+pub const SALT_GEN_HOUSE_X: u32 = 285;
+pub const SALT_GEN_HOUSE_DIM: u32 = 286;
+pub const SALT_GEN_HOUSE_RUIN: u32 = 287;
+pub const SALT_GEN_HOUSE_PROP: u32 = 288;
+pub const SALT_GEN_WELL_X: u32 = 289;
+pub const SALT_GEN_WELL_DIM: u32 = 290;
+/// Spells' cell rules (mud, salt, snow, thermite, quake). They were 260-267 and shared those values with the biome
+/// generation salts above; D-217 moved them here so every salt in this file is unique (`salts_are_unique`).
+pub const SALT_MUD_MOVE: u32 = 291;
+pub const SALT_SALT_DIAG: u32 = 292;
+pub const SALT_SALT_MELT: u32 = 293;
+pub const SALT_SNOW_DIAG: u32 = 294;
+pub const SALT_SNOW_PACK: u32 = 295;
+pub const SALT_THERMITE_DIAG: u32 = 296;
+pub const SALT_THERMITE_EAT: u32 = 297;
+pub const SALT_QUAKE: u32 = 298;
 
 #[cfg(test)]
 mod tests {

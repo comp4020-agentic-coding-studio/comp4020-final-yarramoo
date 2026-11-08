@@ -27,11 +27,39 @@ async function boot(): Promise<RunningServer> {
 const GAME = 1;
 const BOMB = 5;
 
-/** A deep Bomb pickup, in cells (pickups are a pure function of the seed, D-052). */
+/**
+ * A deep Bomb pickup with open ground to its right, in cells (pickups are a pure function of the seed, D-052).
+ * Bo stands GAP cells to the right and Ana bombs along +x, so the gap must be clear. F3's pickup table moved the
+ * first Bomb spot against a rock wall, where Bo stood inside the rock and Ana's bomb burst beside her own feet,
+ * so whether her own fire death or Bo's death resolved first was a race.
+ *
+ * GAP must exceed the bomb's damage reach, `kr = BOMB_RADIUS * 3 / 2` = 27 cells (`explode_at`), or every bomb that
+ * reaches Bo also hurts Ana. At the old 12 cells it did: a trace showed each bomb taking 32 hp from Ana and 58 from
+ * Bo, so Bo usually died first but under a loaded full-suite run Ana's own blasts sometimes killed her first
+ * (victim Ana, killer null: about one run in three).
+ */
+const GAP = 34;
+/**
+ * 8 degrees above +x (the angle grows downwards). Measured natively on this seed (D-179): a flat throw (angle 0)
+ * crosses Bo's column 3 cells under his feet and misses; from 4 to 20 degrees up every bomb bursts on Bo for
+ * 46-53 hp and Ana stays at 100. 8 is the middle of that band, so tick-timing differences cannot push it out.
+ */
+const LOB = 65536 - Math.round((8 / 360) * 65536);
 function bombPickup(): { x: number; y: number } {
   const sim = loadSim(wasmBytes);
   sim.init(20261014n, 1);
-  const p = sim.entities().filter((e) => e.type === ENT_PICKUP && e.sub === BOMB).sort((a, b) => a.id - b.id)[0];
+  const mv = sim.matView();
+  const W = sim.width();
+  const open = (x: number, y: number) => {
+    for (let dx = 1; dx <= GAP + 6; dx++) for (let dy = 1; dy <= 10; dy++) if (mv[(y - dy) * W + x + dx] !== 0) return false;
+    return true;
+  };
+  const p = sim
+    .entities()
+    .filter((e) => e.type === ENT_PICKUP && e.sub === BOMB)
+    .sort((a, b) => a.id - b.id)
+    .find((e) => open(Math.floor(e.x / 16), Math.floor(e.y / 16)));
+  if (!p) throw new Error("no Bomb pickup with open ground to its right on this seed");
   return { x: p.x / 16, y: p.y / 16 };
 }
 const deaths = (c: TestClient) => {
@@ -64,12 +92,12 @@ describe("two real clients, one kills the other", () => {
     const b = await connect(s.port, hex, { world: GAME, token: bo.token });
     const at = bombPickup();
     a.move(at.x, at.y);
-    b.move(at.x + 12, at.y); // far enough that Ana's own blast never reaches her
+    b.move(at.x + GAP, at.y); // outside the 27-cell reach of a blast at Bo, so Ana's bombs never hurt her
     await sleep(500);
     let seq = 1;
     let sawDeath = false;
     for (let i = 0; i < 12 && !sawDeath; i++) {
-      a.cast(BOMB, 0, seq++); // angle 0: along +x, at Bo
+      a.cast(BOMB, LOB, seq++); // 8 degrees up: lands on Bo (a flat throw passes under his feet at this gap)
       await sleep(700);
       sawDeath = s.log.recent().some((e) => e.ev === "claim.death");
     }

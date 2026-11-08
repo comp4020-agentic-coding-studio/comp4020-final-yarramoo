@@ -3,18 +3,42 @@
 
 use crate::materials::*;
 use crate::rng::*;
+use crate::tuning::{DIG_RADIUS, DIG_REACH, FALL_ISLAND_MAX, FALL_MAX_ISLANDS, ISLAND_MAX, ISLAND_WORK_MAX, MAX_ISLAND_REMOVED};
+
+/// Materials that form rigid islands for falling rock v0 (Bedrock anchors them instead).
+pub fn is_structural(m: u8) -> bool {
+    matches!(m, ROCK | DIRT | WOOD | ICE | GLASS | COAL | BRICK)
+}
+
+/// Outcome of trying to move a free island down one cell.
+enum Fall {
+    Moved,
+    /// A live player or enemy hitbox is in the way: wait.
+    Entity,
+    /// Solid below (or the world floor): it has landed.
+    Terrain,
+}
 
 pub const CHUNK: usize = 64;
+/// log2(CHUNK): chunk arithmetic uses shifts and masks.
+const CHUNK_SHIFT: usize = 6;
+const _: () = assert!(1 << CHUNK_SHIFT == CHUNK);
 /// How a liquid moves: its randomness salts and how far it can slide sideways in one update.
 #[derive(Clone, Copy)]
 pub struct Liquid {
     diag: u32,
     side: u32,
     reach: usize,
+    /// What this liquid may displace (Empty, light gases, and any lighter liquid: density order).
+    ok: fn(u8) -> bool,
 }
-const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6 };
-/// Lava is thicker, so it spreads less per update (and it only moves on even ticks).
-const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3 };
+/// Acid sinks through Oil and is sunk through by Water (Oil < Acid < Water).
+const ACID_FLOW: Liquid = Liquid { diag: SALT_ACID_DIAG, side: SALT_ACID_SIDE, reach: 4, ok: Grid::acid_ok };
+const WATER_FLOW: Liquid = Liquid { diag: SALT_WATER_DIAG, side: SALT_WATER_SIDE, reach: 6, ok: Grid::water_ok };
+/// Oil floats on Water: it only displaces what is lighter than it.
+const OIL_FLOW: Liquid = Liquid { diag: SALT_OIL_DIAG, side: SALT_OIL_SIDE, reach: 5, ok: Grid::liquid_ok };
+/// Lava is thicker, so it spreads less per update (and it only moves on half the ticks, `tick & 2 == 0`).
+const LAVA_FLOW: Liquid = Liquid { diag: SALT_LAVA_DIAG, side: SALT_LAVA_SIDE, reach: 3, ok: Grid::liquid_ok };
 pub const CHUNK_AREA: usize = CHUNK * CHUNK;
 /// Active rectangle around a player (plan 6.5): the 480 x 270 view plus margin.
 pub const ACTIVE_W: i32 = crate::tuning::ACTIVE_W;
@@ -40,8 +64,18 @@ pub struct Grid {
     pub awake: Vec<bool>,
     /// Scratch, not state: the semantic active set (plan 6.5). Inactive chunks are frozen.
     pub active: Vec<bool>,
-    /// Scratch: set by `update_cell` when it sees a volatile material in the chunk being run.
+    /// STATE (Brief W, D-176): outside the active set, a chunk with `woken` set runs each tick until a run
+    /// changes nothing and meets no volatile material; a frozen chunk without it does not run. Set when a cell in
+    /// or within one cell of a frozen chunk changes. For an active chunk it records "busy" (still changing or
+    /// volatile after this tick's run), so a chunk the player walks away from mid-flow keeps flowing. Hashed
+    /// (only when some bit is set) and snapshotted. Always all false while every chunk is active (the sandbox).
+    pub woken: Vec<bool>,
+    /// Scratch: set by `update_cell` when it sees a volatile material in the row segment being run.
     vol_seen: bool,
+    /// Scratch: conversions lit Thermite may still make this tick (reset to `THERMITE_EAT_PER_TICK` in `step_cells`).
+    thermite_budget: u32,
+    /// Scratch, one per chunk column: whether that chunk of the band being stepped is running.
+    running: Vec<bool>,
     /// Telemetry only: chunks actually run in the last `step_cells`.
     pub ran_chunks: u32,
     /// Scratch, not state: explosions queued during this tick's cell pass (plan 6.2 step 4).
@@ -51,6 +85,29 @@ pub struct Grid {
     /// `step_cells`, in queue order, for the damage pass. Cleared at the start of each `step_cells`,
     /// never hashed or snapshotted, and never fed back into the grid.
     pub explosions: Vec<(u32, u32)>,
+    /// Scratch, not state (falling rock v0): solid cells whose neighbour was just removed, drained by
+    /// `crumble_islands` at the end of every tick. Never hashed or snapshotted; empty between ticks.
+    pub island_removed: Vec<u32>,
+    island_stamp: Vec<u32>,
+    /// Cells already proven anchored in this pass (same stamp scheme as `island_stamp`).
+    island_anchor: Vec<u32>,
+    island_tick: u32,
+    island_cells: Vec<u32>,
+    island_stack: Vec<u32>,
+    /// Telemetry only: flood cell visits in the last `crumble_islands`.
+    pub island_visits: u32,
+    /// Telemetry only: islands crumbled since construction (never hashed).
+    pub island_crumbled: u32,
+    /// Telemetry only: cells moved by falling islands since construction (never hashed).
+    pub island_fallen: u32,
+    /// Scratch: the last `flood` stopped because it hit its cell limit (not because it touched an anchor).
+    island_limited: bool,
+    /// STATE (falling rock v0.5, snapshot format 13, hashed): one cell index in each island that is falling now,
+    /// in the order they were found. Re-flooded every tick; at most `FALL_MAX_ISLANDS`.
+    pub falls: Vec<u32>,
+    /// Scratch, set by the sim before `crumble_islands`: hitbox rectangles (x0, y0, x1, y1 inclusive, cells) of
+    /// live players and enemies that a falling island must never be written over.
+    pub fall_blockers: Vec<(i32, i32, i32, i32)>,
 }
 
 /// Explosions resolved per tick. Bounds the per-tick cost of a chain (D-022).
@@ -74,10 +131,25 @@ impl Grid {
             sleep_enabled: true,
             awake: vec![true; cw * ch],
             active: vec![true; cw * ch],
+            woken: vec![false; cw * ch],
             vol_seen: false,
+            thermite_budget: crate::tuning::THERMITE_EAT_PER_TICK,
+            running: vec![false; cw],
             ran_chunks: 0,
             pending: Vec::new(),
             explosions: Vec::new(),
+            island_removed: Vec::new(),
+            island_stamp: vec![0; w * h],
+            island_anchor: vec![0; w * h],
+            island_tick: 0,
+            island_cells: Vec::new(),
+            island_stack: Vec::new(),
+            island_visits: 0,
+            island_crumbled: 0,
+            island_fallen: 0,
+            island_limited: false,
+            falls: Vec::new(),
+            fall_blockers: Vec::new(),
         }
     }
 
@@ -86,24 +158,26 @@ impl Grid {
     }
 
     pub fn chunk_of(&self, x: usize, y: usize) -> usize {
-        (y / CHUNK) * self.cw + x / CHUNK
+        (y >> CHUNK_SHIFT) * self.cw + (x >> CHUNK_SHIFT)
     }
 
-    /// Record that the cell at flat index `i` changed.
+    /// Record that the cell at flat index `i` changed. Sleeping is invisible (invariant 8, D-191) only while every rule
+    /// of a non-volatile material reads at most its 3 x 3 neighbourhood (or is gated by it): a cell that can act on a
+    /// change 2 or more cells away must mark its chunk volatile in `update_cell`.
     pub fn touch(&mut self, i: usize) {
         let (x, y) = (i % self.w, i / self.w);
         let c = self.chunk_of(x, y);
         self.dirty_since_hash[c] = true;
         self.pristine[c] = false;
-        self.awake[c] = true;
+        self.wake(c);
         // Wake the neighbours whose cells can see this one (distance 1, corners included).
-        let (lx, ly) = (x % CHUNK, y % CHUNK);
-        let (cx, cy) = (c % self.cw, c / self.cw);
+        let (lx, ly) = (x & (CHUNK - 1), y & (CHUNK - 1));
+        let (cx, cy) = (x >> CHUNK_SHIFT, y >> CHUNK_SHIFT);
         let xs = [(lx == 0 && cx > 0, -1isize), (lx == CHUNK - 1 && cx + 1 < self.cw, 1)];
         let ys = [(ly == 0 && cy > 0, -1isize), (ly == CHUNK - 1 && cy + 1 < self.ch, 1)];
         for &(okx, dx) in &xs {
             if okx {
-                self.awake[(c as isize + dx) as usize] = true;
+                self.wake((c as isize + dx) as usize);
             }
         }
         for &(oky, dy) in &ys {
@@ -111,12 +185,20 @@ impl Grid {
                 continue;
             }
             let row = (c as isize + dy * self.cw as isize) as usize;
-            self.awake[row] = true;
+            self.wake(row);
             for &(okx, dx) in &xs {
                 if okx {
-                    self.awake[(row as isize + dx) as usize] = true;
+                    self.wake((row as isize + dx) as usize);
                 }
             }
+        }
+    }
+
+    /// A cell in or next to chunk `c` changed: it must run next tick, and if it is frozen it is woken (D-176).
+    fn wake(&mut self, c: usize) {
+        self.awake[c] = true;
+        if !self.active[c] {
+            self.woken[c] = true;
         }
     }
 
@@ -141,16 +223,259 @@ impl Grid {
             let (x1, y1) = (x0 + CHUNK as i32, y0 + CHUNK as i32);
             self.active[c] = centres.iter().any(|&(px, py)| x0 < px + hw && x1 > px - hw && y0 < py + hh && y1 > py - hh);
         }
+        if self.active.iter().all(|&a| a) {
+            self.woken.fill(false);
+        }
     }
 
     pub fn set_all_active(&mut self) {
         self.active.fill(true);
+        self.woken.fill(false);
+    }
+
+    /// Telemetry only: chunks currently outside the active set that are woken.
+    pub fn woken_frozen(&self) -> u32 {
+        (0..self.chunk_count()).filter(|&c| self.woken[c] && !self.active[c]).count() as u32
     }
 
     pub fn set(&mut self, i: usize, m: u8, a: u8) {
+        if is_structural(self.mat[i]) && !is_structural(m) {
+            self.seed_neighbours(i);
+        }
         self.mat[i] = m;
         self.aux[i] = a;
         self.touch(i);
+    }
+
+    /// `set` for a paint stroke of a structural material: writes and touches like `set` but records no crumble
+    /// seed, so a painted wall may float (D-174). Paint is an input, so this stays deterministic.
+    pub fn set_unseeded(&mut self, i: usize, m: u8, a: u8) {
+        self.mat[i] = m;
+        self.aux[i] = a;
+        self.touch(i);
+    }
+
+    /// Record a removed structural cell (bounded; extras dropped). Seeds are derived later, in
+    /// `crumble_islands`, from neighbours that are still solid, so a bulk removal cannot overflow a seed queue.
+    fn seed_neighbours(&mut self, i: usize) {
+        if self.island_removed.len() < MAX_ISLAND_REMOVED {
+            self.island_removed.push(i as u32);
+        }
+    }
+
+    fn next_stamp(&mut self) -> u32 {
+        self.island_tick = self.island_tick.wrapping_add(1);
+        if self.island_tick == 0 {
+            self.island_stamp.fill(0);
+            self.island_anchor.fill(0);
+            self.island_tick = 1;
+        }
+        self.island_tick
+    }
+
+    /// Flood the 4-connected structural cells from `s` into `island_cells`. Returns true when anchored: Bedrock or
+    /// the world edge touched, `limit` cells reached, or an earlier flood this pass proved a neighbour anchored.
+    /// An anchored flood marks everything it reached or queued in `island_anchor` (D-174).
+    fn flood(&mut self, s: usize, stamp: u32, limit: usize) -> bool {
+        self.island_cells.clear();
+        self.island_stack.clear();
+        self.island_stamp[s] = stamp;
+        self.island_stack.push(s as u32);
+        let mut anchored = false;
+        self.island_limited = false;
+        while let Some(c) = self.island_stack.pop() {
+            let c = c as usize;
+            self.island_visits += 1;
+            self.island_cells.push(c as u32);
+            if self.island_cells.len() >= limit {
+                self.island_limited = true;
+                anchored = true;
+                break;
+            }
+            let (x, y) = (c % self.w, c / self.w);
+            if x == 0 || y == 0 || x + 1 == self.w || y + 1 == self.h {
+                anchored = true;
+                break;
+            }
+            for j in [c - self.w, c - 1, c + 1, c + self.w] {
+                let m = self.mat[j];
+                if m == BEDROCK {
+                    anchored = true;
+                    break;
+                } else if is_structural(m) {
+                    if self.island_anchor[j] == stamp {
+                        anchored = true;
+                        break;
+                    }
+                    if self.island_stamp[j] != stamp {
+                        self.island_stamp[j] = stamp;
+                        self.island_stack.push(j as u32);
+                    }
+                }
+            }
+        }
+        if anchored {
+            // Everything this flood reached or queued is connected to an anchor. Remember it, or a later
+            // seed's flood would find these cells already stamped, skip them, and mistake the thin rock
+            // strip it is standing on for a free island.
+            for k in 0..self.island_cells.len() {
+                let c = self.island_cells[k] as usize;
+                self.island_anchor[c] = stamp;
+            }
+            for k in 0..self.island_stack.len() {
+                let c = self.island_stack[k] as usize;
+                self.island_anchor[c] = stamp;
+            }
+        }
+        anchored
+    }
+
+    /// Move the island in `island_cells` (a complete free island, stamped `stamp`) down one cell, keeping its
+    /// materials. Every cell under its bottom edge must be Empty, a gas or a liquid (a liquid is displaced upward:
+    /// the cells swap bottom-up, so the fluid bubbles to the top of each column run) and outside every blocker
+    /// rectangle (a live player or enemy hitbox, so cells are never written over one).
+    fn fall_one(&mut self, stamp: u32) -> Fall {
+        let w = self.w;
+        let mut blocked_by_entity = false;
+        for k in 0..self.island_cells.len() {
+            let below = self.island_cells[k] as usize + w;
+            if below >= self.w * self.h {
+                return Fall::Terrain;
+            }
+            if self.island_stamp[below] == stamp {
+                continue;
+            }
+            // Review N4 F2: only structural material and Bedrock stop a fall. A powder (Sand, Pebbles, Seed) is
+            // displaced upward like a liquid, so an island can never rest on something that later moves away.
+            if is_structural(self.mat[below]) || self.mat[below] == BEDROCK {
+                return Fall::Terrain;
+            }
+            let (bx, by) = ((below % w) as i32, (below / w) as i32);
+            if self.fall_blockers.iter().any(|&(x0, y0, x1, y1)| bx >= x0 && bx <= x1 && by >= y0 && by <= y1) {
+                blocked_by_entity = true;
+            }
+        }
+        if blocked_by_entity {
+            return Fall::Entity;
+        }
+        self.island_cells.sort_unstable_by(|a, b| b.cmp(a));
+        for k in 0..self.island_cells.len() {
+            let c = self.island_cells[k] as usize;
+            self.mat.swap(c, c + w);
+            self.aux.swap(c, c + w);
+            self.touch(c);
+            self.touch(c + w);
+            // Stamp the new position too, so a second seed in this island (two falling islands that met) is skipped.
+            self.island_stamp[c + w] = stamp;
+        }
+        self.island_fallen += self.island_cells.len() as u32;
+        Fall::Moved
+    }
+
+    /// Falling rock v0.5: every tracked falling island is re-flooded and moves one cell down, or stops.
+    fn fall_step(&mut self) {
+        if self.falls.is_empty() {
+            return;
+        }
+        let stamp = self.next_stamp();
+        // `island_visits` counts the seed pass only; falling floods are bounded by FALL_MAX_ISLANDS x (cap + 1).
+        let visits = self.island_visits;
+        let old = core::mem::take(&mut self.falls);
+        let mut keep = Vec::new();
+        for &s in &old {
+            let s = s as usize;
+            if !is_structural(self.mat[s]) || self.island_stamp[s] == stamp {
+                continue; // dug away, or already moved with another seed's island this tick
+            }
+            if self.flood(s, stamp, FALL_ISLAND_MAX + 1) {
+                if self.island_limited {
+                    // Review N4 F1: free but now too big (two falling islands met): crumble, as a new one would.
+                    // The limit may also mean the flood is big AND anchored; only a sub-cap flood is trusted as
+                    // anchored, so a big one is re-judged with the full seed-pass cap.
+                    let st2 = self.next_stamp();
+                    if !self.flood(s, st2, ISLAND_MAX) {
+                        self.crumble_cells();
+                    }
+                }
+                continue; // landed on, or joined to, something anchored
+            }
+            match self.fall_one(stamp) {
+                Fall::Moved => keep.push((s + self.w) as u32),
+                Fall::Entity => keep.push(s as u32), // wait above the player; resumes when they leave
+                Fall::Terrain => {}
+            }
+        }
+        self.falls = keep;
+        self.island_visits = visits;
+    }
+
+    /// Falling rock: for each queued seed flood the 4-connected structural cells. A fill that reaches
+    /// `ISLAND_MAX` cells (or the remaining `ISLAND_WORK_MAX` budget), touches Bedrock or the world edge is
+    /// anchored and left alone. A free island of at most `FALL_ISLAND_MAX` cells starts falling as itself (tracked
+    /// in `falls`, at most `FALL_MAX_ISLANDS`); any other free island, and any containing Ice, crumbles to Pebbles (Ice to Water). Seeds
+    /// beyond the budget are dropped, so the seed queue is always empty on return. Reads neither `awake` nor `active`.
+    pub fn crumble_islands(&mut self) {
+        self.island_visits = 0;
+        self.find_islands();
+        self.fall_step();
+    }
+
+    /// Crumble the island in `island_cells` to Pebbles (Ice to Water).
+    fn crumble_cells(&mut self) {
+        self.island_crumbled += 1;
+        let cells = core::mem::take(&mut self.island_cells);
+        for &c in &cells {
+            let c = c as usize;
+            // Direct write, not `set`: the island's own cells must not seed further floods.
+            self.mat[c] = if self.mat[c] == ICE { WATER } else { PEBBLES };
+            self.aux[c] = 0;
+            self.touch(c);
+        }
+        self.island_cells = cells;
+    }
+
+    /// The seed pass of `crumble_islands`: new free islands start falling (registered, moved by `fall_step` in
+    /// the same tick) or crumble.
+    fn find_islands(&mut self) {
+        if self.island_removed.is_empty() {
+            return;
+        }
+        let stamp = self.next_stamp();
+        let removed = core::mem::take(&mut self.island_removed);
+        let w = self.w;
+        'seeds: for &r in &removed {
+            let r = r as usize;
+            let (rx, ry) = (r % w, r / w);
+            for (dx, dy) in [(0isize, -1isize), (-1, 0), (1, 0), (0, 1)] {
+                let Some((nx, ny)) = self.off(rx, ry, dx, dy) else { continue };
+                let s = ny * w + nx;
+                let used = self.island_visits as usize;
+                if used >= ISLAND_WORK_MAX {
+                    break 'seeds;
+                }
+                if self.island_stamp[s] == stamp || !is_structural(self.mat[s]) {
+                    continue;
+                }
+                let limit = ISLAND_MAX.min(ISLAND_WORK_MAX - used);
+                if self.flood(s, stamp, limit) {
+                    continue;
+                }
+                if self.falls.iter().any(|f| self.island_cells.contains(f)) {
+                    continue; // already falling (tracked): `fall_step` moves it
+                }
+                if self.island_cells.len() <= FALL_ISLAND_MAX
+                    && self.falls.len() < FALL_MAX_ISLANDS
+                    && !self.island_cells.iter().any(|&c| self.mat[c as usize] == ICE)
+                {
+                    // Registered where it stands; `fall_step` moves it, or leaves it if it rests on something.
+                    self.falls.push(s as u32);
+                    continue;
+                }
+                self.crumble_cells();
+            }
+        }
+        self.island_removed = removed;
+        self.island_removed.clear();
     }
 
     fn swap(&mut self, a: usize, b: usize) {
@@ -167,38 +492,84 @@ impl Grid {
         self.moved.fill(0);
         self.pending.clear();
         self.explosions.clear();
+        self.thermite_budget = crate::tuning::THERMITE_EAT_PER_TICK;
         let odd = tick & 1 == 1;
         self.ran_chunks = 0;
+        // Nobody is active: the world is frozen outright (plan 6.5), so there is nothing to carry on.
+        if !self.active.iter().any(|&a| a) {
+            self.woken.fill(false);
+        }
+        // A band of chunks runs row by row across every running chunk (bottom row first), not one chunk at a time:
+        // with chunk-major order a spreading liquid stood in walls on chunk edges (D-191). With every chunk running
+        // this is a plain raster scan. A chunk asleep (or frozen) when its band starts joins at the first row
+        // segment after something wakes it; the rows it skipped saw an unchanged neighbourhood when they would have
+        // run, so they would have done nothing. A chunk that joins late keeps `awake` (or `woken`) set: the touch
+        // that woke it may have changed a cell next to a row it skipped, so it runs in full next tick.
         for cy in (0..self.ch).rev() {
+            let row0 = cy * self.cw;
             for ci in 0..self.cw {
-                let cx = if odd { self.cw - 1 - ci } else { ci };
-                let c = cy * self.cw + cx;
-                if !self.active[c] {
+                let c = row0 + ci;
+                let frozen = !self.active[c];
+                self.running[ci] = if frozen && !self.woken[c] {
                     // Frozen, but awake so it runs on its first active tick.
                     self.awake[c] = true;
-                    continue;
-                }
-                if self.sleep_enabled {
-                    if !self.awake[c] {
-                        continue;
-                    }
-                    // Quiet unless this run changes a cell here or meets a volatile material.
+                    false
+                } else {
+                    // A woken frozen chunk runs whatever the sleep switch says, so the switch cannot change results.
+                    !self.sleep_enabled || frozen || self.awake[c]
+                };
+                if self.running[ci] {
+                    // Quiet unless this run changes a cell here or meets a volatile material. Cleared with sleeping
+                    // off too: `awake` after a run is then the "busy" flag the woken rule reads.
                     self.awake[c] = false;
-                    self.vol_seen = false;
+                    self.ran_chunks += 1;
                 }
-                self.ran_chunks += 1;
-                for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
+            }
+            // Only this band's cells run during its pass, so if none of its chunks is running nothing can wake one.
+            if !self.running[..self.cw].contains(&true) {
+                continue;
+            }
+            for y in (cy * CHUNK..cy * CHUNK + CHUNK).rev() {
+                for i in 0..self.cw {
+                    let ci = if odd { self.cw - 1 - i } else { i };
+                    let c = row0 + ci;
+                    if !self.running[ci] {
+                        let frozen = !self.active[c];
+                        if !(if frozen { self.woken[c] } else { self.awake[c] }) {
+                            continue;
+                        }
+                        self.running[ci] = true;
+                        self.ran_chunks += 1;
+                    }
+                    self.vol_seen = false;
                     for xi in 0..CHUNK {
-                        let x = cx * CHUNK + if odd { CHUNK - 1 - xi } else { xi };
+                        let x = ci * CHUNK + if odd { CHUNK - 1 - xi } else { xi };
                         self.update_cell(x, y, seed, tick);
                     }
-                }
-                if self.vol_seen {
-                    self.awake[c] = true;
+                    if self.vol_seen {
+                        self.awake[c] = true;
+                    }
                 }
             }
         }
+        self.update_woken();
         self.resolve_explosions(seed, tick);
+    }
+
+    /// End of the cell pass (D-176): a frozen woken chunk that is quiet goes back to frozen; an active chunk records
+    /// whether it is busy, which is what lets a flow continue after the player walks away. Chunks neither run nor
+    /// touched keep their bit. Skipped when nothing is frozen (the sandbox keeps `woken` all false).
+    fn update_woken(&mut self) {
+        if self.active.iter().all(|&a| a) {
+            return;
+        }
+        for c in 0..self.chunk_count() {
+            if self.active[c] {
+                self.woken[c] = self.awake[c];
+            } else if self.woken[c] && !self.awake[c] {
+                self.woken[c] = false;
+            }
+        }
     }
 
     fn update_cell(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
@@ -212,9 +583,10 @@ impl Grid {
         // Volatile: acts on chance, a timer or a counter even when nothing around it changes, so the
         // chunk may not sleep (plan 6.4). Lava also ignites neighbours by chance. A resting powder or
         // liquid is not volatile: with an unchanged neighbourhood it provably does nothing.
-        if matches!(m, FIRE | SMOKE | STEAM | SEED | LAVA)
+        if matches!(m, FIRE | SMOKE | STEAM | SEED | ACID)
             || (m == STEM && self.aux[i] != 0)
             || (m == GUNPOWDER && self.aux[i] == 1)
+            || (m == COAL && self.aux[i] != 0)
         {
             self.vol_seen = true;
         }
@@ -222,7 +594,19 @@ impl Grid {
             SAND => {
                 self.powder_move(x, y, seed, tick, SALT_SAND_DIAG);
             }
+            PEBBLES => {
+                self.powder_move(x, y, seed, tick, SALT_PEBBLES_DIAG);
+            }
+            MUD => self.update_mud(x, y, seed, tick),
+            SALT => self.update_salt(x, y, seed, tick),
+            SNOW => self.update_snow(x, y, seed, tick),
+            THERMITE => self.update_thermite(x, y, seed, tick),
             WATER => self.update_water(x, y, seed, tick),
+            OIL => self.liquid_move(x, y, seed, tick, OIL_FLOW),
+            ACID => self.update_acid(x, y, seed, tick),
+            GAS => self.update_marsh_gas(x, y, seed, tick),
+            ICE => self.update_ice(x, y, seed, tick),
+            COAL => self.update_coal(x, y, seed, tick),
             FIRE => self.update_fire(x, y, seed, tick),
             SMOKE => self.update_gas(x, y, seed, tick, SMOKE),
             STEAM => self.update_gas(x, y, seed, tick, STEAM),
@@ -286,7 +670,16 @@ impl Grid {
 
     /// Liquids displace Empty and the light gases (not Fire).
     fn liquid_ok(m: u8) -> bool {
-        m == EMPTY || m == SMOKE || m == STEAM
+        m == EMPTY || m == SMOKE || m == STEAM || m == GAS
+    }
+
+    /// Water also sinks through Oil (density order: Oil < Water).
+    fn water_ok(m: u8) -> bool {
+        Self::liquid_ok(m) || m == OIL || m == ACID
+    }
+
+    fn acid_ok(m: u8) -> bool {
+        Self::liquid_ok(m) || m == OIL
     }
 
     /// Returns true if the powder moved.
@@ -300,7 +693,7 @@ impl Grid {
 
     /// Shared liquid motion: down, diagonal down, then a sideways slide of up to `reach` cells.
     fn liquid_move(&mut self, x: usize, y: usize, seed: u64, tick: u32, l: Liquid) {
-        let ok = Self::liquid_ok;
+        let ok = l.ok;
         if self.try_move(x, y, 0, 1, ok) {
             return;
         }
@@ -320,6 +713,14 @@ impl Grid {
                 return;
             }
         }
+        // Resting state: a cell sitting on bare ground with no liquid above it does not wander (a lone drop
+        // or a one-deep film stays put, so its chunk can sleep). It slides only when pushed (liquid above)
+        // or when it is on the surface of a body (liquid below). A gap one cell down-and-aside was already
+        // taken by the diagonal move above. The rule reads only the 3 x 3 neighbourhood, so the one-cell
+        // wake radius of `touch` is enough and sleeping stays invisible.
+        if !self.liquid_free(x, y) {
+            return;
+        }
         let (sl, sr) = (open(self, -1, 0), open(self, 1, 0));
         if !sl && !sr {
             return;
@@ -331,24 +732,36 @@ impl Grid {
         } else {
             1
         };
-        if !self.slide(x, y, s, l.reach) {
-            self.slide(x, y, -s, l.reach);
+        if !self.slide(x, y, s, l.reach, ok) {
+            self.slide(x, y, -s, l.reach, ok);
         }
+    }
+
+    /// True if the liquid cell at (x, y) may spread sideways: liquid above it pushes, or it floats on liquid.
+    fn liquid_free(&self, x: usize, y: usize) -> bool {
+        [(0, -1), (0, 1)].iter().any(|&(dx, dy)| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| is_liquid(self.at(nx, ny))))
+    }
+
+    /// Whether `liquid_move` would move this cell in some direction (no rng, no change). Lava, which only
+    /// moves on half the ticks, uses it to keep its chunk awake exactly while it still has somewhere to go.
+    fn liquid_can_move(&self, x: usize, y: usize, ok: fn(u8) -> bool) -> bool {
+        let open = |dx: isize, dy: isize| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(self.at(nx, ny)));
+        open(0, 1) || open(-1, 1) || open(1, 1) || (self.liquid_free(x, y) && (open(-1, 0) || open(1, 0)))
     }
 
     /// Slide a liquid cell sideways to the furthest free cell within `reach`, stopping at the first
     /// blocked one, and dropping into a gap it passes over. One step at a time, a deep heap only levels
     /// from its surface a cell per update and settles into a staircase on chunk edges; dispersion is how
     /// a liquid finds its level. Bounded by `reach`, integer-only, and a fixed scan order.
-    fn slide(&mut self, x: usize, y: usize, dir: isize, reach: usize) -> bool {
+    fn slide(&mut self, x: usize, y: usize, dir: isize, reach: usize, ok: fn(u8) -> bool) -> bool {
         let mut best = None;
         for k in 1..=reach as isize {
             let Some((nx, ny)) = self.off(x, y, dir * k, 0) else { break };
-            if !Self::liquid_ok(self.at(nx, ny)) {
+            if !ok(self.at(nx, ny)) {
                 break;
             }
             best = Some((nx, ny));
-            if self.off(nx, ny, 0, 1).is_some_and(|(bx, by)| Self::liquid_ok(self.at(bx, by))) {
+            if self.off(nx, ny, 0, 1).is_some_and(|(bx, by)| ok(self.at(bx, by))) {
                 break; // a gap below: fall into it from here
             }
         }
@@ -365,8 +778,261 @@ impl Grid {
         self.liquid_move(x, y, seed, tick, WATER_FLOW);
     }
 
+    /// Acid: `aux` is its strength (0 = fresh, becomes `ACID_STRENGTH`). Each tick at most one thing happens:
+    /// dilute against a Water neighbour (both become Water, 1 in 6), or dissolve one dissolvable neighbour
+    /// (1 in 4), using one point of strength (the cell vanishes at 1). Bedrock and Glass are immune. Otherwise
+    /// it flows. Work: four neighbour reads, one move.
+    fn update_acid(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.aux[i] == 0 {
+            self.set(i, ACID, ACID_STRENGTH);
+            return;
+        }
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
+            let n = ny * self.w + nx;
+            let m = self.mat[n];
+            if m == WATER {
+                if rng(seed, tick, x as u32, y as u32, SALT_ACID_DILUTE) % 6 == 0 {
+                    self.set(i, WATER, 0);
+                    return;
+                }
+            } else if Self::dissolvable(m) && rng(seed, tick, nx as u32, ny as u32, SALT_ACID_EAT) % 4 == 0 {
+                self.set(n, EMPTY, 0);
+                let a = self.aux[i] - 1;
+                if a <= 1 {
+                    self.set(i, EMPTY, 0);
+                } else {
+                    self.aux[i] = a;
+                    self.touch(i);
+                }
+                return;
+            }
+        }
+        self.liquid_move(x, y, seed, tick, ACID_FLOW);
+    }
+
+    /// Marsh gas: rises like smoke but never expires, so it lingers in pockets. No chance is involved except
+    /// which side to take when two are open (drawn only then), so a gas cell that cannot move provably does
+    /// nothing and its chunk may sleep. Burning is done by the Fire cell next to it (see `update_fire`).
+    fn update_marsh_gas(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        fn ok(m: u8) -> bool {
+            m == EMPTY
+        }
+        if self.try_move(x, y, 0, -1, ok) {
+            return;
+        }
+        let open = |g: &Grid, dx: isize, dy: isize| g.off(x, y, dx, dy).is_some_and(|(nx, ny)| ok(g.at(nx, ny)));
+        for dy in [-1isize, 0] {
+            let (l, r) = (open(self, -1, dy), open(self, 1, dy));
+            if l || r {
+                let d = if l && r {
+                    if rng(seed, tick, x as u32, y as u32, SALT_MGAS_DIR) & 1 == 0 { -1 } else { 1 }
+                } else if l {
+                    -1
+                } else {
+                    1
+                };
+                self.try_move(x, y, d, dy, ok);
+                return;
+            }
+        }
+    }
+
+    fn has_neighbour(&self, x: usize, y: usize, pred: fn(u8) -> bool) -> bool {
+        self.find_neighbour(x, y, pred).is_some()
+    }
+
+    fn is_heat(m: u8) -> bool {
+        matches!(m, FIRE | LAVA)
+    }
+
+    /// Mud (E3): a thick powder that only moves on every third tick, and dries to Dirt beside Fire or Lava.
+    fn update_mud(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        if self.has_neighbour(x, y, Self::is_heat) {
+            self.vol_seen = true;
+            self.set(y * self.w + x, DIRT, 0);
+            return;
+        }
+        if tick % 3 == 0 {
+            self.powder_move(x, y, seed, tick, SALT_MUD_MOVE);
+        } else if self.powder_can_move(x, y) {
+            self.vol_seen = true; // waiting for its turn: the chunk must not sleep through it
+        }
+    }
+
+    fn powder_can_move(&self, x: usize, y: usize) -> bool {
+        [(0, 1), (-1, 1), (1, 1)].iter().any(|&(dx, dy)| self.off(x, y, dx, dy).is_some_and(|(nx, ny)| Self::powder_ok(self.at(nx, ny))))
+    }
+
+    /// Salt (E3): a powder. Beside Ice it melts the ice to Water (and is spent, 1 in 4 per tick); beside Water it
+    /// dissolves into more Water (1 in 8). A roll, so it keeps its chunk awake while it has such a neighbour.
+    fn update_salt(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if let Some((nx, ny)) = self.find_neighbour(x, y, |m| m == ICE) {
+            self.vol_seen = true;
+            if rng(seed, tick, x as u32, y as u32, SALT_SALT_MELT) % 4 == 0 {
+                self.set(ny * self.w + nx, WATER, 0);
+                self.set(i, EMPTY, 0);
+                return;
+            }
+        } else if self.has_neighbour(x, y, |m| m == WATER) {
+            self.vol_seen = true;
+            if rng(seed, tick, x as u32, y as u32, SALT_SALT_MELT) % 8 == 0 {
+                self.set(i, WATER, 0);
+                return;
+            }
+        }
+        self.powder_move(x, y, seed, tick, SALT_SALT_DIAG);
+    }
+
+    /// Snow (E3): a light powder, falls on even ticks only. Melts to Water beside Fire or Lava; a resting flake with
+    /// Snow in the three cells above it packs into spent Ice (1 in 16 per tick).
+    fn update_snow(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.has_neighbour(x, y, Self::is_heat) {
+            self.vol_seen = true;
+            self.set(i, WATER, 0);
+            return;
+        }
+        if tick & 1 == 0 && self.powder_move(x, y, seed, tick, SALT_SNOW_DIAG) {
+            return;
+        }
+        if self.powder_can_move(x, y) {
+            self.vol_seen = true;
+            return;
+        }
+        // The pack rule reads three cells up, but a write wakes chunks only at distance 1, so a flake topped at row
+        // 62 over a chunk line would leave this one asleep (review-int-spells 1). Any snow directly on top keeps the
+        // chunk awake, so the three cells above are re-read every tick, asleep or not.
+        if y >= 1 && self.at(x, y - 1) == SNOW {
+            self.vol_seen = true;
+            if y >= 3 && (2..=3).all(|k| self.at(x, y - k) == SNOW) && rng(seed, tick, x as u32, y as u32, SALT_SNOW_PACK) % 16 == 0 {
+                self.set(i, ICE, 1);
+            }
+        }
+    }
+
+    /// Thermite (E3): a powder. Unlit (`aux` 0) it lights beside Fire or Lava. Lit, it burns `THERMITE_BURN` ticks and
+    /// turns each Rock, Dirt, Glass, Ice, Coal, Wood or Sand neighbour to Lava (1 in 3 per neighbour per tick) and
+    /// Water neighbours to Steam; spent, it becomes Fire.
+    fn update_thermite(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.aux[i] == 0 {
+            if self.has_neighbour(x, y, Self::is_heat) {
+                self.vol_seen = true;
+                self.aux[i] = crate::tuning::THERMITE_BURN;
+                self.touch(i);
+            } else {
+                self.powder_move(x, y, seed, tick, SALT_THERMITE_DIAG);
+            }
+            return;
+        }
+        self.vol_seen = true;
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
+            let m = self.at(nx, ny);
+            let n = ny * self.w + nx;
+            if self.thermite_budget == 0 {
+                break; // the per-tick cap: the rest wait for a later tick (this cell stays lit, so its chunk stays awake)
+            }
+            if matches!(m, ROCK | DIRT | GLASS | ICE | COAL | WOOD | SAND) && rng(seed, tick, nx as u32, ny as u32, SALT_THERMITE_EAT) % 3 == 0 {
+                self.set(n, LAVA, 0);
+                self.thermite_budget -= 1;
+            } else if m == WATER {
+                self.set(n, STEAM, 0);
+                self.thermite_budget -= 1;
+            }
+        }
+        if self.aux[i] <= 1 {
+            self.set(i, FIRE, 0);
+            return;
+        }
+        self.aux[i] -= 1;
+        self.touch(i);
+        self.powder_move(x, y, seed, tick, SALT_THERMITE_DIAG);
+    }
+
+    /// Ice: static. `aux` is its freezing budget plus one (0 = fresh, becomes `ICE_COLD + 1`; 1 = spent).
+    /// A Water neighbour freezes (1 in 20) and spends one point; ice made this way is spent, so a lake
+    /// cannot freeze through a chain. Melting is done by the Fire or Lava next to it (those cells are
+    /// volatile and always run), so a sleeping chunk of ice is never what decides a melt. Only an ice cell
+    /// with budget left and Water beside it is volatile: its roll is a chance that needs no change nearby.
+    fn update_ice(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        if self.aux[i] == 0 {
+            self.set(i, ICE, ICE_COLD + 1);
+            return;
+        }
+        if self.aux[i] <= 1 {
+            return;
+        }
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            let Some((nx, ny)) = self.off(x, y, dx, dy) else { continue };
+            if self.at(nx, ny) == WATER {
+                self.vol_seen = true;
+                if rng(seed, tick, x as u32, y as u32, SALT_ICE_FREEZE) % 20 == 0 {
+                    self.set(ny * self.w + nx, ICE, 1);
+                    self.moved[ny * self.w + nx] = 1;
+                    self.aux[i] -= 1;
+                    // The ice's own budget changed: its chunk may differ from the water's (review 8 Nov, S1).
+                    self.touch(i);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Coal: a static solid (it does not fall). `aux` 0 is unlit; a lit cell counts `COAL_BURN` ticks down to
+    /// nothing, glowing as Coal, and on the way sheds Fire into an empty neighbour (1 in 6, up first) and
+    /// sometimes Smoke. It is lit by Fire or Lava next to it (`light_coal`). Four neighbour reads per tick.
+    fn update_coal(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
+        let i = y * self.w + x;
+        let a = self.aux[i];
+        if a == 0 {
+            return;
+        }
+        if a == 1 {
+            self.set(i, EMPTY, 0);
+            return;
+        }
+        self.aux[i] = a - 1;
+        self.touch(i);
+        // A lit cell passes the fire to a coal neighbour now and then (a seam burns along its length).
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            if let Some((nx, ny)) = self.off(x, y, dx, dy) {
+                if self.at(nx, ny) == COAL && rng(seed, tick, nx as u32, ny as u32, SALT_COAL_IGNITE) % 24 == 0 {
+                    self.light_coal(ny * self.w + nx);
+                }
+            }
+        }
+        let r = rng(seed, tick, x as u32, y as u32, SALT_COAL_EMIT);
+        if r % 6 == 0 {
+            for (dx, dy) in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
+                if let Some((nx, ny)) = self.off(x, y, dx, dy) {
+                    if self.at(nx, ny) == EMPTY {
+                        let smoky = rng(seed, tick, x as u32, y as u32, SALT_COAL_SMOKE) % 3 == 0;
+                        self.set(ny * self.w + nx, if smoky { SMOKE } else { FIRE }, 0);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Light the Coal at flat index `n`, if it is unlit.
+    fn light_coal(&mut self, n: usize) {
+        if self.aux[n] == 0 {
+            self.set(n, COAL, COAL_BURN);
+        }
+    }
+
+    fn dissolvable(m: u8) -> bool {
+        matches!(m, ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER | MOSS | MUSHROOM)
+    }
+
     /// Lava: touching Water turns the lava to Rock and the water to Steam; ignites flammables;
-    /// moves only on even ticks (slow).
+    /// moves only when `tick & 2 == 0` (slow; D-233).
     fn update_lava(&mut self, x: usize, y: usize, seed: u64, tick: u32) {
         let i = y * self.w + x;
         if let Some((nx, ny)) = self.find_neighbour(x, y, |m| m == WATER) {
@@ -376,14 +1042,34 @@ impl Grid {
         }
         for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
             if let Some((nx, ny)) = self.off(x, y, dx, dy) {
-                if is_flammable(self.at(nx, ny))
-                    && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_IGNITE) % 8 == 0
-                {
-                    self.set(ny * self.w + nx, FIRE, 0);
+                let m = self.at(nx, ny);
+                let n = ny * self.w + nx;
+                if is_flammable(m) && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_IGNITE) % 8 == 0 {
+                    self.set(n, FIRE, 0);
+                } else if m == COAL && rng(seed, tick, nx as u32, ny as u32, SALT_COAL_IGNITE) % 16 == 0 {
+                    self.light_coal(n);
+                } else if m == ICE && rng(seed, tick, nx as u32, ny as u32, SALT_ICE_MELT) % 2 == 0 {
+                    self.set(n, WATER, 0);
+                } else if m == SAND && rng(seed, tick, nx as u32, ny as u32, SALT_LAVA_GLASS) % 10 == 0 {
+                    self.set(n, GLASS, 0);
                 }
             }
         }
-        if tick & 1 == 0 {
+        // Lava acts on chance beside anything it can ignite, melt or glaze, and moves on half the ticks only,
+        // so it keeps its chunk awake while it has such a neighbour or somewhere to go; otherwise it rests.
+        if self.liquid_can_move(x, y, LAVA_FLOW.ok)
+            || [(0, -1), (0, 1), (-1, 0), (1, 0)].iter().any(|&(dx, dy)| {
+                self.off(x, y, dx, dy).is_some_and(|(nx, ny)| {
+                    let m = self.at(nx, ny);
+                    is_flammable(m) || matches!(m, COAL | ICE | SAND)
+                })
+            })
+        {
+            self.vol_seen = true;
+        }
+        // Half the ticks, in pairs (tick % 4 in {0, 1}), so it moves under both scan directions. On even ticks only,
+        // every lava move ran left to right and a body drained left far more readily than right (D-233).
+        if tick & 2 == 0 {
             self.liquid_move(x, y, seed, tick, LAVA_FLOW);
         }
     }
@@ -404,10 +1090,24 @@ impl Grid {
         for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
             if let Some((nx, ny)) = self.off(x, y, dx, dy) {
                 let m = self.at(nx, ny);
+                if m == COAL && rng(seed, tick, nx as u32, ny as u32, SALT_COAL_IGNITE) % 8 == 0 {
+                    self.light_coal(ny * self.w + nx);
+                }
+                if m == ICE && rng(seed, tick, nx as u32, ny as u32, SALT_ICE_MELT) % 3 == 0 {
+                    self.set(ny * self.w + nx, WATER, 0);
+                }
                 if is_flammable(m) {
-                    let n = if m == WOOD { 12 } else { 4 };
+                    let n = match m {
+                        WOOD => 12,
+                        MOSS => 40,
+                        MUSHROOM => 6,
+                        OIL => 2,
+                        GAS => 1,
+                        _ => 4,
+                    };
                     if rng(seed, tick, nx as u32, ny as u32, SALT_FIRE_IGNITE) % n == 0 {
-                        self.set(ny * self.w + nx, FIRE, 0);
+                        // Gas flashes: a short-lived fire, so the front runs through the pocket.
+                        self.set(ny * self.w + nx, FIRE, if m == GAS { FLASH_LIFE } else { 0 });
                     }
                 }
             }
@@ -426,7 +1126,7 @@ impl Grid {
         self.aux[i] = a - 1;
         self.touch(i);
         // Fire touching fuel lingers on it instead of drifting off, so it can spread.
-        if self.find_neighbour(x, y, is_flammable).is_some() {
+        if self.find_neighbour(x, y, |m| is_flammable(m) || m == COAL).is_some() {
             return;
         }
         let r = rng(seed, tick, x as u32, y as u32, SALT_FIRE_RISE);
@@ -644,6 +1344,36 @@ impl Grid {
         }
     }
 
+    /// Dig: clear solids and plants in the capsule of radius `r` (clamped to `DIG_RADIUS`) around the segment
+    /// from (`ax`, `ay`) to (`bx`, `by`). Each segment component is clamped to `DIG_REACH` from the start, so the
+    /// box is at most (reach + 2r + 1)^2 cells. Bedrock, liquids, fire, smoke and steam stay; Gunpowder is
+    /// primed; no fire rim. Integers only: a cell is inside when its squared distance to the segment is at
+    /// most r^2, compared without division as `|p * L2 - d * t|^2 <= r^2 * L2^2` (L2 = |d|^2, t = clamp(p.d)).
+    pub fn dig(&mut self, ax: i32, ay: i32, bx: i32, by: i32, r: i32) {
+        let r = r.clamp(0, DIG_RADIUS);
+        let (dx, dy) = ((bx - ax).clamp(-DIG_REACH, DIG_REACH), (by - ay).clamp(-DIG_REACH, DIG_REACH));
+        let l2 = i64::from(dx * dx + dy * dy);
+        let (x0, x1) = (ax.min(ax + dx) - r, ax.max(ax + dx) + r);
+        let (y0, y1) = (ay.min(ay + dy) - r, ay.max(ay + dy) + r);
+        for y in y0.max(0)..=y1.min(self.h as i32 - 1) {
+            for x in x0.max(0)..=x1.min(self.w as i32 - 1) {
+                let (px, py) = (i64::from(x - ax), i64::from(y - ay));
+                let t = (px * i64::from(dx) + py * i64::from(dy)).clamp(0, l2);
+                let (ex, ey) = (px * l2 - i64::from(dx) * t, py * l2 - i64::from(dy) * t);
+                let outside = if l2 == 0 { px * px + py * py > i64::from(r * r) } else { ex * ex + ey * ey > i64::from(r * r) * l2 * l2 };
+                if outside {
+                    continue;
+                }
+                let i = y as usize * self.w + x as usize;
+                match self.mat[i] {
+                    ROCK | DIRT | SAND | PEBBLES | WOOD | SEED | STEM | FLOWER | ICE | GLASS | COAL | BRICK | MOSS | MUSHROOM => self.set(i, EMPTY, 0),
+                    GUNPOWDER if self.aux[i] != 1 => self.set(i, GUNPOWDER, 1),
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// Clear the disc of radius `r` around (`cx`, `cy`): bedrock stays, Gunpowder other than the centre
     /// cell is primed, everything else becomes Empty (or Fire on a third of the rim, by counter-based rng).
     /// Work is bounded by the (2r+1)^2 box clamped to the world.
@@ -675,10 +1405,78 @@ impl Grid {
 }
 
 const GERMINATE_AT: u8 = 60;
+/// Dissolves an acid cell can do before it is used up.
+const ACID_STRENGTH: u8 = 12;
+/// Waters one fresh Ice cell can freeze over its life.
+const ICE_COLD: u8 = 3;
+/// Ticks a lit Coal cell burns: about four times a Wood cell's fire (30..=90 ticks, mean 60).
+const COAL_BURN: u8 = 240;
+/// Lifetime of the fire a burning Gas cell becomes: short, so a pocket flashes through.
+const FLASH_LIFE: u8 = 6;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dig_removes_solids_and_plants_only() {
+        let mut g = Grid::new(64, 64);
+        // All within radius 4 of (20, 30): nine on the centre row, four on the row above.
+        let cells: Vec<(usize, usize)> = (16..=24).map(|x| (x, 30)).chain((18..=21).map(|x| (x, 29))).collect();
+        let mats = [ROCK, DIRT, SAND, WOOD, SEED, STEM, FLOWER, BEDROCK, WATER, LAVA, FIRE, SMOKE, STEAM];
+        for (&(x, y), &m) in cells.iter().zip(&mats) {
+            g.set(y * 64 + x, m, 0);
+        }
+        g.dig(20, 30, 20, 30, 4);
+        for (k, (&(x, y), &m)) in cells.iter().zip(&mats).enumerate() {
+            let removed = k < 7;
+            assert_eq!(g.at(x, y) == EMPTY && m != EMPTY, removed, "material {m} at {x},{y}");
+            if !removed {
+                assert_eq!(g.at(x, y), m);
+            }
+        }
+    }
+
+    #[test]
+    fn dig_primes_gunpowder_without_fire_rim() {
+        let mut g = Grid::new(64, 64);
+        g.set(30 * 64 + 30, GUNPOWDER, 0);
+        for x in 20..29 {
+            g.set(30 * 64 + x, ROCK, 0);
+        }
+        g.dig(30, 30, 30, 30, 4);
+        assert_eq!(g.mat[30 * 64 + 30], GUNPOWDER);
+        assert_eq!(g.aux[30 * 64 + 30], 1);
+        assert!((0..64 * 64).all(|i| g.mat[i] != FIRE));
+    }
+
+    #[test]
+    fn dig_work_is_bounded_by_clamping_radius_and_reach() {
+        let mut g = Grid::new(256, 256);
+        for i in 0..256 * 256 {
+            g.mat[i] = ROCK;
+        }
+        g.dig(128, 128, 128 + 10_000, 128 + 10_000, 10_000);
+        let gone = g.mat.iter().filter(|&&m| m == EMPTY).count() as i32;
+        let (r, k) = (DIG_RADIUS, DIG_REACH);
+        assert!(gone > 0 && gone <= (k + 2 * r + 1) * (k + 2 * r + 1), "cleared {gone}");
+        assert_eq!(g.at((128 + k + r + 1) as usize, 128), ROCK);
+        assert_eq!(g.at(128, (128 + k + r + 1) as usize), ROCK);
+    }
+
+    #[test]
+    fn dig_capsule_is_body_wide_and_reach_long() {
+        let mut g = Grid::new(128, 128);
+        for i in 0..128 * 128 {
+            g.mat[i] = ROCK;
+        }
+        g.dig(20, 60, 20 + DIG_REACH, 60, DIG_RADIUS);
+        // Along the aim: reach plus the end cap; across it: the full radius, no more.
+        assert_eq!((g.at(20 - DIG_RADIUS as usize, 60), g.at(20 - DIG_RADIUS as usize - 1, 60)), (EMPTY, ROCK));
+        assert_eq!((g.at(20 + (DIG_REACH + DIG_RADIUS) as usize, 60), g.at(20 + (DIG_REACH + DIG_RADIUS) as usize + 1, 60)), (EMPTY, ROCK));
+        assert_eq!((g.at(30, 60 - DIG_RADIUS as usize), g.at(30, 60 - DIG_RADIUS as usize - 1)), (EMPTY, ROCK));
+        assert_eq!((g.at(30, 60 + DIG_RADIUS as usize), g.at(30, 60 + DIG_RADIUS as usize + 1)), (EMPTY, ROCK));
+    }
 
     #[test]
     fn sand_falls() {
@@ -703,6 +1501,233 @@ mod tests {
             g.step_cells(1, t);
         }
         assert_eq!(g.at(5, 62), SAND);
+    }
+
+    #[test]
+    fn oil_floats_on_water() {
+        // Water starts above the oil; it must sink through it and the oil must rise to the top.
+        let mut g = boxed(64, 64);
+        for y in 40..50 {
+            g.set(y * 64 + 5, WATER, 0);
+        }
+        for y in 50..60 {
+            g.set(y * 64 + 5, OIL, 0);
+        }
+        // Walls so the column stays a column.
+        for y in 0..64 {
+            g.set(y * 64 + 4, BEDROCK, 0);
+            g.set(y * 64 + 6, BEDROCK, 0);
+        }
+        run(&mut g, 1, 400);
+        for y in 43..53 {
+            assert_eq!(g.at(5, y), OIL, "row {y}");
+        }
+        for y in 53..63 {
+            assert_eq!(g.at(5, y), WATER, "row {y}");
+        }
+    }
+
+    #[test]
+    fn oil_burns_fast_and_spreads_fire() {
+        // A 40-wide, 4-deep pool in a basin, lit at one end: the fire must run the whole surface and
+        // consume the oil, far faster than wood burns.
+        let mut g = boxed(64, 64);
+        for y in 56..63 {
+            g.set(y * 64 + 4, BEDROCK, 0);
+            g.set(y * 64 + 45, BEDROCK, 0);
+        }
+        for y in 59..63 {
+            for x in 5..45 {
+                g.set(y * 64 + x, OIL, 0);
+            }
+        }
+        g.set(58 * 64 + 5, FIRE, 0);
+        let mut done = None;
+        for t in 0..600 {
+            g.step_cells(2, t);
+            if done.is_none() && count(&g, OIL) == 0 {
+                done = Some(t);
+            }
+        }
+        let t = done.unwrap_or_else(|| panic!("pool left {} oil", count(&g, OIL)));
+        assert!(t < 400, "oil took {t} ticks to burn");
+    }
+
+    #[test]
+    fn acid_eats_rock_and_stops_at_bedrock() {
+        // A column of acid on a rock floor over bedrock: it digs down through the rock, never the bedrock.
+        let mut g = Grid::new(64, 64);
+        for x in 0..64 {
+            g.set(63 * 64 + x, BEDROCK, 0);
+            for y in 58..63 {
+                g.set(y * 64 + x, ROCK, 0);
+            }
+        }
+        for y in 40..58 {
+            for x in 20..24 {
+                g.set(y * 64 + x, ACID, 0);
+            }
+        }
+        let rock0 = count(&g, ROCK);
+        run(&mut g, 3, 600);
+        assert!(count(&g, ROCK) < rock0, "acid should dissolve rock");
+        assert_eq!(count(&g, BEDROCK), 64);
+        assert!((0..64).all(|x| g.at(x, 63) == BEDROCK));
+        // Each dissolve spends strength: acid is consumed.
+        assert!(count(&g, ACID) < 18 * 4);
+    }
+
+    #[test]
+    fn acid_dilutes_water() {
+        let mut g = boxed(64, 64);
+        g.set(62 * 64 + 10, ACID, 0);
+        g.set(62 * 64 + 11, WATER, 0);
+        run(&mut g, 3, 200);
+        assert_eq!(count(&g, ACID), 0);
+        assert_eq!(count(&g, WATER), 2);
+    }
+
+    #[test]
+    fn gas_rises_and_lingers_under_a_ceiling() {
+        let mut g = boxed(64, 64);
+        for x in 0..64 {
+            g.set(30 * 64 + x, BEDROCK, 0);
+        }
+        g.set(50 * 64 + 5, GAS, 0);
+        run(&mut g, 3, 500);
+        assert_eq!(count(&g, GAS), 1, "gas never expires");
+        assert!((0..64).any(|x| g.at(x, 31) == GAS), "it rose to the ceiling");
+    }
+
+    #[test]
+    fn gas_flash_burns_the_whole_pocket() {
+        let mut g = boxed(64, 64);
+        for y in 40..63 {
+            g.set(y * 64 + 4, BEDROCK, 0);
+            g.set(y * 64 + 45, BEDROCK, 0);
+        }
+        for x in 4..46 {
+            g.set(40 * 64 + x, BEDROCK, 0);
+        }
+        for y in 41..45 {
+            for x in 5..45 {
+                g.set(y * 64 + x, GAS, 0);
+            }
+        }
+        g.set(45 * 64 + 5, FIRE, 0);
+        let mut done = None;
+        for t in 0..300 {
+            g.step_cells(2, t);
+            if done.is_none() && count(&g, GAS) == 0 {
+                done = Some(t);
+            }
+        }
+        let t = done.unwrap_or_else(|| panic!("pocket left {} gas", count(&g, GAS)));
+        assert!(t < 120, "flash fire took {t} ticks");
+        assert_eq!(count(&g, FIRE), 0);
+    }
+
+    #[test]
+    fn fire_melts_ice() {
+        let mut g = boxed(64, 64);
+        for x in 10..14 {
+            g.set(62 * 64 + x, ICE, 0);
+        }
+        g.set(61 * 64 + 10, FIRE, 0);
+        g.set(61 * 64 + 11, FIRE, 0);
+        g.set(61 * 64 + 12, FIRE, 0);
+        g.set(61 * 64 + 13, FIRE, 0);
+        for x in 10..14 {
+            g.set(60 * 64 + x, BEDROCK, 0); // a ceiling, so the fire stays on the ice
+        }
+        run(&mut g, 4, 100);
+        // Fire beside the fresh meltwater turns to steam, so the last cell may survive; most must go.
+        // Resting rule (D-172): meltwater now clings where it forms instead of wandering off, and fire
+        // beside it turns to steam, so the fire dies before the last cells melt. Half must still go.
+        assert!(count(&g, ICE) <= 2, "fire should melt the ice");
+        assert!(count(&g, WATER) + count(&g, STEAM) > 0);
+    }
+
+    #[test]
+    fn lava_melts_ice() {
+        let mut g = boxed(64, 64);
+        for x in 9..12 {
+            g.set(61 * 64 + x, ROCK, 0);
+        }
+        g.set(62 * 64 + 11, LAVA, 0);
+        g.set(62 * 64 + 12, ICE, 0);
+        g.set(61 * 64 + 12, BEDROCK, 0);
+        g.set(62 * 64 + 13, BEDROCK, 0);
+        run(&mut g, 4, 60);
+        assert_eq!(count(&g, ICE), 0);
+    }
+
+    #[test]
+    fn water_freezes_slowly_and_only_within_the_ice_cold_budget() {
+        // One ice cell in a big pool of water: it may freeze at most ICE_COLD neighbours, over time.
+        let mut g = boxed(64, 64);
+        for y in 50..63 {
+            g.set(y * 64 + 9, BEDROCK, 0);
+            g.set(y * 64 + 40, BEDROCK, 0);
+        }
+        for y in 55..63 {
+            for x in 10..40 {
+                g.set(y * 64 + x, WATER, 0);
+            }
+        }
+        g.set(58 * 64 + 20, ICE, 0);
+        g.step_cells(5, 0);
+        assert_eq!(count(&g, ICE), 1, "not instant");
+        run(&mut g, 5, 2000);
+        let n = count(&g, ICE);
+        assert!(n > 1, "some water should freeze");
+        assert!(n <= 1 + ICE_COLD as usize, "freezing is capped, got {n} ice");
+    }
+
+    #[test]
+    fn lava_turns_sand_to_glass_and_glass_is_inert_and_diggable() {
+        let mut g = boxed(64, 64);
+        g.set(62 * 64 + 10, SAND, 0);
+        g.set(62 * 64 + 12, BEDROCK, 0);
+        g.set(62 * 64 + 11, LAVA, 0);
+        g.set(61 * 64 + 11, ROCK, 0);
+        g.set(61 * 64 + 10, ROCK, 0);
+        run(&mut g, 4, 200);
+        assert_eq!(g.at(10, 62), GLASS);
+        g.set(60 * 64 + 20, GLASS, 0);
+        g.set(60 * 64 + 21, ICE, 0);
+        g.dig(20, 60, 21, 60, 1);
+        assert_eq!((g.at(20, 60), g.at(21, 60)), (EMPTY, EMPTY));
+    }
+
+    #[test]
+    fn coal_burns_long_and_gives_off_smoke() {
+        // One lit coal cell burns far longer than a wood cell does, and sheds fire and smoke.
+        let burn = |m: u8| {
+            let mut g = boxed(64, 64);
+            for x in 20..25 {
+                g.set(62 * 64 + x, m, 0);
+            }
+            for y in 0..62 {
+                g.set(y * 64 + 19, BEDROCK, 0);
+                g.set(y * 64 + 25, BEDROCK, 0);
+            }
+            g.set(61 * 64 + 20, FIRE, 0);
+            let (mut gone, mut saw_smoke) = (None, false);
+            for t in 0..2000 {
+                g.step_cells(6, t);
+                saw_smoke |= count(&g, SMOKE) > 0;
+                if gone.is_none() && count(&g, m) == 0 {
+                    gone = Some(t);
+                }
+            }
+            (gone, saw_smoke)
+        };
+        let (coal, smoke) = burn(COAL);
+        let (wood, _) = burn(WOOD);
+        let (coal, wood) = (coal.expect("coal should burn out"), wood.expect("wood should burn out"));
+        assert!(smoke, "burning coal gives off smoke");
+        assert!(coal > 2 * wood, "coal burned {coal} ticks, wood {wood}");
     }
 
     #[test]
@@ -817,13 +1842,16 @@ mod tests {
     }
 
     #[test]
-    fn lava_moves_every_other_tick_and_ignites_wood() {
+    fn lava_moves_half_the_ticks_and_ignites_wood() {
         let mut g = Grid::new(64, 64);
         g.set(10 * 64 + 5, LAVA, 0);
         g.step_cells(1, 0);
         assert_eq!(g.at(5, 11), LAVA);
         g.step_cells(1, 1);
-        assert_eq!(g.at(5, 11), LAVA, "lava rests on odd ticks");
+        assert_eq!(g.at(5, 12), LAVA, "lava moves on ticks 0 and 1 of every 4 (both scan directions, D-233)");
+        g.step_cells(1, 2);
+        g.step_cells(1, 3);
+        assert_eq!(g.at(5, 12), LAVA, "lava rests on ticks 2 and 3 of every 4");
         let mut g = boxed(64, 64);
         g.set(62 * 64 + 5, LAVA, 0);
         for x in 3..8 {
@@ -840,7 +1868,9 @@ mod tests {
         g.set(62 * 64 + 5, LAVA, 0);
         g.set(60 * 64 + 5, SAND, 0);
         run(&mut g, 1, 10);
-        assert_eq!(g.at(5, 62), SAND);
+        // Resting rule (D-172): the displaced lava now rests on the sand instead of sliding away, and may
+        // glaze it (1 in 10 a tick), so the sunk cell is Sand or Glass. Either way it sank.
+        assert!(matches!(g.at(5, 62), SAND | GLASS), "sand did not sink: {}", g.at(5, 62));
         assert_eq!(count(&g, LAVA), 1);
     }
 
@@ -1004,10 +2034,11 @@ mod tests {
 
     #[test]
     fn new_materials_are_paintable_but_not_bedrock() {
-        for m in (0u8..=14).filter(|&m| m != BEDROCK) {
+        for m in (0u8..=COAL).filter(|&m| !matches!(m, BEDROCK | STEM | FLOWER)) {
             assert!(paintable(m), "{m}");
         }
-        assert!(!paintable(BEDROCK) && !paintable(15));
+        // Bedrock is the boundary, Stem and Flower only grow from Seeds, Pebbles only come from crumbled rock.
+        assert!(![BEDROCK, STEM, FLOWER, PEBBLES, THERMITE + 1].iter().any(|&m| paintable(m)));
     }
 }
 
@@ -1015,8 +2046,11 @@ mod tests {
 mod lava_levels {
     use super::*;
 
-    fn lava_column(sleep: bool) -> Grid { column(sleep, LAVA) }
-    fn column(sleep: bool, mat: u8) -> Grid {
+    // Lava moves on half the ticks, so it gets twice water's settling time: at 6000 ticks after D-233 it is level but
+    // still rippling (3 rows), at 12000 it is within 2 from either wall.
+    fn lava_column(sleep: bool) -> Grid { column_at(sleep, LAVA, false, 12000) }
+    fn column(sleep: bool, mat: u8) -> Grid { column_at(sleep, mat, false, 6000) }
+    fn column_at(sleep: bool, mat: u8, left: bool, ticks: u32) -> Grid {
         let (w, h) = (384, 192);
         let mut g = Grid::new(w, h);
         g.set_all_active();
@@ -1028,13 +2062,14 @@ mod lava_levels {
             g.set(y * w + w - 1, BEDROCK, 0);
             g.set(y * w, BEDROCK, 0);
         }
-        // A tall column of lava against the right wall, as in the bug screenshot.
+        // A tall column of lava against the right wall, as in the bug screenshot (or the left one, its mirror).
+        let xs = if left { 1..61 } else { w - 60..w - 1 };
         for y in 20..h - 1 {
-            for x in w - 60..w - 1 {
+            for x in xs.clone() {
                 g.set(y * w + x, mat, 0);
             }
         }
-        for t in 0..6000 {
+        for t in 0..ticks {
             g.step_cells(7, t);
         }
         g
@@ -1045,12 +2080,83 @@ mod lava_levels {
         (1..g.w - 1).map(|x| (0..g.h).find(|&y| g.mat[y * g.w + x] == m).unwrap_or(g.h)).collect()
     }
 
+    /// 9 Nov playtest screenshot: lava against the left wall stood high and would not level rightwards, while the
+    /// same column against the right wall levelled. Lava moved only on even ticks, and even ticks always scan rows
+    /// left to right, so a cell sliding right landed ahead of the scan (and was skipped by `moved`) while one sliding
+    /// left moved into cells already scanned: lava drained left far more readily than right.
+    #[test]
+    fn lava_levels_the_same_from_either_wall() {
+        let (l, r) = (column_at(true, LAVA, true, 12000), lava_column(true));
+        let (sl, sr) = (surface(&l), surface(&r));
+        let spread = |s: &[usize]| s.iter().max().unwrap() - s.iter().min().unwrap();
+        assert!(spread(&sl) <= 2, "lava poured against the left wall spans {} rows (right wall: {})", spread(&sl), spread(&sr));
+        assert!(spread(&sr) <= 2, "lava poured against the right wall spans {} rows", spread(&sr));
+    }
+
     #[test]
     fn water_levels_out() {
         let g = column(true, WATER);
         let s = surface_of(&g, WATER);
         let spread = s.iter().max().unwrap() - s.iter().min().unwrap();
         assert!(spread <= 2, "water surface spans {spread} rows; a liquid should level");
+    }
+
+    /// Water poured from one point (5 Nov playtest screenshot): the largest step in the surface between neighbouring
+    /// columns while it spreads, and the grid at the end. Each chunk used to run all 64 of its rows before the next
+    /// chunk, so a spreading body stood in walls on chunk edges (22 rows at x = 448) that only levelled thousands of
+    /// ticks later.
+    fn pour(sleep: bool) -> (usize, Grid) {
+        let (w, h) = (512, 256);
+        let mut g = Grid::new(w, h);
+        g.set_all_active();
+        g.sleep_enabled = sleep;
+        for x in 0..w {
+            g.set((h - 1) * w + x, BEDROCK, 0);
+        }
+        for y in 0..h {
+            g.set(y * w + w - 1, BEDROCK, 0);
+            g.set(y * w, BEDROCK, 0);
+        }
+        let (px, py) = (470i32, 40i32);
+        let (mut worst, mut measured) = (0, 0);
+        for t in 0..1600u32 {
+            if t < 1000 && t % 2 == 0 {
+                for dy in -5..=5i32 {
+                    for dx in -5..=5i32 {
+                        let i = (py + dy) as usize * w + (px + dx) as usize;
+                        if dx * dx + dy * dy <= 25 && g.mat[i] == EMPTY {
+                            g.set(i, WATER, 0);
+                        }
+                    }
+                }
+            }
+            g.step_cells(7, t);
+            if t >= 600 && t % 50 == 0 {
+                // Columns the water has reached, away from the falling stream.
+                let s = surface_of(&g, WATER);
+                for x in 1..s.len() - 1 {
+                    let (a, b) = (s[x - 1], s[x]);
+                    if a < h && b < h && (x as i32 - px).abs() > 10 {
+                        worst = worst.max(a.abs_diff(b));
+                        measured += 1;
+                    }
+                }
+            }
+        }
+        assert!(measured > 1000, "too few columns measured ({measured})");
+        (worst, g)
+    }
+
+    #[test]
+    fn poured_water_spreads_without_walls_on_chunk_edges() {
+        let ((on, gon), (off, goff)) = (pour(true), pour(false));
+        assert!(gon.mat == goff.mat && gon.aux == goff.aux && gon.woken == goff.woken, "sleeping changed the result (invariant 8)");
+        assert_eq!(on, off);
+        // The pour starts at x = 470 and must have crossed at least two chunk edges (448 and 384).
+        let left = (0..gon.w).find(|&x| (0..gon.h).any(|y| gon.mat[y * gon.w + x] == WATER)).unwrap();
+        assert!(left < 384, "water only reached x = {left}");
+        // Before D-191 this measured a 54-row step (the screenshot's wall at x = 448 was 22 rows at one moment).
+        assert!(on <= 6, "a spreading water surface stepped {on} rows between neighbouring columns");
     }
 
     #[test]

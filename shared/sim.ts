@@ -1,8 +1,9 @@
 // Typed loader around the sim.wasm C ABI (plan 6.11). No Node-only APIs: runs in browsers too.
+import { configForKind } from "./room.ts";
 
 export interface SimExports {
   memory: WebAssembly.Memory;
-  init(seedLo: number, seedHi: number, worldKind: number): number;
+  init(seedLo: number, seedHi: number, cfgPtr: number, cfgLen: number): number;
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
   push_input(ptr: number, len: number): number;
@@ -22,6 +23,9 @@ export interface SimExports {
   events(outPtr: number, max: number): number;
   entities(outPtr: number, max: number): number;
   player_view(id: number, outPtr: number): number;
+  snapshot_format_version(): number;
+  snapshot_header_bytes(): number;
+  player_record_bytes(): number;
 }
 
 /** Event kinds from `events()` (plan 6.11). Render and UI only: nothing read here may become an input (invariant 9). */
@@ -35,10 +39,21 @@ export const EV_RESPAWN = 7;
 export const EV_EXPLODE = 8;
 export const EV_DEATH = 9;
 export const EV_BAG_PICKUP = 10;
-/** Cause of a death (`EV_DEATH.b`): a spell id 0..5 is that spell, then these. */
-export const CAUSE_FIRE = 6;
-export const CAUSE_LAVA = 7;
-export const CAUSE_GUNPOWDER = 8;
+/** EnemyHurt: `player` = attacker (0 none), a = enemy id, b = damage, c = hp left. */
+export const EV_ENEMY_HURT = 11;
+/** EnemyDeath: `player` = killer (0 none), a, b = x, y in 1/16 cell, c = kind. */
+export const EV_ENEMY_DEATH = 12;
+/** RoundEnd: a = 1 win, 0 loss. Fires once per room. */
+export const EV_ROUND_END = 13;
+/** F6b: the lobby countdown completed; the round is running. */
+export const EV_ROUND_START = 15;
+/** Heal taken (Brief E): `player` = taker, a = hit points gained, b and c = the heal's cell x, y. */
+export const EV_HEAL = 16;
+/** Cause of a death (`EV_DEATH.b`): a spell id 0..NUM_SPELLS is that spell, then these. */
+export const CAUSE_FIRE = 32;
+export const CAUSE_LAVA = 33;
+export const CAUSE_GUNPOWDER = 34;
+export const CAUSE_ACID = 35;
 /** Why a cast was refused (`CastRejected.b`). */
 export const REJECT_SPELL = 1;
 export const REJECT_CHARGES = 2;
@@ -60,13 +75,28 @@ export interface SimEvent {
   c: number;
 }
 
+/** Enemy kinds the sim has (NUM_ENEMY_KINDS in sim/src/tuning.rs; pinned by tests/net/claims-events.test.ts). */
+export const NUM_ENEMY_KINDS = 8;
+/**
+ * Max hp of each enemy kind, for health bars and the hover label (render-only). The one TypeScript copy of
+ * `ENEMY_STATS[k].hp` in sim/src/tuning.rs (and `BOSS_HP`, `COLOSSUS_HP`), pinned by tests/net/spells-table.test.ts.
+ */
+export const ENEMY_MAX_HP: readonly number[] = [20, 30, 60, 90, 800, 40, 30, 600];
 export const ENT_PLAYER = 1;
 export const ENT_PICKUP = 2;
 /** A bolt in flight: `id` is the owner, `sub` the spell, `a` the cast_seq, x and y in 1/16 cell. */
 export const ENT_PROJECTILE = 3;
 /** A dropped bag: `id` is its index in the list, `a` the total charges, x and y the cell centre in 1/16 cell. */
 export const ENT_BAG = 4;
-export const NUM_SPELLS = 6;
+/** An enemy: `id`, `sub` = kind, x and y in 1/16 cell (feet centre / feet line), `a` = hp, `health` = state | facing << 7. */
+export const ENT_ENEMY = 5;
+/** The one-life round state (round 1 rooms only): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = running (bit 0) | boss_killed << 1. */
+export const ENT_ROUND = 6;
+/** F6b: a player's lobby ready flag: `id` = player, `active` = ready. Only present while the lobby is open. */
+export const ENT_READY = 7;
+/** A heal on the ground (Brief E): `id` = index, `a` = amount, x and y the cell centre in 1/16 cell. */
+export const ENT_HEAL = 8;
+export const NUM_SPELLS = 15;
 export interface EntityView {
   type: number;
   id: number;
@@ -93,7 +123,8 @@ export interface PlayerView {
 }
 
 export interface Sim {
-  init(seed: bigint, worldKind: number): void;
+  /** Start a world from a seed and a room config (16 bytes, see room.ts). A bare number is the legacy world kind: 0 and 1 map to the presets. Throws if the sim refuses the config. */
+  init(seed: bigint, cfg: Uint8Array | number): void;
   /** Returns 0 on success, negative if the sim rejected the input. */
   pushInput(input: Uint8Array): number;
   step(): number;
@@ -190,9 +221,21 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
         return { charges, cooldown };
       });
     },
-    init(seed, worldKind) {
+    init(seed, cfg) {
       const s = BigInt.asUintN(64, seed);
-      const rc = x.init(Number(s & 0xffffffffn), Number(s >> 32n), worldKind);
+      // The deployed v1 sandbox wasm (tests/fixtures, compat test) still has init(lo, hi, kind): a wasm export's
+      // length is its parameter count, so that one old build is called the old way, with a bare kind.
+      if ((x.init as unknown as { length: number }).length === 3) {
+        if (typeof cfg !== "number") throw new Error("legacy sim.wasm takes a world kind, not a config");
+        const rc = (x.init as unknown as (a: number, b: number, c: number) => number)(Number(s & 0xffffffffn), Number(s >> 32n), cfg);
+        if (rc !== 0) throw new Error(`sim init failed (${rc})`);
+        return;
+      }
+      const bytes = typeof cfg === "number" ? configForKind(cfg) : cfg;
+      const rc = withBuf(bytes.length, (p) => {
+        mem().set(bytes, p);
+        return x.init(Number(s & 0xffffffffn), Number(s >> 32n), p, bytes.length);
+      });
       if (rc !== 0) throw new Error(`sim init failed (${rc})`);
     },
     pushInput(input) {
@@ -234,6 +277,25 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
     },
     setSleepEnabled: (on) => x.set_sleep_enabled(on ? 1 : 0),
   };
+}
+
+/**
+ * Where a snapshot's player records sit, read from the sim build itself (review M4) so the server, which reads the
+ * active players of a stored snapshot without running the sim, holds no copy of the layout. A snapshot is
+ * `headerBytes`, the entity section's byte length (u32), then the entity bytes: the player count (u32), then
+ * `playerRecordBytes` per player, each starting `id u32, active u8`.
+ */
+export interface SnapshotLayout {
+  formatVersion: number;
+  headerBytes: number;
+  playerRecordBytes: number;
+}
+
+/** The layout facts of a sim build. Instantiates the module once (no imports, about 1 MB of memory); throws for a build without the exports. */
+export function snapshotLayout(bytes: Uint8Array): SnapshotLayout {
+  const x = new WebAssembly.Instance(new WebAssembly.Module(bytes as BufferSource), {}).exports as unknown as Partial<SimExports>;
+  if (!x.snapshot_format_version || !x.snapshot_header_bytes || !x.player_record_bytes) throw new Error("sim.wasm has no snapshot layout exports");
+  return { formatVersion: x.snapshot_format_version(), headerBytes: x.snapshot_header_bytes(), playerRecordBytes: x.player_record_bytes() };
 }
 
 /** Hex sha256 of the wasm bytes (WebCrypto: Node and browsers). */

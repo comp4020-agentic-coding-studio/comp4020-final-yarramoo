@@ -23,12 +23,14 @@ precision highp int;
 precision highp usampler2D;
 uniform usampler2D uMat;
 uniform usampler2D uAux;
-uniform vec3 uPal[16];
+uniform vec3 uPal[32];
 uniform float uTime;
 uniform vec2 uWorld;
 uniform vec2 uCam;
 uniform vec2 uView;
 uniform vec3 uBands; // x: 1 in a game world, else 0; y: SHALLOW_TOP; z: DEEP_TOP
+uniform usampler2D uSurf; // per column: y of the surface (first solid cell from the top), fixed at generation (setBackground)
+uniform vec2 uSky; // x: sky kind 0..4, y: 1 when motion is allowed (0 under prefers-reduced-motion)
 in vec2 uv;
 out vec4 outColor;
 
@@ -36,14 +38,86 @@ float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+// The open-air sky behind a cell: a pure function of the screen cell, the kind and the time. Drawn, never simulated.
+vec3 skyColor(vec2 uvp, vec2 cs) {
+  float kind = uSky.x;
+  float t = uTime * uSky.y;
+  float g = uvp.y; // 0 top, 1 bottom
+  if (kind < 0.5 || kind > 3.5) {
+    vec3 col = mix(vec3(0.015, 0.03, 0.10), vec3(0.07, 0.10, 0.22), g);
+    float s = hash(cs);
+    if (s > 0.991) col += vec3(0.55 + 0.45 * sin(t * 0.9 + s * 400.0)) * (kind > 3.5 ? 0.5 : 1.0);
+    if (kind > 3.5) {
+      float band = sin(uvp.x * 6.0 + sin(uvp.x * 2.3 + t * 0.15) * 1.8 + t * 0.1);
+      float m = smoothstep(0.0, 1.0, band * 0.5 + 0.5) * smoothstep(0.65, 0.1, g) * smoothstep(0.0, 0.2, g);
+      col += mix(vec3(0.1, 0.8, 0.45), vec3(0.55, 0.25, 0.85), g * 2.0) * m * 0.55;
+    }
+    return col;
+  }
+  if (kind < 1.5) {
+    vec3 col = mix(vec3(0.36, 0.60, 0.92), vec3(0.74, 0.88, 0.97), g);
+    float d = length((uvp - vec2(0.78, 0.2)) * vec2(1.7, 1.0));
+    col += vec3(1.0, 0.95, 0.75) * (exp(-d * 7.0) * 0.5 + step(d, 0.045));
+    return col;
+  }
+  if (kind < 2.5) {
+    vec3 col = mix(vec3(0.20, 0.20, 0.42), vec3(0.98, 0.52, 0.30), pow(g, 1.6));
+    col = mix(col, vec3(1.0, 0.80, 0.45), smoothstep(0.75, 1.0, g) * 0.6);
+    float d = length((uvp - vec2(0.3, 0.95)) * vec2(1.7, 1.0));
+    col += vec3(1.0, 0.7, 0.3) * exp(-d * 4.0) * 0.5;
+    return col;
+  }
+  vec3 col = mix(vec3(0.27, 0.30, 0.35), vec3(0.46, 0.49, 0.53), g);
+  float cx = floor(cs.x + cs.y * 0.2);
+  float h1 = hash(vec2(cx, 3.0));
+  float yy = cs.y + t * (50.0 + 40.0 * h1) + h1 * 300.0;
+  float seg = mod(yy, 36.0);
+  if (seg < 5.0 && hash(vec2(cx, floor(yy / 36.0))) > 0.75) col += vec3(0.20, 0.22, 0.28) * (1.0 - seg / 6.0);
+  return col;
+}
+
+// Grass (cosmetic, game world only): exposed dirt within 6 rows of the generated ground line of its column.
+// Cells are never changed: avatars and the sim see plain dirt, and blades are drawn over empty sky only.
+bool grassTop(ivec2 p) {
+  if (uBands.x < 0.5 || p.y < 1 || p.y >= int(uWorld.y) - 1) return false;
+  if (texelFetch(uMat, p, 0).r != 3u) return false;
+  uint up = texelFetch(uMat, p + ivec2(0, -1), 0).r;
+  if (up != 0u && up != 8u && up != 9u) return false;
+  return p.y <= int(texelFetch(uSurf, ivec2(p.x, 0), 0).r) + 6;
+}
+
 void main() {
   ivec2 c = clamp(ivec2(floor(uCam + uv * uView)), ivec2(0), ivec2(uWorld) - 1);
   uint m = texelFetch(uMat, c, 0).r;
   float a = float(texelFetch(uAux, c, 0).r);
   float h = hash(vec2(c));
-  vec3 bg = vec3(0.043, 0.055, 0.078) + vec3(0.02, 0.025, 0.04) * (1.0 - uv.y);
+  // Open air only: in a game world a cell is sky above the ground line of its column (setBackground); the
+  // sandbox has no ground to speak of, so all of it is sky. Below the line, a cave's open cells show a dim back
+  // wall in the depth bands' colours (dirt brown, grey rock, cold blue-black), so a cave reads as inside the earth.
+  vec3 bg;
+  if (uBands.x < 0.5 || c.y < int(texelFetch(uSurf, ivec2(c.x, 0), 0).r)) bg = skyColor(uv, floor(uv * uView));
+  else {
+    float y = float(c.y);
+    float s1 = smoothstep(uBands.y - 40.0, uBands.y + 40.0, y);
+    float s2 = smoothstep(uBands.z - 40.0, uBands.z + 40.0, y);
+    vec3 wall = mix(mix(vec3(0.23, 0.15, 0.10), vec3(0.19, 0.19, 0.20), s1), vec3(0.09, 0.11, 0.17), s2);
+    // Chunky two-scale noise (2- and 6-cell blocks), so the wall has texture but stays well behind the terrain.
+    float n = 0.78 + 0.22 * hash(vec2(c / 2) + 31.0) + 0.12 * (hash(vec2(c / 6) + 7.0) - 0.5);
+    bg = wall * n;
+  }
   vec3 col = uPal[m];
   if (m == 0u) {
+    if (uBands.x > 0.5) {
+      // Grass blades: 1 in 2 columns a 1-cell blade, 1 in 6 a 2-cell blade, swaying only when motion is allowed.
+      int shift = int(floor(0.5 + 0.9 * sin(uTime * 1.3 + float(c.x) * 0.2) * uSky.y));
+      float hb = hash(vec2(float(c.x + shift), 11.0));
+      bool blade = hb < 0.5 && grassTop(c + ivec2(0, 1));
+      if (!blade && hb < 0.1667 && texelFetch(uMat, c + ivec2(0, 1), 0).r == 0u) blade = grassTop(c + ivec2(0, 2));
+      if (blade) {
+        vec3 g = mix(vec3(0.27, 0.55, 0.18), vec3(0.40, 0.68, 0.22), hash(vec2(c) + 5.0));
+        bg = mix(bg, g, 0.9);
+      }
+    }
     outColor = vec4(bg, 1.0);
     return;
   }
@@ -58,6 +132,12 @@ void main() {
   if (m == 14u) {
     float w = 0.5 + 0.5 * sin(uTime * 2.0 + float(c.x) * 0.35 + float(c.y) * 0.21 + h * 3.0);
     outColor = vec4(mix(vec3(0.62, 0.1, 0.02), vec3(1.0, 0.62, 0.12), w * (0.6 + 0.4 * h)), 1.0);
+    return;
+  }
+  if (m == 17u) {
+    // Gas: faint, slowly shimmering, so a pocket reads as a haze against the rock.
+    float sh = 0.5 + 0.5 * sin(uTime * 1.2 + float(c.x) * 0.3 + float(c.y) * 0.17 + h * 4.0);
+    outColor = vec4(mix(bg, col, 0.28 + 0.14 * sh), 1.0);
     return;
   }
   if (m == 11u || m == 12u) {
@@ -78,6 +158,11 @@ void main() {
     // Two scales of hash noise so big faces are not flat.
     float n = 0.80 + 0.28 * h + 0.14 * (hash(vec2(c / 3) + 17.0) - 0.5);
     col = col * tint * dark;
+    if (m == 3u) {
+      vec3 g = mix(vec3(0.27, 0.55, 0.18), vec3(0.40, 0.68, 0.22), h);
+      if (grassTop(c)) col = g;
+      else if (grassTop(c + ivec2(0, -1))) col = mix(col, g * 0.6, 0.55);
+    }
     if (m == 2u) {
       // Moss: rock touching water, speckled by hash.
       bool wet = texelFetch(uMat, c + ivec2(0, -1), 0).r == 5u || texelFetch(uMat, c + ivec2(-1, 0), 0).r == 5u
@@ -133,6 +218,10 @@ export class Renderer {
   private uCam: WebGLUniformLocation | null;
   private uView: WebGLUniformLocation | null;
   private uBands: WebGLUniformLocation | null;
+  private uSky: WebGLUniformLocation | null;
+  private surfTex: WebGLTexture | null = null;
+  private sky = 0;
+  private motion = 1;
   private prog: WebGLProgram;
   private rectProg: WebGLProgram;
   private rRect: WebGLUniformLocation | null;
@@ -140,6 +229,8 @@ export class Renderer {
   private rView: WebGLUniformLocation | null;
   private rCol: WebGLUniformLocation | null;
   private cam: Camera = { x: 0, y: 0, vw: 1, vh: 1 };
+  /** Cave terrain: sky only above the surface, depth bands on. Otherwise every empty cell is sky. */
+  private caves = false;
   /** Size of the world the textures are allocated for (0 until `setWorld`). */
   private ww = 0;
   private wh = 0;
@@ -194,7 +285,9 @@ export class Renderer {
     this.uCam = gl.getUniformLocation(prog, "uCam");
     this.uView = gl.getUniformLocation(prog, "uView");
     this.uBands = gl.getUniformLocation(prog, "uBands");
-    const pal = new Float32Array(48);
+    this.uSky = gl.getUniformLocation(prog, "uSky");
+    gl.uniform1i(gl.getUniformLocation(prog, "uSurf"), 2);
+    const pal = new Float32Array(96);
     paletteTable().forEach((c, i) => {
       pal[i * 3] = ((c >> 16) & 255) / 255;
       pal[i * 3 + 1] = ((c >> 8) & 255) / 255;
@@ -204,8 +297,35 @@ export class Renderer {
     this.uTime = gl.getUniformLocation(prog, "uTime");
   }
 
+  /** Pick the sky (an index into SKY_KINDS) and whether it may move (false under prefers-reduced-motion). */
+  setSky(kind: number, motion = true) {
+    this.sky = kind;
+    this.motion = motion ? 1 : 0;
+    this.gl.useProgram(this.prog);
+    this.gl.uniform2f(this.uSky, kind, this.motion);
+  }
+
+  /**
+   * Set the backdrop line once, from the pristine generated world (`groundLine` in background.ts, called right after
+   * `sim.init`): a column is sky above `groundY[x]` and dim cave wall below it. It is never recomputed from live
+   * cells, so what players build or dig does not move it. Call after `setWorld` (which sizes the texture).
+   */
+  setBackground(groundY: Uint16Array) {
+    if (!this.surfTex || groundY.length !== this.ww) return;
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.surfTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.ww, 1, gl.RED_INTEGER, gl.UNSIGNED_SHORT, groundY);
+  }
+
   /** Allocate textures for a world of `w` by `h` cells (a no-op if the size is unchanged). */
-  setWorld(w: number, h: number) {
+  /** `caves`: the world has cave terrain (a surface, bands, sky only above ground). Defaults to the old height
+   * guess (taller than the sandbox), which is wrong for a size-S cave room: callers that know the config pass it. */
+  setWorld(w: number, h: number, caves = h > SANDBOX_H) {
+    if (caves !== this.caves) {
+      this.caves = caves;
+      if (this.ww) this.gl.uniform3f(this.uBands, caves ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
+    }
     if (w === this.ww && h === this.wh) return;
     const gl = this.gl;
     gl.deleteTexture(this.matTex);
@@ -214,9 +334,18 @@ export class Renderer {
     this.auxTex = this.makeTex(1, w, h);
     this.ww = w;
     this.wh = h;
+    if (this.surfTex) gl.deleteTexture(this.surfTex);
+    gl.activeTexture(gl.TEXTURE2);
+    this.surfTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.surfTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16UI, w, 1);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.uniform2f(this.uWorld, w, h);
     // The sandbox is 512 tall and has no bands: only a taller world gets the depth look.
-    gl.uniform3f(this.uBands, h > SANDBOX_H ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
+    gl.uniform3f(this.uBands, this.caves ? 1 : 0, SHALLOW_TOP, DEEP_TOP);
   }
 
   private makeTex(unit: number, w: number, h: number): WebGLTexture {

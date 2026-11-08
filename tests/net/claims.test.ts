@@ -229,19 +229,19 @@ describe("kills, deaths and the four claim achievements", () => {
     expect(h.stats.get(4)).toEqual({ deaths: 1 });
     expect(h.given).toEqual([]);
   });
-  it("shoved_to_doom only for a credited kill that died to fire (6), lava (7) or gunpowder (8)", () => {
-    for (const cause of [0, 1, 2, 3, 4, 5, 9]) {
+  it("shoved_to_doom only for a credited kill that died to fire (32), lava (33) or gunpowder (34)", () => {
+    for (const cause of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
       const h = harness();
       h.die(9, 1, cause);
       expect(h.given).toEqual(["1:first_blood"]);
     }
-    for (const cause of [6, 7, 8]) {
+    for (const cause of [32, 33, 34]) {
       const h = harness();
       h.die(9, 1, cause);
       expect(h.given).toEqual(["1:first_blood", "1:shoved_to_doom"]);
     }
     const h = harness();
-    h.die(9, 0, 7); // lava with no credited hitter
+    h.die(9, 0, 33); // lava with no credited hitter
     expect(h.given).toEqual([]);
   });
 });

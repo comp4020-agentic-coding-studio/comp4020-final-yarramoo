@@ -2,7 +2,7 @@
 use sim::entities::*;
 use sim::tuning::*;
 
-fn bag(x: u16, y: u16, c: [u16; 4], e: u32) -> Bag {
+fn bag(x: u16, y: u16, c: [u16; BAG_SPELLS], e: u32) -> Bag {
     Bag { x, y, charges: c, expires_at: e }
 }
 
@@ -13,20 +13,21 @@ fn bytes_with(bags: &[Bag]) -> (Vec<u8>, Vec<Pickup>, usize) {
     for p in pk.iter_mut() {
         p.respawn_at = 7;
     }
-    let b = encode(&[Player::new(3, 100, 200)], &pk, &[], bags);
-    let at = b.len() - 4 - bags.len() * BAG_BYTES;
+    let b = encode(&[Player::new(3, 100, 200)], &pk, &[], bags, &[], &[], [0; ROUND_TAIL_BYTES]);
+    // The enemy and heal sections (a u32 count each, empty here) and the round tail follow the bags.
+    let at = b.len() - 4 - 4 - ROUND_TAIL_BYTES - 4 - bags.len() * BAG_BYTES;
     (b, s.pickups, at)
 }
 
 #[test]
-fn bag_is_sixteen_bytes_and_round_trips() {
-    assert_eq!(BAG_BYTES, 16);
-    let bags = vec![bag(10, 20, [15, 0, 0, 5], 5400), bag(2047, 1535, [0, 1, 0, 0], u32::MAX)];
+fn bag_is_thirty_two_bytes_and_round_trips() {
+    assert_eq!(BAG_BYTES, 32);
+    let bags = vec![bag(10, 20, [15, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0], 5400), bag(2047, 1535, [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], u32::MAX)];
     let (b, mut pk, at) = bytes_with(&bags);
     assert_eq!(&b[at..at + 4], &2u32.to_le_bytes());
-    // literal layout of the first bag: x, y, four charges, expires_at, all LE
-    assert_eq!(&b[at + 4..at + 20], &[10, 0, 20, 0, 15, 0, 0, 0, 0, 0, 5, 0, 0x18, 0x15, 0, 0]);
-    let (players, projs, got) = decode(&b, &mut pk, 2048, 1536).unwrap();
+    // literal layout of the first bag: x, y, twelve charges, expires_at, all LE
+    assert_eq!(&b[at + 4..at + 36], &[10, 0, 20, 0, 15, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x18, 0x15, 0, 0]);
+    let (players, projs, got, _, _, _) = decode(&b, &mut pk, 2048, 1536).unwrap();
     assert_eq!((players.len(), projs.len()), (1, 0));
     assert_eq!(got, bags);
     // and with no bags
@@ -36,7 +37,7 @@ fn bag_is_sixteen_bytes_and_round_trips() {
 
 #[test]
 fn hostile_bag_bytes_fail_cleanly() {
-    let good = vec![bag(10, 20, [15, 0, 0, 5], 5400)];
+    let good = vec![bag(10, 20, [15, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0], 5400)];
     let (b, pk, at) = bytes_with(&good);
     let try_decode = |b: &[u8]| decode(b, &mut pk.clone(), 2048, 1536);
     assert!(try_decode(&b).is_ok());
@@ -58,14 +59,14 @@ fn hostile_bag_bytes_fail_cleanly() {
     assert!(try_decode(&b[..at + 2]).is_err());
     // out-of-world coordinates
     for (x, y) in [(2048u16, 5u16), (5, 1536), (u16::MAX, u16::MAX)] {
-        let (b, pk, _) = bytes_with(&[bag(x, y, [1, 0, 0, 0], 0)]);
+        let (b, pk, _) = bytes_with(&[bag(x, y, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0)]);
         assert!(decode(&b, &mut pk.clone(), 2048, 1536).is_err(), "{x},{y}");
     }
     // all-zero charges
-    let (b, pk, _) = bytes_with(&[bag(5, 5, [0; 4], 0)]);
+    let (b, pk, _) = bytes_with(&[bag(5, 5, [0; BAG_SPELLS], 0)]);
     assert!(decode(&b, &mut pk.clone(), 2048, 1536).is_err());
     // a full 64 bags is accepted
-    let many: Vec<Bag> = (0..MAX_BAGS as u16).map(|i| bag(i, 5, [1, 0, 0, 0], 9)).collect();
+    let many: Vec<Bag> = (0..MAX_BAGS as u16).map(|i| bag(i, 5, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 9)).collect();
     let (b, pk, _) = bytes_with(&many);
     assert_eq!(decode(&b, &mut pk.clone(), 2048, 1536).unwrap().2.len(), MAX_BAGS);
 }
@@ -117,7 +118,7 @@ fn pl(s: &Sim, id: u32) -> &Player {
 }
 
 fn set_charges(s: &mut Sim, id: u32, c: [u16; 6]) {
-    s.players.iter_mut().find(|p| p.id == id).unwrap().charges = c;
+    s.players.iter_mut().find(|p| p.id == id).unwrap().charges[..6].copy_from_slice(&c);
 }
 
 /// Kill player `id` with a small explosion on its chest (others are 8+ cells away, outside 1.5 r = 6).
@@ -144,8 +145,8 @@ fn death_drops_exactly_the_finite_charges_and_keeps_push_and_blast() {
     let d = death_of(&kill(&mut s, 1), 1);
     assert_eq!((d.a, d.b, d.c), (0, i32::from(CAUSE_GUNPOWDER), 1));
     // feet cell: x 510, y (839) - 1 = 838
-    assert_eq!(s.bags, vec![Bag { x: 510, y: 838, charges: [15, 0, 0, 5], expires_at: t + 5400 }]);
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0]);
+    assert_eq!(s.bags, vec![Bag { x: 510, y: 838, charges: [15, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0], expires_at: t + 5400 }]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0, INF, 0, 0, 0, 0, 0, 0, 0, 0]);
 }
 
 #[test]
@@ -162,8 +163,8 @@ fn a_victim_holding_an_infinite_finite_slot_keeps_it() {
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, INF, 7, 0, 0]);
     kill(&mut s, 1);
-    assert_eq!(s.bags[0].charges, [0, 7, 0, 0]);
-    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, 0, 0, 0]);
+    assert_eq!(s.bags[0].charges, [0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, 0, 0, 0, INF, 0, 0, 0, 0, 0, 0, 0, 0]);
 }
 
 #[test]
@@ -180,11 +181,11 @@ fn drops_merge_within_eight_cells_chebyshev_and_not_at_nine() {
         let d = death_of(&kill(&mut s, 2), 2);
         assert_eq!(d.c, 1);
         if merges {
-            assert_eq!(s.bags, vec![Bag { x: 510, y: 838, charges: [16, 2, 0, 0], expires_at: t + 5400 }], "at {cx}");
+            assert_eq!(s.bags, vec![Bag { x: 510, y: 838, charges: [16, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], expires_at: t + 5400 }], "at {cx}");
         } else {
             assert_eq!(s.bags.len(), 2, "at {cx}");
             assert_eq!(s.bags[0].expires_at, 123);
-            assert_eq!((s.bags[1].x, s.bags[1].charges), (cx as u16, [1, 2, 0, 0]));
+            assert_eq!((s.bags[1].x, s.bags[1].charges), (cx as u16, [1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         }
     }
 }
@@ -194,10 +195,10 @@ fn merge_picks_the_first_bag_in_order_and_saturates_below_infinite() {
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 1000, 0, 0, 0]);
     // Two bags both within 8 of the drop cell (510, 838); the first in vector order wins.
-    s.bags = vec![bag(515, 838, [65000, 0, 0, 0], 99), bag(505, 838, [1, 0, 0, 0], 99)];
+    s.bags = vec![bag(515, 838, [65000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99), bag(505, 838, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99)];
     kill(&mut s, 1);
-    assert_eq!(s.bags[0].charges, [INF - 1, 0, 0, 0]);
-    assert_eq!(s.bags[1].charges, [1, 0, 0, 0]);
+    assert_eq!(s.bags[0].charges, [INF - 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(s.bags[1].charges, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(s.bags.len(), 2);
 }
 
@@ -205,11 +206,11 @@ fn merge_picks_the_first_bag_in_order_and_saturates_below_infinite() {
 fn the_sixty_fifth_bag_evicts_the_oldest_and_its_charges_are_gone() {
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 0, 0, 0, 9]);
-    s.bags = (0..MAX_BAGS as u16).map(|i| bag(20 + 20 * i, 100, [i + 1, 0, 0, 0], 99_999)).collect();
+    s.bags = (0..MAX_BAGS as u16).map(|i| bag(20 + 20 * i, 100, [i + 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)).collect();
     kill(&mut s, 1);
     assert_eq!(s.bags.len(), MAX_BAGS);
-    assert_eq!(s.bags[0].charges, [2, 0, 0, 0], "bag 0 (charges 1) was evicted, order kept");
-    assert_eq!(s.bags[MAX_BAGS - 1].charges, [0, 0, 0, 9]);
+    assert_eq!(s.bags[0].charges, [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "bag 0 (charges 1) was evicted, order kept");
+    assert_eq!(s.bags[MAX_BAGS - 1].charges, [0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert!(s.bags.iter().all(|b| b.charges[0] != 1));
 }
 
@@ -238,14 +239,14 @@ fn a_bag_falls_through_empty_and_gas_and_stops_on_anything_else() {
     // Row 812 is set just before each step, which is what the bag reads (update_entities runs first).
     for (m, falls) in [(EMPTY, true), (SMOKE, true), (STEAM, true), (FIRE, true), (WATER, false), (SAND, false), (ROCK, false), (LAVA, false), (BEDROCK, false)] {
         let mut s = boxed(&[1]);
-        s.bags = vec![bag(520, 811, [1, 0, 0, 0], 99_999)];
+        s.bags = vec![bag(520, 811, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
         s.grid.set(812 * s.grid.w + 520, m, 0);
         s.step();
         assert_eq!(s.bags[0].y, if falls { 812 } else { 811 }, "material {m}");
     }
     // Falls to the floor and stops there; never leaves the world.
     let mut s = boxed(&[1]);
-    s.bags = vec![bag(520, 801, [1, 0, 0, 0], 99_999)];
+    s.bags = vec![bag(520, 801, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
     for _ in 0..60 {
         s.step();
     }
@@ -256,7 +257,7 @@ fn a_bag_falls_through_empty_and_gas_and_stops_on_anything_else() {
 fn a_bag_at_the_world_floor_does_not_fall_out() {
     let mut s = boxed(&[1]);
     let h = s.grid.h as u16;
-    s.bags = vec![bag(520, h - 1, [1, 0, 0, 0], 99_999)];
+    s.bags = vec![bag(520, h - 1, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
     s.step();
     assert_eq!(s.bags[0].y, h - 1);
 }
@@ -271,21 +272,21 @@ fn the_respawned_victim_takes_their_own_bag_back() {
         s.step();
         evs.extend(s.events.clone());
     }
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0], "respawn does not refill");
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 0, 0, 0, 0, INF, 0, 0, 0, 0, 0, 0, 0, 0], "respawn does not refill");
     assert!(evs.iter().all(|e| e.kind != EV_BAG_PICKUP), "no one took it while the victim was dead");
     assert_eq!(s.bags.len(), 1);
     stand(&mut s, 1, 510);
     let taken: Vec<_> = s.events.iter().filter(|e| e.kind == EV_BAG_PICKUP).collect();
     assert_eq!(taken.len(), 1);
     assert_eq!((taken[0].player, taken[0].a, taken[0].b, taken[0].c), (1, 510, 838, 20));
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 15, 0, 0, 5]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 15, 0, 0, 5, INF, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert!(s.bags.is_empty());
 }
 
 #[test]
 fn a_dead_player_cannot_take_a_bag() {
     let mut s = boxed(&[1]);
-    s.bags = vec![bag(510, 838, [4, 0, 0, 0], 99_999)];
+    s.bags = vec![bag(510, 838, [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
     s.players[0].health = 0;
     s.players[0].dead_until = 50_000;
     for _ in 0..5 {
@@ -301,12 +302,12 @@ fn two_players_on_one_bag_the_lower_id_gets_it() {
     let mut s = boxed(&[1, 2]);
     s.players[0].x = 510 * PX + 8;
     s.players[1].x = 512 * PX + 8;
-    s.bags = vec![bag(511, 838, [4, 0, 0, 1], 99_999)];
+    s.bags = vec![bag(511, 838, [4, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
     s.step();
     let taken: Vec<_> = s.events.iter().filter(|e| e.kind == EV_BAG_PICKUP).collect();
     assert_eq!(taken.len(), 1);
     assert_eq!((taken[0].player, taken[0].c), (1, 5));
-    assert_eq!(pl(&s, 1).charges, [INF, INF, 4, 0, 0, 1]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, 4, 0, 0, 1, INF, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(pl(&s, 2).charges, START_CHARGES);
 }
 
@@ -314,9 +315,9 @@ fn two_players_on_one_bag_the_lower_id_gets_it() {
 fn pickup_leaves_infinite_slots_and_saturates() {
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, INF, 65_530, 0, 0]);
-    s.bags = vec![bag(510, 838, [5, 100, 0, 2], 99_999)];
+    s.bags = vec![bag(510, 838, [5, 100, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
     s.step();
-    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, INF - 1, 0, 2]);
+    assert_eq!(pl(&s, 1).charges, [INF, INF, INF, INF - 1, 0, 2, INF, 0, 0, 0, 0, 0, 0, 0, 0]);
     let e = s.events.iter().find(|e| e.kind == EV_BAG_PICKUP).unwrap();
     assert_eq!(e.c, 107, "the whole bag is taken");
 }
@@ -324,9 +325,9 @@ fn pickup_leaves_infinite_slots_and_saturates() {
 #[test]
 fn the_bag_view_record() {
     let mut s = Sim::new(5, 1).unwrap();
-    s.bags = vec![bag(10, 20, [1, 2, 3, 4], 9), bag(7, 8, [u16::MAX - 1, u16::MAX - 1, 0, 0], 9)];
+    s.bags = vec![bag(10, 20, [1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0], 9), bag(7, 8, [u16::MAX - 1, u16::MAX - 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 9)];
     let mut out = vec![0u8; 2000 * ENTITY_BYTES];
-    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, 0, &mut out, 2000);
+    let n = write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &[], [0; ROUND_TAIL_BYTES], false, 0, &mut out, 2000);
     assert_eq!(n, s.pickups.len() + 2);
     let r = &out[(n - 2) * ENTITY_BYTES..(n - 1) * ENTITY_BYTES];
     assert_eq!(r[0], ENT_BAG);
@@ -404,7 +405,7 @@ fn sleep_run(sleep: bool) -> (Vec<u64>, Sim) {
     push(&mut s, encode_join(1));
     s.step();
     let (px, py) = (pl(&s, 1).x >> POS_SHIFT, pl(&s, 1).y >> POS_SHIFT);
-    s.bags = vec![bag(100, 50, [1, 2, 3, 4], 99_999), bag((px + 30) as u16, (py - 120) as u16, [5, 0, 0, 0], 99_999)];
+    s.bags = vec![bag(100, 50, [1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0], 99_999), bag((px + 30) as u16, (py - 120) as u16, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 99_999)];
     let mut hs = vec![];
     for t in 1..=300u32 {
         s.step();
@@ -434,46 +435,62 @@ fn with_version(snap: &[u8], v: u16) -> Vec<u8> {
 }
 
 #[test]
-fn format_is_three_and_a_v3_game_snapshot_round_trips_with_bags() {
-    assert_eq!(snapshot::FORMAT_VERSION, 3);
+fn format_is_eighteen_and_a_game_snapshot_round_trips_with_bags() {
+    assert_eq!(snapshot::FORMAT_VERSION, 19);
     let mut s = boxed(&[1]);
     set_charges(&mut s, 1, [INF, INF, 15, 0, 0, 5]);
     kill(&mut s, 1);
     let snap = snapshot::write(&s);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 3);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 19);
     let mut r = snapshot::restore(&snap).unwrap();
     assert_eq!(r.bags, s.bags);
     assert_eq!(r.state_hash(), s.state_hash());
 }
 
+/// R0a: format 4 replaced the kind byte with the config and format 5 added Dig, so every other format is refused, sandbox or game
+/// (the game is not live; no stored state is lost). Config-header refusals are in config_state.rs.
 #[test]
-fn v2_sandbox_restores_but_v1_and_v2_game_snapshots_are_refused() {
+fn other_formats_are_refused_for_sandbox_and_game() {
     let mut sb = Sim::new(9, 0).unwrap();
     push(&mut sb, sim::input::encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let snap = snapshot::write(&sb);
-    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 3);
-    for v in [1u16, 2, 3] {
-        let mut r = snapshot::restore(&with_version(&snap, v)).unwrap_or_else(|_| panic!("sandbox v{v}"));
-        // The state hash covers tick, entity bytes and chunk hashes, never the header, so the version stamp
-        // cannot change a sandbox's hash.
-        assert_eq!(r.state_hash(), sb.state_hash(), "v{v}");
-    }
-    assert!(snapshot::restore(&with_version(&snap, 4)).is_err());
-    assert!(snapshot::restore(&with_version(&snap, 0)).is_err());
-
-    // A game snapshot stamped v2 has the v2 entity layout (no bag count); it is refused, and so is v1.
-    let g = boxed(&[1]);
-    let gsnap = snapshot::write(&g);
+    assert_eq!(u16::from_le_bytes([snap[4], snap[5]]), 19);
+    assert!(snapshot::restore(&snap).is_ok());
+    let gsnap = snapshot::write(&boxed(&[1]));
     assert!(snapshot::restore(&gsnap).is_ok());
-    assert!(snapshot::restore(&with_version(&gsnap, 2)).is_err());
-    assert!(snapshot::restore(&with_version(&gsnap, 1)).is_err());
-    // A real v2 body: drop the 4-byte bag count from the end of the entity section.
-    let elen_at = 55;
-    let elen = u32::from_le_bytes(gsnap[elen_at..elen_at + 4].try_into().unwrap()) as usize;
-    let mut v2 = gsnap[..elen_at].to_vec();
-    v2.extend_from_slice(&((elen - 4) as u32).to_le_bytes());
-    v2.extend_from_slice(&gsnap[elen_at + 4..elen_at + 4 + elen - 4]);
-    v2.extend_from_slice(&gsnap[elen_at + 4 + elen..]);
-    assert!(snapshot::restore(&with_version(&v2, 2)).is_err());
+    for v in [0u16, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] {
+        assert!(snapshot::restore(&with_version(&snap, v)).is_err(), "sandbox v{v}");
+        assert!(snapshot::restore(&with_version(&gsnap, v)).is_err(), "game v{v}");
+    }
+}
+
+// ---- F3: every finite spell rides in a bag ----------------------------------------------------------------
+
+#[test]
+fn every_finite_spell_round_trips_through_a_death_bag_and_its_pickup() {
+    let finite: Vec<usize> = (0..NUM_SPELLS).filter(|&k| START_CHARGES[k] != INF).collect();
+    assert_eq!(finite.as_slice(), BAG_SPELL_IDS.as_slice(), "the bag covers exactly the finite spells");
+    let mut s = boxed(&[1, 2]);
+    for (n, &k) in finite.iter().enumerate() {
+        s.players[0].charges[k] = 3 + n as u16;
+    }
+    kill(&mut s, 1);
+    assert_eq!(s.bags.len(), 1);
+    for (n, &k) in finite.iter().enumerate() {
+        assert_eq!(s.bags[0].charges[n], 3 + n as u16, "spell {k} in the bag");
+        assert_eq!(pl(&s, 1).charges[k], 0, "spell {k} left the victim");
+    }
+    // the bag survives a snapshot
+    let r = snapshot::restore(&snapshot::write(&s)).unwrap();
+    assert_eq!(r.bags, s.bags);
+    // player 2 walks onto it and gets every spell back
+    let (bx, by) = (i32::from(s.bags[0].x), i32::from(s.bags[0].y));
+    let life = pl(&s, 2).life;
+    push(&mut s, encode_pos(2, life, bx * PX + PX / 2, (by + 1) * PX, 0));
+    s.step();
+    assert!(s.bags.is_empty());
+    for (n, &k) in finite.iter().enumerate() {
+        assert_eq!(pl(&s, 2).charges[k], 3 + n as u16, "spell {k} picked up");
+    }
 }

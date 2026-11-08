@@ -4,10 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { decodeServer, encodeTick, encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME, compressSnapshot, decompressSnapshot, maxSnapshotRawFor } from "../../shared/protocol.ts";
+import { decodeServer, encodeTick, encodeInput, MAX_UPLOAD_FRAME, MAX_UPLOAD_FRAME_GAME, compressSnapshot, decompressSnapshot, maxSnapshotRawFor, maxUploadFrameFor, MAX_SNAPSHOT_RAW_GAME } from "../../shared/protocol.ts";
 import { createHash } from "node:crypto";
 import { KIND_JOIN, KIND_LEAVE, KIND_PAINT, encodePaint } from "../../shared/inputs.ts";
 import { GameDb } from "../../server/db.ts";
+import { CAVES_PVP, CLASSIC_SANDBOX } from "../../shared/room.ts";
 import { ENT_PROJECTILE, EV_CAST, EV_KNOCK, loadSim } from "../../shared/sim.ts";
 import { startServer, type RunningServer } from "../../server/main.ts";
 import { buildHashHex, connect, register, sleep, wasmBytes, waitFor, type TestClient } from "./helpers.ts";
@@ -154,7 +155,10 @@ describe("two worlds on one server", () => {
     g.ws.send(encodeInput(2, 2, new Uint8Array(0)));
     g.ws.send(encodeInput(3, KIND_PAINT, encodePaint(0, 4, 1, 1, 9, 9, 3).subarray(5)));
     await waitFor(() => s.stats.rejected - before >= 3, 3000, "three rejections");
-    await expect(connect(s.port, hex, { world: 7 })).rejects.toThrow(/unknown world/);
+    // R2b: ids beyond the two fixed worlds now resolve through RoomsStore, so an id with no room row rejects
+    // with "unknown room" (the brief's item 2), not the old "unknown world" (world 0/1's own behavior is
+    // unaffected — see the "two fixed worlds" describe block in tests/net/room-join.test.ts).
+    await expect(connect(s.port, hex, { world: 7 })).rejects.toThrow(/unknown room/);
     g.close();
   });
 
@@ -255,40 +259,57 @@ describe("respawn Pos rule (D-078, review M4b S1)", () => {
 
 describe("snapshots in the game world", () => {
   it("caps scale with the world kind", () => {
-    expect(maxSnapshotRawFor(1)).toBeGreaterThan(6_400_000);
-    expect(maxSnapshotRawFor(0)).toBe(1 << 20);
+    expect(maxSnapshotRawFor(CAVES_PVP)).toBeGreaterThan(6_400_000);
+    expect(maxSnapshotRawFor(CLASSIC_SANDBOX)).toBe(1 << 20);
+    // R0a: derived from the config, but they must equal the constants the old per-kind helpers returned.
+    expect(maxSnapshotRawFor(CAVES_PVP)).toBe(MAX_SNAPSHOT_RAW_GAME);
+    expect(maxUploadFrameFor(CAVES_PVP)).toBe(MAX_UPLOAD_FRAME_GAME);
+    expect(maxUploadFrameFor(CLASSIC_SANDBOX)).toBe(MAX_UPLOAD_FRAME);
     expect(MAX_UPLOAD_FRAME_GAME_ok()).toBe(true);
   });
 
-  it("verifies a game snapshot in a worker: the tick clock does not stall, and a main-thread restore would", async () => {
-    const s = await boot(tmp(), 120);
-    // Observe every closed tick's time on the server's own clock.
-    const closes: number[] = [];
-    s.game.onTickClosed = () => closes.push(performance.now());
-    const me = await register(s.port, "Snap");
-    const a = await connect(s.port, hex, { world: GAME, token: me.token });
-    const stepper = setInterval(() => a.ls.run(100000), 4);
-    cleanups.push(() => clearInterval(stepper));
-    a.move(1000, 240);
-    await waitFor(() => s.game.stats.snapshotsAccepted >= 1, 30000, "a verified game snapshot");
-    clearInterval(stepper);
-    expect(s.game.stats.snapshotsRejected).toBe(0);
-    expect(s.game.stats.lastVerifyMs).toBeGreaterThan(100); // a real world was regenerated, off-thread
-    // The worst gap between consecutive closed ticks while the clock ran (includes the verification window).
-    let worst = 0;
-    for (let i = 1; i < closes.length; i++) worst = Math.max(worst, closes[i] - closes[i - 1]);
-    console.log(`[game] verify took ${s.game.stats.lastVerifyMs.toFixed(0)} ms; worst gap between closed ticks ${worst.toFixed(1)} ms over ${closes.length} ticks`);
-    expect(worst).toBeLessThan(120);
-    // Control: the same restore on this thread blocks it for hundreds of ms, so the measurement can see a stall.
-    const sim = loadSim(wasmBytes);
-    const snap = a.ls.sim.snapshot();
-    const t0 = performance.now();
-    sim.restore(snap);
-    const blocked = performance.now() - t0;
-    console.log(`[game] control: restoring on the main thread blocks it for ${blocked.toFixed(0)} ms`);
-    expect(blocked).toBeGreaterThan(worst);
-    a.close();
-  });
+  // Both verify paths regenerate a game world off the tick thread. On the overflow worker (no lane: start-up, a room past
+  // the lane budget) the verify itself regenerates. On a room's warm lane (D-228) the generation runs at the first join
+  // instead, and the verify is warm; the recorded window starts before the join, so it covers that generation too.
+  for (const lanes of [false, true]) {
+    it(`verifies a game snapshot in a worker (${lanes ? "warm lane: generated at join" : "overflow: cold"}): the tick clock does not stall, and a main-thread restore would`, async () => {
+      const s = await startServer({ port: 0, dataDir: tmp(), snapshotEveryTicks: 120, quiet: true, verifyWarmBudgetBytes: lanes ? undefined : 0 });
+      cleanups.push(() => s.close());
+      // Observe every closed tick's time on the server's own clock.
+      const closes: number[] = [];
+      s.game.onTickClosed = () => closes.push(performance.now());
+      const me = await register(s.port, "Snap");
+      const a = await connect(s.port, hex, { world: GAME, token: me.token });
+      const stepper = setInterval(() => a.ls.run(100000), 4);
+      cleanups.push(() => clearInterval(stepper));
+      a.move(1000, 240);
+      await waitFor(() => s.game.stats.snapshotsAccepted >= 1, 30000, "a verified game snapshot");
+      clearInterval(stepper);
+      expect(s.game.stats.snapshotsRejected).toBe(0);
+      if (lanes) {
+        expect(s.verifier!.laneIds()).toEqual([GAME]); // the room's own lane generated its world at the join
+        expect(s.verifier!.coldRestores).toBe(0); // so the verify found it built
+      } else {
+        expect(s.verifier!.laneIds()).toEqual([]);
+        expect(s.verifier!.coldRestores).toBe(1);
+        expect(s.game.stats.lastVerifyMs).toBeGreaterThan(100); // a real world was regenerated, off-thread
+      }
+      // The worst gap between consecutive closed ticks while the clock ran (includes the generation and the verify).
+      let worst = 0;
+      for (let i = 1; i < closes.length; i++) worst = Math.max(worst, closes[i] - closes[i - 1]);
+      console.log(`[game] verify took ${s.game.stats.lastVerifyMs.toFixed(0)} ms; worst gap between closed ticks ${worst.toFixed(1)} ms over ${closes.length} ticks`);
+      expect(worst).toBeLessThan(120);
+      // Control: the same restore on this thread blocks it for hundreds of ms, so the measurement can see a stall.
+      const sim = loadSim(wasmBytes);
+      const snap = a.ls.sim.snapshot();
+      const t0 = performance.now();
+      sim.restore(snap);
+      const blocked = performance.now() - t0;
+      console.log(`[game] control: restoring on the main thread blocks it for ${blocked.toFixed(0)} ms`);
+      expect(blocked).toBeGreaterThan(worst);
+      a.close();
+    });
+  }
 
   it("D9: a client joining late gets the verified game snapshot with players in it, and agrees on the state hash", async () => {
     const s = await boot(tmp(), 120);
@@ -352,18 +373,44 @@ describe("snapshots in the game world", () => {
       };
     }
     // Stand where the sim put each player. A aims at B (Push and Blast, so knockback is exercised when the line
-    // is clear); B shoots straight up, so a bolt is always in flight, whatever the terrain between them.
+    // is clear); B shoots up into open sky (below), so a bolt is always in flight, whatever the terrain between them.
     const at = (id: number) => a.ls.sim.entities().find((e) => e.type === 1 && e.id === id)!;
     await waitFor(() => (a.ls.run(100000), at(ra.id) !== undefined && at(rb.id) !== undefined), 5000, "both joined");
-    const [pa, pb] = [at(ra.id), at(rb.id)];
+    const pa = at(ra.id);
+    // B's spawn column depends on the tick it joined at, so B sometimes spawned one cell from A (its bolt hit A
+    // at once) or under a tree (the bolt died in the branches), and no snapshot ever caught a bolt: 6 runs in
+    // 10 failed. A first Pos for a life has no baseline (D-078), so B stands 24 cells from A, at the first
+    // surface column whose sky above is open, and shoots up and away from A.
+    const mv = a.ls.sim.matView();
+    const W = a.ls.sim.width();
+    const openUp = (x: number, top: number) => {
+      for (let y = top; y > top - 40 && y >= 0; y--) if (mv[y * W + x] !== 0) return false;
+      return true;
+    };
+    const surfaceAt = (x: number) => {
+      let y = Math.floor(pa.y / 16) - 30;
+      while (y < a.ls.sim.height() - 1 && mv[(y + 1) * W + x] === 0) y++;
+      return y; // the feet row: the last empty cell above ground
+    };
+    let bx = Math.floor(pa.x / 16) + 24;
+    for (const dx of [24, -24, 32, -32, 40, -40, 48, -48]) {
+      const x = Math.floor(pa.x / 16) + dx;
+      const fy = surfaceAt(x);
+      if ([-2, -1, 0, 1, 2].every((o) => openUp(x + o, fy - 11))) {
+        bx = x;
+        break;
+      }
+    }
+    const pb = { x: (bx + 0.5) * 16, y: (surfaceAt(bx) + 1) * 16 };
     const aim = Math.round(((Math.atan2(pb.y - pa.y, pb.x - pa.x) / (2 * Math.PI) + 1) % 1) * 65536) & 0xffff;
+    const upAim = pb.x > pa.x ? 54613 : 43691; // 60 degrees above the horizon, away from A
     let n = 0;
     const shooter = setInterval(() => {
       n++;
       a.move(pa.x / 16, pa.y / 16, 1);
       b.move(pb.x / 16, pb.y / 16, 0);
       a.cast(n % 4 === 0 ? 1 : 0, aim, n & 0xffff);
-      b.cast(0, 49152, n & 0xffff);
+      b.cast(0, upAim, n & 0xffff);
     }, 117); // about 7 ticks: not a divisor of the snapshot cadence, see the snapshot loop below
     const stepper = setInterval(() => (a.ls.run(100000), b.ls.run(100000)), 4);
     cleanups.push(() => (clearInterval(shooter), clearInterval(stepper)));
@@ -442,7 +489,7 @@ function MAX_UPLOAD_FRAME_GAME_ok(): boolean {
     raw[i] = (x >>> 16) % 15;
   }
   const z = compressSnapshot(raw);
-  return z.length + 13 < MAX_UPLOAD_FRAME_GAME && raw.length < maxSnapshotRawFor(1) && MAX_UPLOAD_FRAME < MAX_UPLOAD_FRAME_GAME && decompressSnapshot(z, maxSnapshotRawFor(1)).length === raw.length;
+  return z.length + 13 < MAX_UPLOAD_FRAME_GAME && raw.length < maxSnapshotRawFor(CAVES_PVP) && MAX_UPLOAD_FRAME < MAX_UPLOAD_FRAME_GAME && decompressSnapshot(z, maxSnapshotRawFor(CAVES_PVP)).length === raw.length;
 }
 
 describe("connection limits (review M4a S2)", () => {

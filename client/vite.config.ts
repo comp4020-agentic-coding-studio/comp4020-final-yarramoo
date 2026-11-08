@@ -37,7 +37,7 @@ function simWasm(): Plugin {
 
 export default defineConfig({
   root: here,
-  base: "./",
+  base: "/",
   plugins: [simWasm()],
   worker: { format: "es" },
   server: { port: 5173, strictPort: true, fs: { allow: [resolve(here, "..")] } },

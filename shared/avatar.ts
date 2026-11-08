@@ -19,6 +19,8 @@ export function maxPosJump(dtTicks: number): number {
 export const POS_PAYLOAD_LEN = 11;
 /** Cast payload after kind and player: spell u8, angle u16, cast_seq u16. */
 export const CAST_PAYLOAD_LEN = 5;
+/** Ready payload after kind and player: ready u8 (0 or 1). */
+export const READY_PAYLOAD_LEN = 1;
 
 /** Game world size in cells (sim/src/sim.rs GAME_W/GAME_H); the server uses it to bound Pos. */
 export const GAME_W = 2048;
@@ -44,6 +46,12 @@ const livesAhead = (life: number, top: number): number => (life - top) & 0xffff;
 export class PosBaselines {
   private readonly byLife = new Map<number, { x: number; y: number; tick: number }>();
   private top: number | null = null;
+
+  /** Dev teleport only (server/devteleport.ts): record this Pos as the baseline of its life without the distance check. */
+  force(x: number, y: number, life: number, tick: number): void {
+    this.byLife.set(life, { x, y, tick });
+    if (this.top === null || livesAhead(life, this.top) <= RESPAWN_LIFE_WINDOW) this.top = life;
+  }
 
   accept(x: number, y: number, life: number, tick: number): boolean {
     const b = this.byLife.get(life);

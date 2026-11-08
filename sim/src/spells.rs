@@ -3,7 +3,7 @@
 
 use crate::entities::*;
 use crate::materials::*;
-use crate::rng::{rng, SALT_BURST};
+use crate::rng::{rng, SALT_BURST, SALT_QUAKE};
 use crate::sim::Sim;
 use crate::trig::{dir, TRIG_ONE};
 use crate::tuning::*;
@@ -14,9 +14,21 @@ pub const WATER_SPELL: u8 = 2;
 pub const ROSE: u8 = 3;
 pub const FIRE_BOLT: u8 = 4;
 pub const BOMB: u8 = 5;
+pub const DIG: u8 = 6;
+pub const ACID_FLASK: u8 = 7;
+pub const OIL_FLASK: u8 = 8;
+pub const WALL: u8 = 9;
+pub const LAVA_FLASK: u8 = 10;
+pub const BLACK_HOLE: u8 = 11;
+pub const FREEZE: u8 = 12;
+pub const QUAKE: u8 = 13;
+pub const MUDSLIDE: u8 = 14;
 
 /// A live player's hitbox for this tick: `(id, x0, y0, x1, y1)` in cells, inclusive.
 type Box5 = (u32, i32, i32, i32, i32);
+
+/// High bit of a `Box5` id: the box is an enemy's, and the low bits are its id (player ids stay below it).
+pub const ENEMY_BOX: u32 = 0x8000_0000;
 
 /// Floor square root, integer Newton. No floats (invariant 3).
 pub fn isqrt(n: u64) -> u32 {
@@ -32,6 +44,16 @@ pub fn isqrt(n: u64) -> u32 {
     x as u32
 }
 
+/// The `owner` of a bolt an enemy of `kind` and `id` fires (see `ENEMY_OWNER`).
+pub fn enemy_owner(kind: u8, id: u16) -> u32 {
+    ENEMY_OWNER | (u32::from(kind) << 16) | u32::from(id)
+}
+
+/// The enemy kind in an enemy-owned bolt's `owner`.
+pub fn enemy_owner_kind(owner: u32) -> u8 {
+    ((owner >> 16) & 0xff) as u8
+}
+
 impl Player {
     /// Alive means able to act and be hit. Nothing can kill a player before M5, but the rule is already
     /// the one M5 needs (plan 6.8): health above zero and the respawn timer elapsed.
@@ -45,7 +67,7 @@ impl Sim {
         self.events.push(Event { kind: EV_CAST_REJECTED, player, a: i32::from(spell), b: reason, c: i32::from(seq) });
     }
 
-    /// A Cast input. Spawns a bolt (or, for Blast, resolves the cone now) at the caster's official position.
+    /// A Cast input. Spawns a bolt (or, for Blast and Dig, resolves now) at the caster's official position.
     pub(crate) fn cast(&mut self, player: u32, spell: u8, angle: u16, seq: u16) {
         let Ok(k) = self.players.binary_search_by_key(&player, |p| p.id) else { return };
         let tick = self.tick;
@@ -65,8 +87,13 @@ impl Sim {
         } else if tick < p.cooldown_until[s] {
             REJECT_COOLDOWN
         } else if spell != BLAST
+            && spell != DIG
+            && spell != WALL
+            && spell != QUAKE
             && (self.projectiles.len() >= MAX_PROJECTILES
-                || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER)
+                || self.projectiles.iter().filter(|q| q.owner == player).count() >= MAX_PROJECTILES_PER_PLAYER
+                || (spell == BLACK_HOLE
+                    && self.projectiles.iter().filter(|q| q.owner == player && q.spell == BLACK_HOLE).count() >= MAX_BLACK_HOLES_PER_PLAYER))
         {
             REJECT_FULL
         } else {
@@ -84,6 +111,15 @@ impl Sim {
         if spell == BLAST {
             return self.blast(player, px, py, angle);
         }
+        if spell == DIG {
+            return self.dig_cast(px, py, angle);
+        }
+        if spell == WALL {
+            return self.wall_cast(px, py, angle);
+        }
+        if spell == QUAKE {
+            return self.quake_cast(px, py, angle);
+        }
         let (c, sn) = dir(angle);
         let v = SPEED[s];
         self.projectiles.push(Projectile {
@@ -97,6 +133,32 @@ impl Sim {
             vy: sn * v / TRIG_ONE,
             age: 0,
         });
+    }
+
+    /// An enemy fires `spell` from (`fx`, `fy`) (1/16 cell) along (`dx`, `dy`) (any scale, not both zero). Refused
+    /// (false) at `MAX_ENEMY_PROJECTILES` enemy bolts or `MAX_PROJECTILES` in all. Integer normalisation: the
+    /// direction is scaled to `SPEED[spell]` with `isqrt`.
+    pub fn enemy_fire(&mut self, enemy: (u8, u16), spell: u8, from: (i32, i32), d: (i32, i32)) -> bool {
+        let s = usize::from(spell);
+        if s >= NUM_SPELLS || self.projectiles.len() >= MAX_PROJECTILES || (d.0 == 0 && d.1 == 0) {
+            return false;
+        }
+        if self.projectiles.iter().filter(|q| q.owner & ENEMY_OWNER != 0).count() >= MAX_ENEMY_PROJECTILES {
+            return false;
+        }
+        let len = i64::from(isqrt((i64::from(d.0) * i64::from(d.0) + i64::from(d.1) * i64::from(d.1)) as u64)).max(1);
+        let v = i64::from(SPEED[s]);
+        self.projectiles.push(Projectile {
+            owner: enemy_owner(enemy.0, enemy.1),
+            spell,
+            cast_seq: 0,
+            x: from.0 << (PROJ_SHIFT - POS_SHIFT),
+            y: from.1 << (PROJ_SHIFT - POS_SHIFT),
+            vx: (i64::from(d.0) * v / len) as i32,
+            vy: (i64::from(d.1) * v / len) as i32,
+            age: 0,
+        });
+        true
     }
 
     /// Blast: a cone of `BLAST_RADIUS_CELLS` and 45 degrees either side of the aim, no projectile.
@@ -124,9 +186,121 @@ impl Sim {
             let id = t.id;
             self.hit_player(id, caster, c * KNOCK_BLAST / TRIG_ONE, sn * KNOCK_BLAST / TRIG_ONE);
         }
+        // Enemies in the same cone, by id: damage, knockback and the caster as last hitter.
+        for i in 0..self.enemies.len() {
+            let t = &self.enemies[i];
+            if t.hp == 0 {
+                continue;
+            }
+            let (dx, dy) = (i64::from(t.x - cx), i64::from(t.y - (ENEMY_STATS[usize::from(t.kind)].h * POS_ONE / 2) - cy));
+            let d2 = dx * dx + dy * dy;
+            if d2 > reach * reach {
+                continue;
+            }
+            let dot = dx * i64::from(c) + dy * i64::from(sn);
+            let one = i64::from(TRIG_ONE);
+            if d2 > 0 && (dot <= 0 || 2 * dot * dot < d2 * one * one) {
+                continue;
+            }
+            self.damage_enemy(i, BLAST_ENEMY_DAMAGE, caster);
+            self.knock_enemy(i, c * KNOCK_BLAST / TRIG_ONE, sn * KNOCK_BLAST / TRIG_ONE);
+        }
+        self.reap_enemies();
+    }
+
+    /// Dig: clear a capsule from the chest `DIG_REACH` cells along the aim, radius `DIG_RADIUS` (`Grid::dig`).
+    /// No projectile, no damage, no knockback. `cx, cy` are 1/16 cell; the offset is added in 1/16 cell and
+    /// shifted down to cells (arithmetic shift floors, the same on every platform).
+    fn dig_cast(&mut self, cx: i32, cy: i32, angle: u16) {
+        let (c, sn) = dir(angle);
+        let off = DIG_REACH * POS_ONE;
+        let (bx, by) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
+        self.grid.dig(cx >> POS_SHIFT, cy >> POS_SHIFT, bx, by, DIG_RADIUS);
+    }
+
+    /// Quake: crumble a bounded disc of Rock and Dirt to Pebbles, `QUAKE_REACH` cells along the aim. No projectile.
+    /// Goes through `Grid::set`, so a roof left without support crumbles by the normal island rules.
+    fn quake_cast(&mut self, cx: i32, cy: i32, angle: u16) {
+        let (c, sn) = dir(angle);
+        let off = QUAKE_REACH * POS_ONE;
+        let (mx, my) = ((cx + c * off / TRIG_ONE) >> POS_SHIFT, (cy + sn * off / TRIG_ONE) >> POS_SHIFT);
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let (seed, tick) = (self.seed, self.tick);
+        for dy in -QUAKE_R..=QUAKE_R {
+            for dx in -QUAKE_R..=QUAKE_R {
+                let (x, y) = (mx + dx, my + dy);
+                if dx * dx + dy * dy > QUAKE_R * QUAKE_R || x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                if matches!(self.grid.mat[i], ROCK | DIRT) && rng(seed, tick, x as u32, y as u32, SALT_QUAKE) & 1 == 0 {
+                    self.grid.set(i, PEBBLES, 0);
+                }
+            }
+        }
+    }
+
+    /// Freeze impact: Water in the disc becomes Ice (aux 1 = spent, so it does not chain-freeze a lake), capped.
+    fn freeze_burst(&mut self, at: (i32, i32)) {
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let mut left = FREEZE_CAP;
+        for dy in -7..=7i32 {
+            for dx in -7..=7i32 {
+                let (x, y) = (at.0 + dx, at.1 + dy);
+                if left == 0 || dx * dx + dy * dy > FREEZE_R2 || x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                if self.grid.mat[i] == WATER {
+                    self.grid.set(i, ICE, 1);
+                    left -= 1;
+                }
+            }
+        }
+    }
+
+    /// Wall: a rock slab `WALL_THICK` x `WALL_LEN` cells, perpendicular to the aim, centred `WALL_REACH` cells along
+    /// the aim from the chest. Only Empty, gas or liquid cells become Rock (never Bedrock or other solids), and
+    /// never a cell inside an alive player's hitbox. At most `WALL_THICK * WALL_LEN` (36) cells are written.
+    /// `cx, cy` are 1/16 cell.
+    fn wall_cast(&mut self, cx: i32, cy: i32, angle: u16) {
+        let (c, sn) = dir(angle);
+        let (pc, ps) = (-sn, c); // the aim turned a quarter turn
+        let one = TRIG_ONE;
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let tick = self.tick;
+        let boxes: Vec<Box5> = self.players.iter().filter(|p| p.alive(tick)).map(|p| {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            (p.id, x0, y0, x1, y1)
+        }).collect();
+        // Centre in 1/16 cell.
+        let (mx, my) = (cx + c * (WALL_REACH * POS_ONE) / one, cy + sn * (WALL_REACH * POS_ONE) / one);
+        for a in 0..WALL_LEN {
+            for b in 0..WALL_THICK {
+                let (u, v) = (a - WALL_LEN / 2, b - WALL_THICK / 2);
+                // Offsets in 1/16 cell; the final shift floors, the same on every platform.
+                let x = (mx + (pc * u + c * v) * POS_ONE / one + POS_ONE / 2) >> POS_SHIFT;
+                let y = (my + (ps * u + sn * v) * POS_ONE / one + POS_ONE / 2) >> POS_SHIFT;
+                if x < 0 || y < 0 || x >= w || y >= h {
+                    continue;
+                }
+                if boxes.iter().any(|&(_, x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                let m = self.grid.mat[i];
+                if m == EMPTY || is_gas(m) || is_liquid(m) {
+                    self.grid.set(i, ROCK, 0);
+                }
+            }
+        }
     }
 
     fn hit_player(&mut self, victim: u32, attacker: u32, vx: i32, vy: i32) {
+        // D-158 co-op gate: with no player-on-player damage, one player's spell never moves another.
+        if victim != attacker && !self.cfg.damage_from_players() {
+            return;
+        }
         let tick = self.tick;
         if let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) {
             self.players[k].last_hit_by = attacker;
@@ -150,6 +324,13 @@ impl Sim {
                 (p.id, x0, y0, x1, y1)
             })
             .collect();
+        // Enemy boxes follow the player boxes (so a player is hit first when both overlap a cell); their ids carry
+        // `ENEMY_BOX` so `impact` can tell them apart. Only enemies with hp left can be hit.
+        let mut boxes = boxes;
+        boxes.extend(self.enemies.iter().filter(|e| e.hp > 0).map(|e| {
+            let (x0, y0, x1, y1) = e.hitbox_cells();
+            (ENEMY_BOX | u32::from(e.id), x0, y0, x1, y1)
+        }));
         let mut qs = core::mem::take(&mut self.projectiles);
         let mut gone = Vec::with_capacity(qs.len());
         let mut bombs = 0u32;
@@ -162,6 +343,7 @@ impl Sim {
             !gone[i - 1]
         });
         self.projectiles = qs;
+        self.reap_enemies();
     }
 
     /// One tick of one bolt: gravity, then at most `MAX_SUBSTEPS` integer sub-steps of at most one cell.
@@ -171,6 +353,9 @@ impl Sim {
     fn step_projectile(&mut self, q: &mut Projectile, boxes: &[Box5], bombs: &mut u32) -> bool {
         q.age += 1;
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        if q.spell == BLACK_HOLE {
+            return self.step_black_hole(q);
+        }
         if q.spell == BOMB && q.age >= BOMB_FUSE {
             // The fuse comes before the age-out, so a bomb never vanishes silently.
             if *bombs >= MAX_BOMB_EXPLOSIONS_PER_TICK {
@@ -199,6 +384,14 @@ impl Sim {
                 if (id == q.owner && q.age <= OWNER_GRACE) || cx < bx0 || cx > bx1 || cy < by0 || cy > by1 {
                     continue;
                 }
+                // An enemy's bolt never hits an enemy (the shooter included).
+                if id & ENEMY_BOX != 0 && q.owner & ENEMY_OWNER != 0 {
+                    continue;
+                }
+                // A corpse hit earlier this tick (not yet reaped) does not stop a bolt.
+                if id & ENEMY_BOX != 0 && self.enemy_index((id & !ENEMY_BOX) as u16).is_none_or(|i| self.enemies[i].hp == 0) {
+                    continue;
+                }
                 if q.spell == BOMB && !self.bomb_may_explode(q, vy0, bombs) {
                     return true;
                 }
@@ -220,6 +413,44 @@ impl Sim {
         true
     }
 
+    /// One tick of a Black Hole: it flies straight through terrain (no gravity, no impact), clears the disc of
+    /// radius `BH_RADIUS` of solids where it is (`Grid::dig` with a zero-length segment: at most 7 x 7 cells, and
+    /// the radius is clamped there), and pulls every alive player within `BH_PULL_RANGE` cells one step toward
+    /// it with an `EV_KNOCK` of `BH_PULL` (no last-hitter credit: it is a pull, not a hit). It ends at
+    /// `BH_LIFETIME` ticks or when it leaves the world. Work: one dig plus a loop over the players.
+    /// Sleep invisibility: `Grid::set` wakes the chunks it changes, as for every other spell's writes.
+    fn step_black_hole(&mut self, q: &mut Projectile) -> bool {
+        if q.age > BH_LIFETIME {
+            self.events.push(Event { kind: EV_IMPACT, player: q.owner, a: q.x >> PROJ_SHIFT, b: q.y >> PROJ_SHIFT, c: i32::from(q.spell) });
+            return false;
+        }
+        q.x += q.vx;
+        q.y += q.vy;
+        let (cx, cy) = (q.x >> PROJ_SHIFT, q.y >> PROJ_SHIFT);
+        if cx < 0 || cy < 0 || cx >= self.grid.w as i32 || cy >= self.grid.h as i32 {
+            return false;
+        }
+        self.grid.dig(cx, cy, cx, cy, BH_RADIUS);
+        let tick = self.tick;
+        let range = i64::from(BH_PULL_RANGE * POS_ONE);
+        for i in 0..self.players.len() {
+            let t = &self.players[i];
+            // D-158 co-op gate: the pull moves only the caster's own avatar when players cannot hurt each other.
+            if !t.alive(tick) || (t.id != q.owner && !self.cfg.damage_from_players()) {
+                continue;
+            }
+            let (dx, dy) = (i64::from(cx * POS_ONE + POS_ONE / 2 - t.x), i64::from(cy * POS_ONE + POS_ONE / 2 - (t.y - CHEST * POS_ONE)));
+            let d2 = dx * dx + dy * dy;
+            if d2 > range * range || d2 == 0 {
+                continue;
+            }
+            let dist = i64::from(isqrt(d2 as u64));
+            let (vx, vy) = (i64::from(BH_PULL) * dx / dist, i64::from(BH_PULL) * dy / dist);
+            self.events.push(Event { kind: EV_KNOCK, player: t.id, a: vx as i32, b: vy as i32, c: 0 });
+        }
+        true
+    }
+
     /// Takes one of this tick's bomb explosions, or (cap reached) puts the bolt's velocity back so it waits.
     fn bomb_may_explode(&self, q: &mut Projectile, vy0: i32, bombs: &mut u32) -> bool {
         if *bombs >= MAX_BOMB_EXPLOSIONS_PER_TICK {
@@ -232,18 +463,40 @@ impl Sim {
 
     fn impact(&mut self, q: &Projectile, at: (i32, i32), hit: Option<u32>) {
         self.events.push(Event { kind: EV_IMPACT, player: q.owner, a: at.0, b: at.1, c: i32::from(q.spell) });
+        let enemy_owned = q.owner & ENEMY_OWNER != 0;
         match q.spell {
             PUSH => {
-                if let Some(v) = hit {
-                    self.hit_player(v, q.owner, q.vx * KNOCK_PUSH / SPEED[PUSH as usize], q.vy * KNOCK_PUSH / SPEED[PUSH as usize]);
+                if let (Some(v), false) = (hit, enemy_owned) {
+                    let (kx, ky) = (q.vx * KNOCK_PUSH / SPEED[PUSH as usize], q.vy * KNOCK_PUSH / SPEED[PUSH as usize]);
+                    if v & ENEMY_BOX != 0 {
+                        if let Some(i) = self.enemy_index((v & !ENEMY_BOX) as u16) {
+                            self.damage_enemy(i, PUSH_ENEMY_DAMAGE, q.owner);
+                            self.knock_enemy(i, kx, ky);
+                        }
+                    } else {
+                        self.hit_player(v, q.owner, kx, ky);
+                    }
                 }
             }
             WATER_SPELL => self.burst_water(at),
+            ACID_FLASK => self.burst(at, ACID, ACID_BURST_CELLS, false),
+            OIL_FLASK => self.burst(at, OIL, OIL_BURST_CELLS, false),
+            LAVA_FLASK => self.burst(at, LAVA, LAVA_BURST_CELLS, true),
+            MUDSLIDE => self.burst(at, MUD, MUD_BURST_CELLS, false),
+            FREEZE => self.freeze_burst(at),
             ROSE => self.burst_seeds(at),
             FIRE_BOLT => {
                 self.ignite(at);
-                if let Some(v) = hit {
-                    self.fire_bolt_hit(v, q.owner);
+                if let (Some(v), true) = (hit, enemy_owned) {
+                    self.enemy_bolt_hit(v, q.owner);
+                } else if let Some(v) = hit {
+                    if v & ENEMY_BOX != 0 {
+                        if let Some(i) = self.enemy_index((v & !ENEMY_BOX) as u16) {
+                            self.damage_enemy(i, u16::from(FIRE_BOLT_DAMAGE), q.owner);
+                        }
+                    } else {
+                        self.fire_bolt_hit(v, q.owner);
+                    }
                 }
             }
             BOMB => {
@@ -274,11 +527,23 @@ impl Sim {
         }
     }
 
+    /// An enemy's Fire bolt that struck player `victim`: `FIRE_BOLT_DAMAGE` with the enemy cause (40 + kind, so
+    /// `damage_from_env()` gates it like contact). No last-hitter credit: an enemy is never a killer a player earns.
+    fn enemy_bolt_hit(&mut self, victim: u32, owner: u32) {
+        if let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) {
+            self.apply_damage(k, FIRE_BOLT_DAMAGE, CAUSE_ENEMY_BASE + enemy_owner_kind(owner));
+        }
+    }
+
     /// A Fire bolt that struck a player: `FIRE_BOLT_DAMAGE`, and the owner becomes the last hitter unless
     /// it is their own bolt (never self, as in `explode_at`). Last-hit goes first so a kill is credited.
     fn fire_bolt_hit(&mut self, victim: u32, owner: u32) {
         let tick = self.tick;
         let Ok(k) = self.players.binary_search_by_key(&victim, |p| p.id) else { return };
+        // D-158: a teammate's bolt neither credits nor damages in a room without player damage.
+        if victim != owner && !self.cfg.damage_from_players() {
+            return;
+        }
         if victim != owner {
             self.players[k].last_hit_by = owner;
             self.players[k].last_hit_tick = tick;
@@ -290,10 +555,17 @@ impl Sim {
     /// first (the cells below are usually the floor the bolt hit). Never overwrites anything: a burst into a
     /// full cave does little, by design. At most 13 x 13 cells are looked at.
     fn burst_water(&mut self, at: (i32, i32)) {
+        self.burst(at, WATER, WATER_BURST_CELLS, false);
+    }
+
+    /// The shared flask burst: fill up to `cap` Empty cells of the `WATER_BURST_R2` disc with `mat`. `down` fills
+    /// the lowest rows first (Lava's "sea"); otherwise the impact row and the rows above come first. `cap` is
+    /// clamped to the largest cap here, and at most 13 x 13 cells are looked at.
+    pub(crate) fn burst(&mut self, at: (i32, i32), mat: u8, cap: usize, down: bool) {
         let (w, h) = (self.grid.w as i32, self.grid.h as i32);
-        let mut left = WATER_BURST_CELLS;
+        let mut left = cap.min(OIL_BURST_CELLS);
         for k in 0..13i32 {
-            let dy = if k <= 6 { -k } else { k - 6 };
+            let dy = if down { 6 - k } else if k <= 6 { -k } else { k - 6 };
             for dx in -6..=6i32 {
                 let (x, y) = (at.0 + dx, at.1 + dy);
                 if left == 0 || dx * dx + dy * dy > WATER_BURST_R2 || x < 0 || y < 0 || x >= w || y >= h {
@@ -301,7 +573,7 @@ impl Sim {
                 }
                 let i = (y * w + x) as usize;
                 if self.grid.mat[i] == EMPTY {
-                    self.grid.set(i, WATER, 0);
+                    self.grid.set(i, mat, 0);
                     left -= 1;
                 }
             }
@@ -330,7 +602,20 @@ impl Sim {
     /// Take `amount` health from the player at `victim_index`, saturating at 0. Only an alive player takes
     /// damage (a corpse takes none). At 0 the player dies: `dead_until`, then `EV_DEATH` with the killer
     /// (the last other hitter within `KILL_CREDIT_TICKS`, else 0) and `cause`.
-    pub(crate) fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
+    ///
+    /// R4: gated by the room's `damage` config (D-103/D-106/D-107 computed the amount; this is the single
+    /// choke point every damage source already goes through, so the gate lives here rather than at each
+    /// of the four call sites). `cause` 0..`NUM_SPELLS` is a spell id (a player's own cast: Fire bolt direct
+    /// hit, Bomb's explosion), gated by `damage_from_players()`; `CAUSE_FIRE`/`CAUSE_LAVA`/`CAUSE_GUNPOWDER`
+    /// are environment-caused (hazard contact, gunpowder's own chain reaction, owner 0), gated by
+    /// `damage_from_env()`. Terrain effects (ignite, carve, knockback, bursts) are never gated: a Creative
+    /// Blast still carves and knocks back, it just never takes health.
+    pub fn apply_damage(&mut self, victim_index: usize, amount: u8, cause: u8) {
+        let player_caused = usize::from(cause) < NUM_SPELLS;
+        let allowed = !self.in_lobby() && if player_caused { self.cfg.damage_from_players() } else { self.cfg.damage_from_env() };
+        if !allowed {
+            return;
+        }
         let tick = self.tick;
         let p = &mut self.players[victim_index];
         if !p.alive(tick) || amount == 0 {
@@ -340,14 +625,15 @@ impl Sim {
         if p.health > 0 {
             return;
         }
-        p.dead_until = tick.wrapping_add(DEATH_TICKS);
+        // D-160: with one life (`death` 1) a dead player never respawns: the deadline is never reached.
+        p.dead_until = if self.cfg.death == 1 { u32::MAX } else { tick.wrapping_add(self.cfg.respawn_ticks()) };
         let credited = p.last_hit_by != 0 && p.last_hit_by != p.id && tick.wrapping_sub(p.last_hit_tick) <= KILL_CREDIT_TICKS;
         let killer = if credited { p.last_hit_by } else { 0 };
         let (id, px, py) = (p.id, p.x, p.y);
         // The victim's finite charges (spells 2..=5) leave with the death; Push and Blast stay.
         let mut taken = [0u16; BAG_SPELLS];
         for (k, t) in taken.iter_mut().enumerate() {
-            let c = &mut p.charges[2 + k];
+            let c = &mut p.charges[BAG_SPELL_IDS[k]];
             if *c != INFINITE {
                 *t = *c;
                 *c = 0;
@@ -423,13 +709,75 @@ impl Sim {
                 let b = self.bags.remove(i);
                 let mut total = 0u32;
                 for (k, &add) in b.charges.iter().enumerate() {
-                    let c = &mut p.charges[2 + k];
+                    let c = &mut p.charges[BAG_SPELL_IDS[k]];
                     if *c != INFINITE {
                         *c = c.saturating_add(add).min(INFINITE - 1);
                     }
                     total += u32::from(add);
                 }
                 self.events.push(Event { kind: EV_BAG_PICKUP, player: p.id, a: bx, b: by, c: total.min(u32::from(u16::MAX)) as i32 });
+            }
+        }
+    }
+
+    /// Put a heal on the ground at `cell` (Brief E). At `MAX_HEALS` the oldest (index 0) is evicted first.
+    /// A cell inside solid ground (an enemy that died in a wall) moves up to the first open cell within
+    /// `HEAL_RISE_MAX`; with none, nothing is dropped, so a heal nobody could reach never takes a slot (review E).
+    pub fn drop_heal(&mut self, cell: (i32, i32)) {
+        let (w, h) = (self.grid.w as i32, self.grid.h as i32);
+        let x = cell.0.clamp(0, w - 1);
+        let mut y = cell.1.clamp(0, h - 1);
+        let open = |m: u8| m == EMPTY || is_gas(m);
+        let mut rise = 0;
+        while !open(self.grid.mat[(y * w + x) as usize]) {
+            if rise == HEAL_RISE_MAX || y == 0 {
+                return;
+            }
+            y -= 1;
+            rise += 1;
+        }
+        if self.heals.len() >= MAX_HEALS {
+            self.heals.remove(0);
+        }
+        self.heals.push(Heal { x: x as u16, y: y as u16, amount: HEAL_AMOUNT, expires_at: self.tick.wrapping_add(HEAL_LIFETIME) });
+    }
+
+    /// Heals, once a tick, right after bags: expire, fall one cell, then be taken by the lowest-id living player
+    /// below full health whose hitbox covers the cell (a full-health player leaves it for a teammate).
+    /// At most `MAX_HEALS` of them, a few cell reads each.
+    ///
+    /// Sleep invisibility, as for bags: the fall only reads the cell below and never writes a cell, a sleeping
+    /// chunk's cells are unchanged this tick, and the heal's own state lives in `Sim.heals`, outside the grid.
+    pub(crate) fn update_heals(&mut self) {
+        if self.heals.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        self.heals.retain(|h| tick < h.expires_at);
+        let (w, h) = (self.grid.w, self.grid.h);
+        for k in self.heals.iter_mut() {
+            let (x, y) = (usize::from(k.x), usize::from(k.y));
+            if y + 1 < h {
+                let m = self.grid.mat[(y + 1) * w + x];
+                if m == EMPTY || is_gas(m) {
+                    k.y += 1;
+                }
+            }
+        }
+        for p in self.players.iter_mut().filter(|p| p.alive(tick)) {
+            let (x0, y0, x1, y1) = p.hitbox_cells();
+            let mut i = 0;
+            while i < self.heals.len() && p.health < HEALTH_MAX {
+                let k = &self.heals[i];
+                let (hx, hy) = (i32::from(k.x), i32::from(k.y));
+                if hx < x0 || hx > x1 || hy < y0 || hy > y1 {
+                    i += 1;
+                    continue;
+                }
+                let k = self.heals.remove(i);
+                let gained = k.amount.min(HEALTH_MAX - p.health);
+                p.health += gained;
+                self.events.push(Event { kind: EV_HEAL, player: p.id, a: i32::from(gained), b: hx, c: hy });
             }
         }
     }
@@ -445,6 +793,9 @@ impl Sim {
         if r <= 0 {
             return;
         }
+        // An enemy-owned blast hurts players with the enemy cause and credits nobody; it never hurts enemies.
+        let enemy_owned = owner & ENEMY_OWNER != 0;
+        let cause = if enemy_owned { CAUSE_ENEMY_BASE + enemy_owner_kind(owner) } else { cause };
         for i in 0..self.players.len() {
             let t = &self.players[i];
             if !t.alive(tick) {
@@ -458,7 +809,11 @@ impl Sim {
                 continue;
             }
             let id = t.id;
-            if owner != 0 && id != owner {
+            // D-158 co-op gate: another player's explosion neither credits, damages nor knocks this player.
+            if owner != 0 && id != owner && !enemy_owned && !self.cfg.damage_from_players() {
+                continue;
+            }
+            if owner != 0 && id != owner && !enemy_owned {
                 self.players[i].last_hit_by = owner;
                 self.players[i].last_hit_tick = tick;
             }
@@ -467,12 +822,36 @@ impl Sim {
             }
             let mag = i64::from(KNOCK_EXPLOSION * (kr - d) / kr);
             let (vx, vy) = if dist == 0 { (0, -mag) } else { (mag * dx / dist, mag * dy / dist) };
-            self.events.push(Event { kind: EV_KNOCK, player: id, a: vx as i32, b: vy as i32, c: owner as i32 });
+            self.events.push(Event { kind: EV_KNOCK, player: id, a: vx as i32, b: vy as i32, c: if enemy_owned { 0 } else { owner as i32 } });
         }
+        if enemy_owned {
+            return;
+        }
+        // Enemies, in id order: the same falloff to their centre, credited to the owner (0 for gunpowder).
+        for i in 0..self.enemies.len() {
+            let t = &self.enemies[i];
+            if t.hp == 0 {
+                continue;
+            }
+            let mid = ENEMY_STATS[usize::from(t.kind)].h * POS_ONE / 2;
+            let (dx, dy) = (i64::from(t.x - cx * POS_ONE - POS_ONE / 2), i64::from(t.y - mid - cy * POS_ONE - POS_ONE / 2));
+            let dist = isqrt((dx * dx + dy * dy) as u64) as i64;
+            let d = (dist >> POS_SHIFT) as i32;
+            if d >= kr {
+                continue;
+            }
+            if d < r {
+                self.damage_enemy(i, (EXPLOSION_DAMAGE_MAX * (r - d) / r) as u16, owner);
+            }
+            let mag = i64::from(KNOCK_EXPLOSION * (kr - d) / kr);
+            let (vx, vy) = if dist == 0 { (0, -mag) } else { (mag * dx / dist, mag * dy / dist) };
+            self.knock_enemy(i, vx as i32, vy as i32);
+        }
+        self.reap_enemies();
     }
 
     /// Lava and fire contact for every active, alive player, in id order. Lava costs 1 HP on even ticks,
-    /// fire 1 HP when `(tick + id) % 6 == 0`; lava wins if both touch. Reads only the player's own hitbox,
+    /// fire 1 HP when `(tick + id) % 6 == 0`, acid 1 HP when `tick % 4 == 0`; lava wins over both, fire over acid. Reads only the player's own hitbox,
     /// which lies inside the awake region of an active player, so chunk sleeping cannot change the result.
     pub(crate) fn hazard_scan(&mut self) {
         let tick = self.tick;
@@ -483,12 +862,13 @@ impl Sim {
                 continue;
             }
             let (x0, y0, x1, y1) = p.hitbox_cells();
-            let (mut lava, mut fire) = (false, false);
+            let (mut lava, mut fire, mut acid) = (false, false, false);
             for y in y0.max(0)..=y1.min(h - 1) {
                 for x in x0.max(0)..=x1.min(w - 1) {
                     match self.grid.mat[(y * w + x) as usize] {
                         LAVA => lava = true,
                         FIRE => fire = true,
+                        ACID => acid = true,
                         _ => {}
                     }
                 }
@@ -500,6 +880,8 @@ impl Sim {
                 }
             } else if fire && tick.wrapping_add(id).is_multiple_of(6) {
                 self.apply_damage(i, 1, CAUSE_FIRE);
+            } else if acid && tick.is_multiple_of(4) {
+                self.apply_damage(i, 1, CAUSE_ACID);
             }
         }
     }
@@ -521,5 +903,109 @@ impl Sim {
         p.last_hit_tick = 0;
         let ev = Event { kind: EV_RESPAWN, player: id, a: x, b: y, c: i32::from(p.life) };
         self.events.push(ev);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::{encode_cast, encode_join};
+
+    const DOWN: u16 = 16384;
+    const FX: i32 = 1000;
+
+    /// Game world, one player (id 1) standing at feet (FX, 190) on an arena with rock from y=192 and bedrock from y=194.
+    fn arena(floor: u8) -> Sim {
+        let mut s = Sim::new(11, 1).unwrap();
+        let w = s.grid.w;
+        for y in 100..260 {
+            for x in 900..1150 {
+                s.grid.mat[y * w + x] = if y < 192 { EMPTY } else if y < 194 { floor } else { BEDROCK };
+            }
+        }
+        for c in 0..s.grid.chunk_count() {
+            s.grid.mark_chunk(c);
+        }
+        assert_eq!(s.push_input(&encode_join(1)), 0);
+        s.step();
+        s.players[0].x = FX * POS_ONE;
+        s.players[0].y = 190 * POS_ONE;
+        s
+    }
+
+    fn cast_down(s: &mut Sim, seq: u16) {
+        assert_eq!(s.push_input(&encode_cast(1, BLAST, DOWN, seq)), 0);
+        s.step();
+    }
+
+    fn at(s: &Sim, x: i32, y: i32) -> u8 {
+        s.grid.mat[y as usize * s.grid.w + x as usize]
+    }
+
+    fn dig_down(s: &mut Sim, seq: u16) {
+        assert_eq!(s.push_input(&encode_cast(1, DIG, DOWN, seq)), 0);
+        s.step();
+    }
+
+    #[test]
+    fn dig_aimed_down_clears_a_capsule_but_not_bedrock() {
+        let mut s = arena(ROCK);
+        dig_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (EMPTY, EMPTY));
+        assert_eq!(at(&s, FX, 194), BEDROCK);
+        assert_eq!(at(&s, FX + 6, 193), EMPTY, "inside the radius");
+        assert_eq!(at(&s, FX + 9, 193), ROCK, "outside the radius");
+    }
+
+    #[test]
+    fn dig_does_not_dig_water() {
+        let mut s = arena(WATER);
+        dig_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (WATER, WATER));
+    }
+
+    #[test]
+    fn blast_no_longer_digs() {
+        let mut s = arena(ROCK);
+        cast_down(&mut s, 1);
+        assert_eq!((at(&s, FX, 192), at(&s, FX, 193)), (ROCK, ROCK));
+    }
+
+    #[test]
+    fn dig_is_unlimited_and_cools_down() {
+        let mut s = arena(ROCK);
+        assert_eq!(s.players[0].charges[DIG as usize], INFINITE);
+        dig_down(&mut s, 1);
+        assert_eq!(s.players[0].charges[DIG as usize], INFINITE);
+        assert_eq!(s.players[0].cooldown_until[DIG as usize], s.tick - 1 + COOLDOWN[DIG as usize]);
+    }
+
+    /// Dig casts needed to dig 100 rows of solid rock straight down, standing in the shaft (falling to the bottom
+    /// after each cast). Run with `--ignored --nocapture`; the number is in the panic-free output file.
+    #[test]
+    #[ignore = "measurement"]
+    fn dig_casts_to_dig_100_rows() {
+        let mut s = arena(ROCK);
+        let w = s.grid.w;
+        for y in 192..400 {
+            for x in 900..1150 {
+                s.grid.mat[y * w + x] = ROCK;
+            }
+        }
+        let mut casts = 0u16;
+        while s.players[0].y / POS_ONE < 190 + 100 {
+            casts += 1;
+            for _ in 0..COOLDOWN[6] {
+                s.step();
+            }
+            dig_down(&mut s, casts);
+            let mut y = s.players[0].y / POS_ONE;
+            while (FX - 2..=FX + 2).all(|x| at(&s, x, y + 1) == EMPTY) {
+                y += 1;
+            }
+            s.players[0].y = y * POS_ONE;
+            assert!(casts < 200);
+        }
+        std::fs::write("/tmp/dig_casts_to_dig_100_rows.txt", format!("{casts}\n")).unwrap();
     }
 }

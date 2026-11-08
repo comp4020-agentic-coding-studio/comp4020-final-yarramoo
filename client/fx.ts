@@ -36,6 +36,130 @@ function pushGrid(rects: Rect[], rows: string[], pal: Record<string, [number, nu
   }
 }
 
+// A slime (7 wide, 4 tall): g body, l light, d dark, e eye. Squashed (landing) is wider and shorter, stretched (hop) taller.
+const SLIME_IDLE = [".ggggg.", "glllggg", "ggegegg", "ddddddd"];
+const SLIME_SQUASH = ["ggggggg", "ggegegg", "ddddddd"];
+const SLIME_STRETCH = ["..ggg..", ".glggg.", ".gegeg.", ".ggggg.", "ddddddd"];
+const SLIME_COL: Record<string, [number, number, number]> = { g: [0.3, 0.8, 0.32], l: [0.6, 0.95, 0.55], d: [0.14, 0.45, 0.2], e: [0.05, 0.1, 0.05] };
+const SLIME_HIT: Record<string, [number, number, number]> = { g: [1, 1, 1], l: [1, 1, 1], d: [0.85, 0.85, 0.85], e: [0.3, 0.3, 0.3] };
+
+/** A slime standing with its feet centre at (px, py) cells. `air` is "rising" | "falling" | "ground" from the view's
+ * vertical motion (render-only); `hit` flashes it white; `hpFrac` below 1 shows a small bar over it. */
+export function pushSlime(rects: Rect[], px: number, py: number, air: "rising" | "falling" | "ground", hit: boolean, hpFrac: number): void {
+  const rows = air === "rising" ? SLIME_STRETCH : air === "ground" && hpFrac > 0 ? SLIME_IDLE : SLIME_SQUASH;
+  pushGrid(rects, rows, hit ? SLIME_HIT : SLIME_COL, Math.round(px) - 3, Math.round(py) - rows.length);
+  if (hpFrac < 1) {
+    const x0 = Math.round(px) - 3;
+    const y0 = Math.round(py) - rows.length - 3;
+    rects.push({ x: x0, y: y0, w: 7, h: 1, r: 0.15, g: 0.05, b: 0.05 });
+    rects.push({ x: x0, y: y0, w: Math.max(1, Math.round(7 * hpFrac)), h: 1, r: 0.9, g: 0.25, b: 0.2 });
+  }
+}
+
+// F5 enemy sprites. Imp (7 wide, 5 tall): r body, o flame, y flame tip, w wing, e eye. Acid slime (7 x 4): darker green with
+// bright acid drips. Worm (7 x 5): segmented pink head, p flesh, d ring shadow, t tooth, e eye.
+const IMP_A = [".o.y.o.", "wrrrrrw", "wrerere", ".rrrrr.", "..r.r.."];
+const IMP_B = ["..oyo..", ".wrrrw.", "wrerere", ".rrrrr.", "..r.r.."];
+const IMP_COL: Record<string, [number, number, number]> = { r: [0.9, 0.3, 0.12], o: [1, 0.55, 0.1], y: [1, 0.9, 0.35], w: [0.6, 0.15, 0.1], e: [1, 1, 0.7] };
+const ACID_IDLE = [".ggggg.", "glllggg", "ggegegg", "dddddd.", ".a..a.."];
+const ACID_SQUASH = ["ggggggg", "ggegegg", "dddddda"];
+const ACID_COL: Record<string, [number, number, number]> = { g: [0.35, 0.55, 0.1], l: [0.6, 0.8, 0.2], d: [0.18, 0.3, 0.06], e: [0.95, 0.95, 0.2], a: [0.7, 1, 0.2] };
+const WISP = [".o.y.o.", "ooyyyoo", "oyeyeyo", ".ooyoo.", "..o.o.."];
+const WISP_COL: Record<string, [number, number, number]> = { o: [1, 0.35, 0.05], y: [1, 0.8, 0.2], e: [1, 1, 0.9] };
+const FROST = ["..i.i..", ".iwwwi.", "iwewewi", ".iwwwi.", "..i.i.."];
+const FROST_COL: Record<string, [number, number, number]> = { i: [0.45, 0.8, 1], w: [0.85, 0.96, 1], e: [0.1, 0.2, 0.5] };
+const WORM = [".ppppp.", "pppppdp", "pepepdp", "pttpppp", ".ddppd."];
+const WORM_COL: Record<string, [number, number, number]> = { p: [0.85, 0.5, 0.5], d: [0.55, 0.3, 0.32], t: [1, 1, 0.9], e: [0.1, 0.05, 0.05] };
+const HIT_COL: Record<string, [number, number, number]> = Object.fromEntries("rowyegldatpi".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
+
+// The Deep Mage (24 wide, 26 tall incl. staff): h hood, f face glow, r robe, R robe shade, s sleeve, t staff, g staff gem.
+const BOSS = [
+  "..........hhhhhh..........",
+  "........hhhhhhhhhh........",
+  ".......hhhhhhhhhhhh.......",
+  "......hhhhffhhffhhhh......",
+  "......hhhhffhhffhhhh.....g",
+  "......hhhhhhhhhhhhhh....gg",
+  ".......hhhhhhhhhhhh....ggg",
+  "......rrrrrhhhhrrrrr....gg",
+  ".....rrrrrrrrrrrrrrrr....t",
+  "....rrrrrrrrrrrrrrrrrr...t",
+  "...ssrrrrrrrrrrrrrrrrss..t",
+  "...sssrrrrrrrrrrrrrrsss..t",
+  "...ssrrrrRRRRRRrrrrrss...t",
+  "....rrrrRRRRRRRRrrrrr....t",
+  "....rrrrrRRRRRRrrrrrr....t",
+  "...rrrrrrrRRRRrrrrrrrr...t",
+  "...rrrrrrrrrrrrrrrrrrr...t",
+  "..rrrrrrrrrrrrrrrrrrrrr..t",
+  "..rrrrrrrrrrrrrrrrrrrrr..t",
+  ".rrrrrrrrrrrrrrrrrrrrrrr.t",
+  ".RRRRRRRRRRRRRRRRRRRRRRR.t",
+  "..RRRRRRRRRRRRRRRRRRRRR..t",
+];
+/** Per-phase robe tint: 1 violet, 2 orange, 3 enraged red. */
+const BOSS_PAL: Record<number, Record<string, [number, number, number]>> = {
+  1: { h: [0.25, 0.15, 0.45], f: [0.6, 0.95, 1], r: [0.38, 0.22, 0.66], R: [0.24, 0.13, 0.44], s: [0.5, 0.32, 0.8], t: [0.5, 0.35, 0.2], g: [0.5, 0.9, 1] },
+  2: { h: [0.4, 0.2, 0.3], f: [1, 0.85, 0.4], r: [0.7, 0.32, 0.2], R: [0.45, 0.2, 0.12], s: [0.85, 0.5, 0.25], t: [0.5, 0.35, 0.2], g: [1, 0.7, 0.2] },
+  3: { h: [0.35, 0.05, 0.08], f: [1, 0.95, 0.8], r: [0.85, 0.12, 0.1], R: [0.5, 0.06, 0.06], s: [1, 0.35, 0.2], t: [0.4, 0.25, 0.15], g: [1, 0.4, 0.1] },
+};
+const BOSS_HIT: Record<string, [number, number, number]> = Object.fromEntries("hfrRstg".split("").map((c) => [c, [1, 1, 1] as [number, number, number]]));
+
+/** The Deep Mage, feet centre (px, py), `phase` 1..3 (the view's state bits 2..3). Hurt flash white. */
+export function pushBoss(rects: Rect[], px: number, py: number, phase: number, hit: boolean, now: number): void {
+  const x0 = Math.round(px) - 12;
+  const y0 = Math.round(py) - BOSS.length;
+  pushGrid(rects, BOSS, hit ? BOSS_HIT : BOSS_PAL[phase] ?? BOSS_PAL[1], x0, y0 + Math.round(Math.sin(now / 300)));
+}
+
+/** The Sand Colossus (11 x 12 cells, feet centre): a lumpy sand body, eyes glow by phase, hurt flash white. */
+export function pushColossus(rects: Rect[], px: number, py: number, phase: number, hit: boolean, now: number): void {
+  const x0 = Math.round(px) - 5;
+  const eye: [number, number, number] = phase >= 3 ? [1, 0.2, 0.1] : phase === 2 ? [1, 0.7, 0.2] : [0.3, 0.2, 0.1];
+  const rows = ["...#####...", "..#######..", ".#########.", ".#e#####e#.", ".#########.", "###########", "###########", "###########", ".#########.", ".####.####.", ".####.####.", ".###...###."];
+  for (let y = 0; y < rows.length; y++)
+    for (let x = 0; x < 11; x++) {
+      const ch = rows[y][x];
+      if (ch === ".") continue;
+      const shade = ((x * 7 + y * 13) % 5) / 40;
+      const c: [number, number, number] = hit ? [1, 1, 1] : ch === "e" ? eye : [0.82 - shade, 0.7 - shade, 0.4 - shade];
+      rects.push({ x: x0 + x, y: Math.round(py) - rows.length + y + (y < 3 ? Math.round(Math.sin(now / 400)) : 0), w: 1, h: 1, r: c[0], g: c[1], b: c[2] });
+    }
+}
+
+/** An enemy of `kind` (0 slime, 1 imp, 2 acid slime, 3 worm) standing with its feet centre at (px, py). `awake` is the
+ * view's hunting bit: a dormant worm is not drawn at all (it is inside the rock), an awake one shows its head. */
+export function pushEnemy(rects: Rect[], kind: number, px: number, py: number, air: "rising" | "falling" | "ground", hit: boolean, hpFrac: number, maxHp: number, awake: boolean, now: number): void {
+  if (kind === 0) return pushSlime(rects, px, py, air, hit, hpFrac);
+  if (kind === 4) return pushBoss(rects, px, py, 1, hit, now);
+  if (kind === 7) return pushColossus(rects, px, py, 1, hit, now);
+  if (kind === 3 && !awake) return;
+  const x0 = Math.round(px) - 3;
+  let rows: string[];
+  let pal: Record<string, [number, number, number]>;
+  if (kind === 1) {
+    rows = Math.floor(now / 140) % 2 === 0 ? IMP_A : IMP_B;
+    pal = IMP_COL;
+  } else if (kind === 5 || kind === 6) {
+    rows = kind === 5 ? WISP : FROST;
+    pal = kind === 5 ? WISP_COL : FROST_COL;
+  } else if (kind === 2) {
+    rows = air === "ground" ? ACID_IDLE : ACID_SQUASH;
+    pal = ACID_COL;
+  } else {
+    rows = WORM;
+    pal = WORM_COL;
+  }
+  const y0 = Math.round(py) - rows.length;
+  pushGrid(rects, rows, hit ? HIT_COL : pal, x0, y0);
+  if (hpFrac < 1) {
+    const by = y0 - 3;
+    rects.push({ x: x0, y: by, w: 7, h: 1, r: 0.15, g: 0.05, b: 0.05 });
+    rects.push({ x: x0, y: by, w: Math.max(1, Math.round(7 * hpFrac)), h: 1, r: 0.9, g: 0.25, b: 0.2 });
+  }
+  void maxHp;
+}
+
 /** A bag resting on the cell (cx, cy): bobs by a cell now and then and glints. `now` is ms, cosmetic only. */
 export function pushBag(rects: Rect[], cx: number, cy: number, now: number): void {
   const bob = Math.sin(now / 350 + cx * 0.7) > 0.4 ? 1 : 0;
@@ -43,6 +167,17 @@ export function pushBag(rects: Rect[], cx: number, cy: number, now: number): voi
   const y0 = Math.floor(cy) - 4 - bob;
   pushGrid(rects, BAG, BAG_COL, x0, y0);
   if (Math.floor(now / 160 + cx) % 9 === 0) rects.push({ x: x0 + 3, y: y0 + 1, w: 1, h: 1, r: 1, g: 1, b: 0.85 });
+}
+
+/** A heal resting on the cell (cx, cy): a red cross about 3 x 3 cells with a gentle pulse, so it reads at 1x zoom. `now` is ms, cosmetic only. */
+export function pushHeal(rects: Rect[], cx: number, cy: number, now: number): void {
+  const pulse = 0.7 + 0.3 * Math.sin(now / 220 + cx * 0.5);
+  const x0 = Math.floor(cx) - 1;
+  const y0 = Math.floor(cy) - 2;
+  const c = { r: 1 * pulse, g: 0.18 * pulse, b: 0.2 * pulse };
+  rects.push({ x: x0 + 1, y: y0, w: 1, h: 3, ...c });
+  rects.push({ x: x0, y: y0 + 1, w: 3, h: 1, ...c });
+  rects.push({ x: x0 + 1, y: y0 + 1, w: 1, h: 1, r: 1, g: 0.85, b: 0.85 });
 }
 
 /** A bomb in flight: round shaded body, a short fuse and a flickering spark tip. */
@@ -132,9 +267,14 @@ export interface PoseState {
   vx: number;
   vy: number;
   walkPhase: number;
+  /** Exponentially averaged |vx| and the walk/idle state with hysteresis (remote players' vx spikes). */
+  sx: number;
+  walking: boolean;
   airMs: number;
   castUntil: number;
   hitUntil: number;
+  /** When the last knock landed (ms), for the brief white flash. */
+  hitAt: number;
   /** Colour of the last spell cast, for the hand glow. */
   castCol: [number, number, number];
   facingRight: boolean;
@@ -142,7 +282,7 @@ export interface PoseState {
 }
 
 export function newPoseState(x: number, y: number, facingRight: boolean): PoseState {
-  return { x, y, vx: 0, vy: 0, walkPhase: 0, airMs: 0, castUntil: 0, hitUntil: 0, castCol: WHITE, facingRight, pose: "idle" };
+  return { x, y, vx: 0, vy: 0, walkPhase: 0, sx: 0, walking: false, airMs: 0, castUntil: 0, hitUntil: 0, hitAt: -1e9, castCol: WHITE, facingRight, pose: "idle" };
 }
 
 /**
@@ -150,6 +290,10 @@ export function newPoseState(x: number, y: number, facingRight: boolean): PoseSt
  * local avatar; for others it is inferred from vertical speed. `thrusting` is the local avatar holding up in
  * the air with energy; for others a long rise stands in for it.
  */
+const WALK_ON = 0.12;
+const WALK_OFF = 0.05;
+const WALK_FRAMES_PER_CELL = 0.2; // 0.75 cells/tick (WALK) * 60 * 0.2 = 9 frames/s (was 0.45: 20 frames/s)
+
 export function updatePose(p: PoseState, x: number, y: number, dt: number, now: number, grounded: boolean | null, thrusting: boolean | null): void {
   const ticks = Math.max(dt / (1000 / 60), 0.25);
   p.vx = (x - p.x) / ticks;
@@ -159,9 +303,13 @@ export function updatePose(p: PoseState, x: number, y: number, dt: number, now: 
   const air = grounded === null ? Math.abs(p.vy) > 0.15 : !grounded;
   p.airMs = air ? p.airMs + dt : 0;
   if (Math.abs(p.vx) > 0.05) p.facingRight = p.vx > 0;
-  if (!air && Math.abs(p.vx) > 0.1) p.walkPhase += Math.abs(p.vx) * ticks * 0.45;
+  // Smooth the measured speed (interpolated remote positions spike), then switch walk/idle with hysteresis so a
+  // brief stall does not flicker to idle. About 9 animation frames/s at WALK.
+  p.sx += (Math.abs(p.vx) - p.sx) * (1 - Math.exp(-dt / 90));
+  if (p.walking ? p.sx < WALK_OFF : p.sx > WALK_ON) p.walking = !p.walking;
+  if (!air && p.walking) p.walkPhase += Math.max(p.sx, WALK_ON) * ticks * WALK_FRAMES_PER_CELL;
   const lev = thrusting ?? (p.airMs > 380 && p.vy < -0.2);
-  p.pose = now < p.hitUntil ? "hit" : now < p.castUntil ? "cast" : air ? (lev ? "levitate" : "jump") : Math.abs(p.vx) > 0.1 ? "walk" : "idle";
+  p.pose = now < p.hitUntil ? "hit" : now < p.castUntil ? "cast" : air ? (lev ? "levitate" : "jump") : p.walking ? "walk" : "idle";
 }
 
 export interface Particle {
@@ -247,6 +395,25 @@ export class Particles {
       const a = angle + (this.rand() - 0.5) * (Math.PI / 2);
       const s = 0.05 + this.rand() * 0.11;
       this.add({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 150 + this.rand() * 130, size: this.rand() < 0.25 ? 2 : 1, r: c[0], g: c[1], b: c[2], grav: 0 });
+    }
+  }
+
+  /** Black Hole: a few specks on a ring around (x, y), drawn into the centre. */
+  swirlIn(x: number, y: number, c: [number, number, number]): void {
+    for (let i = 0; i < 3; i++) {
+      const a = this.rand() * Math.PI * 2;
+      const r = 6 + this.rand() * 6;
+      const life = 260;
+      this.add({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: (-Math.cos(a) * r) / life - Math.sin(a) * 0.01, vy: (-Math.sin(a) * r) / life + Math.cos(a) * 0.01, life, size: 1, r: c[0], g: c[1], b: c[2], grav: 0 });
+    }
+  }
+
+  /** Dig's dust: grit thrown along the capsule (DIG_REACH 14 cells), slowly settling. */
+  dust(x: number, y: number, angle: number, c: [number, number, number]): void {
+    for (let i = 0; i < 34; i++) {
+      const a = angle + (this.rand() - 0.5) * 0.7;
+      const s = 0.03 + this.rand() * 0.08;
+      this.add({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 220 + this.rand() * 200, size: this.rand() < 0.3 ? 2 : 1, r: c[0], g: c[1], b: c[2], grav: 0.00006 });
     }
   }
 

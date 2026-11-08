@@ -3,7 +3,7 @@ import { chromium, firefox, webkit } from "playwright";
 import type { BrowserType } from "playwright";
 import type { Server } from "node:http";
 import { compare } from "./compare.ts";
-import { canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, wasmPath } from "./helpers.ts";
+import { bossScript, canaryPath, castScript, gameScript, m5Script, readWasm, root, sharedScript, survivalScript, tiersScript, wasmPath } from "./helpers.ts";
 import { m5Missing } from "./m5-coverage.ts";
 import { run } from "./run.ts";
 import type { RunResult } from "./run.ts";
@@ -93,6 +93,39 @@ describe("cross-engine", () => {
     it(`D2 with M5: ${name} matches Node`, async () => {
       const out = await inBrowser(type, wasmPath, false, m5.path);
       expect(compare(m5Node, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // F4: D2 on a Survival world with slimes: hops, hits, kills and one-life rules are identical in every engine.
+  const surv = survivalScript();
+  const survNode = run(readWasm(wasmPath), surv.script);
+  for (const [name, type] of engines) {
+    it(`D2 with slimes: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, surv.path);
+      expect(compare(survNode, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // F5: the same for an imp firing and a worm tunnelling.
+  const tiers = tiersScript();
+  const tiersNode = run(readWasm(wasmPath), tiers.script);
+  for (const [name, type] of engines) {
+    it(`D2 with imps and worms: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, tiers.path);
+      expect(compare(tiersNode, out.result, ["node", name])).toBeNull();
+    });
+  }
+
+  // F6: the boss fight (phases, summons, the lava ring, fan and bombs) on every engine.
+  const boss = bossScript();
+  const bossNode = run(readWasm(wasmPath), boss.script, {}, { collectEvents: true });
+  for (const [name, type] of engines) {
+    it(`D2 with the boss: ${name} matches Node`, async () => {
+      const out = await inBrowser(type, wasmPath, false, boss.path);
+      // The state hash (which includes the boss's phase, summons and bolts) is compared every tick, so equal hashes mean the
+      // engine reached the same phase 3 / death as Node; assert that Node's run really contains it (S3, review-f6).
+      expect(bossNode.events!.some((e) => (e.kind === 14 && e.b === 3) || (e.kind === 12 && e.c === 4))).toBe(true);
+      expect(compare(bossNode, out.result, ["node", name])).toBeNull();
     });
   }
 

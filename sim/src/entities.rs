@@ -20,9 +20,11 @@ pub struct Player {
     pub cooldown_until: [u32; NUM_SPELLS],
     pub last_hit_by: u32,
     pub last_hit_tick: u32,
+    /// F6b: the lobby ready flag (0 or 1). Only ever set in a one-life room's lobby.
+    pub ready: u8,
 }
 
-pub const PLAYER_BYTES: usize = 4 + 1 + 2 + 4 + 4 + 1 + 1 + 4 + 2 * NUM_SPELLS + 4 * NUM_SPELLS + 4 + 4;
+pub const PLAYER_BYTES: usize = 4 + 1 + 2 + 4 + 4 + 1 + 1 + 4 + 2 * NUM_SPELLS + 4 * NUM_SPELLS + 4 + 4 + 1;
 
 impl Player {
     pub fn new(id: u32, x: i32, y: i32) -> Player {
@@ -39,6 +41,7 @@ impl Player {
             cooldown_until: [0; NUM_SPELLS],
             last_hit_by: 0,
             last_hit_tick: 0,
+            ready: 0,
         }
     }
 
@@ -70,6 +73,7 @@ impl Player {
         }
         v.extend_from_slice(&self.last_hit_by.to_le_bytes());
         v.extend_from_slice(&self.last_hit_tick.to_le_bytes());
+        v.push(self.ready);
     }
 }
 
@@ -130,7 +134,7 @@ impl Projectile {
 }
 
 /// A dropped bag of a dead player's finite charges (M5 slice 3). State: hashed and snapshotted, kept in
-/// spawn order. `charges[k]` is spell `2 + k` (Water, Rose, Fire bolt, Bomb); never all zero.
+/// spawn order. `charges[k]` is spell `BAG_SPELL_IDS[k]`; never all zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bag {
     /// The cell the bag occupies.
@@ -159,15 +163,107 @@ impl Bag {
     }
 }
 
+/// A heal dropped by a killed enemy (Brief E). State: hashed and snapshotted, kept in spawn order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Heal {
+    /// The cell the heal occupies.
+    pub x: u16,
+    pub y: u16,
+    /// Hit points restored (1..=`HEALTH_MAX`).
+    pub amount: u8,
+    /// Removed when `tick >= expires_at`.
+    pub expires_at: u32,
+}
+
+pub const HEAL_BYTES: usize = 2 + 2 + 1 + 4;
+
+impl Heal {
+    fn write(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.x.to_le_bytes());
+        v.extend_from_slice(&self.y.to_le_bytes());
+        v.push(self.amount);
+        v.extend_from_slice(&self.expires_at.to_le_bytes());
+    }
+}
+
+/// A generator-placed enemy (F4). State: hashed and snapshotted, sorted by id (ids come from the generator in
+/// placement order, so no id counter exists). `x`, `y`: 1/16 cell, feet centre and feet line, like a player.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Enemy {
+    pub id: u16,
+    pub kind: u8,
+    pub x: i32,
+    pub y: i32,
+    /// 1/16 cell per tick.
+    pub vx: i16,
+    pub vy: i16,
+    pub hp: u16,
+    pub facing: u8,
+    /// Bit 0: hunting a player. Bit 1: airborne (render hint, set every stepped tick). Bits 2..7 are always 0.
+    pub state: u8,
+    /// Boss only (1..=3, rises with hp thirds); 0 for every other kind. Hashed and snapshotted.
+    pub phase: u8,
+    /// Boss only: imps summoned so far, at most `BOSS_SUMMONS_TOTAL` (40, so u8 would fit; u16 keeps headroom if the
+    /// total is raised). The next summon's id is `id + 1 + summons`. 0 for every other kind.
+    pub summons: u16,
+    /// Sand Colossus only (1..=its max hp): the hp it had after its own last update; a drop below it is a hit, and
+    /// sheds sand. 0 for every other kind. Hashed and snapshotted (format 15).
+    pub last_hp: u16,
+    /// Contact damage is available when `tick >= cooldown_until`.
+    pub cooldown_until: u32,
+    /// The next hop is allowed when `tick >= hop_until`.
+    pub hop_until: u32,
+    pub last_hit_by: u32,
+    pub last_hit_tick: u32,
+}
+
+pub const ENEMY_BYTES: usize = 2 + 1 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 4 + 4 + 4 + 4 + 1 + 2 + 2;
+
+impl Enemy {
+    pub fn new(id: u16, kind: u8, x: i32, y: i32) -> Enemy {
+        Enemy { id, kind, x, y, vx: 0, vy: 0, hp: ENEMY_STATS[usize::from(kind)].hp, facing: 0, state: 0, phase: 0, summons: 0, last_hp: 0, cooldown_until: 0, hop_until: 0, last_hit_by: 0, last_hit_tick: 0 }
+    }
+
+    /// Cells overlapped by the hitbox: (x0, y0, x1, y1), inclusive. Width is odd-centred like the player's.
+    pub fn hitbox_cells(&self) -> (i32, i32, i32, i32) {
+        let st = &ENEMY_STATS[usize::from(self.kind)];
+        let half = st.w * POS_ONE / 2;
+        ((self.x - half) >> POS_SHIFT, (self.y - st.h * POS_ONE) >> POS_SHIFT, (self.x + half - 1) >> POS_SHIFT, (self.y - 1) >> POS_SHIFT)
+    }
+
+    fn write(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.id.to_le_bytes());
+        v.push(self.kind);
+        v.extend_from_slice(&self.x.to_le_bytes());
+        v.extend_from_slice(&self.y.to_le_bytes());
+        v.extend_from_slice(&self.vx.to_le_bytes());
+        v.extend_from_slice(&self.vy.to_le_bytes());
+        v.extend_from_slice(&self.hp.to_le_bytes());
+        v.push(self.facing);
+        v.push(self.state);
+        v.extend_from_slice(&self.cooldown_until.to_le_bytes());
+        v.extend_from_slice(&self.hop_until.to_le_bytes());
+        v.extend_from_slice(&self.last_hit_by.to_le_bytes());
+        v.extend_from_slice(&self.last_hit_tick.to_le_bytes());
+        v.push(self.phase);
+        v.extend_from_slice(&self.summons.to_le_bytes());
+        v.extend_from_slice(&self.last_hp.to_le_bytes());
+    }
+}
+
 /// Canonical entity bytes: `n_players u32, players (by id), n_pickups u32, pickups (by id),
-/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order)`. Players stay first:
+/// n_projectiles u32, projectiles (spawn order), n_bags u32, bags (spawn order), n_enemies u32, enemies (by id), n_heals u32, heals (spawn order),
+/// round tail (`ROUND_TAIL_BYTES`: over, running, boss_killed, result u8, `lobby_since` u32)`. Players stay first:
 /// the server reads the player section at a fixed offset (`activePlayersIn`).
-pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag]) -> Vec<u8> {
+pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], heals: &[Heal], round: [u8; ROUND_TAIL_BYTES]) -> Vec<u8> {
     let mut v = Vec::with_capacity(
         16 + players.len() * PLAYER_BYTES
             + pickups.len() * PICKUP_BYTES
             + projectiles.len() * PROJECTILE_BYTES
-            + bags.len() * BAG_BYTES,
+            + bags.len() * BAG_BYTES
+            + ROUND_TAIL_BYTES
+            + heals.len() * HEAL_BYTES
+            + enemies.len() * ENEMY_BYTES,
     );
     v.extend_from_slice(&(players.len() as u32).to_le_bytes());
     for p in players {
@@ -185,6 +281,15 @@ pub fn encode(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile]
     for b in bags {
         b.write(&mut v);
     }
+    v.extend_from_slice(&(enemies.len() as u32).to_le_bytes());
+    for e in enemies {
+        e.write(&mut v);
+    }
+    v.extend_from_slice(&(heals.len() as u32).to_le_bytes());
+    for h in heals {
+        h.write(&mut v);
+    }
+    v.extend_from_slice(&round);
     v
 }
 
@@ -214,7 +319,7 @@ impl R<'_> {
 /// Decode entity bytes against the freshly generated `pickups` (their identity must match; only
 /// `respawn_at` and `charges` are taken from the bytes). Hostile input fails cleanly, never panics.
 /// `w`, `h` are the world's size in cells: a bag outside it is refused.
-pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>);
+pub type Decoded = (Vec<Player>, Vec<Projectile>, Vec<Bag>, Vec<Enemy>, Vec<Heal>, [u8; ROUND_TAIL_BYTES]);
 
 pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<Decoded, ()> {
     let mut r = R(b, 0);
@@ -238,7 +343,25 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         return Err(());
     }
     let nb = u32::from_le_bytes(b[bag_at as usize..bag_at as usize + 4].try_into().map_err(|_| ())?) as usize;
-    if nb > MAX_BAGS || bag_at + 4 + (nb as u64) * (BAG_BYTES as u64) != b.len() as u64 {
+    if nb > MAX_BAGS {
+        return Err(());
+    }
+    // The enemy count follows the bags; it then fixes the exact total length (enemies, then the round_over byte).
+    let en_at = bag_at + 4 + (nb as u64) * (BAG_BYTES as u64);
+    if (b.len() as u64) < en_at + 4 {
+        return Err(());
+    }
+    let ne = u32::from_le_bytes(b[en_at as usize..en_at as usize + 4].try_into().map_err(|_| ())?) as usize;
+    if ne > MAX_ENEMIES {
+        return Err(());
+    }
+    // The heal count follows the enemies; it then fixes the exact total length (heals, then the round tail).
+    let heal_at = en_at + 4 + (ne as u64) * (ENEMY_BYTES as u64);
+    if (b.len() as u64) < heal_at + 4 {
+        return Err(());
+    }
+    let nh = u32::from_le_bytes(b[heal_at as usize..heal_at as usize + 4].try_into().map_err(|_| ())?) as usize;
+    if nh > MAX_HEALS || heal_at + 4 + (nh as u64) * (HEAL_BYTES as u64) + ROUND_TAIL_BYTES as u64 != b.len() as u64 {
         return Err(());
     }
     let mut players: Vec<Player> = Vec::with_capacity(np);
@@ -264,6 +387,10 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         }
         p.last_hit_by = r.u32().ok_or(())?;
         p.last_hit_tick = r.u32().ok_or(())?;
+        p.ready = r.u8().ok_or(())?;
+        if p.ready > 1 {
+            return Err(());
+        }
         players.push(p);
     }
     if r.u32().ok_or(())? as usize != pickups.len() {
@@ -282,11 +409,19 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         return Err(());
     }
     let mut projectiles = Vec::with_capacity(n);
+    let mut enemy_bolts = 0usize;
     for _ in 0..n {
         let owner = r.u32().ok_or(())?;
         let spell = r.u8().ok_or(())?;
         if usize::from(spell) >= NUM_SPELLS {
             return Err(());
+        }
+        // An enemy-owned bolt names a real kind, leaves the reserved bits clear, and there are few of them.
+        if owner & ENEMY_OWNER != 0 {
+            enemy_bolts += 1;
+            if owner & 0x7f00_0000 != 0 || usize::from(((owner >> 16) & 0xff) as u8) >= NUM_ENEMY_KINDS || enemy_bolts > MAX_ENEMY_PROJECTILES {
+                return Err(());
+            }
         }
         projectiles.push(Projectile {
             owner,
@@ -314,7 +449,71 @@ pub fn decode(b: &[u8], pickups: &mut [Pickup], w: usize, h: usize) -> Result<De
         }
         bags.push(Bag { x, y, charges, expires_at: r.u32().ok_or(())? });
     }
-    Ok((players, projectiles, bags))
+    if r.u32().ok_or(())? as usize != ne {
+        return Err(());
+    }
+    let mut enemies: Vec<Enemy> = Vec::with_capacity(ne);
+    for _ in 0..ne {
+        let id = r.u16().ok_or(())?;
+        let kind = r.u8().ok_or(())?;
+        if usize::from(kind) >= NUM_ENEMY_KINDS || enemies.last().is_some_and(|e| e.id >= id) {
+            return Err(());
+        }
+        let mut e = Enemy::new(id, kind, 0, 0);
+        e.x = r.i32().ok_or(())?;
+        e.y = r.i32().ok_or(())?;
+        e.vx = r.u16().ok_or(())? as i16;
+        e.vy = r.u16().ok_or(())? as i16;
+        e.hp = r.u16().ok_or(())?;
+        e.facing = r.u8().ok_or(())?;
+        e.state = r.u8().ok_or(())?;
+        let boss = kind == ENEMY_BOSS;
+        if e.facing > 1 || e.state > 3 || e.hp == 0 || e.hp > ENEMY_STATS[usize::from(kind)].hp {
+            return Err(());
+        }
+        e.cooldown_until = r.u32().ok_or(())?;
+        e.hop_until = r.u32().ok_or(())?;
+        e.last_hit_by = r.u32().ok_or(())?;
+        e.last_hit_tick = r.u32().ok_or(())?;
+        e.phase = r.u8().ok_or(())?;
+        e.summons = r.u16().ok_or(())?;
+        // Only the boss has a phase (1..=3) and a summon counter; the counter is bounded, so a summon's id
+        // (`id + 1 + summons`) stays far inside u16.
+        e.last_hp = r.u16().ok_or(())?;
+        // The Colossus has a phase (1..=3), no summons, and a last-seen hp in 1..=max; every other kind has none of them.
+        let named_ok = if kind == ENEMY_COLOSSUS {
+            (1..=3).contains(&e.phase) && e.summons == 0 && e.last_hp >= 1 && e.last_hp <= ENEMY_STATS[usize::from(kind)].hp
+        } else if boss { (1..=3).contains(&e.phase) && u32::from(e.summons) <= BOSS_SUMMONS_TOTAL && u32::from(id) + 1 + u32::from(e.summons) < MAX_ENEMY_ID && e.last_hp == 0 } else { e.phase == 0 && e.summons == 0 && e.last_hp == 0 };
+        if !named_ok {
+            return Err(());
+        }
+        if e.x < 0 || e.y < 0 || (e.x >> POS_SHIFT) as usize >= w || (e.y >> POS_SHIFT) as usize > h {
+            return Err(());
+        }
+        enemies.push(e);
+    }
+    if r.u32().ok_or(())? as usize != nh {
+        return Err(());
+    }
+    let mut heals = Vec::with_capacity(nh);
+    for _ in 0..nh {
+        let (x, y, amount) = (r.u16().ok_or(())?, r.u16().ok_or(())?, r.u8().ok_or(())?);
+        if usize::from(x) >= w || usize::from(y) >= h || amount == 0 || amount > HEALTH_MAX {
+            return Err(());
+        }
+        heals.push(Heal { x, y, amount, expires_at: r.u32().ok_or(())? });
+    }
+    let mut round = [0u8; ROUND_TAIL_BYTES];
+    for x in round.iter_mut() {
+        *x = r.u8().ok_or(())?;
+    }
+    let since = u32::from_le_bytes([round[4], round[5], round[6], round[7]]);
+    let majority = u32::from_le_bytes([round[8], round[9], round[10], round[11]]);
+    // A running round has no countdown; a killed boss means the round ran.
+    if round[0] > 1 || round[1] > 1 || round[2] > 1 || round[3] > 1 || (round[1] != 0 && (since != LOBBY_IDLE || majority != LOBBY_IDLE)) || (round[2] != 0 && round[1] == 0) {
+        return Err(());
+    }
+    Ok((players, projectiles, bags, enemies, heals, round))
 }
 
 // ---- render-only views (plan 6.11; invariant 9: nothing read from these may become an input) ----------
@@ -338,6 +537,18 @@ pub const EV_EXPLODE: u8 = 8;
 pub const EV_DEATH: u8 = 9;
 /// A bag was taken: `player` = taker, a, b = the bag's cell x, y, c = total charges taken.
 pub const EV_BAG_PICKUP: u8 = 10;
+/// An enemy took damage: `player` = attacker (0 if none), a = enemy id, b = damage, c = hp left.
+pub const EV_ENEMY_HURT: u8 = 11;
+/// An enemy died: `player` = killer (0 if none), a, b = x, y (1/16 cell), c = kind.
+pub const EV_ENEMY_DEATH: u8 = 12;
+/// A one-life round ended: a = 1 win, 0 loss. Fires once (`round_over`).
+pub const EV_ROUND_END: u8 = 13;
+/// The boss entered a new phase: a = enemy id, b = phase (2 or 3).
+pub const EV_ENEMY_PHASE: u8 = 14;
+/// F6b: the lobby countdown completed and the round is running (a = players). Fires once.
+pub const EV_ROUND_START: u8 = 15;
+/// A heal was taken (Brief E): `player` = taker, a = hit points actually gained, b, c = the heal's cell x, y.
+pub const EV_HEAL: u8 = 16;
 pub const REJECT_SPELL: i32 = 1;
 pub const REJECT_CHARGES: i32 = 2;
 pub const REJECT_COOLDOWN: i32 = 3;
@@ -371,11 +582,20 @@ pub const ENT_PICKUP: u8 = 2;
 pub const ENT_PROJECTILE: u8 = 3;
 /// A dropped bag: `id` = index, `active` = 1, x, y = the cell centre in 1/16 cell, `a` = total charges (capped to u16).
 pub const ENT_BAG: u8 = 4;
+/// An enemy: `id`, `active` = 1, `sub` = kind, x, y in 1/16 cell, `a` = hp, `health` byte = `state | facing << 7`.
+pub const ENT_ENEMY: u8 = 5;
+/// The one-life round's state (only in `round` 1 rooms): `sub` = result (1 win, 0 loss), `a` = over (0 or 1), `health` = started (bit 0 running, bit 1 boss win), `x` = all-ready countdown ticks left (-1 when not counting), `y` = majority countdown ticks left (-1 when not counting).
+pub const ENT_ROUND: u8 = 6;
+/// F6b: a player's lobby ready flag (lobby phase only): `id` = player, `active` = ready.
+pub const ENT_READY: u8 = 7;
+/// A heal on the ground (Brief E): `id` = index, `active` = 1, x, y = the cell centre in 1/16 cell, `a` = amount.
+pub const ENT_HEAL: u8 = 8;
 /// Entity record: `type u8, id u32, active u8, sub u8, x i32, y i32, a u16, health u8`.
 pub const ENTITY_BYTES: usize = 18;
 
+#[allow(clippy::too_many_arguments)] // one slice per entity list, as `encode`
 /// Entity views for the renderer, players then pickups, written into `out` (at most `max` records).
-pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], tick: u32, out: &mut [u8], max: usize) -> usize {
+pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Projectile], bags: &[Bag], enemies: &[Enemy], heals: &[Heal], round: [u8; ROUND_TAIL_BYTES], round_on: bool, tick: u32, out: &mut [u8], max: usize) -> usize {
     let mut n = 0;
     let mut put = |t: u8, id: u32, active: bool, sub: u8, x: i32, y: i32, a: u16, health: u8| {
         if n >= max || (n + 1) * ENTITY_BYTES > out.len() {
@@ -413,6 +633,25 @@ pub fn write_view(players: &[Player], pickups: &[Pickup], projectiles: &[Project
     }
     for (i, b) in bags.iter().enumerate() {
         put(ENT_BAG, i as u32, true, 0, i32::from(b.x) * POS_ONE + POS_ONE / 2, i32::from(b.y) * POS_ONE + POS_ONE / 2, b.total(), 0);
+    }
+    for (i, h) in heals.iter().enumerate() {
+        put(ENT_HEAL, i as u32, true, 0, i32::from(h.x) * POS_ONE + POS_ONE / 2, i32::from(h.y) * POS_ONE + POS_ONE / 2, u16::from(h.amount), 0);
+    }
+    for e in enemies {
+        // The view byte keeps its old shape for the client: state bits 0..1, the boss phase in bits 2..3, facing in bit 7.
+        put(ENT_ENEMY, u32::from(e.id), true, e.kind, e.x, e.y, e.hp, e.state | (e.phase << 2) | (e.facing << 7));
+    }
+    if round_on {
+        let since = u32::from_le_bytes([round[4], round[5], round[6], round[7]]);
+        let left = if since == LOBBY_IDLE { -1 } else { since.saturating_add(LOBBY_COUNTDOWN_TICKS).saturating_sub(tick).min(LOBBY_COUNTDOWN_TICKS) as i32 };
+        let mj = u32::from_le_bytes([round[8], round[9], round[10], round[11]]);
+        let mleft = if mj == LOBBY_IDLE { -1 } else { mj.saturating_add(LOBBY_MAJORITY_TICKS).saturating_sub(tick).min(LOBBY_MAJORITY_TICKS) as i32 };
+        put(ENT_ROUND, 0, true, round[3], left, mleft, u16::from(round[0]), round[1] | (round[2] << 1));
+        if round[1] == 0 {
+            for p in players {
+                put(ENT_READY, p.id, p.ready == 1, 0, 0, 0, 0, 0);
+            }
+        }
     }
     n
 }

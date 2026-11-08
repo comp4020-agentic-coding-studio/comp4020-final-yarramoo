@@ -130,23 +130,48 @@ fn gunpowder_explosion_damages_by_falloff_knocks_back_and_gives_no_credit() {
     s.step();
     let ex: Vec<_> = s.events.iter().filter(|e| e.kind == EV_EXPLODE).collect();
     assert_eq!(ex.len(), 1);
-    assert_eq!((ex[0].player, ex[0].a, ex[0].b, ex[0].c), (0, 514, 833, 4));
+    assert_eq!((ex[0].player, ex[0].a, ex[0].b, ex[0].c), (0, 514, 833, GUNPOWDER_DAMAGE_RADIUS));
     // dx = 510.5 - 514.5 = -4 cells, dy = 833.5? chest = 838 - 5 = 833, minus centre 833.5 -> -0.5.
+    // Damage reaches GUNPOWDER_DAMAGE_RADIUS (10, the user 5 Nov; was 4): 60 * (10 - 4) / 10 = 36.
     let dmg = before - pl(&s, 1).health;
-    assert!(dmg == 0, "outside radius 4 takes nothing, took {dmg}");
+    assert_eq!(dmg, 36);
     let k: Vec<_> = s.events.iter().filter(|e| e.kind == EV_KNOCK).collect();
     assert_eq!(k.len(), 1);
     assert!(k[0].a < 0, "knocked away (left), got {}", k[0].a);
     assert_eq!(pl(&s, 1).last_hit_by, 0);
-    // Closer: 2 cells away takes damage 60 * (4 - 2) / 4 = 30 (distance floors to a whole cell).
+    // Closer: 2 cells away takes damage 60 * (10 - 2) / 10 = 48 (distance floors to a whole cell).
     let mut s = boxed(&[1]);
     let w = s.grid.w;
     s.grid.set(833 * w + 512, GUNPOWDER, 1);
     s.step();
-    // A literal, not the formula again: the chest is 2 whole cells from the centre, so 60 * (4 - 2) / 4 = 30
+    // A literal, not the formula again: the chest is 2 whole cells from the centre, so 60 * (10 - 2) / 10 = 48
     // (review M5 slice 1 N3: recomputing it with isqrt would pass a wrong formula too).
-    assert_eq!(pl(&s, 1).health, 100 - 30);
+    assert_eq!(pl(&s, 1).health, 100 - 48);
     assert_eq!(pl(&s, 1).last_hit_by, 0);
+}
+
+/// The user, 5 Nov: gunpowder set off by burning coal barely hurt (radius 4). A blast 8 cells from the chest now does
+/// real damage, linear to `GUNPOWDER_DAMAGE_RADIUS`; the grid carve is unchanged.
+#[test]
+fn a_world_gunpowder_blast_hurts_well_beyond_its_carve() {
+    let mut s = boxed(&[1]);
+    let w = s.grid.w;
+    // Chest at (510.5, 833.5); the blast centre 8 whole cells to the right.
+    s.grid.set(833 * w + 518, GUNPOWDER, 1);
+    s.events.clear();
+    s.step();
+    let ex: Vec<_> = s.events.iter().filter(|e| e.kind == EV_EXPLODE).collect();
+    assert_eq!(ex.len(), 1);
+    assert_eq!(ex[0].c, GUNPOWDER_DAMAGE_RADIUS);
+    // 60 * (10 - 8) / 10 = 12.
+    assert_eq!(pl(&s, 1).health, 100 - 12);
+    assert_eq!(pl(&s, 1).last_hit_by, 0, "world gunpowder credits nobody");
+    // The carve did not grow: a Rock cell 6 cells from the centre survives.
+    let mut s = boxed(&[1]);
+    s.grid.set(820 * w + 518, ROCK, 0);
+    s.grid.set(826 * w + 518, GUNPOWDER, 1);
+    s.step();
+    assert_eq!(s.grid.mat[820 * w + 518], ROCK, "the carve radius changed");
 }
 
 #[test]
@@ -387,4 +412,37 @@ fn death_and_respawn_are_deterministic_and_snapshot_restores_while_dead() {
         r.step();
     }
     assert_eq!(r.state_hash(), a.state_hash());
+}
+
+#[test]
+fn acid_costs_one_hp_every_four_ticks_and_lava_wins() {
+    let mut s = boxed(&[1]);
+    let h0 = pl(&s, 1).health;
+    for _ in 0..20 {
+        fill_hitbox(&mut s, 1, ACID);
+        s.step();
+    }
+    assert_eq!(h0 - pl(&s, 1).health, 5, "acid: 1 HP on ticks divisible by 4");
+    // Lava and acid together: lava's rate and lava's cause.
+    let mut s = boxed(&[1]);
+    let h0 = pl(&s, 1).health;
+    for _ in 0..20 {
+        fill_hitbox(&mut s, 1, LAVA);
+        let (x0, y0, _, _) = pl(&s, 1).hitbox_cells();
+        let w = s.grid.w;
+        s.grid.set(y0 as usize * w + x0 as usize, ACID, 0);
+        s.step();
+    }
+    assert_eq!(h0 - pl(&s, 1).health, 10, "lava wins");
+    // A kill by acid reports CAUSE_ACID.
+    let mut s = boxed(&[1]);
+    s.players[0].health = 1;
+    let mut deaths = Vec::new();
+    for _ in 0..4 {
+        fill_hitbox(&mut s, 1, ACID);
+        s.step();
+        deaths.extend(s.events.iter().filter(|e| e.kind == EV_DEATH).copied());
+    }
+    let d = deaths.first().expect("died in acid");
+    assert_eq!((d.player, d.a, d.b), (1, 0, i32::from(CAUSE_ACID)));
 }

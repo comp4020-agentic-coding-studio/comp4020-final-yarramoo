@@ -81,7 +81,7 @@ export function generateM5(wasm: Uint8Array, seed: bigint = M5_SEED, ticks: numb
       // Bot 2, respawned and empty-handed, takes a fresh Bomb pickup and bombs its own feet until it dies:
       // a self-kill with no other player's credit.
       case 300: goto(2, bomb[3].x, bomb[3].y); break;
-      case 305: case 370: case 435: case 500: case 565: goto(2, bomb[3].x, bomb[3].y); cast(2, SPELL_BOMB, UP); break;
+      case 305: case 370: case 435: case 500: case 565: case 630: case 695: case 760: goto(2, bomb[3].x, bomb[3].y); cast(2, SPELL_BOMB, UP); break;
       default:
     }
   };

@@ -30,18 +30,29 @@ Decisions
 8. [Chunk sleeping that must be invisible](#8-chunk-sleeping-that-must-be-invisible)
 9. [Identity and names](#9-identity-and-names)
 10. [Observability, the dashboard and admin reset](#10-observability-the-dashboard-and-admin-reset)
+11. [A config replaces the world kind, and ends a compatibility guarantee](#11-a-config-replaces-the-world-kind-and-ends-a-compatibility-guarantee)
+12. [Rooms land in three slices, the first one inert](#12-rooms-land-in-three-slices-the-first-one-inert)
+13. [The menu wires the client into real rooms for the first time](#13-the-menu-wires-the-client-into-real-rooms-for-the-first-time)
+14. [Creative, and the server split that would have broken its brush](#14-creative-and-the-server-split-that-would-have-broken-its-brush)
 
 Challenges
-11. [The live site went down on 18 October](#11-the-live-site-went-down-on-18-october)
-12. [Snapshot timing, and the correction](#12-snapshot-timing-and-the-correction)
-13. [The late-join test that failed after the world cache](#13-the-late-join-test-that-failed-after-the-world-cache)
-14. [Liquids "stuck in staircases"](#14-liquids-stuck-in-staircases)
-15. [Performance gate P1](#15-performance-gate-p1)
-16. [What independent reviews caught that tests missed](#16-what-independent-reviews-caught-that-tests-missed)
-17. [Snapshot format 3 before any game snapshot exists](#17-snapshot-format-3-before-any-game-snapshot-exists)
-18. [A cross-browser check that tested nothing it named](#18-a-cross-browser-check-that-tested-nothing-it-named)
-19. [An achievement the sim's outputs cannot express](#19-an-achievement-the-sims-outputs-cannot-express)
-20. [The merge rehearsal: two bugs only the real image could show](#20-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
+15. [The live site went down on 18 October](#15-the-live-site-went-down-on-18-october)
+16. [Snapshot timing, and the correction](#16-snapshot-timing-and-the-correction)
+17. [The late-join test that failed after the world cache](#17-the-late-join-test-that-failed-after-the-world-cache)
+18. [Liquids "stuck in staircases"](#18-liquids-stuck-in-staircases)
+19. [Performance gate P1](#19-performance-gate-p1)
+20. [What independent reviews caught that tests missed](#20-what-independent-reviews-caught-that-tests-missed)
+21. [Snapshot format 3 before any game snapshot exists](#21-snapshot-format-3-before-any-game-snapshot-exists)
+22. [A cross-browser check that tested nothing it named](#22-a-cross-browser-check-that-tested-nothing-it-named)
+23. [An achievement the sim's outputs cannot express](#23-an-achievement-the-sims-outputs-cannot-express)
+24. [The merge rehearsal: two bugs only the real image could show](#24-the-merge-rehearsal-two-bugs-only-the-real-image-could-show)
+
+Later
+25. [Fun before modes: juice, Dig and roomy caves](#25-fun-before-modes-juice-dig-and-roomy-caves)
+26. [The canvas that shrank for a week, and two workers who blamed the browser](#26-the-canvas-that-shrank-for-a-week-and-two-workers-who-blamed-the-browser)
+27. [Six new materials, and the half of the game that didn't know about them](#27-six-new-materials-and-the-half-of-the-game-that-didnt-know-about-them)
+28. [Rigid bodies: falling rock in a lockstep integer sim (researched, not built)](#28-rigid-bodies-falling-rock-in-a-lockstep-integer-sim-researched-not-built)
+29. [Green tests, broken features, and once a wrong alarm: what the browser caught overnight](#29-green-tests-broken-features-and-once-a-wrong-alarm-what-the-browser-caught-overnight)
 
 ---
 
@@ -168,7 +179,7 @@ by platform. 1024 entries is 2 KB, against 128 KB for a full 16-bit
 table, and the aim resolution is about 0.35 degrees (D-075).
 
 **Cost / consequences.** Every random draw costs three mix rounds, and profiling
-later found draws that could not matter (entry 15). Long-range spells would
+later found draws that could not matter (entry 19). Long-range spells would
 need a finer table.
 
 **Evidence.** [plan.md section 6.3](plan.md); D-051, D-075, D-087;
@@ -359,8 +370,8 @@ harness can see nondeterminism, and the input script exercises the sim (690
 paints, 30 of 30 distinct checkpoint hashes, D-020), so agreement is evidence
 rather than an idle world agreeing with itself.
 
-**Cost / consequences.** The suite takes about 50 s, so it is separate from
-`pnpm check` (D-019). D4, the cross-architecture run on an ARM device, was owed
+**Cost / consequences.** The suite took about 50 s, so it is separate from
+`pnpm check` (D-019). By November it had grown to about 7 minutes (entry 40). D4, the cross-architecture run on an ARM device, was owed
 and never closed in the record: CI only runs once the repo is public, and a
 phone run was left for later (D-020).
 
@@ -419,7 +430,7 @@ Refusing anonymous painters, which would break old tabs.
 **Why.** A stored hash means a database leak does not leak sessions. The id is
 the sim id so the entity returns without a lookup table.
 
-**Cost / consequences.** Anti-teleport was harder than it looked, see entry 16
+**Cost / consequences.** Anti-teleport was harder than it looked, see entry 20
 for the exploit. A zero token once minted a permanent player on every connect,
 so an unclaimable token no longer gets a player (D-069).
 
@@ -477,9 +488,264 @@ Guards 1 and 2 are in `World.stampClient`. Join and Leave are the server's own a
 [`d088c4f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d088c4f),
 [`0ca9f5e`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/0ca9f5e).
 
+## 11. A config replaces the world kind, and ends a compatibility guarantee
+
+**Context.** PvP consent was broken: one fighter in the shared game world forced everyone else to fight, because
+the only way to tell worlds apart was a bare `world_kind` byte (0 sandbox, 1 game) compiled into every rule gate.
+Rooms need their own terrain, damage, spells and player cap, and the plan reserved D-132/D-133 for exactly this
+before any code existed.
+
+**Decision.** A 16-byte, versioned `RoomConfig` (terrain, size, avatars, damage, spells, brushes, death,
+respawn_secs, pickup_respawn, round, max_players, 4 reserved bytes, all zero-checked) replaces `world_kind` at the
+ABI (`init(seed_lo, seed_hi, cfg_ptr, cfg_len)`) and in every sim rule gate, which now reads a helper
+(`has_players()`, `paint_allowed()`, ...) instead of a bare compare. Worlds 0 and 1 become presets
+(`classic_sandbox()`, `caves_pvp()`) built to reproduce today's state hashes exactly. The config bytes are
+themselves hashed, so two clients running different configs diverge at tick 0 instead of silently agreeing.
+Snapshot format bumps to 4, with the config in the header; restore refuses every older format. `shared/room.ts`
+mirrors the Rust layout field-for-field, and the round-trip and refusal tests in both languages share the literal
+same hex vectors, not independently-authored ones that happen to agree. The protocol itself is untouched: server
+and client map world kind 0/1 to a preset locally (D-132, D-133).
+
+**Alternatives considered.** Keeping `world_kind` and adding a second dimension alongside it (more gates to keep in
+sync, not fewer). Versioning the config as forward-compatible, accepting unknown future fields (rejected: a version
+byte that must match exactly is simpler and the game is not live, so there is no old client to be lenient to).
+
+**Why.** Rooms (R2) need per-room rules, which a compile-time `world_kind` cannot express. Reproducing today's
+presets byte-for-byte meant R0a could land with the determinism suite's existing hashes as its own regression test,
+rather than writing new fixtures to trust.
+
+**Cost / consequences.** Format 4 refuses every snapshot from versions 1-3, which ends the deployed-sandbox
+compatibility guarantee from D-014 and D-068 — acceptable only because the 21 Oct redirect says the game is not
+live and world resets are fine until the user says otherwise. If the sandbox is declared live before R2 ships a
+protocol-level config, this needs a migration path first. Separately, `RoomConfig.max_players` is decoded, hashed
+and range-checked (2..=8) but not yet enforced against the live player count: only the pre-existing global
+`MAX_PLAYERS = 1024` gates joins. This was flagged independently by the worker and by a cold second review
+(entry 20), and is deferred, not forgotten (D-138) — it's strictly more permissive than before, not a new hole, but
+R2/R6 (Survival's lobby cap) must not assume it already works.
+
+**R1: every (terrain, size) combination, not just the two presets.** A config's `terrain` and `size` fields were
+only real choices once every combination they could name actually produced a world. R1 generalised gen v2 (its
+traversal fix, D-083/`ec188a0`, had only ever run at Caves' one size, L) to Caves at S and M too, built Solid box
+(Dirt over Rock, a static layered fill, no cave algorithm) at every size, and opened Empty box (today's sandbox
+fill) up from size S only to every size. The traversal test (`traversable_to_every_band`) now loops all three
+sizes, each against its own target depth, rather than asserting only L reaches the deep band.
+
+Every absolute row/column constant the generator had baked in for L's 2048x1536 (band boundaries, repair depth,
+link-worm rows, material pile counts and spans) is now derived once per `generate` call by a `Scale` struct:
+depth/row quantities scale linearly by usable height (`h - FLOOR_ROWS`, exact at L by construction, so the
+`caves_pvp` preset's generation path is unchanged bit-for-bit), and counts (piles, trees, pickup spots) scale by
+area relative to L's, with hand-picked floors so a small world still gets a sensible minimum. This was checked
+independently, not just taken from the worker's report: the session model computed `classic_sandbox` (seed 42) and
+`caves_pvp` (seed 5) state hashes at ticks 0/40/80/120 in a separate git worktree at the pre-R1 commit and again at
+R1's head, and they match exactly.
+
+**Alternatives considered.** Scaling by raw height instead of usable height (simpler, but a bigger relative error
+at S, where the 64-row floor band is 12.5% of the world's 512). Scaling width-dependent spans by the same area
+ratio as counts (rejected for now as the less reversible choice — it would also need re-deriving every margin
+constant per size; keeping L's absolute wall margin was lower-risk without a preview to judge the alternative by
+eye, logged in FUTURE.md for a later look).
+
+**Why.** Rooms (R2) need Caves, Solid box and Empty box to actually be available at every size a room can request,
+not just the two combinations that happened to exist before R0a. Reproducing `caves_pvp`'s hash exactly, the same
+discipline R0a held to, meant R1 could also land with the existing determinism suite as its own regression test.
+
+**Cost / consequences.** Gen time doesn't scale down with world size the way cell count would suggest: S (512x512)
+measured 85 ms native, M (1024x768) 91.5 ms, L (2048x1536) 245.6 ms — S is barely cheaper than M despite a quarter
+of the area, because count floors and fixed-cost passes (noise setup, the repair-traversal flood) don't shrink
+with the grid in this range. Logged in FUTURE.md: this matters for R2's room-creation latency budget. The
+`scale_count` floor values and Solid box's dirt-depth formula are tuned by eye, not measurement; cosmetic only
+(the traversal guarantee doesn't depend on them), left for a look at the now-multi-size `gen-preview.html`.
+
+**Evidence.** D-132, D-133, D-137, D-138, D-139; [plan-game-modes.md](plan-game-modes.md) "Config fields",
+"Caves: gen v2 everywhere"; [review-r0a.md](research/review-r0a.md), [r1-worker-report.md](research/r1-worker-report.md);
+[`8ee79f3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8ee79f3)
+(config.rs and shared/room.ts),
+[`425cab4`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/425cab4)
+(snapshot format 4),
+[`1964349`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/1964349)
+(Caves at every size, the scaled generator).
+
+## 12. Rooms land in three slices, the first one inert
+
+**Context.** R2 ("rooms on the server") replaces the two fixed worlds with a room table, a creation/listing API,
+a protocol bump, a lazy load/unload lifecycle and admission caps. It is the plan's largest milestone, and it
+touches the two files every other live feature depends on: `server/world.ts` (1311 lines, the tick clock, the
+hash/snapshot checks, every socket-facing rule) and `server/main.ts` (1006 lines, HELLO/WELCOME, every existing
+route). CLAUDE.md warns specifically against fanning out agents on a coupled, multi-user surface like this one,
+and the plan's own review column already marks R2 as needing an independent reviewer for its protocol and
+lifecycle work.
+
+**Decision.** Split R2 into three sequential slices instead of one dispatch: **R2a** (this entry) builds the
+`rooms` table and `POST/GET /api/rooms`/`GET /api/rooms/:code`, but deliberately touches nothing on the socket
+path — a room can be created and listed, but nothing can join one, so the two fixed worlds (`/`, `/sandbox`)
+keep working exactly as before. **R2b** (not yet built) wires rooms into HELLO/WELCOME (protocol v9), adds the
+lazy load/unload lifecycle and the capacity note's admission caps, and gets the independent reviewer R0a and
+the plan both call for. **R2c** re-measures capacity (`pnpm soak:capacity`) against the room-ified server.
+
+**Alternatives considered.** One large worker building all of R2 at once (rejected: too much surface for one
+review pass, and a bug in the lifecycle code would be indistinguishable from a bug in the data layer when
+something broke). Building the protocol change first (rejected: the data model and validation are independently
+useful to prove correct, and R2a's tests can run against the real Docker image without needing a single live
+socket change to risk).
+
+**Why.** An inert first slice cannot regress a live, working feature: the worst a bug in R2a can do is make
+`/api/rooms` misbehave, since nothing reads from the `rooms` table outside it yet. Reviewing R2a therefore didn't
+need the independent-reviewer pass the plan reserves for R2 as a whole — the session model reviewed it directly
+the same way R1's terrain work was reviewed, and verified the claims by hand: built and booted the real Docker
+image, and curled every new route (a valid create, a bad-config rejection, a cross-origin refusal, an unlisted
+room correctly hidden from the public list but still fetchable by its code, case-insensitive code lookup)
+against the live container, rather than only reading the worker's report of having done the same.
+
+**Cost / consequences.** Anonymous room creation (`POST /api/rooms` has no authenticated identity on this HTTP
+path yet) has no rate limit at all — confirmed by hand, four consecutive anonymous creates from one address all
+returned 201. This is an open flood vector until R2b wires identity onto the path and adds IP-based limiting
+(D-141, logged in `FUTURE.md`); acceptable only because the game is not live. The public room list sorts by
+`last_active` only, with a `TODO(R2b)` for a live player count, since no room is joinable yet to have one. Two
+existing tests' hardcoded `schemaVersion` assertions needed a one-line bump (5 to 6) for the new migration,
+a mechanical cost every future migration will repeat unless a later slice makes the assertion self-deriving.
+
+**R2b: rooms become joinable, and the independent review earns its place.** Protocol v9 lets WELCOME carry a
+room's actual 16-byte config instead of a bare world-kind byte, so a joiner inits from the exact bytes every
+other member of the room shares; `getOrLoadRoom` loads a room's `World` on first HELLO for it, keyed by an
+in-flight-promise map so two near-simultaneous HELLOs for the same unloaded room id converge on one load rather
+than racing to construct two. A room unloads on a uniform 2-minute empty timer (mode-specific archive/delete
+timing stays deferred). Admission caps from `capacity-rooms.md` (32/48 members, 16 loaded-room slots, an L room
+weighted 2) are checked before a room is constructed, reading cgroup memory per that note's own finding that RSS
+overstates it. In passing, R2b also fixed a real bug the brief had to name explicitly: `World.acceptPos` bounded
+every Pos against the fixed L-sized `GAME_W`/`GAME_H`, silently wrong for any S or M room now that R1 made those
+sizes real.
+
+The independent reviewer this slice was built to get (D-140's rationale) found two HIGH-severity bugs neither the
+worker nor the session model's own reading had caught: a join rejected by the member cap, and separately a
+bad-token HELLO that fired after the unload timer had already been canceled, both left a freshly-loaded,
+zero-member room pinned in memory permanently — exactly the resource the new admission caps exist to protect,
+and exactly the question the reviewer's brief asked ("are caps checked before a `World` is constructed, so a
+rejected join doesn't still pay the cost") turning out to be only half-true. The session model reproduced both
+with a standalone script against the real server code before accepting either finding, and again after the fix,
+rather than trusting either report. D-143 has the full account.
+
+**R2c closes the question this milestone asked.** The plan's own acceptance line for R2 ("24 sockets over 4
+rooms, a forced verify; pass is under 200 MB") is a real number, not a code review, so it needed a bench over
+real rooms rather than the pre-R2 two-fixed-world one. 4 runs passed (171.82, 95.74, 103.90, 104.86 MB cgroup),
+but not evenly: one run used 86% of the budget while the other three used about half that, on an identical
+scenario run seconds apart. The report names this plainly rather than rounding it into "comfortably under 200
+MB" — the pre-R2 table's own "first activity" jump is the likely cause (now paid once per freshly-loaded room
+instead of once for two always-loaded worlds), but that split was left unmeasured rather than guessed at. The
+session model re-ran the bench twice more independently before accepting the numbers (106.7, 103.85 MB, both in
+the "normal" cluster) and confirmed the Docker container is cleaned up on every exit path, including the error
+path.
+
+**Evidence.** D-140, D-141, D-142, D-143, D-144; [plan-game-modes.md](plan-game-modes.md) "Server: rooms instead
+of two fixed worlds"; [capacity-rooms.md](research/capacity-rooms.md);
+[r2a-worker-report.md](research/r2a-worker-report.md), [r2b-worker-report.md](research/r2b-worker-report.md),
+[review-r2b.md](research/review-r2b.md), [r2b-fix-report.md](research/r2b-fix-report.md),
+[r2c-worker-report.md](research/r2c-worker-report.md);
+[`120075b`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/120075b)
+(the rooms table and `RoomsStore`),
+[`8be0076`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8be0076)
+(the HTTP API),
+[`064613c`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/064613c)
+(protocol v9 and the `acceptPos` fix),
+[`b254084`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b254084)
+(the member-cap leak fix),
+[`8c11131`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8c11131)
+(the cancel-unload-ordering fix),
+[`fa1f09a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/fa1f09a)
+(the real-room capacity bench).
+
+## 13. The menu wires the client into real rooms for the first time
+
+**Context.** R2 built rooms end to end on the server — a table, an API, a lazy load/unload lifecycle, admission
+caps — but nothing in `client/` could reach any of it. The client still only ever joined the two fixed worlds by
+URL path (`/sandbox` → id 0, everything else → id 1), and `client/worker.ts` still initialised the sim from a
+bare "kind" number, which only ever meant something for those two presets.
+
+**Decision.** `/` becomes the menu (mode cards, a polled public room list, a create sheet, a name sheet shown
+only at the moment of first Join/Create, a first-visit hint per room) in `client/menu.ts`; the old sandbox/game
+page logic moves into `client/room.ts`, generalised to take a `RoomTarget {worldId, cfg, name, code}` resolved
+from the URL (`/sandbox`, `/game`, or `/r/<code>` fetched from `GET /api/rooms/:code`) instead of deriving
+everything once from a literal path check. The real fix this required: `client/worker.ts`'s `beginReplay` now
+initialises the sim from WELCOME's actual 16-byte config (`m.cfg`), not the derived bare kind, at both the
+initial join and every resync — a real room's config never matches either fixed preset, so the bare-kind path
+would have handed a joined room's sim the wrong rules entirely. Every avatar/cast/steer/follow/spectate check
+that used to compare `worldId === 1` now reads `cfg.avatars === 1`, since a real room's numeric id is never 1;
+the old Game/Sandbox nav links are deleted outright (the plan says they go away) and replaced with a single
+"← Menu" link. The old fixed cave-world page moved from `/` to a direct `/game` route, not a redirect.
+
+**Alternatives considered.** Redirecting `/` to `/game` instead of giving the old world its own route (rejected
+as less reversible: a redirect could be layered on top of a direct route later with no further client change,
+but unwinding a redirect-based design to get a clean menu landing would repeat work this slice already did).
+Inventing a `mode` string for the room page's hint lookup (rejected: the room page never receives the server's
+`mode` field, only config bytes, so the hint is keyed on `terrain`/`avatars`/`brushes` instead — a defensible,
+if slightly coarser, proxy).
+
+**Why.** The menu is the front door every marker and classmate actually lands on; until it can create and join a
+real room, R2's work has no visible effect for anyone who isn't reading the API directly. Deferring commit 6
+(the live preview) rather than rushing it matches the brief's own conditional wording: it needs a live
+player-count the room list doesn't return yet (an explicit R2a/R2b gap), so building it now would mean guessing
+at a number the room list will properly have once that gap closes.
+
+**Cost / consequences.** A Docker boot (not the test suite) caught a real bug before this shipped: `/game` 404'd
+on the server's static-file route, because the route only special-cased `/`, `/sandbox` and `/r/<code>`, and no
+net or spec test ever visits a page by URL — every existing test joins by raw socket with a numeric world id.
+Fixed in the same slice (`3c9d465`). This is exactly the kind of gap CLAUDE.md's "open it and look" and "treat a
+red check as authoritative" sections exist for: the full suite was green the whole time this bug was live.
+
+**Evidence.** D-145; [plan-game-modes.md](plan-game-modes.md) "The main menu (the landing page)";
+[r3-worker-report.md](research/r3-worker-report.md);
+[`2ac3023`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2ac3023)
+(routing, menu shell, the real-config `beginReplay` fix),
+[`3c9d465`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3c9d465)
+(the `/game` route fix found by the Docker boot).
+
+## 14. Creative, and the server split that would have broken its brush
+
+**Context.** Creative is the first room with both `avatars: 1` and `brushes: 1` — every earlier room had one or
+the other, never both. The sim side of that was straightforward: `cfg.paint_allowed()` (R0a) already checks
+`brushes` independently of `avatars`, so nothing in `sim/` needed to change to let an avatar-capable room also
+paint. The rest of R4 followed the same shape as every config-driven milestone since R0a: a fill-empty Paint
+flag (one bit reused in the existing frame, not a protocol bump), two already-defined but inert config helpers
+(`cfg.all_spells()`, `cfg.damage_from_players()`/`damage_from_env()`) finally wired into real sim rules, and a
+new preset.
+
+**What the worker found, and correctly didn't fix.** Booting the real server and joining a real Creative room
+(the brief's own commit 7) found that every Paint input was rejected, server-side, before the sim ever saw it.
+`server/main.ts`'s input dispatch — written in R2b, before a room's config could set `avatars` and `brushes`
+independently — treated `World.kind === WORLD_GAME` and "accepts Paint" as mutually exclusive: a game-world
+connection could only send Pos or Cast, a sandbox connection only Paint. Every sim-level test for the fill-empty
+flag, unlimited spells and damage-off passed, because none of them went through the real socket dispatch — the
+gap was invisible to everything this slice's own brief asked it to test. The worker diagnosed the exact cause
+and the exact fix, but correctly left it alone: `server/*` was outside this brief's file list, and brief
+discipline cuts both ways — a worker that oversteps its scope to "just fix it" is the same failure mode as one
+that silently papers over a gap.
+
+**The fix.** The session model reproduced the rejection directly (a standalone script joining a real Creative
+room, confirmed rejected), wrote a red-then-green regression test, then made the dispatch's game-world branch
+accept Paint when `w.cfg.brushes === 1`, falling through to the same `stampClient` path every other input kind
+already uses — a few-line change, not a redesign, exactly as diagnosed. Re-verified end to end against a fresh
+Docker container: the room's own session summary logged `"paints":"sand:1","rejected":0`. In the same pass,
+fixed `client/menu.ts`'s Creative mode card, which had a hand-duplicated `avatars: 0` config predating the real
+`CREATIVE` preset — the menu's own Creative button would have created an avatar-less room with no brush/spell
+toggle, now imports `CREATIVE` from `shared/room.ts` directly so the two can never drift apart again.
+
+**Why this is worth recording.** This is the same lesson as R3's `/game` 404 (entry 13) and the M3/M4b findings
+in entry 20, told from the opposite direction: there, an independent reviewer or a Docker boot caught a bug
+*despite* a green suite. Here, a worker's own Docker boot caught it, correctly scoped the fix as out of bounds,
+and reported it clearly enough that closing the gap took minutes, not a re-investigation. A brief's file-list
+boundary is there so one slice's worker doesn't accidentally destabilise a file another slice owns — it is not
+a reason to ship a feature whose headline mechanic doesn't work over the wire. The fix belongs to whoever is
+reviewing the slice, immediately, not to a future "fix the Paint bug" brief.
+
+**Evidence.** D-146, D-147; [plan-game-modes.md](plan-game-modes.md) "Sandspiel-style brushes (Creative)";
+[r4-worker-report.md](research/r4-worker-report.md);
+[`6ae0b66`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/6ae0b66)
+(spells and damage wired to config, the `respawn_secs` bug fix),
+[`8d473dd`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8d473dd)
+(the server dispatch fix and the menu.ts correction).
+
 ---
 
-## 11. The live site went down on 18 October
+## 15. The live site went down on 18 October
 
 **What happened.** The sandbox stopped serving. Every cold start threw
 `RangeError: Maximum call stack size exceeded` in `loadFromDb`, and Fly gave up
@@ -496,7 +762,7 @@ HTTP; fixed, 150,000 ticks loaded and HTTP 200 (D-099).
 
 **How it broke.** A cold start restores the last snapshot, then replays every
 tick logged since. The log should stay short, because each new snapshot lets the
-server drop the log before it. Snapshots had stopped for days (entry 12), so the
+server drop the log before it. Snapshots had stopped for days (entry 16), so the
 log kept growing until one ordinary restart crossed a line nobody knew was there:
 
 ```mermaid
@@ -536,14 +802,14 @@ cold-starts, and fails with the same RangeError without the fix.
 
 **What changed.** The log is appended one frame at a time. The fix went onto
 `main` first and then `multa`. Why the log had grown so long was not answered
-by D-099; entry 12 is that investigation.
+by D-099; entry 16 is that investigation.
 
 **Evidence.** D-099;
 [`2c70ceb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2c70ceb)
 (hotfix on `main`),
 [`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2).
 
-## 12. Snapshot timing, and the correction
+## 16. Snapshot timing, and the correction
 
 **What happened.** A log that should be short, because verified snapshots
 normally truncate it, had grown past 130,000 ticks. Research
@@ -595,7 +861,7 @@ The visitors-leaving explanation is inferred, because visit lengths were not log
 [`70355c5`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/70355c5),
 [`943cefc`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/943cefc).
 
-## 13. The late-join test that failed after the world cache
+## 17. The late-join test that failed after the world cache
 
 **What happened.** After caching the generated world so a join did not generate
 twice (D-088, joins went from 1170 ms to 320 to 520 ms, measured in Node wasm),
@@ -618,7 +884,7 @@ had passed two runs in three before is not established.
 [`4ad1435`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/4ad1435),
 [`5e417ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5e417ed).
 
-## 14. Liquids "stuck in staircases"
+## 18. Liquids "stuck in staircases"
 
 **What happened.** From play, a lava heap looked like a staircase on chunk edges,
 48 rows high after 100 s.
@@ -637,11 +903,15 @@ now measures that on the real sandbox through `Sim::step`. A big lava heap still
 takes minutes, partly by design. The lesson: check a diagnosis against the artifact
 the user sees.
 
+**Corrected on 5 Nov (entry 39).** The steps sat on chunk edges because cells were updated chunk by chunk, which
+gave liquid at an edge fewer moves per tick. Dispersion made the heap level faster but left the cause in place,
+and poured water still stood in walls 64 cells apart. D-191 changed the scan order.
+
 **Evidence.** D-081, D-082;
 [`f48a500`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f48a500),
 [`42e167a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/42e167a).
 
-## 15. Performance gate P1
+## 19. Performance gate P1
 
 **What happened.** The plan set a worst-case budget: step time p95 of at most
 8 ms with four players each lighting a fire and a flood. The G2 run found N1,
@@ -668,7 +938,7 @@ spell can make, and a real phone was never measured.
 [`3111461`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3111461),
 [`3c5188a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3c5188a).
 
-## 16. What independent reviews caught that tests missed
+## 20. What independent reviews caught that tests missed
 
 **What happened.** Slices that set structure were read cold by a fresh reviewer.
 Three findings show why.
@@ -702,7 +972,7 @@ from where the system ships.
 [`08b1dd7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/08b1dd7),
 [`e46c83f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e46c83f).
 
-## 17. Snapshot format 3 before any game snapshot exists
+## 21. Snapshot format 3 before any game snapshot exists
 
 **Context.** Dropped bags (M5 slice 3) add a section to the entity bytes, which
 are inside every game snapshot and the state hash. The live sandbox is the one
@@ -742,7 +1012,7 @@ untouched (D-112).
 [`b71a386`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b71a386).
 
 
-## 18. A cross-browser check that tested nothing it named
+## 22. A cross-browser check that tested nothing it named
 
 **What happened.** M5 added damage, death, respawn, Fire bolt, Bomb and dropped
 bags (D-102 to D-113). The determinism suite had a game-world test called "D2
@@ -775,7 +1045,7 @@ sim changes. Bag expiry, bag merging and lava deaths are not in it yet.
 [`94290ce`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/94290ce),
 [`5b5de22`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/5b5de22).
 
-## 19. An achievement the sim's outputs cannot express
+## 23. An achievement the sim's outputs cannot express
 
 **What happened.** Plan 10 defined "Shoved to their doom" as a kill whose last hit
 was Push or Blast. Slice b awards kill achievements from a majority claim about
@@ -818,7 +1088,7 @@ Before review S1, anonymous tabs could vote and raise the quorum, so a dozen of 
 
 **Evidence.** D-118 to D-120; commit `89988b1`.
 
-## 20. The merge rehearsal: two bugs only the real image could show
+## 24. The merge rehearsal: two bugs only the real image could show
 
 **What happened.** Before merging `multa` into `main` for crit 10, the merge was rehearsed in a scratch copy: merge locally, build the real Docker image, and boot it on data written by the build then deployed. Every test was green at the time.
 
@@ -847,3 +1117,648 @@ flowchart TD
 [`e2851ed`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e2851ed),
 [`d0d0634`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d0d0634),
 [`d9c6ed1`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d9c6ed1) (the merge).
+
+## 25. Fun before modes: juice, Dig and roomy caves
+
+**Context.** By 31 October the room system and two modes were in, but the user's own playtest found the base
+world not fun. Their list: no feedback, nothing to aim for, few materials and spells, caves too thin to walk
+through, and nothing at spawn that changes the world. Because every mode is a preset over one config (entry
+11), work on the base world pays off in every mode at once. The new modes waited, and the 2 November feature
+freeze was dropped (D-148).
+
+**Decision.** Three slices, in order, from cheapest and safest to most structural:
+
+- **Juice (D-149).** Synthesized sounds, shake scaled by distance, and a hit flash. Client only, so no
+  determinism risk.
+- **Dig (D-150).** An unlimited capsule-shaped dig on key 3. Blast stopped digging, so fighting and digging
+  stay separate buttons; the user chose this over a bigger Blast dig. Adding a seventh spell exposed a latent
+  clash: `EV_DEATH` causes were "a spell id, then 6, 7, 8 for fire, lava and gunpowder", so the environmental
+  causes moved to 32-34 first, in a commit of their own. The server's snapshot parser had its own hard-coded
+  65-byte player record. The net tests caught it, and it now derives from `NUM_SPELLS`.
+- **Roomy caves (D-151).** Wider worms and open chambers, carved on worm-path points before pruning, so they
+  are connected by construction and come before any liquid is placed.
+
+**What it costs.** A snapshot format bump (format 5) and a world reset. This is fine only because the game
+isn't live yet (entry 11, D-133). Gen time at L rose by roughly 50-130 ms, measured on a loaded machine.
+
+**Evidence.** D-148 to D-151; [`docs/research/review-f1.md`](research/review-f1.md);
+[`docs/art/shots/f1-dig-shaft.png`](art/shots/f1-dig-shaft.png) shows six Dig casts boring a shaft the
+player falls down. Commits [`9d7e2e7`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/9d7e2e7)
+(the juice review fix), [`ff099cb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ff099cb)
+(the causes), [`3f107a4`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3f107a4)
+(Dig), [`6639d78`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/6639d78) (the chambers).
+
+## 26. The canvas that shrank for a week, and two workers who blamed the browser
+
+**What happened.** R3 (25 October) moved the room page into a `#room-root` wrapper div. The page's layout
+relied on `main { flex: 1 }` filling the body's flex column, and a plain block wrapper breaks that chain. So
+on desktop the stage collapsed to its content height, and the canvas fitted itself into about 150 px: a
+postage stamp in the middle of the screen with the HUD on top of it.
+
+**Why nobody saw it.** No test measures layout. The net tests join by raw socket, and the menu test checks
+state hashes. The juice worker and the F1 worker each opened the game in `agent-browser`, saw a 267x150
+canvas, and wrote that off as "the headless canvas renders tiny". Both screenshots that were meant to show
+a feature showed nothing.
+
+**How it was found.** The session model checked Dig in the browser because neither worker had confirmed it.
+Before trusting a screenshot, it read the computed heights: `#room-root` was 208 px tall in an 800 px window.
+
+**What changed.** One CSS rule (D-152); the canvas is now 960x540 at 2x. The lesson for briefs: when a
+screenshot looks wrong, measure the layout before blaming the tool. It is the same "open it and look" gap as
+D-145's `/game` 404 and D-147's dropped Paint, but this time it got through even though someone did open it
+and look.
+
+**Evidence.** D-152; before: [`docs/art/shots/juice-dig-preview.png`](art/shots/juice-dig-preview.png);
+after: [`docs/art/shots/f1-dig-preview.png`](art/shots/f1-dig-preview.png).
+
+## 27. Six new materials, and the half of the game that didn't know about them
+
+**What happened.** F2 added Oil, Acid, Gas, Ice, Glass and Coal (D-153). Each one had an update rule, a unit
+test, a colour and sleep-invisibility coverage, and the full gate passed. The worker never walked an avatar
+into one.
+
+**What the review found.** The player's movement controller is in the client, not the sim (invariant 1:
+TypeScript predicts the local avatar, and Pos is client-authoritative). It classified materials with
+hard-coded ranges: gas was ids 10-12, liquid was Water or Lava, and everything else was solid. So the
+three new fluids were walls. A player would stand on top of an acid pool and walk into a gas cloud as if it
+were rock. No sim test could see this, because the sim has no player collision to test.
+
+**What changed (D-154).** One `MATERIAL_CLASS` table in `shared/names.ts` classifies every id, and a test
+pins each of ids 0-20 to exactly one class, so the next material fails a test until someone classifies it.
+The user decided acid should hurt (1 HP every 4 ticks, half lava's rate). The same review found that an
+acid pool was checked against the guaranteed path only at its seed cell, and that the test meant to catch
+this reused the generator's own check. Both were fixed with an independent distance test.
+
+**A correction kept visible.** The review also asked for the wall-clock work test to be replaced with a
+work count. The replacement asserts at most 64 chunks per tick on a 64-chunk grid. That holds by
+construction, so it can never fail. D-154 records that plainly rather than counting it as a regression
+guard.
+
+**Evidence.** D-153, D-154; [`docs/research/review-f2.md`](research/review-f2.md);
+[`docs/research/f2-fixes-report.md`](research/f2-fixes-report.md); commits
+[`ff52e02`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ff52e02) (the class table),
+[`25cc92b`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/25cc92b) (acid damage),
+[`cc03512`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/cc03512) (the gen margins).
+
+## 28. Rigid bodies: falling rock in a lockstep integer sim (researched, not built)
+
+> **Update, 1 Nov:** v0 was built overnight (D-165, entry 29). Cut-free islands now crumble to sand. v1 and
+> v2 stay in `FUTURE.md`.
+>
+> **Update, 5 Nov:** v0.5 merged (D-190, D-192): small cut-free islands (up to 120 cells) fall whole and cut trees
+> fall as burning Wood. The user played it and closed the line there: v1 and v2 are not planned.
+
+**Context.** On 31 October the user asked what it would take for rock that a player cuts entirely free to
+fall as a solid piece, the way it does in Noita. Noita's talk describes "destructible rigid body physics"
+alongside its falling-sand world (GDC 2019, Purho). Per a developer's summary, it gets there by tracing pixel
+islands into polygons for a float physics engine. Ours cannot copy that. Every client must step the same
+world bit for bit in lockstep, `sim/` bans floating point outright (invariant 3), and there is no server
+stepping or rollback to paper over a divergence.
+
+**A possible approach** ([`docs/research/rigid-bodies.md`](research/rigid-bodies.md)):
+
+- **Detect.** When a solid cell is removed, flood-fill its solid neighbours, with a cell cap. An island
+  that reaches the cap counts as anchored, so cutting a whole cave ceiling free does nothing rather than
+  costing unbounded work.
+- **Represent.** Lift a freed island out of the grid into a `Body` entity: a cell list plus a fixed-point
+  position and velocity. Write it back into the grid when it comes to rest. Because bodies are cell lists,
+  not polygons, the polygon pipeline is unnecessary.
+- **Simulate translation only at first.** Rotation needs fixed-point trig, inertia and impulse tuning, and
+  the research puts it at roughly ten times the work.
+
+**Why multiplayer makes it hard:**
+
+- **Sleeping.** A body must not behave differently when chunks sleep. It reuses the rule from the enemies
+  design: a body steps only inside a rectangle around active players, computed from player positions,
+  which are hashed state, never from the sleep flag (D7).
+- **Order.** Bodies colliding with each other resolve in id order, so the result is deterministic but
+  asymmetric. v1 avoids body-against-body impulses entirely.
+- **Players.** Player positions are client-predicted, so the sim cannot physically push one. The research
+  recommends that a body stop above a player, with no crushing in v1. Otherwise a body could rasterise
+  rock over a player.
+- **Snapshots.** Bodies in flight are hashed state in a variable-length section, so a late joiner gets them
+  intact, at a capped size.
+- **Cost.** Every client runs every body, so the body count, cell count and substeps are all capped.
+
+**Decision.** Nothing is built yet. The recommended ladder:
+
+- **v0:** detect a freed island and crumble it into a falling powder (about half a day, no snapshot change).
+- **v0.5:** an in-grid straight drop of small islands.
+- **v1:** the `Body` entity, translation only (about 2 days).
+- **v2:** rotation (5+ days, high risk). This one goes in `FUTURE.md`.
+
+The research rates v0 at about 60% of the visible effect for about 10% of the effort.
+
+**Evidence.** [`docs/research/rigid-bodies.md`](research/rigid-bodies.md) (its prior-art section says plainly that it
+rests on search results; the GDC page was checked, and it does not name Box2D);
+[`docs/research/enemies-design.md`](research/enemies-design.md) section 3 for the stepping rule it reuses.
+
+
+## 29. Green tests, broken features, and once a wrong alarm: what the browser caught overnight
+
+**Context.** The overnight run of 31 Oct to 1 Nov built enemies (F4, F5), review fixes and falling rock v0
+with full discipline: one worker at a time, an independent review, the full gate, then a look in a real
+browser before every push. The look caught things the gate could not.
+
+**What happened:**
+
+| Slice | Tests | Browser | What it was |
+|---|---|---|---|
+| F4 enemies | 2 net tests the worker never ran were red | n/a | real format consequences; the session model's gate caught them |
+| F4 slime | green | slime "stuck", then "sliding away" | **a false alarm by the session model**: the dev teleport drops the player about 100 rows below the slime, which was chasing the real position correctly |
+| F4 client | green | "respawning in 0 s" under a one-life banner | the dev route read a different config from the one its sim ran |
+| Falling rock v0 | green, 9 tests | a cut-free block **floated** | per-cell seeding overflowed a 32-seed queue on the stalk's own cells (review F1); the tests only ever cut single cells |
+
+**Two lessons.**
+
+- **A test exercises the case its author imagined.** Falling rock's tests freed islands one cell at a time;
+  the browser freed one with a 30-cell stroke. The review flagged the risk from the code alone; the browser
+  confirmed it, and the fix's first test is the exact browser case, shown red.
+- **The look can be wrong too.** The session model twice called the slime broken from screenshots. It was
+  settled only by measuring: the sim's player position against the camera centre showed the player really
+  was below the slime. D-162 keeps that correction visible. The F5 brief then told its worker to read
+  positions before calling movement broken.
+
+**What changed.** Briefs now ask for real-terrain tests, not just synthetic boxes (F5), and a dev hook that
+places the player at the enemy's height. The verification order holds: gate, then review, then look,
+then **measure before concluding**.
+
+**Evidence.** D-162 (the slime correction), D-165 (falling rock); `docs/art/shots/f4-slime-kills-party-fell.png`,
+`falling-rock-block-floats.png` (before), `falling-rock-crumbles.png` (after); `docs/research/review-falling-rock.md`.
+
+## 30. The boss, and a test that only looked at the world that couldn't fail
+
+**What.** F6 added the Deep Mage, its arena and the Survival win (D-167). Three choices shape later work.
+First, the arena is carved only in Survival worlds, so every other world is byte-identical and pinned by
+hashes. Second, the boss's phase, its summon counter and the win are packed into fields that already exist
+(`state` bits, `hop_until`, a `round_started` bit) rather than bumping the snapshot format. Third, a win on
+the tick the last player dies counts as a win.
+
+**The challenge.** The guarantee that every band is reachable, `traversable_to_every_band`, ran only on
+PvP cave worlds, and those never have an arena. So the one world shape the boss slice changed was the one
+the invariant test never looked at. The independent review spotted the gap from the code. The new Survival
+test, run red first, found that `repair_traversal` cut tunnels through the arena floor on 6 seeds across
+the three sizes. `reseal_floor` restores the floor unless sealing it would cut the path down.
+
+**What it costs later.** The reused fields save a format bump today, but every later slice has to know about
+them. The ready-up lobby (D-166) must clear the win bit when it resets a round. Deathmatch gets no arena. The
+balance is arithmetic only: one player holding the whole supply pile has about 1100 damage against 800 hp,
+and nobody has played that fight yet.
+
+**Evidence.** D-166, D-167; `docs/briefs/fun7-boss.md`; `docs/research/f6-worker-report.md`,
+`docs/research/review-f6.md`; `docs/art/shots/f6-arena-boss-hud.png`, `f6-phase2.png`, `f6-phase3.png`,
+`f6-victory.png`; commits `2cfc477`..`b73f7e6`.
+
+## 31. The lobby, and two bugs that only a real room at size S could show
+
+**What.** Survival now opens in a ready-up lobby (D-166, D-168). Every client must start on the same tick,
+so the ready flags and both countdowns are hashed sim state driven by a new `Ready` input. The server only
+stamps who sent it. The user's AFK rule is a strict-majority 30 s timeout. It came out of the independent
+review, which noted that one player who never readies would block the room forever.
+
+**The challenge.** The worker's two-browser look passed, yet two bugs sat right outside it (D-169). The
+worker used the default world size. When it opened a room by its `/r/<code>` link, the page was blank. It
+worked around that with a throwaway proxy and reported it, rather than hiding it. The session model then
+looked at a size-S room through `/r/` and found the second bug: the canvas drew, but with no players, no HUD
+and no lobby. A check from the first networked client (`width() > 512` means a game) had quietly turned every
+small game room into a sandbox once rooms gained sizes. Neither bug was in the lobby, and neither could fail
+any test that existed. One was in the build config and the other in a size assumption.
+
+**What changed.** A net test now loads every asset of every route from the real server. The look in this
+file's "Open it and look" rule now has to vary what the tests hold fixed: the route, the world size and the
+entry path. The size-S fix has no automated test; the screenshots are its only evidence.
+
+**Evidence.** D-166, D-168, D-169; `docs/briefs/fun8-lobby.md`; `docs/research/f6b-lobby-worker-report.md`,
+`docs/research/review-f6b.md`; `docs/art/shots/f6b-size-s-drawn-as-sandbox-before.png`,
+`f6b-size-s-countdown-bo.png`, `f6b-size-s-start-ada.png`; commits `4b9140f`..`5fc9634`.
+
+## 32. Liquids that never stopped, and walls that weren't sleeping
+
+**What.** The 3 Nov playtest showed two liquid problems. Lone drops skittered around flat ground forever,
+and water and lava stood in vertical walls on chunk edges. Liquids now have a resting state (D-172): a
+cell slides sideways only when liquid above pushes it or it sits on a body's surface. Lava lakes in quiet
+caves can sleep for the first time.
+
+**The challenge.** The obvious suspect for the walls was chunk sleeping, which would have broken the rule
+that sleeping is invisible. The worker reproduced both candidates natively first. Sleeping on and off gave
+identical grids; a front froze just past the active rectangle and moved on when the player did (D-173). So
+it isn't a bug in the sim's rules but a consequence of the 576 x 320 active region, which is a design choice
+for the user. It is still not fully closed: the walls in the screenshots look closer to the player than the
+region's edge. The same playtest also showed "frozen enemies" that looked like a desync. The server log
+showed every hash check passing and the client 91,384 ticks behind after a background tab, so it was
+catch-up, not divergence. Without the log both would have been misread.
+
+**Evidence.** D-172, D-173; `docs/playtest-2026-11-03.md` notes 3, 4 and 12; `docs/briefs/fix-a-liquids.md`;
+`docs/research/fix-a-liquids-report.md`, `docs/research/review-fix-a.md`; commits `3fbb1f3`..`7b7602b`.
+
+## 33. Waking the frozen world, and the restore that would have split it
+
+**What.** Liquid that crossed the edge of the active region froze in mid-air (entry 32, D-173). The user chose
+to let frozen chunks wake whenever something reaches them, with no cap, and to measure whether a limit is
+needed (D-176). The load test found no need for one: the worst case built, full-width water and lava on the
+largest world, costs 1.7 ms per step at p95 natively, against a 16.7 ms frame. Fire, growth and reactions now
+carry on outside the player's view, and a flood you walk away from finishes.
+
+**The challenge.** Waking made a scratch flag semantic, which is exactly where lockstep breaks quietly. The
+worker's own snapshot test passed. The independent reviewer, reading cold, found that inputs write cells
+before the active region is refreshed, and that a restored grid starts with every chunk active. So on the first
+tick after a restore, a paint outside the region woke chunks on the running client and not the joining one. The
+first regression test did not fail: the painted "water" overwrote dirt and settled within the tick. Only paint
+in open air, which stays busy, showed the split. Refreshing the region at the start of every step fixed it.
+The user also asked for a design where players share simulation work by distance. The session model reviewed
+it against lockstep and recommended against it (FUTURE.md).
+
+**Evidence.** D-176; `docs/briefs/fix-w-waking.md`; `docs/research/fix-w-waking-report.md`,
+`docs/research/wake-load-results.md`, `docs/research/review-fix-w.md`;
+`sim/tests/wake.rs` (`a_write_outside_the_region_on_the_first_tick_after_restore_matches_the_running_sim`);
+commits `8edde3c`..`76ecdbf` and the merge that follows them.
+
+## 34. One request that killed the server, which a reader could have found and none did
+
+**What.** `POST /api/rooms` with the body `null` took the whole server process down (D-187). `JSON.parse("null")`
+succeeds, and the handler then read `body.name` outside any try. It needed no token and no Origin header. It now
+gets a 400, and anonymous room creation is capped at 10 per IP tag per hour, because the same probe made 150 rooms
+with no limit.
+
+**The challenge.** The hardening run (D-185) had three cold reviewers, but they read only the diff since the 3 Nov
+playtest build, and the room-creation route wasn't in it. The security brief's code reader did read all of `server/`,
+in parallel with the prober, and its write-up doesn't name this crash either (it found the missing creation cap, not
+the `null` body). The prober's first finding was that the next `curl` got connection refused. Reading the handler
+would have caught it; one hostile request found it in minutes. The lesson: a reviewer scoped to a diff can't find a
+bug that predates the diff, and a reader looking for missing checks reads past a missing type check.
+
+**What changed.** A net test (`tests/net/sec-bodies.test.ts`) posts `null`, `true`, `0`, `[]` and `"x"` to both JSON
+routes: room creation must answer 400, registration must never answer 5xx, and the server must still be serving. The public admin
+token, spectators that never go live and the missing Origin check on the WebSocket upgrade are listed for the user,
+not changed (D-187).
+
+**Evidence.** D-185, D-187; `docs/research/sec-probe.md` (S1), `docs/research/sec-review-code.md`,
+`docs/research/review-hardening-server.md`; commit `3cf93e2`.
+
+## 35. Rooms that die when empty, and why "empty now" is the wrong test at boot
+
+**What.** Rooms used to be unloaded from memory when empty and kept forever in the database. A room someone joined
+is now deleted 2 minutes after its last member leaves, and a room nobody ever joined after 10 minutes (D-188).
+Deletion is one transaction over five tables. Player stats and achievements stay, and the fixed worlds never die.
+
+**The challenge.** The obvious test is "has this room got no members right now?", run at boot. Every room has none
+at boot, so a restart would have deleted every room, including one made 30 s earlier. The worker judged by stored
+times instead. `rooms.first_joined_at` is a new column, backfilled from the tick log and snapshots, and
+`last_active` is stamped on join, on leave and once a minute while occupied. One sweep runs at boot and every
+minute. The cost is that `last_active` can be a minute stale, which only matters if the server dies mid-session.
+Both delete paths go through `deleteRoom`, which refuses while a load is in flight or a member exists, so a join
+that wins the race keeps the room.
+
+**What changed.** Seven net tests were shown red against the old server first. One old test changed meaning: an
+emptied room used to reload fresh and is now unknown.
+
+**Evidence.** D-188; `docs/research/n1-report.md`; `tests/net/room-lifecycle.test.ts`; commits `4a361ff`, `d93730e`.
+
+## 36. The renderer that guessed what kind of world it was drawing
+
+**What.** The N3 skies were drawn over open air. The renderer decided "game world" from a height above 512. Since
+rooms gained sizes (entry 31), a size-S cave room is sandbox-sized, so every cave filled with sky, and small cave
+rooms had no depth tint either. The renderer is now told the terrain (`setWorld(w, h, caves)`) (D-189).
+
+**The challenge.** This is the entry 31 bug again: a size assumption standing in for a fact the server knew. Both
+workers had looked only at size-L dev worlds, and each passed its own check. The session model found it by
+opening a size-S Survival room in two browsers after merging both branches. The cause was the merge, not either
+branch: no single worker had a size-S cave room open. The HANDOVER lesson, to vary the size, had not been written
+into the briefs.
+
+**What changed.** The party-fell depth line now reads "The party reached N m down". The screenshots are the only
+evidence, as in entry 31.
+
+**Evidence.** D-189; `docs/research/n3-report.md` is the sky worker's report; commits `2ba5478` (the merge),
+`28aaae9` (the fix).
+
+## 37. The scripted boss win that could not win, and what the numbers said about balance
+
+**What.** The soak script `pnpm soak:boss-win` drives two real browsers through a Survival boss fight. It needed a
+dev-only teleport (`SIMULTA_DEV_TELEPORT`) that is refused under `NODE_ENV=production` and on Fly (D-186). It never
+wins. Both players die in 3 to 11 s with the boss at 300 to 800 of 800 hp, across about twelve runs and several
+tunings.
+
+**The challenge.** A bot that cannot win could just be a bad bot. The second worker built a damage-cause readout
+and a dodging bot, which cut the players' own-Bomb damage to near zero, and still lost. The measured reason is
+ammunition. The supply pile holds 4 Fire and 2 Bomb pickups, and 40 Fire charges at perfect aim are exactly 800 hp.
+So no real player can win from the pile alone, and the script found a balance problem, not a script problem. The
+report says plainly that it did not win and does not claim a Victory. `BOSS_HP` is unchanged, because the choice
+(more pickups, about 600 hp, or ammunition from the level) is the user's after playing. The readout `__evLog` was
+at first exposed in production builds, and was then gated on the teleport flag.
+
+**Evidence.** D-186; `docs/research/hb-boss-win.md`; `tests/net/dev-teleport.test.ts`; commits `a681bc8`,
+`65717ca`, `7f79246`, `9e6f940`.
+
+## 38. What "a 30-minute session" measured, and the first run that was wrong
+
+**What.** Entry 33 left open whether woken chunks need a cap. The review asked for a 30-minute session with a flood
+every 2 minutes (D-176). `wake_load` scenario 6 shows woken chunks plateauing near 100 of 1536, with steady p95 of
+about 4.4 ms natively, right on the 4 ms line that was set for revisiting the question.
+
+**The challenge.** "30 minutes" is 108,000 simulated ticks, run natively in about 5 minutes of wall-clock time,
+with one scripted player and no browser. The brief did not say so, and the commit that added the scenario said it
+plainly afterwards (`3ac67c8`). Run 1 shared the machine with a worker's builds and showed 10 to 23 ms at minutes
+21 to 26, so it was committed as provisional (`b609005`). A quiet rerun replaced it (`cff4375`). Both tables stay in
+the file, with the loaded one labelled. The result is also not a verdict. At the 2x wasm ratio 4.4 ms is about 9 ms
+in a browser, and a phone at 4x throttle would be at or over the frame budget. Whether to act is the user's call.
+
+**Evidence.** D-176; `docs/research/wake-load-results.md`; commits `b609005`, `3ac67c8`, `cff4375`.
+
+## 39. The water walls were the scan order, not sleeping
+
+**What.** After the liquid fixes (entries 32 and 33), the user's screenshot on 5 Nov still showed water poured
+from one point standing in walls 64 cells apart, "only slowly spilling over". The cells had been updated chunk
+by chunk: all 64 rows of one chunk, then the next. They are now updated row by row across a whole band of chunks,
+so with every chunk awake the pass is a plain raster scan (D-191, plan 6.2 amended).
+
+**The challenge.** Entry 18 met the same steps in October and treated them as slow settling; entry 32 found
+walls that were the active region. Every earlier explanation for a liquid wall had been sleeping, the active region
+or settling speed, so the
+first step was to rule them out rather than add another patch. The sandbox keeps every chunk active, and a probe
+with sleeping on and off gave identical grids, so neither was the cause. Measured in cells, the wall edges in the
+screenshot sat at x ≈ 453, 386 and 322, just past the chunk edges at 448, 384 and 320. A temporary raster-order
+switch in the same probe levelled the pour smoothly. With chunk-major order, liquid at a chunk edge got fewer
+moves per tick than liquid inside a chunk, so it piled up in a 22-row step that took about 3000 ticks to level.
+The existing `water_levels_out` test only looked at tick 6000, after the step had gone. The new test measures the
+surface while the water spreads: a 54-row step before the fix, within 6 after it.
+
+Interleaving rows makes sleeping harder to keep invisible, because a sleeping chunk can now be woken halfway
+through its band. It joins at its next row and stays awake for the following tick. The rows it skipped came
+earlier in the scan than the change that woke it, so they saw an unchanged neighbourhood and would have done
+nothing. A band with nothing running is skipped whole, since only its own cells run during its pass. The change
+moves results everywhere, so the golden snapshot and the `perf_equiv` trace were re-recorded on purpose. One wake
+test then failed for a new reason: water now arrived about 1500 ticks sooner and drowned the stem it was meant to
+water. My first repair (raising the seed) passed, but the cold reviewer found the test had never tested waking: it
+built its scene after freezing the region, and every `set` wakes the chunk it lands in, so the volatile seed held its
+chunk awake from tick 0. The test now re-freezes after building, asserts the seed's chunk stays frozen until water
+crosses, and was shown red twice: with no water, and with `wake` stubbed to never wake a frozen chunk.
+
+**Later (9 Nov): lava never got the alternation.** The row direction alternates with tick parity, but lava moved
+only on even ticks, so every lava move scanned left to right. A cell sliding right lands ahead of the scan and is
+skipped by `moved` for the rest of the tick, while one sliding left lands behind it, so a body drained left far more
+readily than right: the user's screenshot showed a heap standing 46 rows high against the left wall while its mirror
+against the right wall levelled to 1. Lava now moves when `tick & 2 == 0`: still half the ticks, in pairs, so
+under both directions (D-233). Snow also moves on even ticks only, but it only falls into the row below, which the
+bottom-up scan has already passed; a probe pile came out symmetric, so it was left alone.
+
+**Evidence.** D-191, D-233; `sim/src/grid.rs` (`step_cells`, `poured_water_spreads_without_walls_on_chunk_edges`,
+`lava_levels_the_same_from_either_wall`); `sim/tests/wake.rs`; `docs/research/review-scan-order.md`.
+
+## 40. The gate: how a lockstep game is tested, and what the tests kept missing
+
+**Context.** In lockstep, a bug that changes one cell on one client is not a glitch: the clients' hashes disagree
+and the room splits. So the question for every change to `sim/`, the protocol or the input path is whether every
+client in every engine still computes the same thing, and whether the test of it could have failed.
+
+**Decision.** Before any such commit, the session model runs five steps, chained with `&&` so that a red step
+stops everything after it, the commit included:
+
+1. `cargo test --release`: 41 Rust test binaries over the sim, natively. Rules, invariants and pinned
+   results (the golden snapshot, a scripted Survival hash, the `perf_equiv` trace).
+2. `cargo clippy` for wasm32 with `-D warnings`: the static half of D11. No floating point, no `HashMap`, no clocks.
+3. `pnpm typecheck`.
+4. `pnpm test:determinism`: builds `sim.wasm` and a canary build. It runs the same scripts in Node, Chromium,
+   Firefox and WebKit and against native Rust, and checks that `sim.wasm` imports nothing (D1-D3, D5-D7, D10, D11,
+   entry 7).
+5. `pnpm test:net`: 399 tests that boot real servers and connect real WebSocket clients. They cover joins,
+   snapshots, rejoin, catch-up, claims, rooms and security.
+
+`pnpm check`, which CI runs against the real Docker image, is the fast subset. Determinism and net stay outside it
+because they need browsers, cargo and minutes (D-019). They run on the session model's machine, and CI only runs
+once the repo is public. Slower soaks (`soak:n1`, `soak:capacity`) are run by hand before a deploy.
+
+**Why these layers.** Each one exists because a cheaper one could not see a class of bug.
+- **Native and wasm comparison (D3)** catches target-dependent code such as `usize` (invariant 7).
+- **Four engines (D2)** catch engine-dependent behaviour.
+- **The canary (D10)** is a build that must fail D2, which proves the harness can see nondeterminism at all.
+- **Sleep on/off (D7)** proves an optimisation is invisible (entry 8).
+- **Pinned hashes** make any change in results a decision someone has to re-record on purpose, with the scenarios
+  that moved listed in the commit (D-191 moved all but `survival_l`).
+- **The net suite** tests the server: a mismatch there is a protocol or playout bug, not a sim bug.
+
+**What the gate has missed, and the rules that came from it.** Most of this project's process rules began as a
+green gate that was wrong.
+- **Agreement is not coverage.** "D2 with casts" passed in four engines while no cast ever succeeded (entry 22).
+  Tests now assert what happened before they trust agreement.
+- **A regression test must be shown red first,** against the real failure. A restore test that painted water into
+  dirt passed on the buggy code (entry 33). On 5 Nov a wake test woke its own chunk in setup and could not fail
+  (entry 39).
+- **The exit code is the gate.** A merge was committed on a red run because the commit followed the test with `;`
+  (`d24bf69`). A later gate piped `cargo test` into `grep`, which exits 0 whatever the tests do. Each step now
+  writes to a log and the steps are chained with `&&`.
+- **Intermittent means a race until shown otherwise.** `first_blood` failed about one run in three. Its "far enough"
+  assumption was 15 cells short (D-179). Another test compared two independent clocks' tick numbers.
+- **Load makes the gate lie both ways.** On 4 Nov eleven parallel agents pushed the load average to about 575.
+  Gates timed out, and quiet reruns then found two real bugs the noise had hidden. Workers also committed on red or
+  skipped `test:net`. So the session model reruns every gate itself, with one or two workers at a time.
+- **Green is not working.** Every test passed while size-S rooms drew as sandboxes and `/r/` links were blank
+  (entry 29). Cold reviews found a buffer overrun and a restore desync that every test passed over (entries 20 and
+  33). A change is finished after the gate, a cold review for anything structural, and a look in two browsers.
+
+**Cost / consequences.** About 8 to 15 minutes per run (determinism 414 s and net 334 s on 5 Nov, at a load
+average near 30), against 50 s for the October suite. One fix often needs two runs: the reviewer's findings change
+the tests, and the commit must rest on a run of the code it contains.
+
+**Still owed.** D4, the run on an ARM device, was never closed (D-015, D-020). Every engine comparison has been on
+one x86-64 Mac.
+
+**Evidence.** Plan section 12; D-015, D-019, D-020, D-114, D-179, D-191; entries 7, 8, 20, 22, 29, 33 and 39;
+`package.json` (`test:determinism`, `test:net`, `check`); `.github/workflows/checks.yml`;
+[`d24bf69`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d24bf69).
+
+## 41. Biomes on a $50 budget, and the mine that floated
+
+**What.** The user asked for small biomes (lava lakes, the surface, ice caves, a moss grotto, an old mine, and the
+agent's own ideas) on a hard $50 cap, run by an Opus lead allowed Sonnet and Haiku workers. Built: lava lakes, ice
+caves with client-side sliding, Brick, Moss and Mushroom, the grotto and the mine (D-193 to D-200, format 14). Cut:
+the surface and tame animals (D-199). Biomes are *sites* placed on the guaranteed cave path after the boss arena and
+before traversal repair, so the generator's two hard guarantees (a walkable path down, an intact arena) and their
+tests did not change.
+
+**The challenge.** The cap had to live in the brief, because nothing in the tooling enforces one: the lead read the
+week's spend at the start (B0 = $30.46), re-read it after every worker, stopped dispatching at B0 + $42 and finished
+at B0 + $40.85, using 3 of its 6 allowed workers, one at a time. Two of the three workers stopped at their tool caps
+with work unfinished, and the lead finished it. The first mine floated: grotto and mine halls lost their flattened
+floor because that floor had sealed off the boss arena, and the beams and rooms were built on a floor row that was
+often open air. The lead said so plainly in its report and left an untested draft fix. The user chose to fix it
+first; a Sonnet worker wrote a test that failed on the floating mine ("beam at x 160 rows 281..294 hangs over 14"),
+then placed beams and rooms only where the ground is found column by column. Its choice, to place nothing rather
+than float over a lake floor, leaves the mine sparse (about 1 in 4 halls gets a room).
+
+Merging cost two gate runs. The pinned results all passed unchanged, but the M5 determinism script plays in a
+generated cave world, so its bombs moved to new ticks and two coverage guards failed. No engine disagreed. A probe
+of the new timeline re-aimed the snapshot cuts, and the bomb check now asks for *any* cut with a bomb in flight so
+the next generation change does not break it again. The same happened hours earlier for the gunpowder damage change.
+
+**Evidence.** D-193 to D-200; `docs/biomes-plan.md`; `docs/research/biomes-report.md`,
+`docs/research/biomes-mine-fix-report.md`; `docs/art/shots/biomes/`; `sim/tests/biomes.rs`,
+`tests/determinism/m5-state.test.ts`; commits `a4b54e3` (plan), `3cf4c33` (mine fix), `5b004e7` (merge).
+
+**Correction (6 Nov, later the same day).** "Sparse" understated it. The user played several Survival rooms and saw
+ice caves, lava lakes and mushrooms but no wood at all. A probe over seeds 1-32 found every medium world had a mine
+site, but only 1 in 32 placed any beam (4 in 32 at L, none at S). The mine-fix test proved beams never *float*; no
+test asked that any *exist*, and a mine that places nothing passes it. The floor model still assumed the bowl that
+D-198 removed: `find_floor` reached only `ry + 24` rows from the hall centre, accepted only Rock, Dirt, Sand and
+Bedrock as ground, and dropped any floor more than `ry/2 + 14` below the centre, so about 40% of hall columns found
+no floor and a beam's 18-column level check rejected most of the rest. A Sonnet worker (D-203) wrote a frequency
+test, red on multa (1 and 4 worlds in 32 with two or more standing beams), gave beams a deep floor scan and a
+narrower level check, and kept the room model unchanged so the room tests held. After: 25 in 32 at M, 32 in 32 at L.
+**Lesson:** a "never wrong" invariant needs a "sometimes right" partner, or doing nothing satisfies it.
+`docs/research/mine-wood-report.md`, `sim/tests/mine_wood.rs`, commits `87bc272` (red test), `46eccaa` (fix).
+
+## 42. Three stale branches in an afternoon, and the second boss
+
+**What.** On 6 Nov the user asked to integrate three experiment branches that had sat since a 5 Nov parallel run:
+`x-enemies` (two enemies), `x-boss` (the Sand Colossus) and `x-spells`. They were 51-55 commits behind, predated the
+water-wall scan order (D-191) and format 14, and two of three had never had a green gate. Each went to one Sonnet
+worker at a time in its own worktree, with a dollar cap in the brief, then a gate run by the session model and a cold
+Sonnet review before merging. The user chose the Colossus's placement: **one boss per world, picked from the seed**
+(D-205), not by size as the branch had it.
+
+**The challenge.** The branches collided with work done since. `x-enemies`' random salts 258-261 were taken by the
+biome picker; its enemies had to move to biome sites (D-204); a net test used kind 5 as its "unknown kind", and 5
+became the wisp. `x-boss` stored the Colossus's hp in a field format 12 had stopped overloading, so it got a real one
+(format 15), and its re-form pass could revive a body at 0 hp, so a killing blow sometimes did not win: a test failed
+on the first tick phase before the fix. The cold reviews found what no test held. A large Survival world now generates
+exactly 64 enemies, the decoder's limit, so the boss slice carried a guard test that every generated world round-trips.
+And every check outside the sim still meant "kind 4": a Colossus kill counted for nobody's boss stat and granted
+"Deep Mage slain" (D-206, shown red first: `expected undefined to be 1`).
+
+**The spells branch** was marked red for breaking invariant 8, and it hadn't: its sleep test wrote cells into the
+grid after the only chunk mark, so even plain Sand diverged (D-207). The real break was elsewhere, and only the cold
+review found it: Snow packs by reading three cells up while a write wakes chunks one cell away (D-208). The first
+test for it passed on the buggy code, because falling snow passes the chunk's edge row and wakes it; a trace showed
+the stack forming and packing identically in both modes. Only snow *painted* directly into place reached the gap.
+The test now does that, and failed before the one-line fix.
+
+**Lesson.** A new kind is a sim change plus every place that names the old kinds. The sim's `is_boss` was right; the
+server and client each had their own idea of "the boss". Grep the constant, not just the function.
+
+**Evidence.** D-204 to D-206; `docs/research/int-enemies-report.md`, `int-boss-report.md`,
+`review-int-enemies.md`, `review-int-boss.md`; `sim/tests/boss_choice.rs`, `sim/tests/colossus.rs`,
+`tests/net/claims-events.test.ts`.
+
+## 43. The menu's mobs are real because the menu plays
+
+**What.** The user asked for a pixel-art menu with a New game / Join game flow, a "players live" stat, a rolling death
+log, and a backdrop landscape with "lots of little element interactions" and "mobs jumping and flying around". An Opus
+lead ran it on a $35 cap with three Sonnet workers, one at a time ($22.95 spent), on a brief written by the session
+model (`docs/briefs/menu-redesign.md`).
+
+**The challenge.** Enemies exist only as sim entities placed by generation, and they step only within 448 x 256 cells
+of an active, living player; chunks update only within 576 x 320 (`stepping_set`, `refresh_active`). A backdrop that is
+only a camera shows a frozen world. The options were a menu-only input to spawn enemies (an ABI change, against the
+"integers in, nothing new without sign-off" rule), client-drawn sprites (pictures pretending to be sim state), or
+making the menu *play*: the backdrop joins one local explorer and moves it with the game's own avatar controller, so
+the sim's own rules wake the slimes, imps, wisps and frost sprites around it, while `damage 0` keeps it alive.
+Invariant 9 (outputs never feed back as inputs) held by choosing the seed and three camera windows offline
+(`tools/menu-vignettes.ts`), never from live entity positions at runtime; a guard test fails if a generator change
+empties those windows. The lead also found, by diffing two screenshots five seconds apart, that reduced motion never
+froze the backdrop (an off-by-one), which no test had held.
+
+**Cost.** Each world restart costs 100-330 ms of generation every ~75 s, and throttled phone rendering reached 167 ms
+frames: drawing, not the sim. A real phone is still owed a look.
+
+**Evidence.** D-210; `docs/research/menu-redesign-report.md` and `menu-w{1,2,3}-report.md`;
+`tests/net/menu-live-api.test.ts`, `menu-router.test.ts`, `menu-backdrop.test.ts`; commits `9da7eea`, `0689cd6`,
+`20d93a0`, `2b8d9bd`.
+
+## 44. Making the world feel alive without new simulation rules
+
+**What.** The user asked for more green and non-hostile mobs on a $30 cap. An Opus lead investigated, ran two Sonnet
+workers and spent about $22 (`docs/briefs/world-life.md`, `docs/research/world-life-report.md`).
+
+**The challenge.** Every new cell rule must keep chunk sleeping invisible (the snow-packing break of D-208 was the
+day before), and every new enemy kind touches nine mirrors and a full budget (a large Survival world already
+generates exactly the decoder's 64 enemies). So the lead took the cheapest honest route. Generation places leaves and
+flowers using cells that already exist and never act (`STEM` with aux 0, `FLOWER`): more of the world, no new rule.
+Everything that moves (grass sway, falling leaves, butterflies, fireflies, drips) is drawn by the client from the
+grid and never read back, so it cannot desync. The one real creature, a fleeing rabbit, was designed and briefed but
+cut when the cap came close. A generator test that measured "surface" as the first non-Empty cell went red on the
+bigger crowns, a real change rather than a mutation, and now measures terrain past leaves with its limit unchanged.
+
+**Evidence.** D-212; commits `c4b0f48` (greenery, format 17), `e7a2a24` (tuning), `2befe42` (grass), `fec8513`
+(ambient); `sim/tests/greenery.rs`, `tests/net/ambient.test.ts`.
+
+## 45. A surface you can read, and what only a screenshot saw
+
+**What.** Overnight 8-9 Nov the user asked for surface structures, "old houses or wells". Track B's Opus lead built
+them as generation-only content (D-216): no new sim rule, no enemy budget, held to the old mine's rule that nothing
+floats (D-200). That rule is why a house has one door: two 12-row doors leave nothing to hold a roof up in a side view,
+and the worker's first version, an unsupported arch, was sent back with a test that failed on it ("house at 44 has a
+floating cell at 77,49").
+
+**The challenge.** 473 sim tests passed while every house's inside and the air over every well drew as dark cave wall:
+the background's ground line (D-211) counted a ruin's Brick as terrain. Only the lead's screenshots showed it, and a
+background test now pins it. The same track found that eight salts had been declared twice since the spells
+integration (D-217), which that slice's worker and its cold review both missed: a new test checks salts from here on.
+
+**Later (9 Nov): the rim rule itself drew walls in the sky.** The user's screenshot showed a flat block of cave wall
+standing in the air beside a hill at a cave mouth. The shaft rule (D-202) took each side's rim as the *highest* ground
+within 64 columns, and closed only columns more than 12 rows below it, so the wall always ended in a vertical edge
+over open funnel cells up to 12 rows lower, and its top followed the nearest hill rather than the mouth's lip. Probed
+over 31 generated worlds, 183 of 190 closed spans had such a step. The rim is now the highest row at which the open
+run around a column is still shaft-narrow (40 columns), and the whole run is closed there, so the wall meets the
+terrain at both ends (0 steps, every one of the 801 deep shaft columns still closed); a wider dip is a valley and
+shows sky (D-234).
+
+**Evidence.** D-216, D-217, D-234; `docs/research/content-report.md`, `review-content.md`; `sim/tests/structures.rs`;
+`tests/net/background.test.ts`; commits `b8217d9`, `d385ea7`, `73e4550`, `c34acbf`.
+
+## 46. An outside reader's review, and who gets to decide the truth
+
+**What.** On 8 Nov the user asked for an independent Opus review that read **the code only**: no README, no plans, no
+decision log. It found 2 high, 7 medium and 12 low issues (`docs/research/code-review-2026-11-08.md`); a second Opus
+lead fixed the six that mattered with tests shown red first, a full gate and its own cold review (D-221 to D-224).
+
+**The challenge.** The worst finding was in the trust model this project is built on. Lockstep clients report state
+hashes, the server takes the majority as the truth, and a client that disagrees is resynced. Claims (deaths, kills,
+round ends) had been counted once per registered visitor since D-120, but hashes were counted once per **socket**:
+three spectator tabs could outvote the players, get every honest player resynced until kicked, and become the source
+of the stored snapshot that every later joiner restores. Nothing in the project's own docs framed it that way, which
+is probably why a reader who never saw them found it. The fix makes the rule explicit in one place (`World.voterKey`):
+players set the truth, everyone else is checked against it. The same review found a one-line sleep-cache bug
+(`update_ice`) that the project's own invariant tests had missed for two days; its invariant test now covers the class.
+
+**Evidence.** D-221 to D-224; `docs/research/code-review-2026-11-08.md`, `review-fixes-report.md`,
+`review-review-fixes.md`; `tests/net/hash-votes.test.ts`, `sim/tests/hash_cache.rs`, `sim/tests/paint_bound.rs`.
+
+## 47. A world that persists because someone owns it
+
+**What.** The marking criteria ask for state that persists. Simulta's game modes deliberately don't: a Survival or
+Deathmatch room belongs to nobody and is deleted two minutes after it empties (D-188). On 8 Nov the user asked for the
+opposite on purpose: a sandbox world that belongs to one player, keeps everything painted in it, can be shared by link,
+and lasts until its owner deletes it (D-225). An Opus lead built it for $24 of a $40 cap.
+
+**The challenge.** Persistence was mostly already there (every world's snapshots and tick log live in SQLite and reload
+after a restart, D-004); what was missing was a reason for a room *not* to be deleted, and a person entitled to delete
+it. Ownership is one column (`owner_player_id`, one per player by a unique index); the sweep, the public list and
+eviction each skip owned rooms, and the delete route is the only path that removes one, behind the owner's token. The
+cold review found that the first way of keeping owners from eviction (stamping a join time) hid a foreign-key crash and
+let a script pin registrations without limit; the fix skips owners outright and caps owned worlds at 200.
+
+**Evidence.** D-225; `docs/research/owned-sandbox-report.md`, `review-owned-sandbox.md`;
+`tests/net/owned-sandbox.test.ts` (8 tests, red without the server change; restart-a-day-later keeps the state hash).
+
+## 48. Warm verifies: necessary, not sufficient
+
+**What.** The 7 Nov capacity run (D-213) found that at Fly's sustained CPU quota no snapshot was ever accepted: every
+room has its own random seed, the one verify worker caches one generated world, so each verify regenerated it (6-18 s
+at M, 35-50 s at L, against a 10 s timeout). The fix (D-228) gives each occupied cave room its own verify worker,
+prewarmed at the first join, under a memory budget, terminated when the room unloads.
+
+**The challenge.** The obvious design, a map of sim instances in one worker, was measured and rejected: dropped wasm
+instances were not reclaimed (RSS 159 to 408 MB after five L replacements), so eviction would free nothing. The first
+session stopped at its cap with three red tests; the second found one was a test's fixed 120 s warm-up bound, one an
+assertion that the verify must be *slow* (it now wasn't), and one unrelated (a rate-limit window that drops a burst
+under load, on `multa` too). The cold review found that join/leave churn regenerated worlds on demand (now a 60 s
+linger), that a bar against regeneration loops was lifted by every last leave (now a 5-minute bar), and, checked against
+the sim, that box-terrain worlds have no cached base at all, so lanes are caves-only.
+
+**The result, honestly.** Rooms held at the quota went from 0 to 1, and verify rejections from 8-25 per run to 0. Two
+rooms still don't hold: the quota is CPU-bound, so warm verifies were necessary rather than sufficient. The showcase
+runs on burst credit (D-213: 24-32 members for 30-65 minutes on a full balance).
+
+**Evidence.** D-213, D-228; `docs/research/warm-verify-report.md`, `review-warm-verify.md`,
+`capacity-2026-11-08-warm-notes.md`; `tests/net/warm-verify.test.ts`; commits `68fb313`, `3c5cecd`, merge `ba65844`.

@@ -6,6 +6,7 @@ export const KIND_LEAVE = 2;
 export const KIND_POS = 3;
 export const KIND_CAST = 4;
 export const KIND_PAINT = 5;
+export const KIND_READY = 6;
 
 function make(len: number, kind: number, player: number): { b: Uint8Array; v: DataView } {
   const b = new Uint8Array(len);
@@ -41,6 +42,17 @@ export function encodeCast(player: number, spell: number, angle: number, castSeq
   return b;
 }
 
+/** F6b: toggle the lobby ready flag (0 or 1). The server stamps `player`. */
+export function encodeReady(player: number, ready: number): Uint8Array {
+  const { b, v } = make(6, KIND_READY, player);
+  v.setUint8(5, ready);
+  return b;
+}
+
+/** Bit 7 of the Paint input's `mat` byte: "fill empty only" (ids 0-20 sit below it, in the low 7 bits). Matches
+ * `sim/src/input.rs`'s `FILL_EMPTY_BIT`. */
+export const FILL_EMPTY_BIT = 0x80;
+
 export function encodePaint(
   player: number,
   mat: number,
@@ -49,9 +61,10 @@ export function encodePaint(
   x1: number,
   y1: number,
   radius: number,
+  fillEmpty = false,
 ): Uint8Array {
   const { b, v } = make(15, KIND_PAINT, player);
-  v.setUint8(5, mat);
+  v.setUint8(5, mat | (fillEmpty ? FILL_EMPTY_BIT : 0));
   v.setInt16(6, x0, true);
   v.setInt16(8, y0, true);
   v.setInt16(10, x1, true);

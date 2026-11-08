@@ -365,7 +365,8 @@ async function main(): Promise<void> {
       page.on("console", (m) => {
         if (m.type() === "error") errors.push(`client ${i} console.error: ${m.text()}`);
       });
-      await page.goto(`http://127.0.0.1:${proxies[i].port}/`);
+      // `/` is the menu since R3 (25 Oct); the fixed game world is `/game`, whose room page has the #joinForm prompt.
+      await page.goto(`http://127.0.0.1:${proxies[i].port}/game`);
       await page.fill("#name", `bot${i}`);
       await page.locator("#joinForm button").click();
     }

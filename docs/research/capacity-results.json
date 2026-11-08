@@ -1,0 +1,927 @@
+{
+ "cpus1": {
+  "cpus": "1",
+  "startedAt": "2026-10-21T10:18:04.475Z",
+  "holdS": 60,
+  "steps": [
+   {
+    "target": 0,
+    "joinedAll": true,
+    "online": [
+     0,
+     0
+    ],
+    "windowS": 45.06,
+    "rssMbMean": 104,
+    "rssMbMax": 104,
+    "rssMbLast": 104,
+    "cgroupMemMbNow": 49.09,
+    "cgroupMemMbPeakCumulative": 50.69,
+    "lagP99MsMax": 45.02,
+    "lagP99MsLast": 38.73,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 6.71,
+    "httpRttMsP99": 74.64,
+    "containerCpuCores": 0.05,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 0,
+      "closedTicksPerSec": 0,
+      "summaryTicksPerSecMin": 0,
+      "summaryTicksPerSecMean": 0,
+      "outBytesPerMemberPerSec": 0,
+      "outFramesPerMemberPerSec": 0,
+      "snapshotsAcceptedDelta": 0,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 0,
+      "lastVerifyMs": 0,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 0,
+      "closedTicksPerSec": 0,
+      "summaryTicksPerSecMin": 0,
+      "summaryTicksPerSecMean": 0,
+      "outBytesPerMemberPerSec": 0,
+      "outFramesPerMemberPerSec": 0,
+      "snapshotsAcceptedDelta": 0,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 0,
+      "lastVerifyMs": 0,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [],
+    "rssAtWorld0Accepts": [],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 4,
+    "botUploads": 0,
+    "dockerStats": "48.82MiB / 256MiB cpu=1.72%"
+   },
+   {
+    "target": 8,
+    "joinedAll": true,
+    "online": [
+     4,
+     4
+    ],
+    "windowS": 45.22,
+    "rssMbMean": 141.75,
+    "rssMbMax": 160,
+    "rssMbLast": 160,
+    "cgroupMemMbNow": 108,
+    "cgroupMemMbPeakCumulative": 108.49,
+    "lagP99MsMax": 29.66,
+    "lagP99MsLast": 28.66,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 4.62,
+    "httpRttMsP99": 45.47,
+    "containerCpuCores": 0.16,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 4,
+      "closedTicksPerSec": 59.99,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 60,
+      "outBytesPerMemberPerSec": 1629,
+      "outFramesPerMemberPerSec": 60.02,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 10055,
+      "lastVerifyMs": 16,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 4,
+      "closedTicksPerSec": 59.99,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 60,
+      "outBytesPerMemberPerSec": 2546,
+      "outFramesPerMemberPerSec": 60.24,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 667,
+      "lastVerifyMs": 584,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     154,
+     160
+    ],
+    "rssAtWorld0Accepts": [
+     135,
+     156
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 5,
+    "botUploads": 4,
+    "dockerStats": "107.8MiB / 256MiB cpu=10.12%"
+   },
+   {
+    "target": 16,
+    "joinedAll": true,
+    "online": [
+     8,
+     8
+    ],
+    "windowS": 45.12,
+    "rssMbMean": 166.47,
+    "rssMbMax": 171,
+    "rssMbLast": 171,
+    "cgroupMemMbNow": 119.32,
+    "cgroupMemMbPeakCumulative": 120.42,
+    "lagP99MsMax": 34.93,
+    "lagP99MsLast": 27.57,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 4.78,
+    "httpRttMsP99": 24.24,
+    "containerCpuCores": 0.19,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 8,
+      "closedTicksPerSec": 60,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 59.99,
+      "outBytesPerMemberPerSec": 3030,
+      "outFramesPerMemberPerSec": 60.57,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 9965,
+      "lastVerifyMs": 5,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 8,
+      "closedTicksPerSec": 60,
+      "summaryTicksPerSecMin": 59.6,
+      "summaryTicksPerSecMean": 60,
+      "outBytesPerMemberPerSec": 4679,
+      "outFramesPerMemberPerSec": 60.37,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 702,
+      "lastVerifyMs": 914,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     164,
+     170
+    ],
+    "rssAtWorld0Accepts": [
+     163,
+     167
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 2,
+    "botUploads": 8,
+    "dockerStats": "119.5MiB / 256MiB cpu=16.31%"
+   },
+   {
+    "target": 32,
+    "joinedAll": true,
+    "online": [
+     16,
+     16
+    ],
+    "windowS": 45.04,
+    "rssMbMean": 174.26,
+    "rssMbMax": 179,
+    "rssMbLast": 180,
+    "cgroupMemMbNow": 129.82,
+    "cgroupMemMbPeakCumulative": 130.88,
+    "lagP99MsMax": 45.71,
+    "lagP99MsLast": 35.45,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 6.16,
+    "httpRttMsP99": 47.85,
+    "containerCpuCores": 0.28,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 16,
+      "closedTicksPerSec": 59.99,
+      "summaryTicksPerSecMin": 59.8,
+      "summaryTicksPerSecMean": 59.99,
+      "outBytesPerMemberPerSec": 3214,
+      "outFramesPerMemberPerSec": 60.45,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 10369,
+      "lastVerifyMs": 11,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 16,
+      "closedTicksPerSec": 59.99,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 59.99,
+      "outBytesPerMemberPerSec": 8760,
+      "outFramesPerMemberPerSec": 60.57,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 1846,
+      "lastVerifyMs": 1955,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     179
+    ],
+    "rssAtWorld0Accepts": [
+     171
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 269,
+    "botUploads": 12,
+    "dockerStats": "129.8MiB / 256MiB cpu=24.42%"
+   },
+   {
+    "target": 48,
+    "joinedAll": true,
+    "online": [
+     24,
+     24
+    ],
+    "windowS": 45.24,
+    "rssMbMean": 196.1,
+    "rssMbMax": 198,
+    "rssMbLast": 196,
+    "cgroupMemMbNow": 147.61,
+    "cgroupMemMbPeakCumulative": 150.24,
+    "lagP99MsMax": 47.28,
+    "lagP99MsLast": 45.42,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 7.04,
+    "httpRttMsP99": 167.46,
+    "containerCpuCores": 0.41,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 24,
+      "closedTicksPerSec": 60.01,
+      "summaryTicksPerSecMin": 59.5,
+      "summaryTicksPerSecMean": 60.28,
+      "outBytesPerMemberPerSec": 860,
+      "outFramesPerMemberPerSec": 61.74,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 10085,
+      "lastVerifyMs": 54,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 24,
+      "closedTicksPerSec": 60.01,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 60.17,
+      "outBytesPerMemberPerSec": 10245,
+      "outFramesPerMemberPerSec": 61,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 1913,
+      "lastVerifyMs": 1146,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     198,
+     196
+    ],
+    "rssAtWorld0Accepts": [
+     195,
+     196
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 644,
+    "botUploads": 18,
+    "dockerStats": "147.5MiB / 256MiB cpu=28.58%"
+   },
+   {
+    "target": 64,
+    "joinedAll": true,
+    "online": [
+     32,
+     32
+    ],
+    "windowS": 45.05,
+    "rssMbMean": 198.45,
+    "rssMbMax": 201,
+    "rssMbLast": 197,
+    "cgroupMemMbNow": 148.45,
+    "cgroupMemMbPeakCumulative": 153.28,
+    "lagP99MsMax": 43.84,
+    "lagP99MsLast": 40.76,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 5.67,
+    "httpRttMsP99": 34.98,
+    "containerCpuCores": 0.38,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 32,
+      "closedTicksPerSec": 59.98,
+      "summaryTicksPerSecMin": 59.1,
+      "summaryTicksPerSecMean": 59.99,
+      "outBytesPerMemberPerSec": 576,
+      "outFramesPerMemberPerSec": 64.03,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 10132,
+      "lastVerifyMs": 116,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 32,
+      "closedTicksPerSec": 59.98,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 59.99,
+      "outBytesPerMemberPerSec": 16361,
+      "outFramesPerMemberPerSec": 60.66,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 1971,
+      "lastVerifyMs": 1270,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     198,
+     201
+    ],
+    "rssAtWorld0Accepts": [
+     199,
+     201
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 9649,
+    "botUploads": 23,
+    "dockerStats": "148.5MiB / 256MiB cpu=36.71%"
+   }
+  ],
+  "baseline": {
+   "rssMbSummary": 104,
+   "heapMb": 13,
+   "cgroupMemMb": 49.02,
+   "dockerStats": "48.55MiB / 256MiB cpu=3.70%",
+   "uptimeS": 12
+  },
+  "disk": {
+   "snap": [
+    {
+     "w": 0,
+     "n": 5,
+     "b": 50694,
+     "mx": 10376
+    },
+    {
+     "w": 1,
+     "n": 5,
+     "b": 9732,
+     "mx": 1971
+    }
+   ],
+   "log": [
+    {
+     "w": 0,
+     "n": 123,
+     "b": 85305
+    },
+    {
+     "w": 1,
+     "n": 122,
+     "b": 1578703
+    }
+   ]
+  },
+  "dataDir": "1970176\t/data/game.db\n32768\t/data/game.db-shm\n4260112\t/data/game.db-wal",
+  "oomKilled": "false",
+  "finishedAt": "2026-10-21T10:25:28.790Z"
+ },
+ "cpus0.25": {
+  "cpus": "0.25",
+  "startedAt": "2026-10-21T10:32:00.409Z",
+  "holdS": 60,
+  "steps": [
+   {
+    "target": 0,
+    "joinedAll": true,
+    "online": [
+     0,
+     0
+    ],
+    "windowS": 45.2,
+    "rssMbMean": 104.51,
+    "rssMbMax": 105,
+    "rssMbLast": 105,
+    "cgroupMemMbNow": 49.84,
+    "cgroupMemMbPeakCumulative": 51.14,
+    "lagP99MsMax": 33.51,
+    "lagP99MsLast": 23.33,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 4.29,
+    "httpRttMsP99": 48.59,
+    "containerCpuCores": 0.04,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 0,
+      "closedTicksPerSec": 0,
+      "summaryTicksPerSecMin": 0,
+      "summaryTicksPerSecMean": 0,
+      "outBytesPerMemberPerSec": 0,
+      "outFramesPerMemberPerSec": 0,
+      "snapshotsAcceptedDelta": 0,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 0,
+      "lastVerifyMs": 0,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 0,
+      "closedTicksPerSec": 0,
+      "summaryTicksPerSecMin": 0,
+      "summaryTicksPerSecMean": 0,
+      "outBytesPerMemberPerSec": 0,
+      "outFramesPerMemberPerSec": 0,
+      "snapshotsAcceptedDelta": 0,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 0,
+      "lastVerifyMs": 0,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [],
+    "rssAtWorld0Accepts": [],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 2,
+    "botUploads": 0,
+    "dockerStats": "49.42MiB / 256MiB cpu=5.83%"
+   },
+   {
+    "target": 32,
+    "joinedAll": false,
+    "online": [
+     13,
+     16
+    ],
+    "windowS": 45.24,
+    "rssMbMean": 177.93,
+    "rssMbMax": 180,
+    "rssMbLast": 176,
+    "cgroupMemMbNow": 126.47,
+    "cgroupMemMbPeakCumulative": 132.71,
+    "lagP99MsMax": 206.05,
+    "lagP99MsLast": 202.9,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 4.49,
+    "httpRttMsP99": 346.88,
+    "containerCpuCores": 0.19,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 13,
+      "closedTicksPerSec": 60.01,
+      "summaryTicksPerSecMin": 59.2,
+      "summaryTicksPerSecMean": 60,
+      "outBytesPerMemberPerSec": 4805,
+      "outFramesPerMemberPerSec": 120.64,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 1,
+      "snapshotBytes": 9797,
+      "lastVerifyMs": 43,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 16,
+      "closedTicksPerSec": 59.99,
+      "summaryTicksPerSecMin": 59.4,
+      "summaryTicksPerSecMean": 60.02,
+      "outBytesPerMemberPerSec": 9000,
+      "outFramesPerMemberPerSec": 60.92,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 1,
+      "snapshotBytes": 765,
+      "lastVerifyMs": 5149,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     180,
+     176
+    ],
+    "rssAtWorld0Accepts": [
+     180,
+     169
+    ],
+    "botsClosed": 3,
+    "botRejects": [],
+    "botLoopLagMaxMs": 6,
+    "botUploads": 12,
+    "dockerStats": "126.3MiB / 256MiB cpu=14.02%"
+   },
+   {
+    "target": 48,
+    "joinedAll": false,
+    "online": [
+     21,
+     24
+    ],
+    "windowS": 45.12,
+    "rssMbMean": 199.94,
+    "rssMbMax": 201,
+    "rssMbLast": 198,
+    "cgroupMemMbNow": 149.41,
+    "cgroupMemMbPeakCumulative": 153.8,
+    "lagP99MsMax": 1301.28,
+    "lagP99MsLast": 219.15,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 7.03,
+    "httpRttMsP99": 2747.01,
+    "containerCpuCores": 0.22,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 21,
+      "closedTicksPerSec": 54.71,
+      "summaryTicksPerSecMin": 41.8,
+      "summaryTicksPerSecMean": 68.61,
+      "outBytesPerMemberPerSec": 407,
+      "outFramesPerMemberPerSec": 37.53,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 1,
+      "snapshotBytes": 10328,
+      "lastVerifyMs": 712,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 24,
+      "closedTicksPerSec": 54.43,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 67.45,
+      "outBytesPerMemberPerSec": 7966,
+      "outFramesPerMemberPerSec": 55.2,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 1,
+      "snapshotBytes": 1907,
+      "lastVerifyMs": 10830,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     200
+    ],
+    "rssAtWorld0Accepts": [
+     200
+    ],
+    "botsClosed": 3,
+    "botRejects": [],
+    "botLoopLagMaxMs": 27730,
+    "botUploads": 24,
+    "dockerStats": "148.8MiB / 256MiB cpu=27.59%"
+   }
+  ],
+  "baseline": {
+   "rssMbSummary": 104,
+   "heapMb": 13,
+   "cgroupMemMb": 49.62,
+   "dockerStats": "49.26MiB / 256MiB cpu=3.24%",
+   "uptimeS": 15
+  },
+  "disk": {
+   "snap": [
+    {
+     "w": 0,
+     "n": 5,
+     "b": 51757,
+     "mx": 10513
+    },
+    {
+     "w": 1,
+     "n": 5,
+     "b": 9530,
+     "mx": 1909
+    }
+   ],
+   "log": [
+    {
+     "w": 0,
+     "n": 116,
+     "b": 289438
+    },
+    {
+     "w": 1,
+     "n": 116,
+     "b": 1425104
+    }
+   ]
+  },
+  "dataDir": "2502656\t/data/game.db\n32768\t/data/game.db-shm\n4136512\t/data/game.db-wal",
+  "oomKilled": "false",
+  "finishedAt": "2026-10-21T10:39:49.670Z"
+ },
+ "cpus0.25_run1_crashed_at_48": {
+  "cpus": "0.25",
+  "startedAt": "2026-10-21T10:25:33.542Z",
+  "holdS": 60,
+  "steps": [
+   {
+    "target": 0,
+    "joinedAll": true,
+    "online": [
+     0,
+     0
+    ],
+    "windowS": 45.09,
+    "rssMbMean": 104,
+    "rssMbMax": 104,
+    "rssMbLast": 104,
+    "cgroupMemMbNow": 48.81,
+    "cgroupMemMbPeakCumulative": 50.98,
+    "lagP99MsMax": 35.19,
+    "lagP99MsLast": 26.33,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 6.62,
+    "httpRttMsP99": 47.36,
+    "containerCpuCores": 0.05,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 0,
+      "closedTicksPerSec": 0,
+      "summaryTicksPerSecMin": 0,
+      "summaryTicksPerSecMean": 0,
+      "outBytesPerMemberPerSec": 0,
+      "outFramesPerMemberPerSec": 0,
+      "snapshotsAcceptedDelta": 0,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 0,
+      "lastVerifyMs": 0,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 0,
+      "closedTicksPerSec": 0,
+      "summaryTicksPerSecMin": 0,
+      "summaryTicksPerSecMean": 0,
+      "outBytesPerMemberPerSec": 0,
+      "outFramesPerMemberPerSec": 0,
+      "snapshotsAcceptedDelta": 0,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 0,
+      "lastVerifyMs": 0,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [],
+    "rssAtWorld0Accepts": [],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 28,
+    "botUploads": 0,
+    "dockerStats": "48.29MiB / 256MiB cpu=3.73%"
+   },
+   {
+    "target": 8,
+    "joinedAll": true,
+    "online": [
+     4,
+     4
+    ],
+    "windowS": 45.23,
+    "rssMbMean": 140.74,
+    "rssMbMax": 160,
+    "rssMbLast": 160,
+    "cgroupMemMbNow": 107.71,
+    "cgroupMemMbPeakCumulative": 108.24,
+    "lagP99MsMax": 100.86,
+    "lagP99MsLast": 97.98,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 4.29,
+    "httpRttMsP99": 247.05,
+    "containerCpuCores": 0.15,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 4,
+      "closedTicksPerSec": 60.05,
+      "summaryTicksPerSecMin": 59.9,
+      "summaryTicksPerSecMean": 60.02,
+      "outBytesPerMemberPerSec": 1779,
+      "outFramesPerMemberPerSec": 61.56,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 9774,
+      "lastVerifyMs": 7,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 4,
+      "closedTicksPerSec": 60.05,
+      "summaryTicksPerSecMin": 59.5,
+      "summaryTicksPerSecMean": 60.01,
+      "outBytesPerMemberPerSec": 2554,
+      "outFramesPerMemberPerSec": 60.19,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 669,
+      "lastVerifyMs": 6403,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     157
+    ],
+    "rssAtWorld0Accepts": [
+     149,
+     155
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 7,
+    "botUploads": 4,
+    "dockerStats": "107.6MiB / 256MiB cpu=16.07%"
+   },
+   {
+    "target": 16,
+    "joinedAll": true,
+    "online": [
+     8,
+     8
+    ],
+    "windowS": 45.23,
+    "rssMbMean": 164.51,
+    "rssMbMax": 168,
+    "rssMbLast": 168,
+    "cgroupMemMbNow": 117.92,
+    "cgroupMemMbPeakCumulative": 119.04,
+    "lagP99MsMax": 102.63,
+    "lagP99MsLast": 102.43,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 5.17,
+    "httpRttMsP99": 223.39,
+    "containerCpuCores": 0.16,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 8,
+      "closedTicksPerSec": 59.98,
+      "summaryTicksPerSecMin": 59.6,
+      "summaryTicksPerSecMean": 60,
+      "outBytesPerMemberPerSec": 3034,
+      "outFramesPerMemberPerSec": 60.31,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 9965,
+      "lastVerifyMs": 9,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 8,
+      "closedTicksPerSec": 59.98,
+      "summaryTicksPerSecMin": 59.5,
+      "summaryTicksPerSecMean": 60,
+      "outBytesPerMemberPerSec": 4659,
+      "outFramesPerMemberPerSec": 60.25,
+      "snapshotsAcceptedDelta": 2,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 694,
+      "lastVerifyMs": 6316,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     163,
+     168
+    ],
+    "rssAtWorld0Accepts": [
+     163,
+     165
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 7,
+    "botUploads": 8,
+    "dockerStats": "118.2MiB / 256MiB cpu=15.11%"
+   },
+   {
+    "target": 32,
+    "joinedAll": true,
+    "online": [
+     16,
+     16
+    ],
+    "windowS": 45.06,
+    "rssMbMean": 169.58,
+    "rssMbMax": 176,
+    "rssMbLast": 176,
+    "cgroupMemMbNow": 126.3,
+    "cgroupMemMbPeakCumulative": 127.05,
+    "lagP99MsMax": 614.47,
+    "lagP99MsLast": 480.51,
+    "lagP99Note": "server histogram resets once a minute (process.minute), so values are since the last reset",
+    "httpRttMsP50": 8.16,
+    "httpRttMsP99": 3529.45,
+    "containerCpuCores": 0.25,
+    "perWorld": [
+     {
+      "world": 0,
+      "members": 16,
+      "closedTicksPerSec": 60,
+      "summaryTicksPerSecMin": 55.6,
+      "summaryTicksPerSecMean": 61.68,
+      "outBytesPerMemberPerSec": 992,
+      "outFramesPerMemberPerSec": 56.96,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 10046,
+      "lastVerifyMs": 6994,
+      "hashFails": 0,
+      "resyncs": 0
+     },
+     {
+      "world": 1,
+      "members": 16,
+      "closedTicksPerSec": 60,
+      "summaryTicksPerSecMin": 55.6,
+      "summaryTicksPerSecMean": 61.73,
+      "outBytesPerMemberPerSec": 6626,
+      "outFramesPerMemberPerSec": 60.01,
+      "snapshotsAcceptedDelta": 1,
+      "snapshotsRejected": 0,
+      "snapshotBytes": 755,
+      "lastVerifyMs": 9599,
+      "hashFails": 0,
+      "resyncs": 0
+     }
+    ],
+    "rssAtWorld1Accepts": [
+     175
+    ],
+    "rssAtWorld0Accepts": [
+     175
+    ],
+    "botsClosed": 0,
+    "botRejects": [],
+    "botLoopLagMaxMs": 6452,
+    "botUploads": 12,
+    "dockerStats": "126.7MiB / 256MiB cpu=27.17%"
+   }
+  ],
+  "baseline": {
+   "rssMbSummary": 103,
+   "heapMb": 13,
+   "cgroupMemMb": 48.33,
+   "dockerStats": "47.99MiB / 256MiB cpu=1.47%",
+   "uptimeS": 13
+  }
+ },
+ "notes": "cpus0.25_run1 stopped at the 48 step when a fetch to /api/summary was dropped (steps 0..32 valid); cpus0.25 is the rerun with STEPS=0,32,48. Rerun joined fewer bots than target at 32 and 48 (online field) because the container was CPU-starved."
+}

@@ -1,5 +1,7 @@
 // Lockstep server: tick clock, input sequencer, closed-tick broadcast, static client. Never steps the sim.
-import { createHash } from "node:crypto";
+import { createLiveFeed } from "./live.ts";
+import { resolveDevTeleport } from "./devteleport.ts";
+import { createHash, randomBytes } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -7,10 +9,13 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { WebSocketServer, type WebSocket } from "ws";
-import { KIND_CAST, KIND_PAINT, KIND_POS } from "../shared/inputs.ts";
-import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN } from "../shared/avatar.ts";
+import { KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../shared/inputs.ts";
+import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN, READY_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
   C_CHUNK_HASHES,
+  CLAIM_KILL,
+  CLAIM_ROUND_END,
+  CLAIM_ROUND_START,
   cleanName,
   decodeClient,
   encodePong,
@@ -24,9 +29,11 @@ import {
   WORLD_GAME,
   encodeAchievement,
 } from "../shared/protocol.ts";
+import { CLASSIC_SANDBOX, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { GameDb } from "./db.ts";
 import { Identity, MAX_REGISTERED } from "./identity.ts";
 import { EventLog } from "./log.ts";
+import { RoomsStore, type RoomRow } from "./rooms.ts";
 import { createDashboard, INDEX_MAX_ROWS, type IncidentRow, type PlayerDetail, type PlayerIndexRow } from "./dashboard.ts";
 import { PlayerStats, type ConnTiming, type InputCounts } from "./stats.ts";
 import {
@@ -43,11 +50,15 @@ import {
   STAT_PLAY_MS,
   STAT_POS_REJECTED,
   STAT_SESSIONS,
+  isBossKind,
 } from "../shared/stats.ts";
+import { isPaintable } from "../shared/names.ts";
+import { PaintRate, paintCost } from "./paintrate.ts";
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
-import { GAME_ID, SANDBOX_ID, World, worldKindOf, type Peer } from "./world.ts";
+import { snapshotLayout } from "../shared/sim.ts";
+import { GAME_ID, SANDBOX_ID, World, type Peer } from "./world.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");
@@ -59,12 +70,51 @@ export const MAX_MEMBERS_PER_WORLD = 64;
 /** Concurrent sockets per client address. */
 export const MAX_CONNS_PER_IP = 12;
 const MAX_FRAME_BYTES = 256;
+/**
+ * Review M1 (8 Nov): HASH and PING frames one connection may send per second. An honest client sends about one HASH
+ * and half a PING a second (a burst after a stall stays well under). The rest have their own gates: inputs
+ * MAX_INPUTS_PER_SEC, claims CLAIMS_PER_WINDOW, uploads expectsUpload, chunk hashes wantsChunkHashes, and LIVE is
+ * O(1) once a member is live and must never be dropped (it ends a catch-up hold). Past it the frame is dropped.
+ */
+export const MAX_CONTROL_FRAMES_PER_SEC = 20;
 /** Unsolicited CHUNK_HASHES frames one connection may send before it is closed (a reply that crosses a timeout). */
 export const MAX_UNASKED_CHUNK_FRAMES = 3;
 const TIMER_MS = 4;
 const HELLO_TIMEOUT_MS = 10_000;
 export const INPUT_SUMMARY_MS = 10_000;
 const STATS_FLUSH_MS = 1000;
+
+// R2b admission caps (docs/research/capacity-rooms.md "Recommended caps"): count members first, rooms second,
+// since per-member cost (CPU relay, memory) drives the ceiling far more than the near-zero cost of a room itself.
+/** Total members (every connection, spectators included) across every loaded world before new joins are refused. */
+export const MAX_MEMBERS_SOFT = 32;
+/** Hard refusal past this; nothing is ever admitted above it regardless of role. */
+export const MAX_MEMBERS_HARD = 48;
+/** Loaded rooms (not counting the two fixed worlds, which never unload and are not "rooms" in this budget). */
+export const MAX_LOADED_ROOMS = 16;
+/** An L-size room (RoomConfig.size === 2) costs 2 of the 16 loaded-room slots: its verify is 4-16x dearer. */
+export const L_ROOM_SLOT_WEIGHT = 2;
+/** At most this many L rooms loaded at once, regardless of total slot budget. */
+export const MAX_LOADED_L_ROOMS = 4;
+/** Cgroup memory budget (capacity note's "budget 200 MB cgroup"): a lazy room load is refused above this, so a
+ * burst of room creation cannot push the process into the kernel's OOM killer before the member caps would bite. */
+export const ROOM_LOAD_MEMORY_CAP_BYTES = 200 * 1024 * 1024;
+/** No warm verify lane opens if it would take cgroup memory past this (D-228): 40 MB under the room-load gate, so warm
+ *  lanes give way to new rooms. A room without a lane still verifies, cold, as before. */
+export const VERIFY_LANE_MEMORY_CAP_BYTES = 160 * 1024 * 1024;
+/** How long a room (not the two fixed worlds) stays loaded after its last member leaves before it unloads. One
+ * uniform value for every mode in this slice — the mode-specific archive/delete timing (plan: Creative's 1h/7d,
+ * Deathmatch/Survival delete-on-empty) is a deferred follow-up, not built here. */
+export const ROOM_UNLOAD_MS = 2 * 60_000;
+/** N1: a room nobody has ever joined is deleted this long after creation (a just-shared link survives until the friend arrives). */
+export const ROOM_NEVER_JOINED_MS = 10 * 60_000;
+/** N1: how often the room sweep runs (touches occupied rooms, deletes abandoned ones). */
+export const ROOM_SWEEP_MS = 60_000;
+/** Rooms one IP may create in a sliding hour (security probe S2). */
+export const ROOM_CREATES_PER_IP_HOUR = 10;
+/** OWNED: owned sandboxes in total. Each lives until its owner deletes it and pins a registration, so the total is
+ * capped (review N1); at 200 the rooms table stays small and a flood of fresh tokens cannot grow it without bound. */
+export const MAX_OWNED_ROOMS = 200;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -84,7 +134,7 @@ code{background:#151a24;padding:1px 4px;border-radius:4px}nav{margin-bottom:1.5e
 /** README.md rendered to HTML on each request, so the page never lags the file. */
 function readmePage(): string {
   const body = marked.parse(readFileSync(join(ROOT, "README.md"), "utf8"), { async: false });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the game</a> &middot; <a href="/dashboard">Dashboard</a></nav>${body}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Simulta: README</title><style>${README_CSS}</style></head><body><main><nav><a href="/">&larr; Back to the game</a> &middot; <a href="/dashboard">Dashboard</a></nav>${body}</main></body></html>`;
 }
 
 /** Per-connection figures for the dashboard: plain data, JSON-safe (undefined fields are omitted by JSON). */
@@ -123,6 +173,8 @@ export interface WorldSummary {
   hashPasses: number;
   hashFails: number;
   resyncs: number;
+  /** F7: a Survival room's round as a majority reported it (no names); null for rooms without a round. */
+  round: "lobby" | "running" | "ended" | null;
   snapshotsAccepted: number;
   snapshotsRejected: number;
   /** Compressed bytes and tick of the latest verified snapshot; 0 when none. */
@@ -176,6 +228,8 @@ export interface RunningServer {
   recentAchievements(limit?: number): { who: string; achievement: string; world: number | null; tick: number | null; at: number }[];
   /** Per-world and process figures. `resetLag` also restarts the event-loop histogram (process.minute does). */
   summary(opts?: { resetLag?: boolean }): ServerSummary;
+  /** N1: run the room sweep now (what the minute timer and boot run). Returns the room ids it deleted. */
+  sweepRooms(): number[];
   close(): Promise<void>;
 }
 
@@ -185,20 +239,40 @@ export function buildHash(wasmPath = WASM_PATH): Buffer {
 
 export interface ServerOptions {
   port?: number;
+  /** A fixed world (sandbox or game) failed its tick: production exits so the platform restarts it, as at boot. Unset in
+   * tests, where the world just stays closed. Rooms never call this: a failed room is dropped and reloads on demand. */
+  onFatal?: (world: number) => void;
   wasmPath?: string;
   clientDir?: string;
   /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
   dataDir?: string | null;
   snapshotEveryTicks?: number;
+  /** Override PAINT_CELLS_PER_SEC, the per-address paint budget (tests). */
+  paintCellsPerSec?: number;
   /** Override World's log-length warning and cap (tests). */
   maxLogTicks?: number;
   warnLogTicks?: number;
   /** Override World's CATCHUP_HOLD_MAX_MS (tests). */
   catchupHoldMaxMs?: number;
+  /** Override World's JOIN_DEADLINE_MS (tests). */
+  joinDeadlineMs?: number;
   /** Override the snapshot-verification timeout (tests). */
   verifyTimeoutMs?: number;
+  /** Tests: every new room gets this seed instead of 64 random bits (D-201), so a scripted test plays the same world
+   * every run (D-219: random seeds made `claims-survival` intermittent). Never set in production. */
+  roomSeed?: bigint;
   verifierWorkerUrl?: URL;
+  /** Override LANE_WARM_TIMEOUT_MS (tests). */
+  verifyWarmTimeoutMs?: number;
+  /** Override VERIFY_WARM_BUDGET_BYTES (tests: 0 turns warm lanes off, as before D-228). */
+  verifyWarmBudgetBytes?: number;
   quiet?: boolean;
+  /** Override ROOM_CREATES_PER_IP_HOUR (tests that create many rooms from one address). */
+  roomCreatesPerIpHour?: number;
+  /** Dev only: accept a Pos jump of any size (default: env SIMULTA_DEV_TELEPORT=1). Refused under production env. */
+  devTeleport?: boolean;
+  /** The environment the dev-teleport gate reads (tests). Default process.env. */
+  env?: Record<string, string | undefined>;
   /** Extra Origins allowed to POST /api/players (a dev client on another port). Same-origin is always allowed. */
   allowedOrigins?: string[];
   maxConnsPerIp?: number;
@@ -207,6 +281,24 @@ export interface ServerOptions {
   inputSummaryMs?: number;
   /** Admin token for /dashboard. Default ADMIN_TOKEN. Unset or empty disables the admin view. */
   adminToken?: string;
+  /** Override MAX_OWNED_ROOMS (tests). */
+  maxOwnedRooms?: number;
+  /** Override ROOM_UNLOAD_MS (tests: a short timer to exercise unload-after-empty without waiting 2 minutes). */
+  roomUnloadMs?: number;
+  /** N1: override ROOM_NEVER_JOINED_MS. */
+  roomNeverJoinedMs?: number;
+  /** N1: override ROOM_SWEEP_MS. */
+  roomSweepMs?: number;
+  /** N1: wall clock (ms) for room lifecycle times; tests inject one. Default Date.now. */
+  now?: () => number;
+  /** Override ROOM_LOAD_MEMORY_CAP_BYTES (tests: force the memory-cap-refused path without a real cgroup). */
+  roomLoadMemoryCapBytes?: number;
+  /** Override MAX_MEMBERS_SOFT/MAX_MEMBERS_HARD (tests: exercise the member cap without 32 real connections). */
+  maxMembersSoft?: number;
+  maxMembersHard?: number;
+  /** Override MAX_LOADED_ROOMS/MAX_LOADED_L_ROOMS (tests: exercise the loaded-room cap without 16 real rooms). */
+  maxLoadedRooms?: number;
+  maxLoadedLRooms?: number;
 }
 
 /** ws ping period for the server-measured RTT. */
@@ -216,15 +308,34 @@ const round2 = (n: number | undefined) => (n === undefined ? undefined : Math.ro
 export async function startServer(opts: ServerOptions = {}): Promise<RunningServer> {
   const wasmPath = opts.wasmPath ?? WASM_PATH;
   const hash = buildHash(wasmPath);
+  // Snapshot layout facts from the same build the hash names (review M4): no hand-held copy of the byte offsets.
+  const layout = snapshotLayout(new Uint8Array(readFileSync(wasmPath)));
   const clientDir = opts.clientDir ?? CLIENT_DIR;
   const log = new EventLog({ quiet: opts.quiet });
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
-  const verifier = db ? new SnapshotVerifier(wasmPath, { timeoutMs: opts.verifyTimeoutMs, workerUrl: opts.verifierWorkerUrl }) : undefined;
+  // A warm verify lane per occupied room (D-228), within its own budget and below the room-load gate, so lanes alone
+  // cannot push the server to the 200 MB at which it stops loading rooms.
+  const verifier = db
+    ? new SnapshotVerifier(wasmPath, {
+        timeoutMs: opts.verifyTimeoutMs,
+        warmTimeoutMs: opts.verifyWarmTimeoutMs,
+        workerUrl: opts.verifierWorkerUrl,
+        warmBudgetBytes: opts.verifyWarmBudgetBytes,
+        memoryBytes: () => cgroupMemoryBytes(),
+        memoryCapBytes: VERIFY_LANE_MEMORY_CAP_BYTES,
+        log,
+      })
+    : undefined;
   const playerStats = new PlayerStats(db, log);
-  const mk = (id: number) =>
+  const tele = resolveDevTeleport(opts.env ?? process.env, opts.devTeleport);
+  if (tele.refused) log.event("dev.teleport_refused", { reason: "production environment" }, "warn");
+  else if (tele.on) log.event("dev.teleport", { note: "enabled for this server" }, "warn");
+  const mk = (id: number, cfg?: RoomConfig, seed?: bigint) =>
     new World({
       id,
+      cfg,
+      seed,
       now: () => performance.now(),
       db: db ?? undefined,
       verifier,
@@ -233,36 +344,326 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       maxLogTicks: opts.maxLogTicks,
       warnLogTicks: opts.warnLogTicks,
       catchupHoldMaxMs: opts.catchupHoldMaxMs,
+      joinDeadlineMs: opts.joinDeadlineMs,
+      devTeleport: tele.on,
       log,
       stats: playerStats,
+      snapshotLayout: layout,
     });
   const worlds = new Map<number, World>([[SANDBOX_ID, mk(SANDBOX_ID)], [GAME_ID, mk(GAME_ID)]]);
   const world = worlds.get(SANDBOX_ID)!;
   const game = worlds.get(GAME_ID)!;
   for (const w of worlds.values()) await w.load();
   const identity = new Identity(db, log);
+  // R2a built the table and HTTP API; R2b (here) wires rooms into the socket path: HELLO with a room id loads
+  // its World on demand (getOrLoadRoom below). A memory-only server (dataDir: null, tests only) has nowhere to
+  // store rooms, so both the HTTP routes and HELLO's room lookup degrade to "unknown room" rather than crash.
+  const wallNow = opts.now ?? Date.now;
+  const rooms = db ? new RoomsStore(db, { now: wallNow }) : null;
+  if (db) {
+    // Real, pre-existing bug this slice surfaces (not introduced by R2a, which never let anything join a room):
+    // `rooms.id` is `integer primary key` with no gap reserved for the two fixed world ids, so sqlite hands out
+    // 1 as the very first real room's id — exactly GAME_ID. That room would then collide with the cave world
+    // in the `worlds` map (`getOrLoadRoom` would find `worlds.get(1)` already populated at startup and hand the
+    // joiner the wrong world's config and state instead of their own room). Reserving rows 0 and 1 here (inert
+    // placeholders, idempotent across restarts, never returned by any RoomsStore read since nothing looks up a
+    // room by these codes) pushes every real room's id to 2+. `server/db.ts`'s schema and `server/rooms.ts`'s
+    // `createRoom` are both out of this brief's "Files you may touch" list, so the reservation lives here
+    // rather than as an `AUTOINCREMENT` + seeded `sqlite_sequence` row, which would need a migration. Flagged
+    // under "Architectural decisions for review": the more reversible fix (bumping `sqlite_sequence` directly,
+    // or adding `AUTOINCREMENT` in a migration) belongs in `server/db.ts` once that file is back in scope.
+    db.db
+      .prepare(
+        "insert into rooms (id, code, name, mode, config, visibility, creator_player_id, created_at, last_active) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do nothing",
+      )
+      .run(0, "__reserved_sandbox__", "(reserved)", "sandbox", Buffer.alloc(16), "unlisted", null, 0, 0);
+    db.db
+      .prepare(
+        "insert into rooms (id, code, name, mode, config, visibility, creator_player_id, created_at, last_active) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do nothing",
+      )
+      .run(1, "__reserved_game__", "(reserved)", "sandbox", Buffer.alloc(16), "unlisted", null, 0, 0);
+  }
+  /**
+   * A new room's seed: 64 random bits, drawn once when its `worlds` row is created (`World.loadFromDb` keeps the
+   * stored seed on every later load, so all members and every restart agree). It used to be the room id, but
+   * sqlite hands a deleted room's id to the next room, so a room made after the last one emptied got the same
+   * seed and the same cave (6 Nov playtest, D-201). Random also means a creator can't pick an id for a layout.
+   */
+  const seedForRoom = (): bigint => opts.roomSeed ?? randomBytes(8).readBigUInt64LE();
+  /** In-flight room loads, keyed by room id: closes the lazy-loading race (two near-simultaneous HELLOs for the
+   * same not-yet-loaded room must not both construct and insert a World). The check (`worlds.get`/`loadingRooms.get`)
+   * and the set (`loadingRooms.set`) below run with no `await` between them, so a second HELLO's synchronous
+   * lookup always sees the first's in-flight promise, never races past it. */
+  const loadingRooms = new Map<number, Promise<World>>();
+  /** Scheduled unload timers for empty rooms, keyed by room id (never the two fixed worlds, which don't unload). */
+  const roomUnloadTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  function cancelUnload(id: number): void {
+    const t = roomUnloadTimers.get(id);
+    if (t !== undefined) {
+      clearTimeout(t);
+      roomUnloadTimers.delete(id);
+    }
+  }
+
+  /** Start (or restart) a room's empty-unload timer. A join before it fires cancels it via `cancelUnload`. */
+  function scheduleUnload(w: World): void {
+    if (w.id === SANDBOX_ID || w.id === GAME_ID) return;
+    if (w.closing || worlds.get(w.id) !== w) return; // already deleted or unloaded (an owner's delete closes its members)
+    cancelUnload(w.id);
+    const ms = opts.roomUnloadMs ?? ROOM_UNLOAD_MS;
+    const t = setTimeout(() => {
+      roomUnloadTimers.delete(w.id);
+      if (w.playerCount > 0 || w.closing || worlds.get(w.id) !== w) return; // rejoined, or already replaced/unloaded
+      // N1: nobody has been in it for the grace period, so the room dies (a memory-only server just unloads it).
+      // OWNED: a player's own sandbox only unloads (frees memory); its rows stay and the next HELLO reloads it.
+      if (rooms && rooms.getRoomById(w.id)?.ownerPlayerId == null) deleteRoom(w.id, "empty");
+      else {
+        w.shutdown();
+        worlds.delete(w.id);
+        log.event("room.unloaded", { world: w.id });
+      }
+    }, ms);
+    roomUnloadTimers.set(w.id, t);
+  }
+
+  /**
+   * N1: delete a room: unload its World (closing the open tick first), then drop its rows in one transaction. Skipped
+   * while a load is in flight or anyone is a member, so a join landing between a trigger and this call wins; once the
+   * rows are gone, a later HELLO finds no row and is refused as an unknown room (nothing is resurrected).
+   */
+  function deleteRoom(id: number, reason: "empty" | "never_joined" | "owner", who?: string): boolean {
+    if (!rooms || id === SANDBOX_ID || id === GAME_ID || loadingRooms.has(id)) return false;
+    const w = worlds.get(id);
+    // OWNED: the owner's delete does not wait for an empty room: its members are closed (4003, "deleted") first.
+    if (w && w.playerCount > 0 && reason !== "owner") return false;
+    const row = rooms.getRoomById(id);
+    if (!row) return false;
+    if (row.ownerPlayerId !== null && reason !== "owner") return false; // only its owner ends a persistent sandbox
+    cancelUnload(id);
+    if (w) {
+      if (reason === "owner") {
+        for (const m of [...w.members.values()]) {
+          try {
+            m.peer.close(4003, "world deleted");
+          } catch {
+            // already gone
+          }
+        }
+      }
+      w.shutdown(); // flushes pending ticks; `closing` stops any in-flight snapshot verify from saving afterwards
+      worlds.delete(id);
+      tickSamples.delete(id);
+    }
+    rooms.deleteRoom(id);
+    log.event("room.deleted", { world: id, code: row.code, mode: row.mode, reason, who });
+    return true;
+  }
+
+  /** N1: refresh `last_active` of occupied rooms, then delete rooms past their grace period by stored time. Boot runs it too. */
+  function sweepRooms(): number[] {
+    if (!rooms) return [];
+    const t = wallNow();
+    for (const w of worlds.values()) if (w.id !== SANDBOX_ID && w.id !== GAME_ID && w.playerCount > 0) rooms.touch(w.id, t);
+    const gone: number[] = [];
+    for (const r of rooms.staleRooms(t, opts.roomUnloadMs ?? ROOM_UNLOAD_MS, opts.roomNeverJoinedMs ?? ROOM_NEVER_JOINED_MS)) {
+      if (deleteRoom(r.id, r.reason)) gone.push(r.id);
+    }
+    return gone;
+  }
+
+  /** A HELLO that reaches `getOrLoadRoom` and gets a `World` back, but is then rejected by a check that only
+   * runs after the room is loaded (member caps; see docs/research/review-r2b.md finding 1), must not leave a
+   * freshly-loaded, zero-member room pinned in `worlds` forever — `scheduleUnload` is only ever armed from a
+   * real member leaving, which never happens for a join that never completed. Only discards rooms THIS call
+   * loaded (never a pre-existing warm room, which may have members from elsewhere even though this join was
+   * refused on the global member cap). */
+  function discardIfFreshlyLoaded(w: World, wasWarm: boolean): void {
+    if (wasWarm || w.playerCount > 0) return;
+    if (worlds.get(w.id) !== w) return; // already replaced or unloaded by something else
+    w.shutdown();
+    worlds.delete(w.id);
+    log.event("room.unloaded", { world: w.id });
+  }
+
+  /** A world whose tick threw is closed, alone: its clients get a clean close, the other worlds keep ticking. */
+  function failWorld(w: World, e: unknown): void {
+    log.limited(`tick_failed:${w.id}`, 10_000, "world.tick_failed", { world: w.id, error: e instanceof Error ? (e.stack ?? e.message).slice(0, 300) : String(e).slice(0, 300) }, "error");
+    cancelUnload(w.id);
+    try {
+      for (const l of [...live.values()]) {
+        if (l.world === w) l.ws.close(1011, "world failed"); // its own close handler runs finish()
+      }
+      w.shutdown();
+    } catch {
+      // the world is already broken; closing it is best effort
+    }
+    // A room is dropped so the next HELLO loads it fresh from the database. A fixed world can't be reloaded in
+    // place, and left closed it would refuse every join until the next deploy, so production restarts the
+    // process (the same "let the platform restart us" as a boot-time verify failure). Its log is already durable.
+    if (w.id !== SANDBOX_ID && w.id !== GAME_ID) worlds.delete(w.id);
+    else opts.onFatal?.(w.id);
+  }
+
+  function totalMembers(): number {
+    let n = 0;
+    for (const w of worlds.values()) n += w.playerCount;
+    return n;
+  }
+
+  /** Loaded-room slot usage (the two fixed worlds are not "rooms" in this budget and never count). */
+  function loadedRoomSlots(): { slots: number; lRooms: number } {
+    let slots = 0;
+    let lRooms = 0;
+    for (const [id, w] of worlds) {
+      if (id === SANDBOX_ID || id === GAME_ID) continue;
+      if (w.cfg.size === 2) {
+        slots += L_ROOM_SLOT_WEIGHT;
+        lRooms++;
+      } else {
+        slots++;
+      }
+    }
+    return { slots, lRooms };
+  }
+
+  /** `register.refused` with a "server busy" reason a lobby can show (plan's menu-facing language), logged. */
+  function memberCapReason(): string | null {
+    const total = totalMembers();
+    const hard = opts.maxMembersHard ?? MAX_MEMBERS_HARD;
+    const soft = opts.maxMembersSoft ?? MAX_MEMBERS_SOFT;
+    // The hard cap is a defensive second ceiling: in normal operation the soft cap below always fires first.
+    // Hitting it without having hit the soft cap first would itself be a bug worth the louder log level.
+    if (total >= hard) {
+      log.limited("cap:members_hard", 10_000, "register.refused", { reason: "cap", scope: "members_hard", total }, "error");
+      return "server busy";
+    }
+    if (total >= soft) {
+      log.limited("cap:members_soft", 10_000, "register.refused", { reason: "cap", scope: "members_soft", total }, "warn");
+      return "server busy";
+    }
+    return null;
+  }
+
+  /**
+   * Resolve a HELLO's room id to a loaded `World`: already loaded (fixed or a warm room), in-flight (a second
+   * HELLO for the same not-yet-loaded id), or a fresh lazy load from `RoomsStore`. Returns "unknown" for an id
+   * with no room row, "cap" if loading it would exceed the loaded-room budget (checked before construction, so
+   * a rejected join never pays the cost of loading).
+   */
+  async function getOrLoadRoom(id: number): Promise<World | "unknown" | "cap"> {
+    const existing = worlds.get(id);
+    if (existing) return existing;
+    const inFlight = loadingRooms.get(id);
+    if (inFlight) return await inFlight;
+    if (!rooms) return "unknown";
+    const row = rooms.getRoomById(id);
+    if (!row) return "unknown";
+    const cfg = decodeConfig(row.config);
+    if (!cfg) return "unknown"; // a config RoomsStore.createRoom already validated; defence only
+    const weight = cfg.size === 2 ? L_ROOM_SLOT_WEIGHT : 1;
+    const { slots, lRooms } = loadedRoomSlots();
+    const maxSlots = opts.maxLoadedRooms ?? MAX_LOADED_ROOMS;
+    const maxL = opts.maxLoadedLRooms ?? MAX_LOADED_L_ROOMS;
+    if (slots + weight > maxSlots || (cfg.size === 2 && lRooms + 1 > maxL)) {
+      log.limited("cap:loaded_rooms", 10_000, "register.refused", { reason: "cap", scope: "loaded_rooms", slots, lRooms, world: id }, "warn");
+      return "cap";
+    }
+    const mem = cgroupMemoryBytes();
+    if (mem !== undefined && mem >= (opts.roomLoadMemoryCapBytes ?? ROOM_LOAD_MEMORY_CAP_BYTES)) {
+      log.limited("cap:memory", 10_000, "register.refused", { reason: "cap", scope: "memory", cgroup_mb: Math.round(mem / 1048576), world: id }, "warn");
+      return "cap";
+    }
+    const p = (async () => {
+      const w = mk(id, cfg, seedForRoom());
+      await w.load();
+      w.roundEnded = row.endedAt !== null; // review S5: the row, not memory, says the round is over
+      wireWorld(w);
+      worlds.set(id, w); // inserted only once load() has finished, so a racing join never sees a half-loaded room
+      log.event("room.loaded", { world: id, code: row.code, mode: row.mode, size: cfg.size });
+      return w;
+    })();
+    loadingRooms.set(id, p);
+    try {
+      return await p;
+    } finally {
+      loadingRooms.delete(id);
+    }
+  }
+
+  /** cgroup memory in bytes (the capacity note: RSS overstates by about 50 MB; the OOM killer uses this figure).
+   * Linux-only (`/sys/fs/cgroup/memory.current`, cgroup v2); undefined off Linux or without cgroups (dev, tests),
+   * in which case the memory admission check is skipped rather than refusing every join. */
+  function cgroupMemoryBytes(): number | undefined {
+    try {
+      return Number(readFileSync("/sys/fs/cgroup/memory.current", "utf8").trim());
+    } catch {
+      return undefined;
+    }
+  }
   // Delivery goes through `live` (declared below; only called from message handlers, after it exists).
   const achievements = new Achievements(db, playerStats, log, (visitorId, id, tick) => {
     const frame = encodeAchievement(id, tick);
     for (const l of live.values()) if (l.visitorId === visitorId && l.ws.readyState === l.ws.OPEN) l.ws.send(frame, { binary: true });
   });
   // A majority-agreed death (D-120). Sim player ids are visitor ids in the game world (D-065).
-  const nameOfVisitor = (id: number): string => {
-    for (const m of game.members.values()) if (m.visitorId === id) return m.visitorName;
-    return db?.playerNames([id])[id] ?? "";
+  /** F7: resolved enemy kills per room since the last summary, folded into one `enemy.kill` line per room (never one line per kill). */
+  const kills = new Map<number, number>();
+  const killsByKind = new Map<number, Map<number, number>>();
+  const flushKills = (): void => {
+    for (const [world, n] of kills) {
+      const by = killsByKind.get(world) ?? new Map<number, number>();
+      log.event("enemy.kill", { world, kills: n, by_kind: [...by].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}:${v}`).join(",") });
+    }
+    kills.clear();
+    killsByKind.clear();
   };
-  game.onDeathResolved = (d) => {
-    const ctxOf = (id: number) => ({ name: nameOfVisitor(id), world: game.id, tick: d.tick });
-    // Not rate-limited: each real death resolves exactly once (resolved keys are remembered) and needs a quorum of
-    // registered voters, so a client cannot repeat it. A global limit here dropped real deaths: a bomb that killed
-    // three players logged one. The per-claim lines a client CAN repeat are limited where the claim arrives.
-    log.event("claim.death", { world: game.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
-    achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
-  };
+  /** Wire a world's majority-claim results to stats, achievements and the log (D-120). Every world with players, fixed or a room (F7). */
+  function wireWorld(w: World): void {
+    const nameOfVisitor = (id: number): string => {
+      for (const m of w.members.values()) if (m.visitorId === id) return m.visitorName;
+      return db?.playerNames([id])[id] ?? "";
+    };
+    w.onDeathResolved = (d) => {
+      const ctxOf = (id: number) => ({ name: nameOfVisitor(id), world: w.id, tick: d.tick });
+      // Not rate-limited: each real death resolves exactly once (resolved keys are remembered) and needs a quorum of
+      // registered voters, so a client cannot repeat it. The per-claim lines a client CAN repeat are limited where the claim arrives.
+      log.event("claim.death", { world: w.id, tick: d.tick, victim: `${nameOfVisitor(d.victim)}#${d.victim}`, killer: d.killer ? `${nameOfVisitor(d.killer)}#${d.killer}` : null, cause: d.cause, bag: d.bag });
+      achievements.onDeath(d.victim, d.killer, d.cause, ctxOf);
+      // Public death log for the menu (/api/live): public rooms only, plain names, nameless visitors skipped.
+      const room = rooms?.getRoomById(w.id);
+      if (room && room.visibility === "public") {
+        const victim = nameOfVisitor(d.victim);
+        const self = d.killer !== 0 && d.killer === d.victim;
+        const killer = d.killer === 0 || self ? null : nameOfVisitor(d.killer);
+        if (victim && (killer === null || killer !== "")) liveFeed.recordDeath({ victim, killer, self, cause: d.cause, bag: d.bag !== 0, mode: room.mode, at: Date.now() });
+      }
+    };
+    // F7: enemy kills, round start and round end, each a majority claim like a death. Plain names in toasts, name#id in logs.
+    w.onKillResolved = (k) => {
+      kills.set(w.id, (kills.get(w.id) ?? 0) + 1);
+      const kk = killsByKind.get(w.id) ?? new Map<number, number>();
+      kk.set(k.kind, (kk.get(k.kind) ?? 0) + 1);
+      killsByKind.set(w.id, kk);
+      achievements.onEnemyKill(k.killer, k.kind, { name: nameOfVisitor(k.killer), world: w.id, tick: k.tick });
+      if (isBossKind(k.kind)) log.event("boss.killed", { world: w.id, kind: k.kind, tick: k.tick, killer: k.killer ? `${nameOfVisitor(k.killer)}#${k.killer}` : null });
+    };
+    w.onRoundStartResolved = (r) => {
+      log.event("round.start", { world: w.id, tick: r.tick, active: r.active });
+    };
+    w.onRoundEndResolved = (r) => {
+      rooms?.markEnded(w.id);
+      log.event("round.end", { world: w.id, tick: r.tick, result: r.win ? "win" : "loss", players: r.players, alive: r.alive.length });
+      if (r.win) achievements.onRoundWon(r.alive, r.players, (id) => ({ name: nameOfVisitor(id), world: w.id, tick: r.tick }));
+    };
+  }
+  wireWorld(game);
   const stats = { droppedRate: 0, rejected: 0, originRefused: 0, capRefused: 0 };
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
   const connsByIp = new Map<string, number>();
+  /** Review H2: paint work per IP tag, across every connection and room. */
+  const paintRate = new PaintRate(opts.paintCellsPerSec);
 
   /** Admin dashboard rows: bounded fields only (the chunk list is already capped at 64 when it is recorded). */
   function incidentRows(limit: number): IncidentRow[] {
@@ -294,6 +695,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     connections: () => running.connections(),
     recentAchievements: () => running.recentAchievements(),
     recentIncidents: (limit) => incidentRows(limit),
+    roomCounts: () => (rooms ? { total: rooms.totalRooms(), byMode: rooms.countsByMode() } : { total: 0, byMode: {} }),
     playerDetail: (id) => playerDetail(id),
     playerIndex: (limit, offset) => playerIndex(limit, offset),
     build: hash.toString("hex").slice(0, 12),
@@ -396,7 +798,240 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     });
   }
 
+  const publicRoom = (r: RoomRow) => ({ id: r.id, code: r.code, name: r.name, mode: r.mode });
+
+  /** Security probe S2: creation is anonymous, so the per-creator daily cap never applies. Cap it per IP tag instead:
+   * at most ROOM_CREATES_PER_IP_HOUR in a sliding hour. The map is bounded; at the bound the oldest tag is dropped. */
+  const roomCreates = new Map<string, number[]>();
+  function roomCreateAllowed(ipTag: string, nowMs: number): boolean {
+    const recent = (roomCreates.get(ipTag) ?? []).filter((t) => nowMs - t < 3_600_000);
+    if (recent.length >= (opts.roomCreatesPerIpHour ?? ROOM_CREATES_PER_IP_HOUR)) {
+      roomCreates.set(ipTag, recent);
+      return false;
+    }
+    recent.push(nowMs);
+    roomCreates.delete(ipTag);
+    roomCreates.set(ipTag, recent);
+    if (roomCreates.size > 4096) roomCreates.delete(roomCreates.keys().next().value!);
+    return true;
+  }
+
+  /** POST /api/rooms: create a room (R2a — the row only; R2b makes it joinable). */
+  function createRoomRoute(req: IncomingMessage, res: ServerResponse): void {
+    const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+    if (!rooms) {
+      res.writeHead(503, { "content-type": "text/plain" }).end("rooms unavailable");
+      return;
+    }
+    if (!originOk(req)) {
+      log.limited(`room_create:${ipTag}`, 10_000, "room.create_rejected", { reason: "origin", ip_tag: ipTag }, "warn");
+      res.writeHead(403).end("cross-origin room creation refused");
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let dead = false;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > 4096 && !dead) {
+        dead = true;
+        res.writeHead(413).end();
+        req.destroy();
+      } else if (!dead) chunks.push(c);
+    });
+    req.on("end", () => {
+      if (dead) return;
+      let body: { name?: unknown; mode?: unknown; config?: unknown; visibility?: unknown };
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad_body" }));
+        return;
+      }
+      // Security probe S1: `null` (or `[]`, `1`) parses fine, and reading a field off `null` below threw outside any try,
+      // which took the whole process down. Anything that isn't a plain object is a bad body.
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad_body" }));
+        return;
+      }
+      if (!roomCreateAllowed(ipTag, Date.now())) {
+        log.limited(`room_create:${ipTag}`, 10_000, "room.create_rejected", { reason: "ip_rate_limited", ip_tag: ipTag }, "warn");
+        res.writeHead(429, { "content-type": "application/json" }).end(JSON.stringify({ error: "rate_limited" }));
+        return;
+      }
+      let configBytes: Uint8Array;
+      try {
+        configBytes = typeof body.config === "string" ? new Uint8Array(Buffer.from(body.config, /^[0-9a-fA-F]+$/.test(body.config) && body.config.length === 32 ? "hex" : "base64")) : new Uint8Array(0);
+      } catch {
+        configBytes = new Uint8Array(0);
+      }
+      // Anonymous creation only in R2a: HELLO/auth is still the two fixed worlds' path, so there is no
+      // authenticated creator identity to attach here yet. See the worker report's "rate-limit gap" note.
+      const result = rooms.createRoom({
+        name: typeof body.name === "string" ? body.name : "",
+        mode: typeof body.mode === "string" ? body.mode : "",
+        config: configBytes,
+        visibility: typeof body.visibility === "string" ? body.visibility : "",
+        creatorPlayerId: null,
+      });
+      if (!result.ok) {
+        log.limited(`room_create:${ipTag}`, 10_000, "room.create_rejected", { reason: result.reason, ip_tag: ipTag }, "warn");
+        const status = result.reason === "rate_limited" ? 429 : 400;
+        res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify({ error: result.reason }));
+        return;
+      }
+      log.event("room.created", { room: result.room.id, mode: result.room.mode, visibility: result.room.visibility });
+      res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ id: result.room.id, code: result.room.code, name: result.room.name, mode: result.room.mode, visibility: result.room.visibility }));
+    });
+  }
+
+  /** Connected players (spectators have playerId 0 and are not counted) in a loaded room; 0 for an unloaded one. */
+  function playersIn(id: number): number {
+    const w = worlds.get(id);
+    return w ? [...w.members.values()].filter((m) => m.playerId !== 0).length : 0;
+  }
+
+  const liveFeed = createLiveFeed();
+  /** GET /api/live: players and rooms live, plus the public death log; cached 2 s, never logged per call (it is polled). */
+  function liveRoute(res: ServerResponse): void {
+    const body = liveFeed.json(() => {
+      let players = 0;
+      let nrooms = 0;
+      for (const r of rooms?.listPublicRooms() ?? []) {
+        const n = playersIn(r.id);
+        players += n;
+        if (n > 0) nrooms++;
+      }
+      return { players, rooms: nrooms };
+    });
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(body);
+  }
+
+  /** GET /api/rooms: public rooms only, with a live player count but no player names. */
+  function listRoomsRoute(req: IncomingMessage, res: ServerResponse): void {
+    if (!rooms) {
+      res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ rooms: [] }));
+      return;
+    }
+    // Not logged: a client polling the room list every few seconds must not flood the ring (CLAUDE.md).
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    // Live player count from the in-memory worlds (0 for a room nobody has loaded); busiest first, then most recently active.
+    // listPublicRooms is already last_active desc, and Array.sort is stable, so sorting by players keeps that as the tiebreak.
+    const list = rooms.listPublicRooms().map((r) => ({ ...publicRoom(r), players: playersIn(r.id) }));
+    list.sort((a, b) => b.players - a.players);
+    res.end(JSON.stringify({ rooms: list }));
+  }
+
+  /** An unloaded Survival room is running if it has logged ticks and has not ended (the round state itself is not stored). */
+  function roomIsRunning(r: RoomRow): boolean {
+    const cfg = decodeConfig(r.config);
+    return cfg?.round === 1 && (db?.getWorld(r.id)?.lastTick ?? 0) > 0;
+  }
+
+  /** GET /api/rooms/:code: config and world id for joining. Still inert in R2a (nothing can join yet). */
+  function getRoomRoute(req: IncomingMessage, res: ServerResponse, code: string): void {
+    if (!rooms) {
+      res.writeHead(503, { "content-type": "text/plain" }).end("rooms unavailable");
+      return;
+    }
+    const r = rooms.getRoomByCode(code);
+    if (!r) {
+      res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not_found" }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    const roomWorld = worlds.get(r.id);
+    res.end(JSON.stringify({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility, owned: r.ownerPlayerId !== null, ended: r.endedAt !== null, running: r.endedAt === null && (roomWorld ? roomWorld.roundActive() : roomIsRunning(r)), ...(tele.on ? { devTeleport: true } : {}), config: Buffer.from(r.config).toString("base64") }));
+  }
+
+  /** OWNED: the caller's player from `authorization: Bearer <64 hex>` (the token POST /api/players gave it), or null. */
+  function bearerPlayer(req: IncomingMessage): { id: number; name: string } | null {
+    const m = /^Bearer ([0-9a-f]{64})$/.exec(String(req.headers.authorization ?? ""));
+    if (!m) return null;
+    const who = identity.resolve(new Uint8Array(Buffer.from(m[1], "hex")));
+    return who === "unknown" ? null : who;
+  }
+
+  /** OWNED: what the menu needs about an owned sandbox. The owner's plain name only, never `name#id`. */
+  const ownedJson = (r: RoomRow) => ({ id: r.id, code: r.code, name: r.name, mode: r.mode, visibility: r.visibility });
+
+  /**
+   * OWNED: /api/sandbox. GET finds the caller's own sandbox (404 if none), POST creates it or returns the existing one
+   * (idempotent: one per player). DELETE /api/sandbox/:code removes it and everything stored for it, for its owner
+   * only (403 for anyone else, and for a room nobody owns). Every verb needs the caller's token. POST and DELETE are
+   * same-origin only, like POST /api/rooms; POST shares that route's per-IP hourly creation limit.
+   */
+  function ownedSandboxRoute(req: IncomingMessage, res: ServerResponse, code: string | null): void {
+    // Review N2: a database error (busy, disk) must answer 500, never escape the handler and take the process down. A
+    // delete that fails after the world was torn down leaves it unloaded with its rows intact: a valid state that the
+    // next join reloads, and the owner may retry the delete.
+    try {
+      ownedSandbox(req, res, code);
+    } catch (e) {
+      log.limited("owned_failed", 10_000, "db.write_failed", { what: "owned_sandbox", error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }, "error");
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: "server" }));
+    }
+  }
+
+  function ownedSandbox(req: IncomingMessage, res: ServerResponse, code: string | null): void {
+    const ipTag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+    const json = (status: number, body: unknown) => res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
+    const allow = code === null ? "GET, POST" : "DELETE";
+    if (!allow.split(", ").includes(req.method ?? "")) {
+      res.writeHead(405, { allow }).end();
+      return;
+    }
+    if (!rooms) return void json(503, { error: "rooms_unavailable" });
+    if (req.method !== "GET" && !originOk(req)) {
+      log.limited(`owned_origin:${ipTag}`, 10_000, "room.create_rejected", { reason: "origin", owned: true, ip_tag: ipTag }, "warn");
+      return void json(403, { error: "origin" });
+    }
+    const me = bearerPlayer(req);
+    if (!me) {
+      if (req.method === "DELETE") log.limited(`owned_del:${ipTag}`, 10_000, "room.delete_refused", { reason: "no_token", ip_tag: ipTag }, "warn");
+      return void json(401, { error: "unknown_token" });
+    }
+    if (code !== null) {
+      const target = /^[A-Za-z0-9]{1,6}$/.test(code) ? rooms.getRoomByCode(code) : null;
+      if (!target) return void json(404, { error: "not_found" });
+      if (target.ownerPlayerId !== me.id) {
+        log.limited(`owned_del:${ipTag}`, 10_000, "room.delete_refused", { reason: "not_owner", world: target.id, who: `${me.name}#${me.id}`, ip_tag: ipTag }, "warn");
+        return void json(403, { error: "not_owner" });
+      }
+      if (!deleteRoom(target.id, "owner", `${me.name}#${me.id}`)) {
+        // Only a load in flight refuses an owner's delete; the client may simply retry.
+        log.limited(`owned_del:${ipTag}`, 10_000, "room.delete_refused", { reason: "busy", world: target.id, ip_tag: ipTag }, "warn");
+        return void json(409, { error: "busy" });
+      }
+      return void json(200, { deleted: target.code });
+    }
+    const mine = rooms.ownedBy(me.id);
+    if (req.method === "GET") return void (mine ? json(200, ownedJson(mine)) : json(404, { error: "not_found" }));
+    if (mine) return void json(200, { ...ownedJson(mine), created: false });
+    if (!roomCreateAllowed(ipTag, Date.now())) {
+      log.limited(`owned_create:${ipTag}`, 10_000, "room.create_rejected", { reason: "ip_rate_limited", owned: true, ip_tag: ipTag }, "warn");
+      return void json(429, { error: "rate_limited" });
+    }
+    if (rooms.ownedCount() >= (opts.maxOwnedRooms ?? MAX_OWNED_ROOMS)) {
+      log.limited("owned_cap", 10_000, "room.create_rejected", { reason: "owned_cap", owned: true, ip_tag: ipTag }, "warn");
+      return void json(503, { error: "owned_cap" });
+    }
+    const r = rooms.ensureOwned(me.id, me.name, encodeConfig(CLASSIC_SANDBOX));
+    if ("error" in r) {
+      log.limited(`owned_create:${ipTag}`, 10_000, "room.create_rejected", { reason: r.error, owned: true, ip_tag: ipTag }, "warn");
+      return void json(400, { error: r.error });
+    }
+    if (r.created) log.event("room.created", { room: r.room.id, mode: r.room.mode, visibility: r.room.visibility, owner: `${me.name}#${me.id}` });
+    json(r.created ? 201 : 200, { ...ownedJson(r.room), created: r.created });
+  }
+
   const http: Server = createServer((req, res) => {
+    // One place for every HTTP response (static, API, dashboard, readme); writeHead merges these in.
+    // Only frame-ancestors in the CSP: a script-src/default-src would risk the wasm and the module worker.
+    res.setHeader("x-content-type-options", "nosniff");
+    res.setHeader("referrer-policy", "same-origin");
+    res.setHeader("content-security-policy", "frame-ancestors 'self'");
     let path: string;
     try {
       path = decodeURIComponent((req.url ?? "/").split("?")[0]);
@@ -415,7 +1050,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       const origin = req.headers.origin;
       if (origin !== undefined && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}` && !allowedOrigins.has(origin)) {
         stats.originRefused++;
-        log.event("register.refused", { reason: "origin", origin: origin.slice(0, 80) }, "warn");
+        const tag = log.ipTag(String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?"));
+        log.limited(`reg_origin:${tag}`, 10_000, "register.refused", { reason: "origin", origin: origin.slice(0, 80), ip_tag: tag }, "warn");
         res.writeHead(403).end("cross-origin registration refused");
         return;
       }
@@ -442,7 +1078,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         }
         const r = identity.register(name, performance.now());
         if (!r) {
-          log.event("register.refused", { reason: identity.count >= MAX_REGISTERED ? "cap" : "rate" }, "warn");
+          log.limited("register:refused", 10_000, "register.refused", { reason: identity.count >= MAX_REGISTERED ? "cap" : "rate" }, "warn");
           res.writeHead(429).end();
           return;
         }
@@ -454,6 +1090,38 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     if (path === "/api/admin/reset") {
       adminReset(req, res);
+      return;
+    }
+    if (path === "/api/live") {
+      if (req.method === "GET") liveRoute(res);
+      else res.writeHead(405, { allow: "GET" }).end();
+      return;
+    }
+    if (path === "/api/sandbox" || path.startsWith("/api/sandbox/")) {
+      ownedSandboxRoute(req, res, path === "/api/sandbox" ? null : path.slice("/api/sandbox/".length));
+      return;
+    }
+    if (path === "/api/rooms") {
+      if (req.method === "POST") {
+        createRoomRoute(req, res);
+      } else if (req.method === "GET") {
+        listRoomsRoute(req, res);
+      } else {
+        res.writeHead(405, { allow: "GET, POST" }).end();
+      }
+      return;
+    }
+    if (path.startsWith("/api/rooms/")) {
+      if (req.method !== "GET") {
+        res.writeHead(405, { allow: "GET" }).end();
+        return;
+      }
+      const code = path.slice("/api/rooms/".length);
+      if (!/^[A-Za-z0-9]{1,6}$/.test(code)) {
+        res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not_found" }));
+        return;
+      }
+      getRoomRoute(req, res, code);
       return;
     }
     if (dashboard.handle(req, res, path)) return;
@@ -470,12 +1138,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       }
       return;
     }
-    // The same client serves both worlds: "/" is the game world, "/sandbox" the sandbox (it reads its URL).
+    // The same client bundle serves the menu, both fixed worlds and every real room: "/" is the menu, "/sandbox"
+    // the permanent sandbox, "/r/<code>" a room by code (R3: plan-game-modes.md "All routes serve the same
+    // bundle"). The client reads location.pathname to pick which of those to render; this route just has to
+    // hand back index.html for any of those paths instead of trying (and failing) a static-file lookup.
     if (path === "/sandbox/") {
       res.writeHead(301, { location: "/sandbox" }).end(); // the client's assets are relative to "/sandbox"
       return;
     }
-    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" ? "index.html" : path));
+    const isRoomPath = /^\/r\/[A-Za-z0-9]{1,6}$/.test(path);
+    let file = normalize(join(clientDir, path === "/" || path === "/sandbox" || path === "/game" || isRoomPath ? "index.html" : path));
     if (file !== clientDir && !file.startsWith(clientDir + sep)) {
       res.writeHead(403).end();
       return;
@@ -504,6 +1176,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
     // Fly sets Fly-Client-IP (and replaces any client-supplied one); elsewhere it is the socket address.
     const ip = String(req.headers["fly-client-ip"] ?? req.socket.remoteAddress ?? "?");
+    // A browser always sends Origin on a WebSocket upgrade, so a page on another site is refused (sec-probe S3).
+    // A missing Origin is a non-browser client (a script, the test helpers), which a drive-by page cannot forge, so it stays allowed.
+    if (!originOk(req)) {
+      stats.originRefused++;
+      log.limited(`ws_origin:${log.ipTag(ip)}`, 10_000, "register.refused", { reason: "origin", scope: "ws", ip_tag: log.ipTag(ip), origin: String(req.headers.origin).slice(0, 80) }, "warn");
+      socket.write("HTTP/1.1 403 Forbidden\r\nconnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     if ((connsByIp.get(ip) ?? 0) >= maxPerIp) {
       stats.capRefused++;
       log.limited(`cap:${log.ipTag(ip)}`, 10_000, "register.refused", { reason: "cap", scope: "ws_per_ip", ip_tag: log.ipTag(ip) }, "warn");
@@ -526,7 +1207,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   function reject(ws: WebSocket, reason: string, fields: { world?: number; ipTag?: string } = {}) {
     stats.rejected++;
-    log.event("hello.rejected", { reason, world: fields.world, ip_tag: fields.ipTag }, "warn");
+    log.limited(`hello_rej:${fields.ipTag ?? "?"}:${reason}`, 10_000, "hello.rejected", { reason, world: fields.world, ip_tag: fields.ipTag }, "warn");
     ws.send(encodeReject(reason), () => ws.close(1008, "rejected"));
   }
 
@@ -554,18 +1235,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     lag: l.timing.lag(l.world.clock.lastClosed),
     step_p95_ms: round2(l.timing.stepP95Ms),
   });
-  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number }) => ({
+  const summaryFields = (l: Live, w: { casts: Map<string, number>; paints: Map<string, number>; pos: number; rejected: number; readies: number; chats: number }) => ({
     world: l.world.id,
     who: l.who,
     conn: l.conn,
     casts: compactCounts(w.casts),
     paints: compactCounts(w.paints),
     pos: w.pos,
+    readies: w.readies,
+    chats: w.chats,
     rejected: w.rejected,
     ...timingFields(l),
   });
   /** One timer over all connections (not one per connection): a summary for each that sent anything. */
   const summaryTimer = setInterval(() => {
+    flushKills();
     for (const l of live.values()) {
       const w = l.counts.takeWindow();
       if (w) log.event("input.summary", summaryFields(l, w));
@@ -615,6 +1299,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     log.limited(`held:${conn}`, 10_000, "input.rejected", { world: w.id, conn, who: w.whoOfConn(conn), reason: w.held ? "world_held" : "tick_full" }, "warn");
   }
 
+  /** Review H2: one address past its paint budget. The input is dropped before it is stamped, so no client pays for it. */
+  function paintOverBudget(w: World, conn: number, ipTag: string, payload: Uint8Array): boolean {
+    if (paintRate.take(ipTag, paintCost(payload), performance.now())) return false;
+    stats.droppedRate++;
+    live.get(liveKey(w.id, conn))?.counts.reject();
+    log.limited(`paint_rate:${ipTag}`, 10_000, "input.rate_limited", { world: w.id, conn, who: w.whoOfConn(conn), ip_tag: ipTag, what: "paint_work" }, "warn");
+    return true;
+  }
+
   function badInput(w: World, conn: number, reason: string, kind: number): void {
     stats.rejected++;
     live.get(liveKey(w.id, conn))?.counts.reject();
@@ -623,6 +1316,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
   function onConnection(ws: WebSocket, userAgent: string, ipTag: string) {
     let joined: { world: World; conn: number; playerId: number; visitorId: number; visitorName: string; counts: InputCounts; at: number } | null = null;
+    /** True while this connection's one HELLO is being resolved (room lookup, a possible lazy load). A second
+     * frame in that window closes the socket rather than racing a second resolution for the same connection. */
+    let handshaking = false;
     ws.on("pong", () => {
       if (!joined) return;
       const l = live.get(liveKey(joined.world.id, joined.conn));
@@ -633,6 +1329,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
+    let controlStart = performance.now();
+    let controlInWindow = 0;
     /** CHUNK_HASHES frames nobody asked for: an honest client never sends one, so a few close the socket. */
     let unaskedChunks = 0;
     const helloTimer = setTimeout(() => ws.close(1008, "no hello"), HELLO_TIMEOUT_MS);
@@ -649,7 +1347,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // CHUNK_HASHES is the one large frame besides an upload. Check its size and whether this connection owes one
       // from the tag and tick alone, before decoding hundreds of u64s (review chunk-diag N1).
       if (buf.length > 0 && buf[0] === C_CHUNK_HASHES) {
-        if (!joined || buf.length > maxChunkHashesFrameFor(joined.world.kind)) return ws.close(1009, "frame too large");
+        if (!joined || buf.length > maxChunkHashesFrameFor(joined.world.cfg)) return ws.close(1009, "frame too large");
         const tick = buf.length >= 5 ? buf.readUInt32LE(1) : -1;
         if (!joined.world.wantsChunkHashes(joined.conn, tick)) {
           if (++unaskedChunks > MAX_UNASKED_CHUNK_FRAMES) return ws.close(1008, "unsolicited chunk hashes");
@@ -663,85 +1361,137 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         if (msg.t !== "hello") return ws.close(1002, "hello first");
         if (buf.length > MAX_FRAME_BYTES) return ws.close(1009, "frame too large");
         clearTimeout(helloTimer);
-        const w = worlds.get(msg.worldId);
         if (msg.version !== PROTOCOL_VERSION) return rej("protocol version mismatch: new version, reload", msg.worldId);
         if (!Buffer.from(msg.buildHash).equals(hash)) return rej("sim build mismatch: new version, reload", msg.worldId);
-        if (!w || worldKindOf(msg.worldId) === null) return rej("unknown world", msg.worldId);
-        if (w.closing) return rej("server is shutting down", msg.worldId);
-        // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
-        if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
-          stats.capRefused++;
-          log.event("register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
-          return rej("world is full; try again later", msg.worldId);
-        }
-        // Identity for every world and role. A game-world player must hold a known token (its id is the sim id);
-        // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
-        // anonymous resolve touches nothing in the database. Identity never reaches the sim.
-        const spectating = !!(msg.flags & HELLO_SPECTATE);
-        const gamePlayer = w.kind === WORLD_GAME && !spectating;
-        const who = identity.resolve(msg.token, gamePlayer);
-        if (who === "unknown" && gamePlayer) return rej("unknown token", msg.worldId);
-        const visitorId = who === "unknown" ? 0 : who.id;
-        const visitorName = who === "unknown" ? "" : who.name;
-        const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
-        const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
-        joined = me;
-        playerStats.bump(visitorId, STAT_SESSIONS);
-        const entry: Live = {
-          world: w,
-          conn: j.conn,
-          visitorId,
-          who: j.who,
-          role: roleOf(w, j.playerId),
-          counts: j.counts,
-          timing: j.timing,
-          ws,
-          pingAt: 0,
-          at: me.at,
-          finish: (code) => {
-            if (!live.delete(liveKey(w.id, j.conn))) return;
-            w.leave(j.conn);
-            log.forget(`rate:${j.conn}`);
-            log.forget(`pos:${j.conn}`);
-            log.forget(`bad:${j.conn}`);
-            log.forget(`held:${j.conn}`);
-            const ms = Date.now() - me.at;
-            playerStats.bump(visitorId, STAT_PLAY_MS, ms);
-            if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
-            // The line to read at the crit: one per session, with its totals.
-            log.event("leave", {
-              world: w.id,
-              who: j.who,
-              conn: j.conn,
-              role: entry.role,
-              online: w.playerCount,
-              tick: w.clock.lastClosed,
-              duration_s: Math.round(ms / 1000),
-              code,
-              casts: compactCounts(j.counts.casts),
-              paints: compactCounts(j.counts.paints),
-              max_depth: j.counts.maxDepth,
-              resyncs: j.counts.resyncs,
-              pos_rejected: j.counts.posRejected,
-              ...timingFields(entry),
-              ip_tag: ipTag,
-            });
-            const rest = j.counts.takeWindow();
-            if (rest) log.event("input.summary", { ...summaryFields(entry, rest), final: true });
-          },
-        };
-        live.set(liveKey(w.id, j.conn), entry);
-        log.event("join", {
-          world: w.id,
-          who: j.who,
-          visitor: visitorId,
-          name: visitorName || undefined,
-          conn: j.conn,
-          role: roleOf(w, j.playerId),
-          online: w.playerCount,
-          tick: w.clock.lastClosed,
-          ip_tag: ipTag,
-          ua: userAgent.slice(0, 80),
+        if (handshaking) return ws.close(1002, "hello already in flight"); // an honest client sends exactly one
+        handshaking = true;
+        // Fixed worlds are always already in `worlds`; anything else resolves through RoomsStore, lazily
+        // loading the room's World on first HELLO for it (R2b). `getOrLoadRoom` is synchronous up to the point
+        // where it registers an in-flight promise, so two near-simultaneous HELLOs for the same unloaded room
+        // id always see the first one's promise rather than racing to construct two Worlds (see its comment).
+        const wasWarm = worlds.has(msg.worldId); // before any lazy load this call might trigger (finding 1)
+        void getOrLoadRoom(msg.worldId).then((resolved) => {
+          handshaking = false;
+          if (ws.readyState !== ws.OPEN || joined) return; // closed, or a stray second frame already failed us
+          if (resolved === "unknown") return rej("unknown room", msg.worldId);
+          if (resolved === "cap") return rej("server busy", msg.worldId);
+          const w = resolved;
+          if (w.closing) return rej("server is shutting down", msg.worldId);
+          // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
+          if (w.playerCount >= (opts.maxMembersPerWorld ?? MAX_MEMBERS_PER_WORLD)) {
+            stats.capRefused++;
+            log.limited(`cap:world_members:${w.id}`, 10_000, "register.refused", { reason: "cap", scope: "world_members", world: w.id }, "warn");
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("world is full; try again later", msg.worldId);
+          }
+          // The member caps (docs/research/capacity-rooms.md: count members, not rooms) cover every connection,
+          // spectators included, across every loaded world. A brand-new room's loaded-room-slot cap is already
+          // checked inside getOrLoadRoom, before construction; this is the member-count cap, checked here
+          // because it is cheap either way and belongs with the per-world cap just above it. A rejection here
+          // must still discard a room THIS call freshly loaded (review-r2b.md finding 1): nobody ever joins it,
+          // so nothing else would ever schedule its unload.
+          const capReason = memberCapReason();
+          if (capReason) {
+            stats.capRefused++;
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej(capReason, msg.worldId);
+          }
+          // Identity for every world and role. A game-world player must hold a known token (its id is the sim id);
+          // a painter or spectator with an unknown or zero token is accepted as anonymous (visitorId 0). An
+          // anonymous resolve touches nothing in the database. Identity never reaches the sim.
+          const spectating = !!(msg.flags & HELLO_SPECTATE);
+          // Review N1: a finished round takes no more players; a non-spectator HELLO is refused (the client's late panel offers Spectate).
+          if (w.roundEnded && !spectating) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("round is over; spectate or start a new room", msg.worldId);
+          }
+          const gamePlayer = w.kind === WORLD_GAME && !spectating;
+          const who = identity.resolve(msg.token, gamePlayer);
+          if (who === "unknown" && gamePlayer) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("unknown token", msg.worldId);
+          }
+          // Review M3: the room's own player cap. A reload of a player already in (same token) replaces its old tab, so it
+          // never counts against itself; spectators and sandbox painters are not players (the member cap above covers them).
+          if (gamePlayer && who !== "unknown" && w.connOf(who.id) === null && w.avatarPlayers >= w.cfg.maxPlayers) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("room is full; spectate or try another room", msg.worldId);
+          }
+          cancelUnload(w.id); // the join is now known to succeed: keep this room hot (review-r2b.md finding 2 —
+          // this must not run any earlier, or a rejected join here could cancel a legitimate pending unload)
+          const visitorId = who === "unknown" ? 0 : who.id;
+          const visitorName = who === "unknown" ? "" : who.name;
+          rooms?.markJoined(w.id, wallNow()); // N1: it has been joined (never_joined no longer applies) and is active now
+          const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName, ipTag });
+          const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
+          joined = me;
+          playerStats.bump(visitorId, STAT_SESSIONS);
+          const entry: Live = {
+            world: w,
+            conn: j.conn,
+            visitorId,
+            who: j.who,
+            role: roleOf(w, j.playerId),
+            counts: j.counts,
+            timing: j.timing,
+            ws,
+            pingAt: 0,
+            at: me.at,
+            finish: (code) => {
+              if (!live.delete(liveKey(w.id, j.conn))) return;
+              w.leave(j.conn);
+              log.forget(`rate:${j.conn}`);
+              log.forget(`pos:${j.conn}`);
+              log.forget(`bad:${j.conn}`);
+              log.forget(`held:${j.conn}`);
+              log.forget(`ctl_rate:${j.conn}`);
+              const ms = Date.now() - me.at;
+              playerStats.bump(visitorId, STAT_PLAY_MS, ms);
+              if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
+              // The line to read at the crit: one per session, with its totals.
+              log.event("leave", {
+                world: w.id,
+                who: j.who,
+                conn: j.conn,
+                role: entry.role,
+                online: w.playerCount,
+                tick: w.clock.lastClosed,
+                duration_s: Math.round(ms / 1000),
+                code,
+                casts: compactCounts(j.counts.casts),
+                paints: compactCounts(j.counts.paints),
+                max_depth: j.counts.maxDepth,
+                resyncs: j.counts.resyncs,
+                pos_rejected: j.counts.posRejected,
+                ...timingFields(entry),
+                ip_tag: ipTag,
+              });
+              const rest = j.counts.takeWindow();
+              if (rest) log.event("input.summary", { ...summaryFields(entry, rest), final: true });
+              // A room (not the two fixed worlds) that just lost its last member starts its unload timer.
+              rooms?.touch(w.id, wallNow()); // N1: this was the last moment this member was in it
+              if (w.playerCount === 0) scheduleUnload(w);
+            },
+          };
+          live.set(liveKey(w.id, j.conn), entry);
+          log.event("join", {
+            world: w.id,
+            who: j.who,
+            visitor: visitorId,
+            name: visitorName || undefined,
+            conn: j.conn,
+            role: roleOf(w, j.playerId),
+            online: w.playerCount,
+            tick: w.clock.lastClosed,
+            ip_tag: ipTag,
+            ua: userAgent.slice(0, 80),
+          });
+        }).catch((e: unknown) => {
+          // A room that cannot load (World.load throws on purpose on verify_unavailable) or a failure in the join
+          // continuation must cost this one client, never the server: the production unhandledRejection handler rethrows.
+          handshaking = false;
+          log.limited(`hello_failed:${msg.worldId}`, 10_000, "hello.failed", { world: msg.worldId, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }, "error");
+          if (ws.readyState === ws.OPEN && !joined) rej("room unavailable; try again later", msg.worldId);
         });
         return;
       }
@@ -749,9 +1499,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       if (w.closing) return;
       // A replaced tab (same token, newer connection) stays open until its socket closes; it must not stamp or count.
       if (!w.hasMember(joined.conn)) return;
+      w.heard(joined.conn);
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
-      const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.kind) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.kind) : MAX_FRAME_BYTES;
+      const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.cfg) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.cfg) : MAX_FRAME_BYTES;
       if (buf.length > frameCap) return ws.close(1009, "frame too large");
+      if (msg.t === "hash" || msg.t === "ping") {
+        const now = performance.now();
+        if (now - controlStart >= 1000) {
+          controlStart = now;
+          controlInWindow = 0;
+        }
+        if (++controlInWindow > MAX_CONTROL_FRAMES_PER_SEC) {
+          log.limited(`ctl_rate:${joined.conn}`, 10_000, "input.rate_limited", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), limit: MAX_CONTROL_FRAMES_PER_SEC, what: msg.t }, "warn");
+          return;
+        }
+      }
 
       switch (msg.t) {
         case "ping":
@@ -770,7 +1532,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             return;
           }
           if (w.kind === WORLD_GAME) {
-            // Game world: only Pos (validated) and Cast. Join/Leave are the server's; Paint is sandbox-only.
+            // Game world: Pos (validated) and Cast for every avatar room; Paint too when the room's own config
+            // allows brushes (R4: Creative has both avatars and brushes, so Paint is no longer sandbox-only —
+            // the old "Game world never paints" split predates a config that can set brushes independently of
+            // avatars). Join/Leave are still the server's.
             if (!joined.playerId) return void badInput(w, joined.conn, "spectator_input", msg.kind);
             if (msg.kind === KIND_POS && msg.payload.length === POS_PAYLOAD_LEN) {
               if (!w.acceptPos(joined.conn, msg.payload)) {
@@ -785,21 +1550,39 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               const depth = depthCells(new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength).getInt32(6, true));
               joined.counts.position(depth);
               // Only a deeper maximum can newly satisfy Spelunker, so most Pos inputs stop here.
-              if (playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth)) achievements.onStat(joined.visitorId, STAT_MAX_DEPTH, { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
-            } else if (!(msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN)) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
-            else {
+              if (w.creditsStats() && playerStats.max(joined.visitorId, STAT_MAX_DEPTH, depth)) achievements.onStat(joined.visitorId, STAT_MAX_DEPTH, { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+            } else if (msg.kind === KIND_CAST && msg.payload.length === CAST_PAYLOAD_LEN) {
               // Counted as an attempt (plan 10). Never one log line per cast: input.summary carries the counts.
               joined.counts.cast(spellKey(msg.payload[0]));
-              playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
-              achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+              // A lobby cast is refused by the sim anyway (F6b), so it is not a cast worth counting.
+              if (w.creditsStats()) {
+                playerStats.bump(joined.visitorId, castStat(msg.payload[0]));
+                achievements.onStat(joined.visitorId, castStat(msg.payload[0]), { name: joined.visitorName, world: w.id, tick: w.clock.lastClosed });
+              }
+            } else if (msg.kind === KIND_READY && w.cfg.round === 1 && msg.payload.length === READY_PAYLOAD_LEN && msg.payload[0] <= 1) {
+              // F6b: the lobby ready toggle, Survival rooms only. The player id is stamped from the connection, never the client's.
+              joined.counts.ready();
+            } else if (w.cfg.brushes === 1 && msg.kind === KIND_PAINT && msg.payload.length === PAINT_PAYLOAD_LEN) {
+              if (paintOverBudget(w, joined.conn, ipTag, msg.payload)) return;
+              // Only materials the sim will paint become stat keys: any other byte is refused by the sim, and counting
+              // it first would add up to 256 junk keys per player (hardening review server F1).
+              if (isPaintable(msg.payload[0])) {
+                joined.counts.paint(materialKey(msg.payload[0]));
+                playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+              }
+            } else {
+              return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
             }
             if (!w.stampClient({ player: joined.playerId, kind: msg.kind, payload: msg.payload })) dropHeld(w, joined.conn);
             return;
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
           if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
-          joined.counts.paint(materialKey(msg.payload[0]));
-          playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+          if (paintOverBudget(w, joined.conn, ipTag, msg.payload)) return;
+          if (isPaintable(msg.payload[0])) {
+            joined.counts.paint(materialKey(msg.payload[0]));
+            playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));
+          }
           // The player id is ours, never the client's.
           if (!w.stampClient({ player: joined.playerId, kind: msg.kind, payload: msg.payload })) dropHeld(w, joined.conn);
           return;
@@ -812,6 +1595,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           if (w.kind !== WORLD_GAME) return void badInput(w, joined.conn, "claim_in_sandbox", 0x06);
           w.onClaim(joined.conn, { tick: msg.tick, victim: msg.victim, killer: msg.killer, cause: msg.cause, bag: msg.bag });
           return;
+        case "claim-event": {
+          if (w.kind !== WORLD_GAME) return void badInput(w, joined.conn, "claim_in_sandbox", 0x09);
+          if (msg.kind === CLAIM_KILL) w.onKillClaim(joined.conn, { tick: msg.tick, killer: msg.a, x: msg.b | 0, y: msg.c | 0, kind: msg.d });
+          else if (msg.kind === CLAIM_ROUND_START) w.onRoundStartClaim(joined.conn, { tick: msg.tick, active: msg.a });
+          else if (msg.kind === CLAIM_ROUND_END) w.onRoundEndClaim(joined.conn, { tick: msg.tick, win: msg.a === 1, players: msg.b, alive: msg.ids });
+          else badInput(w, joined.conn, "bad_claim_kind", msg.kind);
+          return;
+        }
         case "live":
           w.onLive(joined.conn, msg.tick);
           return;
@@ -820,6 +1611,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           return;
         case "snapshot-upload":
           w.onUpload(joined.conn, msg.tick, msg.hash, msg.data);
+          return;
+        case "chat":
+          // Track E: relayed beside the lockstep, never stamped (invariant 1). World.onChat rate-limits, checks and logs.
+          w.onChat(joined.conn, msg.text);
           return;
         default:
           return ws.close(1002, "unexpected message");
@@ -833,8 +1628,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   const timer = setInterval(() => {
-    for (const w of worlds.values()) w.tick();
+    for (const w of [...worlds.values()]) {
+      if (w.closing) continue; // failed (or shutting down): never ticked again
+      try {
+        w.tick();
+      } catch (e) {
+        failWorld(w, e);
+      }
+    }
   }, TIMER_MS);
+  // N1: the same sweep at boot (stored times only: a server that just booted has no members anywhere) and each minute.
+  sweepRooms();
+  const roomSweepTimer = setInterval(() => sweepRooms(), opts.roomSweepMs ?? ROOM_SWEEP_MS);
+  roomSweepTimer.unref();
   let closed: Promise<void> | null = null;
   const sum = (m: ReadonlyMap<string, number>) => {
     let n = 0;
@@ -906,6 +1712,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             hashPasses: w.stats.hashPasses,
             hashFails: w.stats.hashFails,
             resyncs: w.stats.resyncs,
+            round: w.cfg.round !== 1 ? null : w.roundEnded ? "ended" : w.roundActive() ? "running" : "lobby",
             snapshotsAccepted: w.stats.snapshotsAccepted,
             snapshotsRejected: w.stats.snapshotsRejected,
             snapshotBytes: w.snapshot?.data.length ?? 0,
@@ -931,6 +1738,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return out;
     },
     /** Shutdown (plan 9.3): stop inputs, close the open tick, flush tick_log, close the DB. Safe to call twice. */
+    sweepRooms,
     close: () =>
       (closed ??= new Promise<void>((ok) => {
         clearInterval(timer);
@@ -938,11 +1746,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         clearInterval(statsTimer);
         clearInterval(pingTimer);
         clearInterval(sampleTimer);
+        clearInterval(roomSweepTimer);
+        for (const t of roomUnloadTimers.values()) clearTimeout(t);
+        roomUnloadTimers.clear();
         loopLag.disable();
         dashboard.closeAll();
         log.event("server.shutdown", { online: [...worlds.values()].reduce((n, w) => n + w.playerCount, 0), uptime_s: Math.round(process.uptime()) });
         // Finish every session first (leave events, play_ms), then flush stats, then close the DB.
         for (const l of [...live.values()]) l.finish(1001);
+        for (const t of roomUnloadTimers.values()) clearTimeout(t); // finish() just armed some; the DB closes below
+        roomUnloadTimers.clear();
         for (const w of worlds.values()) w.shutdown();
         playerStats.flush();
         db?.close();
@@ -964,7 +1777,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     throw e;
   });
   const port = Number(process.env.PORT ?? 8080);
-  s = await startServer({ port });
+  s = await startServer({ port, onFatal: () => void s?.close().finally(() => process.exit(1)) });
   const srv = s;
   // process.minute: health once a minute. The RSS warning is this event at warn level.
   setInterval(() => {

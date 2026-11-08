@@ -100,7 +100,7 @@ fn sandbox_has_no_entities() {
 fn pickups_exist_alternate_spells_collect_and_respawn() {
     let mut s = Sim::new(2, 1).unwrap();
     assert!(s.pickups.len() >= 48);
-    assert!(s.pickups.iter().all(|k| (2..=5).contains(&k.spell)));
+    assert!(s.pickups.iter().all(|k| PICKUP_TABLE.iter().any(|t| t.iter().any(|&(id, _)| id == k.spell))));
     assert!(s.pickups.iter().any(|k| k.spell == 2) && s.pickups.iter().any(|k| k.spell == 3));
     let k = s.pickups[0].clone();
     push(&mut s, encode_join(1));
@@ -129,6 +129,25 @@ fn pickups_exist_alternate_spells_collect_and_respawn() {
     push(&mut s, encode_pos(1, 0, (i32::from(k2.x) + 4) * PX, (i32::from(k2.y) + 1) * PX, 0));
     s.step();
     assert_eq!(s.pickups[1].respawn_at, 0);
+}
+
+/// The user's 5 Nov screenshot: a player standing on a narrow peak right over a pickup did not collect it, because the
+/// hitbox ended at the feet. Pickups reach `PICKUP_REACH_BELOW` cells below the feet; one cell further does nothing.
+#[test]
+fn a_pickup_just_below_the_feet_is_collected() {
+    let mut s = Sim::new(2, 1).unwrap();
+    let k = s.pickups[0].clone();
+    push(&mut s, encode_join(1));
+    s.step();
+    // Feet two cells above the spot where a player standing on the pickup's floor would have them.
+    let feet = |up: i32| encode_pos(1, 0, i32::from(k.x) * PX + PX / 2, (i32::from(k.y) + 1 - up) * PX, 0);
+    assert_eq!(PICKUP_REACH_BELOW, 2);
+    push(&mut s, feet(PICKUP_REACH_BELOW + 1));
+    s.step();
+    assert_eq!(s.pickups[0].respawn_at, 0, "collected from beyond the reach");
+    push(&mut s, feet(PICKUP_REACH_BELOW));
+    s.step();
+    assert_eq!(s.players[0].charges[k.spell as usize], k.charges, "a pickup just below the feet was not collected");
 }
 
 #[test]
@@ -240,32 +259,30 @@ fn d7_sleep_is_invisible_with_players() {
 }
 
 #[test]
-fn restore_rejects_hostile_entity_sections_and_v1_sandbox_snapshots_still_load() {
+fn restore_rejects_hostile_entity_sections_and_old_formats() {
     let mut a = Sim::new(4, 1).unwrap();
     push(&mut a, encode_join(1));
     a.step();
     let snap = snapshot::write(&a);
-    let elen = u32::from_le_bytes(snap[55..59].try_into().unwrap()) as usize;
+    let elen = u32::from_le_bytes(snap[70..74].try_into().unwrap()) as usize;
     assert!(elen > 0);
     for bad in [u32::MAX, (elen + 1) as u32, 0, 0x7fff_ffff] {
         let mut b = snap.clone();
-        b[55..59].copy_from_slice(&bad.to_le_bytes());
+        b[70..74].copy_from_slice(&bad.to_le_bytes());
         assert!(snapshot::restore(&b).is_err(), "elen {bad}");
     }
     let mut b = snap.clone();
-    b[59..63].copy_from_slice(&(MAX_PLAYERS as u32 + 1).to_le_bytes());
+    b[74..78].copy_from_slice(&(MAX_PLAYERS as u32 + 1).to_le_bytes());
     assert!(snapshot::restore(&b).is_err());
     assert!(snapshot::restore(&snap[..snap.len() - 1]).is_err());
 
-    // A v1 sandbox snapshot (version 1, entity length 0) restores and equals the v2 write apart from the version.
+    // Format 4 refuses every older format, a v1 sandbox snapshot included (R0a; the game is not live).
     let mut sb = Sim::new(9, 0).unwrap();
     push(&mut sb, encode_paint(1, 4, 100, 100, 300, 300, 8));
     sb.step();
     let mut v1 = snapshot::write(&sb);
     v1[4..6].copy_from_slice(&1u16.to_le_bytes());
-    let mut r = snapshot::restore(&v1).expect("v1 restores");
-    assert_eq!(r.state_hash(), sb.state_hash());
-    // And a v1 game-world snapshot with a non-empty entity section is refused.
+    assert!(snapshot::restore(&v1).is_err());
     let mut v1g = snap.clone();
     v1g[4..6].copy_from_slice(&1u16.to_le_bytes());
     assert!(snapshot::restore(&v1g).is_err());
@@ -277,7 +294,7 @@ fn entity_and_event_views() {
     push(&mut s, encode_join(5));
     s.step();
     let mut out = vec![0u8; 4 * sim::entities::ENTITY_BYTES];
-    let n = sim::entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, s.tick, &mut out, 4);
+    let n = sim::entities::write_view(&s.players, &s.pickups, &s.projectiles, &s.bags, &s.enemies, &[], [0; ROUND_TAIL_BYTES], false, s.tick, &mut out, 4);
     assert_eq!(n, 4);
     assert_eq!(out[0], sim::entities::ENT_PLAYER);
     assert_eq!(u32::from_le_bytes(out[1..5].try_into().unwrap()), 5);

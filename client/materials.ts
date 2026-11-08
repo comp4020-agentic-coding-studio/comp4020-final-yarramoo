@@ -15,20 +15,36 @@ export const MATERIALS: MaterialInfo[] = [
   { id: 2, name: MATERIAL_NAMES[2], color: 0x7d8087 },
   { id: 6, name: MATERIAL_NAMES[6], color: 0xb8803c },
   { id: 7, name: MATERIAL_NAMES[7], color: 0xe8e060 },
-  { id: 8, name: MATERIAL_NAMES[8], color: 0x3f9a3a },
-  { id: 9, name: MATERIAL_NAMES[9], color: 0xe2478a },
   { id: 10, name: MATERIAL_NAMES[10], color: 0xff7a1c },
   { id: 11, name: MATERIAL_NAMES[11], color: 0x6e7078 },
   { id: 12, name: MATERIAL_NAMES[12], color: 0xcfd8e6 },
   { id: 13, name: MATERIAL_NAMES[13], color: 0x2e2e36 },
   { id: 14, name: MATERIAL_NAMES[14], color: 0xe03c14 },
+  { id: 15, name: MATERIAL_NAMES[15], color: 0x6b4a14 },
+  { id: 16, name: MATERIAL_NAMES[16], color: 0x8ad21c },
+  { id: 17, name: MATERIAL_NAMES[17], color: 0xb4c85a },
+  { id: 18, name: MATERIAL_NAMES[18], color: 0xa8e4f0 },
+  { id: 19, name: MATERIAL_NAMES[19], color: 0xb4c4d4 },
+  { id: 20, name: MATERIAL_NAMES[20], color: 0x1a1d28 },
+  { id: 22, name: MATERIAL_NAMES[22], color: 0x9a4a36 },
+  { id: 23, name: MATERIAL_NAMES[23], color: 0x4f7a2a },
+  { id: 24, name: MATERIAL_NAMES[24], color: 0xb85a8c },
+  { id: 25, name: MATERIAL_NAMES[25], color: 0x5a3d26 },
+  { id: 26, name: MATERIAL_NAMES[26], color: 0xf2efe8 },
+  { id: 27, name: MATERIAL_NAMES[27], color: 0xf4f8ff },
+  { id: 28, name: MATERIAL_NAMES[28], color: 0xc4561e },
   { id: 0, name: MATERIAL_NAMES[0], color: 0x0b0e14 },
 ];
 
-/** Colour for every id 0..15 (unused ids are magenta so a bug is visible). */
+/** Colour for every id 0..31 (unused ids are magenta so a bug is visible). Matches `uPal[32]` in render.ts. */
+export const PALETTE_SIZE = 32;
+
 export function paletteTable(): number[] {
-  const t = new Array<number>(16).fill(0xff00ff);
+  const t = new Array<number>(PALETTE_SIZE).fill(0xff00ff);
   t[1] = 0x2b2d33; // Bedrock: not paintable, so not in MATERIALS
+  t[8] = 0x3f9a3a; // Stem and Flower grow from Seeds but cannot be painted, so they are not in MATERIALS
+  t[9] = 0xe2478a;
+  t[21] = 0x8a8178; // Pebbles: only from crumbled rock, so not in MATERIALS
   for (const m of MATERIALS) t[m.id] = m.color;
   return t;
 }

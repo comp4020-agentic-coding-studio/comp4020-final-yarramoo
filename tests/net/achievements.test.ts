@@ -23,10 +23,10 @@ const check = (id: string, stats: Record<string, number>) => {
 };
 
 describe("the achievement table", () => {
-  it("has six server entries and four claim entries with unique ids", () => {
+  it("has six server entries and nine claim entries with unique ids", () => {
     expect(SERVER_ACHIEVEMENTS.map((a) => a.id)).toEqual(["first_spell", "gardener", "waterworks", "pyromaniac", "demolitionist", "spelunker"]);
-    expect(ACHIEVEMENTS.filter((a) => a.source === "claim").map((a) => a.name)).toEqual(["First blood", "Shoved to their doom", "Five kills", "Back from the dead"]);
-    expect(new Set(ACHIEVEMENTS.map((a) => a.id)).size).toBe(10);
+    expect(ACHIEVEMENTS.filter((a) => a.source === "claim").map((a) => a.name)).toEqual(["First blood", "Shoved to their doom", "Five kills", "Slime slayer", "Exterminator", "Boss slain", "Last one standing", "Solo descent", "Back from the dead"]);
+    expect(new Set(ACHIEVEMENTS.map((a) => a.id)).size).toBe(15);
   });
   it("thresholds are exact", () => {
     expect(check("waterworks", { casts_water: 99 })).toBe(false);
@@ -60,7 +60,7 @@ describe("migration 5", () => {
       PRAGMA user_version = 4;`);
     raw.close();
     const db = new GameDb(dir);
-    expect(db.schemaVersion).toBe(5);
+    expect(db.schemaVersion).toBe(9); // migrations 6 (rooms, R2a), 7 (rooms.ended_at, F7), 8 (rooms.first_joined_at, N1) and 9 (rooms.owner_player_id, OWNED) also applied
     expect(db.loadStats(1)).toEqual({ casts_water: 7 });
     expect(db.achievementsOf(1)).toEqual([]);
     expect(db.awardAchievement(1, "first_spell", 1, 10)).toBe(true);

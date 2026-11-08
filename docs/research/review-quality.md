@@ -1,0 +1,26 @@
+# Cold review: Track A (quality), ab437c0..HEAD
+
+Read-only review of the client stepping policy and the generation change. Nothing was run. Findings are from reading the diff and the functions it names.
+
+## Findings
+
+1. **nit, client/worker.ts:580 (keepalive).** `sinceSentPos` counts due Pos sends, not ticks. A slow frame now sends at most one Pos, so at 3 fps the 15-send keepalive threshold takes about 5 s instead of 0.5 s. A standing-still client at 2 fps or lower relies on hash replies (every 60 ticks) to count as "heard" against the server's 10 s silence close (`world.ts` CLOSE_SILENT, `heard`). That is probably fine, because hashes are sent when live. Confidence: medium. Harmless unless a client runs below about 1.5 fps.
+2. **nit, client/worker.ts:1079-1150 (live path).** The live path `ls.run(ls.plan(base))` has no time budget: up to 30 + MAX_EXTRA steps per frame, where it used to be 8. If steps cost 15 ms or more (a phone on the 2048x1536 world), a frame takes about 0.5 s. The next frame then owes 30 steps again, which is a stable 60 ticks/s at 100% CPU with no render time left. The `buffered > 120` rule and the fast-forward budget cover this. The slow-frames test does not model it (see 4). Confidence: medium.
+3. **nit, client/worker.ts:1082-1090 (menu backdrop).** The local sim steps up to 30 per frame with no budget, the same shape as 2. It is bounded by owed real time, so there is no runaway. It is a CPU hit on slow devices only.
+4. **should-fix (test only), tests/net/slow-frames.test.ts:25-37.** The model fixes frame spacing at `dt` however long the steps took. It also leaves out `gameFrame`, `reactToTick`, hash and snapshot replies, and message delivery blocked during a slice. So it proves `driveFrame`/`ffBudgetMs` converge. It does not prove the worker loop does not self-throttle (finding 2), and it cannot see the Pos path. Add a case where a frame lasts max(dt, steps x stepMs), or reword the header comment so it does not claim to model the worker loop. Confidence: high that the gap exists.
+5. **nit, client/lockstep.ts:~158-160 (comments).** The old doc comment "A live client this many ticks behind (2 s)..." is now detached from `CATCHUP_THRESHOLD`; the new constants were inserted between them. This is cosmetic.
+6. **nit, client/lockstep.ts `ffBudgetMs`.** The first frame after a hidden tab gets a 400 ms slice, and the worker cannot read WebSocket messages during it. Server hash and snapshot waits tolerate this: `reactToTick` ignores ticks <= `catchUpTarget`, and the server's timeouts are seconds. I did not read the exact server snapshot timeout. Low risk.
+7. **nit, sim/tests/pickup_reach.rs:12-31.** The test claims "can be walked into", but it only checks that a free 5x10 body overlaps the pickup test. It does not require standing support (feet on a solid) or connection to the spawn. It tests cell centres only, which is conservative. Its mapping of `fy` to the sim's rows matches `hitbox_cells` and `PICKUP_REACH_BELOW` (checked: fy in ky-1..=ky+10). Seeds are few (6 per size, 4 for caves). Confidence: high.
+8. **nit, sim/src/gen.rs `carve_arena` alcove (about line 467).** At 12 rows the alcove can open the rock above it into a neighbouring cave or liquid body. `clear_arena` clears only liquids already inside the 12-row box, so water or lava sitting just above row 12 can flow in after generation. Pre-existing in kind (it was 8 rows), slightly more exposed. Confidence: low.
+
+## Checked and fine
+
+- **Input rate.** The Pos loop sends exactly one due Pos per frame at most. With `i + 2 < n` skipped, exactly one of the last two ticks is due, because they differ in parity. Steady state is at most 30 Pos/s, under 40/s. Cast spacing is unchanged.
+- **Pos jump.** `maxPosJump` is per axis, (3 cells + knockback) x (server dt + 10 ticks). The avatar owes at most 500 ms of real time (30 ticks) and the server clock advances in real time, so a skipped Pos cannot outrun the limit. Frames over 500 ms lose time rather than jump.
+- **Returning hidden tab.** `tabHidden` zeroes `avAcc`. `stepDt` is capped at 500 ms, so a returning tab steps at most 30 ticks in its first frame. A backlog over 120 goes through `driveFrame`'s CATCHUP path, which sets `acc = 0` and uses `fastForward` with a time budget.
+- **Invariants 1 and 9.** The avatar only calls `push_input` and sends Pos, with no direct sim writes. The lobby `boss` is derived from the entities view and used only in a text string, so outputs never feed back.
+- **pick_spots indices.** The guard `yf < HITBOX_H` short-circuits before the closure runs, so `yf - d` is at least 1. The columns are bounds-checked (`c0 >= 0`, `c1 < w`). `yf + 1` is read by the existing check. There are no floats, no usize in hashes, and no rng change, so determinism is unaffected.
+- **Alcove carve.** `floor_y - 12` is at or below `cy`, always below the arena top `cy - ry`, so it cannot break the ceiling. `near_border` reach (rx + 28 + 8) bounds x. `clear_arena` uses the same constant. The alcove and `reseal_floor` do not overlap: the reseal covers only `cx +/- hw`.
+- **Format bump.** FORMAT_VERSION 18 matches `SNAPSHOT_FORMAT_VERSION` 18 in `server/db.ts`, and `spells-table.test.ts` pins it.
+
+No blockers.

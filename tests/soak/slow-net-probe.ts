@@ -1,0 +1,38 @@
+// Probe: does CDP Network.emulateNetworkConditions on the page reach the worker's WebSocket?
+import { mkdtempSync } from "node:fs";
+import { chromium } from "playwright";
+import { startServer } from "../../server/main.ts";
+import { encodeConfig, SURVIVAL } from "../../shared/room.ts";
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const dataDir = mkdtempSync("/tmp/slownet-probe-");
+const srv = await startServer({ port: 8075, dataDir, quiet: true });
+const base = "http://127.0.0.1:8075";
+const created = (await (await fetch(`${base}/api/rooms`, { method: "POST", body: JSON.stringify({ name: "Probe", mode: "survival", config: Buffer.from(encodeConfig({ ...SURVIVAL, size: 0 })).toString("base64"), visibility: "public" }) })).json()) as { code: string };
+const browser = await chromium.launch({ headless: true });
+const ctx = await browser.newContext({ viewport: { width: 1100, height: 700 } });
+const page = await ctx.newPage();
+await page.goto(`${base}/r/${created.code}`);
+await page.waitForSelector("#name", { state: "visible" });
+await page.fill("#name", "Probe");
+await page.click("#joinForm button");
+await page.waitForFunction(() => (window as any).__net?.state === "live", null, { timeout: 60000 });
+await sleep(5000);
+const rd = () => page.evaluate(() => ({ ping: (window as any).__net.pingMs, state: (window as any).__net.state }));
+console.log("clean", await rd(), srv.connections().map((c) => c.rttMs));
+const cdp = await ctx.newCDPSession(page);
+let wsid = "";
+let mid = 1000;
+cdp.on("Target.attachedToTarget", (e: any) => { if (e.targetInfo.type === "worker") wsid = e.sessionId; });
+cdp.on("Target.receivedMessageFromTarget", (e: any) => { const m = JSON.parse(e.message); if (m.id >= 1000) console.log("worker reply", e.message.slice(0, 200)); });
+await cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: false });
+await sleep(500);
+console.log("worker session", wsid);
+const toWorker = (method: string, params: object) => cdp.send("Target.sendMessageToTarget" as any, { sessionId: wsid, message: JSON.stringify({ id: mid++, method, params }) } as any);
+await toWorker("Network.enable", {});
+await toWorker("Network.emulateNetworkConditionsByRule", { offline: false, matchedNetworkConditions: [{ urlPattern: "", latency: 800, downloadThroughput: -1, uploadThroughput: -1 }] });
+try { console.log("page byRule", JSON.stringify(await cdp.send("Network.emulateNetworkConditionsByRule" as any, { offline: false, matchedNetworkConditions: [{ urlPattern: "", latency: 800, downloadThroughput: -1, uploadThroughput: -1 }] } as any))); } catch (e) { console.log("page byRule err", String(e).slice(0, 200)); }
+await sleep(8000);
+console.log("worker-throttled", await rd(), srv.connections().map((c) => c.rttMs));
+await browser.close();
+await srv.close();
+process.exit(0);

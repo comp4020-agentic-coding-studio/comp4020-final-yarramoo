@@ -26,13 +26,38 @@ pub fn chunk_hashes(g: &mut Grid) -> &[u64] {
     &g.hash_cache
 }
 
-/// xxh3 over tick (u32 LE), entity bytes (none yet), then chunk hashes (u64 LE).
-pub fn state_hash(g: &mut Grid, tick: u32, entity_bytes: &[u8]) -> u64 {
+/// One bit per chunk, index order, least significant bit first, zero padded.
+pub fn pack_woken(w: &[bool]) -> Vec<u8> {
+    let mut v = vec![0u8; w.len().div_ceil(8)];
+    for (c, &b) in w.iter().enumerate() {
+        if b {
+            v[c / 8] |= 1 << (c % 8);
+        }
+    }
+    v
+}
+
+/// xxh3 over tick (u32 LE), the 16 room-config bytes, entity bytes, then chunk hashes (u64 LE). The config is
+/// in the hash so two clients with different configs fail the first hash check.
+pub fn state_hash(g: &mut Grid, tick: u32, cfg: &[u8], entity_bytes: &[u8]) -> u64 {
     let mut buf = Vec::new();
     buf.extend_from_slice(&tick.to_le_bytes());
+    buf.extend_from_slice(cfg);
     buf.extend_from_slice(entity_bytes);
     for h in chunk_hashes(g) {
         buf.extend_from_slice(&h.to_le_bytes());
+    }
+    // Woken bits (D-176): a packed bitset, appended only when one is set, so a world where nothing is woken
+    // (every sandbox) hashes exactly as before.
+    if g.woken.iter().any(|&w| w) {
+        buf.extend_from_slice(&pack_woken(&g.woken));
+    }
+    // Falling islands (format 13): appended only when some island is falling, so a still world hashes as before.
+    if !g.falls.is_empty() {
+        buf.push(0xFA);
+        for &f in &g.falls {
+            buf.extend_from_slice(&f.to_le_bytes());
+        }
     }
     xxh3_64(&buf)
 }
@@ -44,10 +69,10 @@ mod tests {
     #[test]
     fn cache_invalidates_on_change() {
         let mut g = Grid::new(64, 64);
-        let a = state_hash(&mut g, 0, &[]);
-        assert_eq!(a, state_hash(&mut g, 0, &[]));
+        let a = state_hash(&mut g, 0, &[], &[]);
+        assert_eq!(a, state_hash(&mut g, 0, &[], &[]));
         g.set(5, 4, 0);
-        assert_ne!(a, state_hash(&mut g, 0, &[]));
-        assert_ne!(state_hash(&mut g, 0, &[]), state_hash(&mut g, 1, &[]));
+        assert_ne!(a, state_hash(&mut g, 0, &[], &[]));
+        assert_ne!(state_hash(&mut g, 0, &[], &[]), state_hash(&mut g, 1, &[], &[]));
     }
 }
