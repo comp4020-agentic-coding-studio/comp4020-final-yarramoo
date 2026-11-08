@@ -59,6 +59,7 @@ export type ToWorker =
   | { type: "ready"; ready: boolean }
   /** The mouse has rested at this world point (cells): look up what is under it. Display only, never an input, never sent on. */
   | { type: "hover"; x: number; y: number }
+  | { type: "chat"; text: string }
   | { type: "pointer"; kind: "down" | "move" | "up"; x: number; y: number; mat: number; radius: number; fillEmpty: boolean };
 
 export type FromWorker =
@@ -125,4 +126,5 @@ export type FromWorker =
   | { type: "round"; win: boolean }
   /** The server says this player earned an achievement (by id; the main thread looks the text up). */
   | { type: "achievement"; id: string }
+  | { type: "chat"; name: string; text: string; history: boolean }
   | { type: "error"; error: string };
