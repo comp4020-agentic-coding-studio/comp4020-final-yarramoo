@@ -38,6 +38,11 @@ it prints:
   counts work merged and gated on `multa` since the branch forked (8 Nov: slow-net looked full-tier from its fork point
   only because owned-sandbox had landed in between; what it added was client-tier). **Before every push**, at least the tier of everything since the
   last push.
+- **A worker's gate counts when nothing moved under it.** If the branch forked from `multa`'s current head (`git
+  merge-base multa <branch>` equals `git rev-parse multa`) and the staged merge equals the branch (`git diff --cached
+  <branch>` is empty), the merged tree is exactly what the worker gated: read its logs (test counts, not its echo) and
+  commit on them; rerun only if files changed after its gate that the planner puts above docs. If `multa` moved since
+  the fork, the merged tree is new code: gate it (8 Nov: a sound merge was re-gated for nothing until the user asked why).
 - It says why a change is full (`full because: ...`): put the tier in the commit message.
 - If you change what a path can affect (e.g. a client file starts producing inputs), add it to `FULL` in the planner.
 
@@ -70,7 +75,7 @@ To see *every* cargo failure (cargo stops at the first failing binary), add `--n
 - Never gate on piped output: `cargo test | grep ...` and `| tail` exit 0 whatever the tests did. Redirect to a log
   file and chain with `&&`.
 - Workers have committed on red, piped clippy through `tail`, and skipped `test:net`. **Re-run the gate yourself**
-  before pushing a worker's commits.
+  before pushing a worker's commits, unless the merged tree is exactly what it gated (above).
 
 **Run one gate at a time on this machine, and few agents.**
 - The machine has 8 cores. Determinism launches three browsers and the net suite boots real servers on real time,
