@@ -34,6 +34,8 @@ export interface RoomRow {
   lastActive: number;
   /** F7: when a majority said the round ended, else null. */
   endedAt: number | null;
+  /** OWNED: the player whose persistent sandbox this is, else null (an ephemeral room the sweep deletes). */
+  ownerPlayerId: number | null;
 }
 
 export interface CreateRoomOpts {
@@ -72,6 +74,7 @@ function rowToRoom(r: {
   created_at: number;
   last_active: number;
   ended_at: number | null;
+  owner_player_id: number | null;
 }): RoomRow {
   return {
     id: r.id,
@@ -84,6 +87,7 @@ function rowToRoom(r: {
     createdAt: r.created_at,
     lastActive: r.last_active,
     endedAt: r.ended_at ?? null,
+    ownerPlayerId: r.owner_player_id ?? null,
   };
 }
 
@@ -131,7 +135,7 @@ export class RoomsStore {
           "insert into rooms (code, name, mode, config, visibility, creator_player_id, created_at, last_active) values (?, ?, ?, ?, ?, ?, ?, ?)",
         ).run(code, name, mode, opts.config, visibility, opts.creatorPlayerId, now, now);
         const id = Number(r.lastInsertRowid);
-        return { ok: true, room: { id, code, name, mode, config: opts.config, visibility, creatorPlayerId: opts.creatorPlayerId, createdAt: now, lastActive: now, endedAt: null } };
+        return { ok: true, room: { id, code, name, mode, config: opts.config, visibility, creatorPlayerId: opts.creatorPlayerId, createdAt: now, lastActive: now, endedAt: null, ownerPlayerId: null } };
       } catch (e) {
         // A unique-constraint violation on `code` is the only expected failure here; anything else rethrows.
         if (String(e).includes("UNIQUE") && String(e).includes("code")) continue;
@@ -148,7 +152,7 @@ export class RoomsStore {
   }
 
   getRoomById(id: number): RoomRow | null {
-    const r = this.q("select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at from rooms where id = ?").get(id) as
+    const r = this.q("select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at, owner_player_id from rooms where id = ?").get(id) as
       | Parameters<typeof rowToRoom>[0]
       | undefined;
     return r ? rowToRoom(r) : null;
@@ -170,7 +174,7 @@ export class RoomsStore {
    */
   staleRooms(nowMs: number, unloadMs: number, neverMs: number): { id: number; mode: string; reason: "empty" | "never_joined" }[] {
     const rows = this.q(
-      `select id, mode, first_joined_at from rooms where id > 1 and
+      `select id, mode, first_joined_at from rooms where id > 1 and owner_player_id is null and
          ((first_joined_at is null and created_at < ?) or (first_joined_at is not null and last_active < ?))`,
     ).all(nowMs - neverMs, nowMs - unloadMs) as { id: number; mode: string; first_joined_at: number | null }[];
     return rows.map((r) => ({ id: r.id, mode: r.mode, reason: r.first_joined_at === null ? "never_joined" : "empty" }));
@@ -194,10 +198,57 @@ export class RoomsStore {
     }
   }
 
+  /** OWNED: how many owned sandboxes exist (the server caps the total: each one lives until its owner deletes it). */
+  ownedCount(): number {
+    return (this.q("select count(*) as n from rooms where owner_player_id is not null").get() as { n: number }).n;
+  }
+
+  /** OWNED: the player's own sandbox, or null. */
+  ownedBy(playerId: number): RoomRow | null {
+    const r = this.q(
+      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at, owner_player_id from rooms where owner_player_id = ?",
+    ).get(playerId) as Parameters<typeof rowToRoom>[0] | undefined;
+    return r ? rowToRoom(r) : null;
+  }
+
+  /**
+   * OWNED: return the player's sandbox, creating it on the first call (idempotent: one per player, enforced by the
+   * `rooms_owner` unique index as well as this lookup). Always the classic sandbox config, always unlisted (link-only),
+   * never counted against the 3-a-day room limit (it is one row for life). `created` says which happened.
+   */
+  ensureOwned(playerId: number, ownerName: string, config: Uint8Array): { room: RoomRow; created: boolean } | { error: string } {
+    const existing = this.ownedBy(playerId);
+    if (existing) return { room: existing, created: false };
+    // "Mitch's world": the owner's plain name (cleaned, at most 24 characters) plus 8 always fits the 32 a room name may have.
+    const clean = `${cleanName(ownerName)}'s world`.slice(0, MAX_ROOM_NAME_CHARS);
+    if (clean.length === 0) return { error: "bad_name" };
+    if (!decodeConfig(config) || config.length !== CONFIG_BYTES) return { error: "bad_config" };
+    const now = this.now();
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = this.genCode();
+      try {
+        const r = this.q(
+          "insert into rooms (code, name, mode, config, visibility, creator_player_id, created_at, last_active, owner_player_id) values (?, ?, 'sandbox', ?, 'unlisted', ?, ?, ?, ?)",
+        ).run(code, clean, config, playerId, now, now, playerId);
+        return { room: this.getRoomById(Number(r.lastInsertRowid))!, created: true };
+      } catch (e) {
+        const m = String(e);
+        if (m.includes("UNIQUE") && m.includes("code")) continue;
+        // Two creates for one player racing: the index refused the second; hand back the first's row.
+        if (m.includes("UNIQUE") && m.includes("owner_player_id")) {
+          const won = this.ownedBy(playerId);
+          if (won) return { room: won, created: false };
+        }
+        throw e;
+      }
+    }
+    return { error: "code_exhausted" };
+  }
+
   /** Case-insensitive: the plan says "six characters, case-insensitive". */
   getRoomByCode(code: string): RoomRow | null {
     const r = this.q(
-      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at from rooms where upper(code) = upper(?)",
+      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at, owner_player_id from rooms where upper(code) = upper(?)",
     ).get(code) as Parameters<typeof rowToRoom>[0] | undefined;
     return r ? rowToRoom(r) : null;
   }
@@ -212,7 +263,7 @@ export class RoomsStore {
     const rows = this.q(
       // `id desc` breaks ties: two rooms created in the same millisecond (Date.now() resolution) would
       // otherwise come back in an arbitrary order (sqlite doesn't guarantee one for equal sort keys).
-      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at from rooms where visibility = 'public' and ended_at is null order by last_active desc, id desc limit ?",
+      "select id, code, name, mode, config, visibility, creator_player_id, created_at, last_active, ended_at, owner_player_id from rooms where visibility = 'public' and ended_at is null and owner_player_id is null order by last_active desc, id desc limit ?",
     ).all(limit) as Parameters<typeof rowToRoom>[0][];
     return rows.map(rowToRoom);
   }

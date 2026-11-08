@@ -44,6 +44,8 @@ export const EVENT_NAMES = [
   "room.loaded",
   "room.unloaded",
   "room.deleted",
+  // OWNED: a player's persistent sandbox (create/find/delete by its owner); refusals are rate limited
+  "room.delete_refused",
   "world.tick_failed",
   "db.write_failed",
   // Housekeeping

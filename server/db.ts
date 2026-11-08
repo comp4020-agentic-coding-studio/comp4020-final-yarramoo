@@ -104,6 +104,12 @@ const MIGRATIONS: string[] = [
   alter table rooms add column first_joined_at integer;
   update rooms set first_joined_at = last_active where id in (select world_id from tick_log union select world_id from snapshots);
   `,
+  // OWNED (8 Nov): a player's own persistent sandbox. Null for every other room (Survival, Deathmatch, a shared
+  // sandbox room), which stay ephemeral; the partial unique index makes "one per player" a database fact.
+  `
+  alter table rooms add column owner_player_id integer references players(id);
+  create unique index rooms_owner on rooms (owner_player_id) where owner_player_id is not null;
+  `,
 ];
 
 /** Incident rows kept (the newest). */
@@ -297,11 +303,13 @@ export class GameDb {
   /** Delete registrations created before `cutoffMs` that never joined. Returns how many. */
   evictUnjoined(cutoffMs: number): number {
     // Name-only registrations (sandbox painters, spectators) may have stats rows; the FK needs them gone first.
+    // OWNED: a player who owns a sandbox is never evicted (its room row references it, and it is theirs for good).
+    const victims = "select id from players where joined_at is null and created_at < ? and id not in (select owner_player_id from rooms where owner_player_id is not null)";
     this.db.exec("BEGIN");
     try {
-      this.q("delete from player_stats where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
-      this.q("delete from achievements where player_id in (select id from players where joined_at is null and created_at < ?)").run(cutoffMs);
-      const n = Number(this.q("delete from players where joined_at is null and created_at < ?").run(cutoffMs).changes);
+      this.q(`delete from player_stats where player_id in (${victims})`).run(cutoffMs);
+      this.q(`delete from achievements where player_id in (${victims})`).run(cutoffMs);
+      const n = Number(this.q(`delete from players where id in (${victims})`).run(cutoffMs).changes);
       this.db.exec("COMMIT");
       return n;
     } catch (e) {

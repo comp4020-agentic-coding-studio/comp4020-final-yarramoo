@@ -45,7 +45,7 @@ describe("migration 4", () => {
       PRAGMA user_version = 3;`);
     raw.close();
     const db = new GameDb(dir);
-    expect(db.schemaVersion).toBe(8); // migrations 4 to 8 (rooms R2a, rooms.ended_at F7, rooms.first_joined_at N1) all applied
+    expect(db.schemaVersion).toBe(9); // migrations 4 to 9 (rooms R2a, rooms.ended_at F7, rooms.first_joined_at N1, rooms.owner_player_id OWNED) all applied
     expect(db.playerByTokenHash("abc")).toEqual({ id: 1, displayName: "Old" });
     db.upsertStats([{ playerId: 1, stat: "casts_push", value: 3 }]);
     db.upsertStats([{ playerId: 1, stat: "casts_push", value: 5 }]);
