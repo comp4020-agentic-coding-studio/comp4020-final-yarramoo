@@ -759,8 +759,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **Owned world follow-ups** (D-225): "Open my world" straight from the title screen; renaming it; an optional reset
   to empty; the dead-link page still titles itself "Game world" for any unknown code (pre-existing). **Source:**
   `docs/research/owned-sandbox-report.md`, 8 Nov.
-- **Slow-connection follow-ups** (D-226): re-run the bandwidth and long-blackout phases of `tests/soak/slow-net.ts` on a
-  quiet host; a specific message when the server closes a connection as too slow (not seen in the runs); dim a slow
+- **Slow-connection follow-ups** (D-226): ~~re-run the bandwidth and long-blackout phases quietly~~ (done, D-231); a specific message when the server closes a connection as too slow (not seen in the runs); dim a slow
   player's label for others only if playtests ask. **Source:** `docs/research/slow-net-report.md`, 8 Nov.
 - **Warm verify follow-ups** (D-228): defer a room's first snapshot request until its lane reports warm (the lag peaks
   at the quota sit behind the lane's 4-16 s generation); shed the idlest lane when the room-load gate refuses a room;
@@ -776,3 +775,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   hurts); falling-rock damage with a `crush` sound, if rock should hurt at all; a pin test of the contact-knock
   signature against `tuning.rs`; a volume slider (only mute today); tune the water voice and the 19 new recipes by
   ear; quiet cues for chat lines and achievements. **Source:** `docs/research/sound-report.md`, 8 Nov.
+- **Test clock and starvation** (D-231): a test-steppable world clock (`startServer({ worldNow })`) so scripted-play
+  net tests advance ticks by hand and are deterministic under any load (a small change to `World`'s `now`); a
+  starvation hook for the net suite (an in-process busy-wait from a vitest setup file), since external CPU hogs never
+  reproduce a loaded gate on macOS. **Source:** `docs/research/quality-2-report.md`, 8 Nov.
