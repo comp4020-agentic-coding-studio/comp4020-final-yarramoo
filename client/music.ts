@@ -9,7 +9,7 @@ import { DEEP_TOP, SHALLOW_TOP } from "../shared/stats.ts";
 export const MUSIC_KEY = "sand.music";
 
 export type Mood = "menu" | "sandbox" | "surface" | "caves" | "deep" | "boss" | "fight" | "victory" | "defeat";
-export type VoiceKind = "pad" | "mel" | "bass" | "pluck" | "drone" | "perc";
+export type VoiceKind = "pad" | "mel" | "bass" | "pluck" | "drone" | "perc" | "bell" | "tick";
 
 export interface Note {
   voice: VoiceKind;
@@ -30,6 +30,9 @@ interface VoiceDef {
   attack: number;
   release: number;
   gain: number;
+  /** Music-box bell: a second sine at this multiple of the pitch (e.g. 3), at `partialGain` of the fundamental, decaying faster. */
+  partial?: number;
+  partialGain?: number;
 }
 
 interface MoodDef {
@@ -56,6 +59,7 @@ const PENT_MAJOR = [0, 2, 4, 7, 9];
 const MINOR = [0, 2, 3, 5, 7, 8, 10];
 const DORIAN = [0, 2, 3, 5, 7, 9, 10];
 const LYDIAN = [0, 2, 4, 6, 7, 9, 11];
+const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 
 export const MOODS: Record<Mood, MoodDef> = {
   // Warm and unhurried: C major pentatonic, slow pads, sparse bell-like melody.
@@ -68,15 +72,15 @@ export const MOODS: Record<Mood, MoodDef> = {
       bass: { type: "sine", cutoff: 400, attack: 0.1, release: 0.8, gain: 0.5 },
     },
   },
-  // Cute and playful: C major pentatonic in a high register, music-box bells, light pluck, soft pad, no drone or drums.
+  // A composed C major music-box waltz (3/4): see SANDBOX_MELODY and planSandboxBar. The voices below are its arrangement.
   sandbox: {
-    root: 60, scale: PENT_MAJOR, bpm: 108, beatsPerBar: 4, chords: [0, 3, 4, 1],
-    melDensity: 0.35, pluckDensity: 0.25, pad: true, drone: false, bassOstinato: false, perc: false,
+    root: 60, scale: MAJOR, bpm: 126, beatsPerBar: 3, chords: [0],
+    melDensity: 0, pluckDensity: 0, pad: false, drone: false, bassOstinato: false, perc: false,
     voices: {
-      pad: { type: "triangle", cutoff: 1400, attack: 0.5, release: 1.0, gain: 0.22 },
-      mel: { type: "sine", cutoff: 4500, attack: 0.008, release: 0.55, gain: 0.4 },
-      pluck: { type: "triangle", cutoff: 3200, attack: 0.004, release: 0.4, gain: 0.3 },
-      bass: { type: "sine", cutoff: 500, attack: 0.03, release: 0.5, gain: 0.32 },
+      bell: { type: "sine", cutoff: 6000, attack: 0.004, release: 0.8, gain: 0.42, partial: 3, partialGain: 0.22 },
+      pluck: { type: "triangle", cutoff: 2200, attack: 0.004, release: 0.12, gain: 0.2 },
+      bass: { type: "sine", cutoff: 600, attack: 0.01, release: 0.18, gain: 0.45 },
+      tick: { type: "sine", cutoff: 6000, attack: 0.001, release: 0.04, gain: 0.12 },
     },
   },
   // Light and curious: D lydian, a little quicker, plucky melody.
@@ -181,8 +185,65 @@ export function maxOverlap(notes: Note[]): number {
   return best;
 }
 
+// ---- The sandbox piece: "Music-box waltz", C major, 3/4, 126 bpm, 16 bars looping ----
+// Each entry is one bar of [midi, start beat, length in beats]. Bars 0-7 are the A tune, 8-15 the B tune that answers it.
+const SANDBOX_MELODY: [number, number, number][][] = [
+  [[76, 0, 1], [79, 1, 1], [76, 2, 1]], // C
+  [[84, 0, 2], [79, 2, 1]], // C
+  [[77, 0, 1], [81, 1, 1], [77, 2, 1]], // F
+  [[84, 0, 1], [81, 1, 1], [77, 2, 1]], // F
+  [[79, 0, 1], [76, 1, 1], [72, 2, 1]], // C
+  [[81, 0, 1], [76, 1, 1], [81, 2, 1]], // Am
+  [[74, 0, 1], [79, 1, 1], [83, 2, 1]], // G
+  [[84, 0, 2], [79, 2, 1]], // G -> back to C (the 79 pickup is the tune's own question)
+  [[76, 0, 1], [79, 1, 1], [84, 2, 1]], // C
+  [[88, 0, 2], [84, 2, 1]], // C
+  [[81, 0, 1], [77, 1, 1], [81, 2, 1]], // F
+  [[84, 0, 1], [81, 1, 1], [77, 2, 1]], // F
+  [[79, 0, 1], [76, 1, 0.5], [79, 1.5, 0.5], [84, 2, 1]], // C
+  [[81, 0, 1.5], [79, 1.5, 0.5], [77, 2, 1]], // Am
+  [[74, 0, 1], [77, 1, 1], [79, 2, 1]], // G
+  [[84, 0, 3]], // C, the long last note
+];
+/** Chord per bar: bass root, and the two "pah" tones above it. */
+const SANDBOX_CHORDS: Record<string, { bass: number; pah: [number, number] }> = {
+  C: { bass: 48, pah: [64, 67] },
+  F: { bass: 53, pah: [69, 72] },
+  Am: { bass: 57, pah: [72, 76] },
+  G: { bass: 55, pah: [74, 71] },
+};
+const SANDBOX_HARMONY = ["C", "C", "F", "F", "C", "Am", "G", "G", "C", "C", "F", "F", "C", "Am", "G", "C"];
+export const SANDBOX_BARS = SANDBOX_MELODY.length;
+
+/**
+ * One bar of the composed sandbox piece; pure in the bar index (no rng). Pass = floor(bar / 16): every odd pass adds a
+ * soft counter-melody a third below in the A tune and a quiet octave doubling in the B tune, so the loop is 32 bars long
+ * in what you hear (it repeats exactly every 32).
+ */
+export function planSandboxBar(barIndex: number): Note[] {
+  const i = ((barIndex % SANDBOX_BARS) + SANDBOX_BARS) % SANDBOX_BARS;
+  const varied = Math.floor(barIndex / SANDBOX_BARS) % 2 === 1;
+  const c = SANDBOX_CHORDS[SANDBOX_HARMONY[i]];
+  const out: Note[] = [];
+  for (const [midi, t, dur] of SANDBOX_MELODY[i]) out.push({ voice: "bell", midi, t, dur, vel: 0.7 });
+  out.push({ voice: "bass", midi: c.bass, t: 0, dur: 0.6, vel: 0.8 });
+  for (const t of [1, 2]) for (const midi of c.pah) out.push({ voice: "pluck", midi, t, dur: 0.35, vel: 0.5 });
+  for (let b = 0; b < 3; b++) out.push({ voice: "tick", midi: 0, t: b, dur: 0.1, vel: b === 0 ? 0.7 : 0.4 });
+  if (varied) {
+    if (i < 8) {
+      // Counter-melody: the chord's lower upper tone, an off-beat bell echo.
+      out.push({ voice: "bell", midi: c.pah[0], t: 1.5, dur: 0.5, vel: 0.35 });
+    } else {
+      out.push({ voice: "bell", midi: Math.min(96, SANDBOX_MELODY[i][0][0] + 12), t: SANDBOX_MELODY[i][0][1], dur: 0.5, vel: 0.3 });
+    }
+  }
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+
 /** Plan one bar: notes sorted by start time, at most MAX_MUSIC_VOICES sounding at once. Pure given the rng. */
 export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[] {
+  if (mood === "sandbox") return planSandboxBar(barIndex);
   const m = MOODS[mood];
   const chord = m.chords[barIndex % m.chords.length];
   const bars = m.beatsPerBar;
@@ -190,9 +251,7 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   const add = (voice: VoiceKind, midi: number, t: number, dur: number, vel: number) => {
     if (m.voices[voice] || voice === "perc") out.push({ voice, midi, t, dur: Math.min(dur, bars - t + 2), vel });
   };
-  const cute = mood === "sandbox";
-  // The cute mood keeps its pad in the middle register and its bass an octave down; the melody sits above both.
-  if (m.pad) for (const off of [0, 2, 4]) add("pad", degreeToMidi(m, chord + off + (cute ? 0 : 5)), 0, bars + 0.5, 0.7);
+  if (m.pad) for (const off of [0, 2, 4]) add("pad", degreeToMidi(m, chord + off + 5), 0, bars + 0.5, 0.7);
   if (m.drone) add("drone", degreeToMidi(m, chord), 0, bars + 1, 0.8);
   if (mood === "victory") {
     [0, 2, 4, 5, 7].forEach((d, i) => add("mel", degreeToMidi(m, d + 5), i * 0.5, 2, 0.8));
@@ -204,26 +263,11 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   } else if (m.perc) {
     // A slow pulse: bass thump on beats 1 and 3 (deep) or every beat (boss, with noise).
     for (let b = 0; b < bars; b += mood === "boss" ? 1 : 2) add("bass", degreeToMidi(m, chord), b, 0.6, 0.9);
-  } else if (cute) {
-    // Gentle bounce: root on beat 1, a softer octave-down fifth-ish on beat 3 (chord + 2 degrees).
-    add("bass", degreeToMidi(m, chord - 5), 0, 1.5, 0.6);
-    add("bass", degreeToMidi(m, chord - 3), 2, 1.5, 0.45);
   } else {
     add("bass", degreeToMidi(m, chord), 0, bars, 0.7);
   }
   if (m.perc) for (let b = 0; b < bars; b += 1) if (mood === "boss" || mood === "fight" || b % 2 === 0) add("perc", 0, b, 0.12, b === 0 ? 1 : 0.6);
-  if (cute) {
-    // Toy-piano tune: a stepwise random walk above the chord tone, short bell notes, a little more likely on the beat.
-    let d = chord + 5 + [0, 1, 2][Math.floor(rng() * 3)];
-    for (let h = 0; h < bars * 2; h++) {
-      if (rng() < m.melDensity + (h % 2 === 0 ? 0.1 : -0.1)) {
-        const r = rng();
-        d += r < 0.4 ? 1 : r < 0.8 ? -1 : r < 0.9 ? 2 : -2;
-        d = Math.max(chord + 3, Math.min(chord + 8, d)); // keep within about an octave above the chord
-        add("mel", degreeToMidi(m, d), h * 0.5, 0.75, 0.5 + rng() * 0.3);
-      }
-    }
-  } else if (m.melDensity > 0 && mood !== "victory" && mood !== "defeat") {
+  if (m.melDensity > 0 && mood !== "victory" && mood !== "defeat") {
     for (let h = 0; h < bars * 2; h++) {
       if (rng() < m.melDensity) {
         const d = chord + [0, 1, 2, 4, 5][Math.floor(rng() * 5)] + 5;
@@ -233,7 +277,7 @@ export function planBar(mood: Mood, barIndex: number, rng: () => number): Note[]
   }
   if (m.pluckDensity > 0) {
     for (let b = 0; b < bars; b++) {
-      if (rng() < m.pluckDensity) add("pluck", degreeToMidi(m, chord + [0, 2, 4, 7][Math.floor(rng() * 4)] + (cute ? 2 : 5)), b + (rng() < 0.5 ? 0 : 0.5), 1, 0.5 + rng() * 0.4);
+      if (rng() < m.pluckDensity) add("pluck", degreeToMidi(m, chord + [0, 2, 4, 7][Math.floor(rng() * 4)] + 5), b + (rng() < 0.5 ? 0 : 0.5), 1, 0.5 + rng() * 0.4);
     }
   }
   out.sort((a, b) => a.t - b.t);
@@ -418,7 +462,7 @@ function tick() {
   debug();
 }
 
-function playNote(c: AudioContext, n: Note, t: number, mood: Mood, dest: AudioNode, sec: number, noiseBuf: AudioBuffer | null) {
+export function playNote(c: BaseAudioContext, n: Note, t: number, mood: Mood, dest: AudioNode, sec: number, noiseBuf: AudioBuffer | null) {
   const nodes: AudioNode[] = [];
   const end = (stopAt: number) => {
     live++;
@@ -428,6 +472,26 @@ function playNote(c: AudioContext, n: Note, t: number, mood: Mood, dest: AudioNo
       for (const x of nodes) x.disconnect();
     }, Math.max(0, (stopAt - c.currentTime) * 1000) + 100);
   };
+  if (n.voice === "tick") {
+    // A short, soft high noise tick (the toy's clockwork).
+    const v = MOODS[mood].voices.tick;
+    if (!noiseBuf || !v) return;
+    const src = c.createBufferSource();
+    const f = c.createBiquadFilter();
+    const g = c.createGain();
+    src.buffer = noiseBuf;
+    f.type = "highpass";
+    f.frequency.value = 5000;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, v.gain * n.vel), t + v.attack + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.002 + v.release);
+    src.connect(f).connect(g).connect(dest);
+    src.start(t, 0);
+    src.stop(t + 0.08);
+    nodes.push(src, f, g);
+    end(t + 0.08);
+    return;
+  }
   if (n.voice === "perc") {
     if (!noiseBuf) return;
     const src = c.createBufferSource();
@@ -472,6 +536,19 @@ function playNote(c: AudioContext, n: Note, t: number, mood: Mood, dest: AudioNo
     osc.start(t);
     osc.stop(stop);
     nodes.push(osc);
+  }
+  if (v.partial) {
+    // Music-box bell: a higher sine partial, quieter, that dies away sooner than the fundamental.
+    const po = c.createOscillator();
+    const pg = c.createGain();
+    po.type = "sine";
+    po.frequency.value = freq * v.partial;
+    pg.gain.setValueAtTime(v.partialGain ?? 0.2, t);
+    pg.gain.exponentialRampToValueAtTime(0.001, t + Math.max(v.attack, len) + v.release * 0.4);
+    po.connect(pg).connect(f);
+    po.start(t);
+    po.stop(stop);
+    nodes.push(po, pg);
   }
   f.connect(g).connect(dest);
   nodes.push(f, g);
