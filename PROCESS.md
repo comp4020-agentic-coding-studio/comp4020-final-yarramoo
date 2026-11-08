@@ -32,18 +32,19 @@ The plan landed as
 conformed to the course setup the same day
 ([`bc033ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/bc033ad)). The big
 choice was deterministic lockstep: every browser runs the same Rust simulation compiled to WebAssembly, and the server
-only orders inputs and checks hashes. The alternative, a server-side simulation, was ruled out by the 256 MB
-single-CPU machine, and a JavaScript simulation by floating point differing between engines. The cost is that every
-client must agree bit for bit forever, so the first thing built was a determinism suite running the same inputs in
-Node, three browsers and native Rust
+only orders inputs and checks hashes. The 256 MB single-CPU machine ruled out a server-side simulation, and floating
+point differing between engines ruled out JavaScript. The cost is that every
+client must agree bit for bit forever, so the first thing built was a determinism suite: the same inputs in Node,
+three browsers and native Rust
 ([`d911c8f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d911c8f)).
 
 That choice kept costing. The live site went down on 18 October because a long tick log overflowed the stack on
-boot ([`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2)). An
-independent review that read only the code found hash votes counted per socket rather than per player, so anyone could
-outvote the truth by opening tabs
-([`1298bd1`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/1298bd1)). The full
-reasoning is in `ARCHITECTURE.md` and `docs/engineering-decisions.md`.
+boot ([`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2)). A
+code-only review found hash votes counted per socket, not per player, so extra tabs could outvote the truth
+([`1298bd1`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/1298bd1)). The
+reasoning is in `ARCHITECTURE.md` and `docs/engineering-decisions.md`. The admin dashboard is
+`/dashboard?token=<ADMIN_TOKEN>`, with the token in `fly.toml`'s `[env]`: public by choice, as the app holds no
+private data (D-098).
 
 Some bugs could only be found interactively. While playtesting I noticed poured water standing in walls 64 cells
 apart that only slowly spilled over. Every test passed, because nothing tested what water looks like. I screenshotted
@@ -100,8 +101,8 @@ reason travels with the rule.
 - **Every `rm` names a literal path.** I caught an agent running `rm -rf $D/*` with `$D` read from a file; had the file been empty, that is `rm -rf /*`. That seemed dumb to me, so every `rm` now names an explicit path ([`aedb377`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/aedb377)).
 
 Skills came later when the project grew to a size that testing became a proper chore. The `run-tests` skill holds
-"the gate", the battery of tests that check simulation correctness and agreement across different browsers, plus the
-rules for running it (one heavy job at a time). The `dev-server` skill restarts my local server after every rebuild,
+"the gate", the tests that check simulation correctness and cross-browser agreement, plus the rules for running it
+(one heavy job at a time). The `dev-server` skill restarts my local server after rebuilds,
 since it refuses tabs with a stale build
 ([`f3d4034`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f3d4034)). When the
 full gate grew to 20 minutes, a planner script started picking only the steps a change can affect
