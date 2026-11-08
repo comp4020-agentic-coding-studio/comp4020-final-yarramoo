@@ -1,0 +1,601 @@
+{
+ "room": {
+  "id": 2,
+  "code": "ZGFDPE",
+  "name": "Slow net",
+  "mode": "survival",
+  "visibility": "public"
+ },
+ "summary": [
+  {
+   "phase": "clean",
+   "shape": {
+    "rtt": 0,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 18.9,
+    "lagMax": 48.9,
+    "sps": 60,
+    "spsMin": 46.3,
+    "pingP50": 2,
+    "states": {
+     "live": 400
+    },
+    "seesBoLateMs": 125
+   },
+   "B": {
+    "lagP50": 19.7,
+    "lagMax": 51.8,
+    "sps": 60,
+    "pingP50": 166,
+    "pingMax": 170,
+    "bufMax": 18,
+    "states": {
+     "live": 400
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 100,
+    "notice": []
+   },
+   "serverEvents": {}
+  },
+  {
+   "phase": "bw4k",
+   "shape": {
+    "rtt": 100,
+    "bps": 4000,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 20.3,
+    "lagMax": 58,
+    "sps": 60,
+    "spsMin": 44.5,
+    "pingP50": 1,
+    "states": {
+     "live": 600
+    },
+    "seesBoLateMs": 125
+   },
+   "B": {
+    "lagP50": 23.2,
+    "lagMax": 64.7,
+    "sps": 60,
+    "pingP50": 207,
+    "pingMax": 257,
+    "bufMax": 4,
+    "states": {
+     "live": 600
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 125,
+    "notice": []
+   },
+   "serverEvents": {
+    "snapshot.requested": 1,
+    "snapshot.accepted": 1
+   }
+  },
+  {
+   "phase": "bw1500",
+   "shape": {
+    "rtt": 100,
+    "bps": 1500,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 21.4,
+    "lagMax": 81.2,
+    "sps": 60,
+    "spsMin": 34.1,
+    "pingP50": 2,
+    "states": {
+     "live": 600
+    },
+    "seesBoLateMs": 175
+   },
+   "B": {
+    "lagP50": 24.5,
+    "lagMax": 61,
+    "sps": 60,
+    "pingP50": 298,
+    "pingMax": 610,
+    "bufMax": 20,
+    "states": {
+     "live": 600
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 175,
+    "notice": []
+   },
+   "serverEvents": {
+    "snapshot.requested": 1,
+    "snapshot.accepted": 1
+   }
+  },
+  {
+   "phase": "clean3",
+   "shape": {
+    "rtt": 0,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 19,
+    "lagMax": 47.1,
+    "sps": 60,
+    "spsMin": 58.1,
+    "pingP50": 1,
+    "states": {
+     "live": 400
+    },
+    "seesBoLateMs": 125
+   },
+   "B": {
+    "lagP50": 20.1,
+    "lagMax": 49.7,
+    "sps": 60,
+    "pingP50": 4,
+    "pingMax": 288,
+    "bufMax": 0,
+    "states": {
+     "live": 400
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 150,
+    "notice": []
+   },
+   "serverEvents": {
+    "snapshot.requested": 1,
+    "snapshot.accepted": 1
+   }
+  },
+  {
+   "phase": "blackout5",
+   "shape": {
+    "rtt": 0,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "blackout": 5,
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 21.3,
+    "lagMax": 59.6,
+    "sps": 60,
+    "spsMin": 37.3,
+    "pingP50": 1,
+    "states": {
+     "live": 400
+    },
+    "seesBoLateMs": 175
+   },
+   "B": {
+    "lagP50": 29.8,
+    "lagMax": 334.4,
+    "sps": 60,
+    "pingP50": 5,
+    "pingMax": 1756,
+    "bufMax": 47,
+    "states": {
+     "live": 396,
+     "catching-up": 4
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 175,
+    "notice": [
+     "Connection stalledNo updates from the server: reconnecting if it does not come back"
+    ]
+   },
+   "serverEvents": {
+    "snapshot.requested": 1
+   }
+  },
+  {
+   "phase": "blackout12",
+   "shape": {
+    "rtt": 0,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "blackout": 12,
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 20.8,
+    "lagMax": 46,
+    "sps": 60,
+    "spsMin": 44.5,
+    "pingP50": 1,
+    "states": {
+     "live": 600
+    },
+    "seesBoLateMs": 75
+   },
+   "B": {
+    "lagP50": 39,
+    "lagMax": 728.7,
+    "sps": 60,
+    "pingP50": 5,
+    "pingMax": 216,
+    "bufMax": 51,
+    "states": {
+     "live": 568,
+     "reconnecting": 16,
+     "catching-up": 16
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 125,
+    "notice": [
+     "Connection stalledNo updates from the server: reconnecting if it does not come back"
+    ]
+   },
+   "serverEvents": {
+    "snapshot.accepted": 1,
+    "leave:silent": 1,
+    "leave:4002": 1,
+    "join": 1,
+    "snapshot.requested": 1
+   }
+  },
+  {
+   "phase": "clean4",
+   "shape": {
+    "rtt": 0,
+    "bps": 0,
+    "loss": 0,
+    "rto": 300
+   },
+   "serverTicksPerSec": 60,
+   "held": false,
+   "A": {
+    "lagP50": 20.1,
+    "lagMax": 42.5,
+    "sps": 60,
+    "spsMin": 60,
+    "pingP50": 1,
+    "states": {
+     "live": 300
+    },
+    "seesBoLateMs": 75
+   },
+   "B": {
+    "lagP50": 19.5,
+    "lagMax": 41,
+    "sps": 60,
+    "pingP50": 9,
+    "pingMax": 212,
+    "bufMax": 0,
+    "states": {
+     "live": 300
+    },
+    "resyncs": 0,
+    "seesAnaLateMs": 125,
+    "notice": []
+   },
+   "serverEvents": {
+    "snapshot.accepted": 1
+   }
+  }
+ ],
+ "errors": [],
+ "events": [
+  {
+   "t": 1794137807819,
+   "ev": "room.created",
+   "f": {
+    "t": "2026-11-08T11:36:47.819Z",
+    "lvl": "info",
+    "ev": "room.created",
+    "room": 2,
+    "mode": "survival",
+    "visibility": "public"
+   }
+  },
+  {
+   "t": 1794137808864,
+   "ev": "player.registered",
+   "f": {
+    "t": "2026-11-08T11:36:48.864Z",
+    "lvl": "info",
+    "ev": "player.registered",
+    "player": 1
+   }
+  },
+  {
+   "t": 1794137808967,
+   "ev": "room.loaded",
+   "f": {
+    "t": "2026-11-08T11:36:48.967Z",
+    "lvl": "info",
+    "ev": "room.loaded",
+    "world": 2,
+    "code": "ZGFDPE",
+    "mode": "survival",
+    "size": 0
+   }
+  },
+  {
+   "t": 1794137808982,
+   "ev": "verify.lane_opened",
+   "f": {
+    "t": "2026-11-08T11:36:48.981Z",
+    "lvl": "info",
+    "ev": "verify.lane_opened",
+    "world": 2,
+    "size": 0,
+    "est_mb": 19,
+    "lanes": 1,
+    "in_use_mb": 19
+   }
+  },
+  {
+   "t": 1794137808983,
+   "ev": "join",
+   "f": {
+    "t": "2026-11-08T11:36:48.983Z",
+    "lvl": "info",
+    "ev": "join",
+    "world": 2,
+    "who": "Ana#1",
+    "visitor": 1,
+    "name": "Ana",
+    "conn": 1,
+    "role": "player",
+    "online": 1,
+    "tick": 0,
+    "ip_tag": "60c869",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like "
+   }
+  },
+  {
+   "t": 1794137809262,
+   "ev": "player.registered",
+   "f": {
+    "t": "2026-11-08T11:36:49.262Z",
+    "lvl": "info",
+    "ev": "player.registered",
+    "player": 2
+   }
+  },
+  {
+   "t": 1794137809350,
+   "ev": "join",
+   "f": {
+    "t": "2026-11-08T11:36:49.350Z",
+    "lvl": "info",
+    "ev": "join",
+    "world": 2,
+    "who": "Bo#2",
+    "visitor": 2,
+    "name": "Bo",
+    "conn": 2,
+    "role": "player",
+    "online": 2,
+    "tick": 22,
+    "ip_tag": "60c869",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like "
+   }
+  },
+  {
+   "t": 1794137838971,
+   "ev": "snapshot.requested",
+   "f": {
+    "t": "2026-11-08T11:37:18.971Z",
+    "lvl": "info",
+    "ev": "snapshot.requested",
+    "world": 2,
+    "tick": 1920,
+    "from_tick": 1800,
+    "who": "Ana#1"
+   }
+  },
+  {
+   "t": 1794137841302,
+   "ev": "snapshot.accepted",
+   "f": {
+    "t": "2026-11-08T11:37:21.302Z",
+    "lvl": "info",
+    "ev": "snapshot.accepted",
+    "world": 2,
+    "tick": 1920,
+    "bytes": 7299,
+    "raw_bytes": 296181,
+    "verify_ms": 18,
+    "verify_cold": false,
+    "verify_path": "lane"
+   }
+  },
+  {
+   "t": 1794137868973,
+   "ev": "snapshot.requested",
+   "f": {
+    "t": "2026-11-08T11:37:48.973Z",
+    "lvl": "info",
+    "ev": "snapshot.requested",
+    "world": 2,
+    "tick": 3720,
+    "from_tick": 3600,
+    "who": "Ana#1"
+   }
+  },
+  {
+   "t": 1794137871356,
+   "ev": "snapshot.accepted",
+   "f": {
+    "t": "2026-11-08T11:37:51.356Z",
+    "lvl": "info",
+    "ev": "snapshot.accepted",
+    "world": 2,
+    "tick": 3720,
+    "bytes": 7219,
+    "raw_bytes": 304375,
+    "verify_ms": 22,
+    "verify_cold": false,
+    "verify_path": "lane"
+   }
+  },
+  {
+   "t": 1794137898970,
+   "ev": "snapshot.requested",
+   "f": {
+    "t": "2026-11-08T11:38:18.970Z",
+    "lvl": "info",
+    "ev": "snapshot.requested",
+    "world": 2,
+    "tick": 5520,
+    "from_tick": 5400,
+    "who": "Ana#1"
+   }
+  },
+  {
+   "t": 1794137901261,
+   "ev": "snapshot.accepted",
+   "f": {
+    "t": "2026-11-08T11:38:21.261Z",
+    "lvl": "info",
+    "ev": "snapshot.accepted",
+    "world": 2,
+    "tick": 5520,
+    "bytes": 7279,
+    "raw_bytes": 312569,
+    "verify_ms": 8,
+    "verify_cold": false,
+    "verify_path": "lane"
+   }
+  },
+  {
+   "t": 1794137928972,
+   "ev": "snapshot.requested",
+   "f": {
+    "t": "2026-11-08T11:38:48.972Z",
+    "lvl": "info",
+    "ev": "snapshot.requested",
+    "world": 2,
+    "tick": 7320,
+    "from_tick": 7200,
+    "who": "Ana#1"
+   }
+  },
+  {
+   "t": 1794137933220,
+   "ev": "snapshot.accepted",
+   "f": {
+    "t": "2026-11-08T11:38:53.220Z",
+    "lvl": "info",
+    "ev": "snapshot.accepted",
+    "world": 2,
+    "tick": 7320,
+    "bytes": 7289,
+    "raw_bytes": 312569,
+    "verify_ms": 34,
+    "verify_cold": false,
+    "verify_path": "lane"
+   }
+  },
+  {
+   "t": 1794137940166,
+   "ev": "leave",
+   "f": {
+    "t": "2026-11-08T11:39:00.166Z",
+    "lvl": "warn",
+    "ev": "leave",
+    "world": 2,
+    "who": "Bo#2",
+    "reason": "silent"
+   }
+  },
+  {
+   "t": 1794137940173,
+   "ev": "leave",
+   "f": {
+    "t": "2026-11-08T11:39:00.173Z",
+    "lvl": "info",
+    "ev": "leave",
+    "world": 2,
+    "who": "Bo#2",
+    "conn": 2,
+    "role": "player",
+    "online": 1,
+    "tick": 7872,
+    "duration_s": 131,
+    "code": 4002,
+    "casts": "",
+    "paints": "",
+    "max_depth": 330,
+    "resyncs": 0,
+    "pos_rejected": 0,
+    "rtt_p95_ms": 1.6,
+    "lag": 612,
+    "step_p95_ms": 0.81,
+    "ip_tag": "60c869"
+   }
+  },
+  {
+   "t": 1794137942871,
+   "ev": "join",
+   "f": {
+    "t": "2026-11-08T11:39:02.870Z",
+    "lvl": "info",
+    "ev": "join",
+    "world": 2,
+    "who": "Bo#2",
+    "visitor": 2,
+    "name": "Bo",
+    "conn": 3,
+    "role": "player",
+    "online": 2,
+    "tick": 8034,
+    "ip_tag": "60c869",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like "
+   }
+  },
+  {
+   "t": 1794137958970,
+   "ev": "snapshot.requested",
+   "f": {
+    "t": "2026-11-08T11:39:18.970Z",
+    "lvl": "info",
+    "ev": "snapshot.requested",
+    "world": 2,
+    "tick": 9120,
+    "from_tick": 9000,
+    "who": "Ana#1"
+   }
+  },
+  {
+   "t": 1794137961144,
+   "ev": "snapshot.accepted",
+   "f": {
+    "t": "2026-11-08T11:39:21.143Z",
+    "lvl": "info",
+    "ev": "snapshot.accepted",
+    "world": 2,
+    "tick": 9120,
+    "bytes": 7296,
+    "raw_bytes": 312569,
+    "verify_ms": 6,
+    "verify_cold": false,
+    "verify_path": "lane"
+   }
+  }
+ ],
+ "pausedReads": 0
+}

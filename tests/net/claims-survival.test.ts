@@ -53,37 +53,65 @@ describe("Survival claims from real sim clients", () => {
     expect(pick).toBeDefined();
     let seq = 1;
     const myXY = (id: number) => sim.entities().find((e) => e.type === ENT_PLAYER && e.id === id)!;
-    // The server bounds a Pos jump per tick, so walk in short steps (the sim takes the avatar's Pos as given).
+    // D-219: every wait below counts A's sim ticks, never milliseconds. The server's clock is wall time, so when a loaded
+    // gate starves this process a `sleep(90)` walk step could cover 60+ ticks: A then spent ten times the sim time among
+    // the enemies, followed its slime into the depths and died before the first cast (hp 0, then 39 casts from a corpse).
+    // Paced by ticks, the walk and the casts take the same sim time however slow the host is.
+    const ticks = (n: number) => {
+      const t0 = sim.tick();
+      return waitFor(() => sim.tick() >= t0 + n, 60_000, `${n} sim ticks`);
+    };
+    // The server bounds a Pos jump by the server ticks since the last one, plus 10 ticks of slack, at 9 cells per tick
+    // (shared/avatar.ts maxPosJump). Each step covers WALK_CELLS_PER_TICK per server tick since the last step (at most
+    // WALK_MAX_STEP), so A crosses the map in the same sim time whether this process wakes every tick or once a second.
+    // One step per WALK_EVERY ticks keeps under the input rate limit. The sim takes the avatar's Pos as given.
+    const serverTick = () => s.worlds.get(room.id)!.clock.lastClosed;
+    const WALK_EVERY = 3;
+    const WALK_CELLS_PER_TICK = 6;
+    const WALK_MAX_STEP = 300;
     const pos = { x: 0, y: 0 };
+    let lastStep = serverTick();
     const walk = async (x: number, y: number) => {
       while (Math.hypot(x - pos.x, y - pos.y) > 0.01) {
+        await waitFor(() => serverTick() >= lastStep + WALK_EVERY, 60_000, "a server tick to walk on");
+        const now = serverTick();
         const d = Math.hypot(x - pos.x, y - pos.y);
-        const k = Math.min(1, 40 / d);
+        const k = Math.min(1, Math.min(WALK_MAX_STEP, WALK_CELLS_PER_TICK * (now - lastStep)) / d);
+        lastStep = now;
         pos.x += (x - pos.x) * k;
         pos.y += (y - pos.y) * k;
         a.move(pos.x, pos.y, 0, myXY(ra.id).a); // the sim drops a Pos with a stale life; the round start bumped it
-        await sleep(90);
       }
     };
     const me0 = myXY(ra.id);
     pos.x = me0.x / 16;
     pos.y = me0.y / 16;
     await walk(pick.x / 16, pick.y / 16);
-    await sleep(400);
-    const target = enemies().filter((e) => e.sub === 0).sort((p, q) => Math.hypot(p.x - pick.x, p.y - pick.y) - Math.hypot(q.x - pick.x, q.y - pick.y))[0];
-    expect(target).toBeDefined();
-    for (let i = 0; i < 40 && !s.log.recent().some((e) => e.ev === "achievement.awarded" && e.achievement === "slime_slayer"); i++) {
-      const t = enemies().find((e) => e.id === target.id);
-      if (!t) break;
-      await walk((t.x - 6 * 16) / 16, t.y / 16);
-      await sleep(100);
+    await ticks(24);
+    const slimes = () => enemies().filter((e) => e.sub === 0);
+    const nearest = () => {
       const me = myXY(ra.id);
-      const ang = Math.round((((Math.atan2(t.y - 4 * 16 - (me.y - 6 * 16), t.x - me.x) / (2 * Math.PI)) % 1) + 1) % 1 * 65536) & 0xffff;
+      return slimes().sort((p, q) => Math.hypot(p.x - me.x, p.y - me.y) - Math.hypot(q.x - me.x, q.y - me.y))[0];
+    };
+    const slain = () => s.log.recent().some((e) => e.ev === "achievement.awarded" && e.achievement === "slime_slayer");
+    for (let i = 0; i < 40 && !slain(); i++) {
+      // A dead caster can never land the kill: say so, rather than time out on the majority wait below.
+      if (myXY(ra.id).health === 0) throw new Error(`A died before killing a slime (tick ${sim.tick()}, try ${i})`);
+      const t = nearest(); // a slime that died to something else is replaced by the next nearest
+      expect(t).toBeDefined();
+      await walk((t.x - 6 * 16) / 16, t.y / 16);
+      await ticks(6);
+      const me = myXY(ra.id);
+      const t2 = slimes().find((e) => e.id === t.id);
+      if (!t2) continue;
+      // Aim where the slime is now, not where it was before the walk (it moves while A walks).
+      const ang = Math.round((((Math.atan2(t2.y - 4 * 16 - (me.y - 6 * 16), t2.x - me.x) / (2 * Math.PI)) % 1) + 1) % 1 * 65536) & 0xffff;
       a.cast(FIRE_BOLT, ang, seq++);
-      await sleep(300);
+      await ticks(18);
     }
     await waitFor(() => (s.playerStats.get(ra.id).enemy_kills ?? 0) >= 1, 5000, "enemy kill resolved by majority");
-    expect(a.achievements.map((x) => x.id)).toContain("slime_slayer");
+    // The award reaches A's socket after the server resolves it: wait for it rather than read it in the same turn (D-219).
+    await waitFor(() => a.achievements.some((x) => x.id === "slime_slayer"), 10_000, "slime_slayer delivered to A");
     expect(b.achievements.map((x) => x.id)).not.toContain("slime_slayer");
 
     // End the round by a loss: both players walk into enemies and the lava below until everyone is dead.

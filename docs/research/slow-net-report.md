@@ -76,10 +76,10 @@ and mix CPU starvation with network slowness. The bw4k dips hit the clean client
 | RTT 2000 ms | 60 | no | 60, 20 | 2179 / 2286 | 81 / 117 | 1200 ms | 1225 ms | none |
 | RTT 150 + 3% loss | 60 | no | 60, 19 | 384 / 703 | 37 / 68 | 275 ms | 475 ms | none |
 | RTT 150 + 10% loss | 60 | no | 60, 22 | 514 / 1041 | 45 / 87 | 150 ms | 575 ms | none |
-| 4 KB/s *(load)* | 60 | no | 60, 28 | 302 / 703 | 34 / 188 | 150 ms | 125 ms | none |
-| 1.5 KB/s *(load)* | 60 | no | 60, 23 | 244 / 617 | 27 / 89 | 150 ms | 175 ms | none |
-| 5 s blackout *(load)* | 60 | no | 60, 21 | n/a | 32 / 322 | | | none; Bo froze 5 s, then 0.5 s catching up |
-| 12 s blackout *(load)* | 60 | no | 60, 25 | n/a | 184 / 1654 | | | `leave` silent (4002) at 10 s, then `join`: Bo reconnected and replayed in ~6 s |
+| 4 KB/s *(quiet rerun; changed)* | 60 | no | 60, 20 | 207 / 257 | 23 / 65 | 125 ms | 125 ms | none |
+| 1.5 KB/s *(quiet rerun; changed)* | 60 | no | 60, 21 | 298 / 610 | 25 / 61 | 175 ms | 175 ms | none; no notice (PING crossed 600 ms only briefly) |
+| 5 s blackout *(quiet rerun; unchanged)* | 60 | no | 60, 21 | n/a | 30 / 334 | 175 ms | 175 ms | none; Bo froze 5 s, "Connection stalled" shown, then under 0.5 s catching up |
+| 12 s blackout *(quiet rerun; changed)* | 60 | no | 60, 21 | n/a | 39 / 729 | 75 ms | 125 ms | `leave` silent (4002) at 10 s, then `join`: Bo reconnected and caught up in under 2 s (16 samples reconnecting and 16 catching up at 20 samples/s: about 0.8 s each) |
 
 Every phase: **0** desyncs, resyncs, `pos.rejected` and holds; no 1013 "too slow". Snapshots kept being taken
 from Ana. The proxy never had to apply backpressure, so the server's send queue never grew.
@@ -133,8 +133,12 @@ test, because the server was not touched.
   `#slowNotice` text per sample, and with `SHOTS=` it screenshots Bo at each phase end, so a rebuilt client
   (`pnpm build:client`) plus one quiet run of `tests/soak/slow-net.ts` gives both. Pass a phone viewport for the phone
   shot.
-- **A quiet rerun of the bandwidth and blackout phases is owed** (load under 4). The latency and loss phases that set
-  the thresholds ran quiet.
+- ~~A quiet rerun of the bandwidth and blackout phases is owed~~ **Done 8 Nov 22:36 (quality-2)**: the bw4k, bw1500,
+  blackout5 and blackout12 rows above are that rerun (`shots/slow-net/quiet-rerun-bw-blackout-2026-11-08.json`;
+  `docs/research/quality-2-report.md`). Load 2.4 at the start, 16 at the end, from the harness's own server and two
+  Chromiums only (nothing else running); the clean client held 60 steps/s with lag p50 19-21 throughout, so it was
+  not starved. Changed from the loaded run: bandwidth lag and PING tails much lower; the 12 s blackout's reconnect
+  replay took under 2 s, not ~6 s. The findings stand.
 
 ## 7. Architectural decisions for review
 
