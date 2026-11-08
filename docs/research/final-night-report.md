@@ -43,3 +43,12 @@ starting work at $455).
   sweep: 16 left 251 shaft columns open, 24 left 52, 32 and up left 0; 40 chosen for margin.
 - Red first: two new tests in `tests/net/background.test.ts` failed on the old rule ("wall at x=65 (row 42) ends over
   open air at x=64 (line 54, ground 54)"; a wide valley filled to 56 instead of 70); 9/9 green after.
+- Screenshots (vite dev route, Survival M seed 1, `__setCam(180, 20)`; "before" from a detached worktree at
+  `059d75a`): [`bg-before.png`](shots/final-night/bg-before.png) shows both shaft mouths topped by a block of cave
+  wall standing above the grass with a vertical edge in the sky; [`bg-after.png`](shots/final-night/bg-after.png)
+  closes both flush with the terrain lip.
+
+### Gate (D-233 + D-234 together)
+
+Full tier, chained on exit codes (`/tmp/fn-gate.sh`), queued behind the M4 lead's gate (one at a time): cargo green,
+clippy clean, typecheck clean, determinism 53/53, net 561/561. Committed `cba41a1` (D-233), `118d5b4` (D-234).
