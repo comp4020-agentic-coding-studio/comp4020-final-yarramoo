@@ -749,3 +749,6 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   work budget (H2); `update_ice` writes `aux` without `touch`, so a joiner's chunk hash goes stale across a chunk edge
   (S1, confirmed, a one-line fix); old-tick HASH frames grow server state without limit (M1); `max_players` is never
   enforced (M3).
+- **Phones and tests** (D-218, D-219): a floating thumb-stick (brief in `docs/research/phoneperf-report.md`); a
+  real-device frame-time measurement; **a `startServer` option to fix room seeds in tests** so
+  `claims-survival.test.ts` stops playing a random world each run (D-201 made it intermittent). **Source:** track C, 8 Nov.
