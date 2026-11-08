@@ -50,7 +50,21 @@ export const MAX_LOG_TICKS = 200_000;
 export const WARN_LOG_TICKS = 100_000;
 /** Drop a client whose socket send queue grows past this: it is not keeping up. */
 export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+/**
+ * Review M2 (8 Nov): the most extra queue a catch-up burst may add on top of MAX_BUFFERED_BYTES. The burst (WELCOME or
+ * RESYNC, the snapshot, every logged tick) is sent in one synchronous loop, during which nothing drains: measured, the
+ * queue grows by every byte sent. Without slack a world whose snapshot plus log passed 8 MiB dropped every joiner
+ * partway through its own catch-up. 64 MiB is several million logged ticks; past that the joiner is still dropped.
+ */
+export const MAX_CATCHUP_SLACK_BYTES = 64 * 1024 * 1024;
 export const HASH_WAIT_MS = 2000;
+/**
+ * Review M1 (8 Nov): a HASH is accepted only for a checkpoint at most this many ticks before `lastClosed`, and the
+ * majority hash is kept for the same window. Older ticks would open checkpoints nobody else reports and leave truth
+ * entries forever. 30 checkpoints (30 s) is far past an honest client's lag: a live client more than 2 s behind
+ * fast-forwards, and replayed ticks send no HASH.
+ */
+export const HASH_WINDOW_TICKS = 30 * HASH_EVERY;
 /** A death claim is accepted for a tick at most this long ago, and an open tally is dropped after this long (D-121). */
 export const CLAIM_WINDOW_MS = 10_000;
 export const CLAIM_WINDOW_TICKS = 10 * TICK_HZ;
@@ -124,6 +138,8 @@ export interface Member {
   visitorId: number;
   /** The registered display name, "" when anonymous. Logs only: players only ever see `name`. */
   visitorName: string;
+  /** The connection's salted IP tag (log.ipTag), "" when unknown. The sandbox counts hash votes per tag (review H1). */
+  ipTag: string;
   /** What this connection has sent, for input.summary and the leave summary. Read-only for everyone else. */
   counts: InputCounts;
   /** Ping RTT and HASH timing for this connection (shared with main.ts's live entry). */
@@ -397,6 +413,14 @@ export class World {
     return this.members.size;
   }
 
+  /** Connections that control an avatar (spectators and sandbox painters excluded): what `cfg.maxPlayers` caps (review M3). */
+  get avatarPlayers(): number {
+    if (this.kind !== WORLD_GAME) return 0;
+    let n = 0;
+    for (const m of this.members.values()) if (m.playerId) n++;
+    return n;
+  }
+
   /** True while the tick clock is held because every member is still catching up (D-122). */
   get held(): boolean {
     return this.heldSince !== null;
@@ -585,8 +609,13 @@ export class World {
    * Send one frame, enforcing the queue cap at send time (review M4a S2): a slow reader is closed before it holds
    * megabytes, not only at the next tick close. False means the peer is unusable and must be dropped.
    */
-  private trySend(peer: Peer, frame: Uint8Array): boolean {
-    if (peer.buffered() > MAX_BUFFERED_BYTES) {
+  /** Review M2: a peer's catch-up burst in bytes, allowed on top of the cap until its queue first drains under it. */
+  private readonly catchupSlack = new WeakMap<Peer, number>();
+
+  private trySend(peer: Peer, frame: Uint8Array, slack = this.catchupSlack.get(peer) ?? 0): boolean {
+    const queued = peer.buffered();
+    if (slack && queued <= MAX_BUFFERED_BYTES && !this.inCatchUp) this.catchupSlack.delete(peer);
+    if (queued > MAX_BUFFERED_BYTES + slack) {
       try {
         peer.close(1013, "too slow");
       } catch {
@@ -644,7 +673,7 @@ export class World {
    * id from the players table (the same person always controls the same entity); a spectator (`playerId` 0)
    * gets no Join and no avatar. The sandbox hands out ids from a counter, as before. Returns the connection id.
    */
-  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
+  join(peer: Peer, opts: { playerId?: number; name?: string; spectate?: boolean; visitorId?: number; visitorName?: string; ipTag?: string } = {}): { conn: number; playerId: number; who: string; counts: InputCounts; timing: ConnTiming } {
     if (this.resetting) throw new Error("world is resetting");
     // A joiner replays the log after the snapshot. With none to replay it is live from the start and holds nothing:
     // otherwise the first visitor to an empty world froze it until their LIVE arrived, and any client that never
@@ -662,6 +691,9 @@ export class World {
     if (prior !== null) {
       const old = this.members.get(prior);
       this.members.delete(prior);
+      // As in leave(): a replaced snapshot source will never upload (review L1).
+      if (this.request?.memberId === prior) this.request = null;
+      if (this.waitingUpload?.memberId === prior) this.waitingUpload = null;
       if (old) this.elog.event("replaced", { world: this.id, who: this.whoOf(old), conn: old.id });
       try {
         old?.peer.close(4000, "replaced by a newer connection");
@@ -683,6 +715,7 @@ export class World {
       name: this.kind === WORLD_GAME ? (opts.name ?? "") : "",
       visitorId: opts.visitorId ?? 0,
       visitorName: opts.visitorName ?? "",
+      ipTag: opts.ipTag ?? "",
       peer,
       seq: conn,
       minHashTick: this.clock.lastClosed,
@@ -727,13 +760,24 @@ export class World {
   }
 
   /** False when a send failed part-way: the peer is unusable. */
+  private inCatchUp = false;
+
   private sendCatchUp(peer: Peer, header: (playersAtBase: number) => Uint8Array): boolean {
     const base = this.snapshot ? (this.onlineAt.get(this.snapshot.tick) ?? this.snapshotOnline) : 0;
-    if (!this.trySend(peer, header(base))) return false;
     const sf = this.snapshotFrame();
-    if (sf && !this.trySend(peer, sf)) return false;
-    for (const f of this.log) if (!this.trySend(peer, f)) return false;
-    return true;
+    let burst = sf?.length ?? 0;
+    for (const f of this.log) burst += f.length;
+    const slack = Math.min(burst, MAX_CATCHUP_SLACK_BYTES);
+    this.catchupSlack.set(peer, slack);
+    this.inCatchUp = true;
+    try {
+      if (!this.trySend(peer, header(base), slack)) return false;
+      if (sf && !this.trySend(peer, sf, slack)) return false;
+      for (const f of this.log) if (!this.trySend(peer, f, slack)) return false;
+      return true;
+    } finally {
+      this.inCatchUp = false;
+    }
   }
 
   leave(conn: number): void {
@@ -976,9 +1020,26 @@ export class World {
 
   // ---- hash checks (plan 7.4) -----------------------------------------------------------------
 
+  /**
+   * Review H1 (8 Nov): who may define the majority hash. In a world with avatars, one vote per registered player
+   * (`playerId` is the visitor id there, and one connection per player); spectators get none. In the sandbox, where
+   * every painter may be anonymous, one vote per IP tag, so one address's twelve tabs are one vote. A member with no
+   * vote is still compared against the majority and resynced when it differs; it can never make it.
+   */
+  voterKey(m: Member): string | null {
+    if (this.kind === WORLD_GAME) return m.playerId ? `p${m.playerId}` : null;
+    return m.ipTag ? `ip${m.ipTag}` : `c${m.id}`;
+  }
+
+  /** Test and dashboard view: open checkpoints and kept majority hashes (review M1: both stay bounded). */
+  hashState(): { checkpoints: number; truth: number } {
+    return { checkpoints: this.checkpoints.size, truth: this.truth.size };
+  }
+
   onHash(memberId: number, tick: number, hash: bigint, stepP95Ms?: number, buffered?: number): void {
     const m = this.members.get(memberId);
     if (this.resetting || !m || tick % HASH_EVERY !== 0 || tick <= m.minHashTick || tick > this.clock.lastClosed) return;
+    if (tick < this.clock.lastClosed - HASH_WINDOW_TICKS) return; // review M1: too old to compare or keep
     m.timing.lastHashTick = tick;
     if (!m.live) {
       m.live = true; // a HASH past minHashTick proves it replayed that far
@@ -1002,34 +1063,42 @@ export class World {
   }
 
   private tryResolve(tick: number, cp: Checkpoint, t: number): void {
+    // Wait only for members who vote: a spectator's late HASH is compared against the stored truth instead.
     let waiting = false;
-    for (const m of this.members.values()) if (m.minHashTick < tick && !cp.hashes.has(m.id)) waiting = true;
+    for (const m of this.members.values()) if (m.minHashTick < tick && !cp.hashes.has(m.id) && this.voterKey(m) !== null) waiting = true;
     if (waiting && t - cp.firstAt < HASH_WAIT_MS) return;
     this.checkpoints.delete(tick);
-    // Majority; a tie goes to the group holding the longest-connected reporter.
-    const groups = new Map<bigint, { n: number; best: number }>();
-    for (const [id, h] of cp.hashes) {
-      const seq = this.members.get(id)?.seq ?? Number.MAX_SAFE_INTEGER;
-      const g = groups.get(h) ?? { n: 0, best: Number.MAX_SAFE_INTEGER };
-      g.n++;
-      g.best = Math.min(g.best, seq);
-      groups.set(h, g);
-    }
-    let truth: bigint | null = null;
-    let win: { n: number; best: number } | null = null;
-    for (const [h, g] of groups) {
-      if (!win || g.n > win.n || (g.n === win.n && g.best < win.best)) {
-        win = g;
-        truth = h;
-      }
-    }
-    if (truth === null) return;
+    const truth = majority(this.votesOf(cp));
+    if (truth === null) return; // nobody with a vote reported: nothing to compare against
     this.truth.set(tick, truth);
-    this.truth.delete(tick - 30 * HASH_EVERY);
+    // Keep the window only (review M1): a resolved old tick used to stay for good.
+    for (const k of this.truth.keys()) if (k < this.clock.lastClosed - HASH_WINDOW_TICKS) this.truth.delete(k);
     const bad = new Map([...cp.hashes].filter(([, h]) => h !== truth));
     if (bad.size) this.diverged(tick, truth, bad, cp.hashes);
     else this.stats.hashPasses++;
     this.checkUpload(tick);
+  }
+
+  /**
+   * One vote per voter key (review H1): each key's hash is its own members' majority, a tie going to the
+   * longest-connected member, and the vote carries that member's connection order for the tie between keys.
+   */
+  private votesOf(cp: Checkpoint): { hash: bigint; seq: number }[] {
+    const perKey = new Map<string, { hash: bigint; seq: number }[]>();
+    for (const [id, h] of cp.hashes) {
+      const m = this.members.get(id);
+      const key = m ? this.voterKey(m) : null;
+      if (!m || key === null) continue; // a member who left, or one with no vote
+      const list = perKey.get(key) ?? [];
+      list.push({ hash: h, seq: m.seq });
+      perKey.set(key, list);
+    }
+    const votes: { hash: bigint; seq: number }[] = [];
+    for (const list of perKey.values()) {
+      const hash = majority(list);
+      if (hash !== null) votes.push({ hash, seq: Math.min(...list.filter((v) => v.hash === hash).map((v) => v.seq)) });
+    }
+    return votes;
   }
 
   private diverged(tick: number, truth: bigint, bad: Map<number, bigint>, all?: Map<number, bigint>): void {
@@ -1420,12 +1489,14 @@ export class World {
     this.requestSnapshot();
   }
 
-  /** Ask the longest-connected live client that has not disagreed recently for a snapshot at a future tick. */
+  /** Ask the longest-connected live voter that has not disagreed recently for a snapshot at a future tick. */
   requestSnapshot(): boolean {
     if (this.request || !this.db) return false;
     const last = this.clock.lastClosed;
     let ref: Member | null = null;
     for (const m of this.members.values()) {
+      // Review H1: only a voter supplies the snapshot (a player, in a world with avatars), never a spectator.
+      if (this.voterKey(m) === null) continue;
       if (last - m.lastBadTick < 3 * this.snapshotEvery && m.lastBadTick) continue;
       // Only a live member: a replaying client sends no HASH and would ignore the request (D-100).
       const h = m.timing.lastHashTick;
@@ -1552,4 +1623,24 @@ function presenceDelta(frame: Uint8Array): number {
     o += 7 + v.getUint16(o + 5, true);
   }
   return d;
+}
+
+/** The hash most votes agree on; a tie goes to the group holding the lowest connection order (longest connected). */
+export function majority(votes: readonly { hash: bigint; seq: number }[]): bigint | null {
+  const groups = new Map<bigint, { n: number; best: number }>();
+  for (const v of votes) {
+    const g = groups.get(v.hash) ?? { n: 0, best: Number.MAX_SAFE_INTEGER };
+    g.n++;
+    g.best = Math.min(g.best, v.seq);
+    groups.set(v.hash, g);
+  }
+  let truth: bigint | null = null;
+  let win: { n: number; best: number } | null = null;
+  for (const [h, g] of groups) {
+    if (!win || g.n > win.n || (g.n === win.n && g.best < win.best)) {
+      win = g;
+      truth = h;
+    }
+  }
+  return truth;
 }

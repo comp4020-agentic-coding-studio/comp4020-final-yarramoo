@@ -53,6 +53,7 @@ import {
   isBossKind,
 } from "../shared/stats.ts";
 import { isPaintable } from "../shared/names.ts";
+import { PaintRate, paintCost } from "./paintrate.ts";
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
@@ -68,6 +69,13 @@ export const MAX_MEMBERS_PER_WORLD = 64;
 /** Concurrent sockets per client address. */
 export const MAX_CONNS_PER_IP = 12;
 const MAX_FRAME_BYTES = 256;
+/**
+ * Review M1 (8 Nov): HASH and PING frames one connection may send per second. An honest client sends about one HASH
+ * and half a PING a second (a burst after a stall stays well under). The rest have their own gates: inputs
+ * MAX_INPUTS_PER_SEC, claims CLAIMS_PER_WINDOW, uploads expectsUpload, chunk hashes wantsChunkHashes, and LIVE is
+ * O(1) once a member is live and must never be dropped (it ends a catch-up hold). Past it the frame is dropped.
+ */
+export const MAX_CONTROL_FRAMES_PER_SEC = 20;
 /** Unsolicited CHUNK_HASHES frames one connection may send before it is closed (a reply that crosses a timeout). */
 export const MAX_UNASKED_CHUNK_FRAMES = 3;
 const TIMER_MS = 4;
@@ -232,6 +240,8 @@ export interface ServerOptions {
   /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
   dataDir?: string | null;
   snapshotEveryTicks?: number;
+  /** Override PAINT_CELLS_PER_SEC, the per-address paint budget (tests). */
+  paintCellsPerSec?: number;
   /** Override World's log-length warning and cap (tests). */
   maxLogTicks?: number;
   warnLogTicks?: number;
@@ -241,6 +251,9 @@ export interface ServerOptions {
   joinDeadlineMs?: number;
   /** Override the snapshot-verification timeout (tests). */
   verifyTimeoutMs?: number;
+  /** Tests: every new room gets this seed instead of 64 random bits (D-201), so a scripted test plays the same world
+   * every run (D-219: random seeds made `claims-survival` intermittent). Never set in production. */
+  roomSeed?: bigint;
   verifierWorkerUrl?: URL;
   quiet?: boolean;
   /** Override ROOM_CREATES_PER_IP_HOUR (tests that create many rooms from one address). */
@@ -348,7 +361,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
    * sqlite hands a deleted room's id to the next room, so a room made after the last one emptied got the same
    * seed and the same cave (6 Nov playtest, D-201). Random also means a creator can't pick an id for a layout.
    */
-  const seedForRoom = (): bigint => randomBytes(8).readBigUInt64LE();
+  const seedForRoom = (): bigint => opts.roomSeed ?? randomBytes(8).readBigUInt64LE();
   /** In-flight room loads, keyed by room id: closes the lazy-loading race (two near-simultaneous HELLOs for the
    * same not-yet-loaded room must not both construct and insert a World). The check (`worlds.get`/`loadingRooms.get`)
    * and the set (`loadingRooms.set`) below run with no `await` between them, so a second HELLO's synchronous
@@ -608,6 +621,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
   const connsByIp = new Map<string, number>();
+  /** Review H2: paint work per IP tag, across every connection and room. */
+  const paintRate = new PaintRate(opts.paintCellsPerSec);
 
   /** Admin dashboard rows: bounded fields only (the chunk list is already capped at 64 when it is recorded). */
   function incidentRows(limit: number): IncidentRow[] {
@@ -1157,6 +1172,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     log.limited(`held:${conn}`, 10_000, "input.rejected", { world: w.id, conn, who: w.whoOfConn(conn), reason: w.held ? "world_held" : "tick_full" }, "warn");
   }
 
+  /** Review H2: one address past its paint budget. The input is dropped before it is stamped, so no client pays for it. */
+  function paintOverBudget(w: World, conn: number, ipTag: string, payload: Uint8Array): boolean {
+    if (paintRate.take(ipTag, paintCost(payload), performance.now())) return false;
+    stats.droppedRate++;
+    live.get(liveKey(w.id, conn))?.counts.reject();
+    log.limited(`paint_rate:${ipTag}`, 10_000, "input.rate_limited", { world: w.id, conn, who: w.whoOfConn(conn), ip_tag: ipTag, what: "paint_work" }, "warn");
+    return true;
+  }
+
   function badInput(w: World, conn: number, reason: string, kind: number): void {
     stats.rejected++;
     live.get(liveKey(w.id, conn))?.counts.reject();
@@ -1178,6 +1202,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const rej = (reason: string, worldId?: number) => reject(ws, reason, { world: worldId, ipTag });
     let windowStart = performance.now();
     let inWindow = 0;
+    let controlStart = performance.now();
+    let controlInWindow = 0;
     /** CHUNK_HASHES frames nobody asked for: an honest client never sends one, so a few close the socket. */
     let unaskedChunks = 0;
     const helloTimer = setTimeout(() => ws.close(1008, "no hello"), HELLO_TIMEOUT_MS);
@@ -1258,12 +1284,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
             discardIfFreshlyLoaded(w, wasWarm);
             return rej("unknown token", msg.worldId);
           }
+          // Review M3: the room's own player cap. A reload of a player already in (same token) replaces its old tab, so it
+          // never counts against itself; spectators and sandbox painters are not players (the member cap above covers them).
+          if (gamePlayer && who !== "unknown" && w.connOf(who.id) === null && w.avatarPlayers >= w.cfg.maxPlayers) {
+            discardIfFreshlyLoaded(w, wasWarm);
+            return rej("room is full; spectate or try another room", msg.worldId);
+          }
           cancelUnload(w.id); // the join is now known to succeed: keep this room hot (review-r2b.md finding 2 —
           // this must not run any earlier, or a rejected join here could cancel a legitimate pending unload)
           const visitorId = who === "unknown" ? 0 : who.id;
           const visitorName = who === "unknown" ? "" : who.name;
           rooms?.markJoined(w.id, wallNow()); // N1: it has been joined (never_joined no longer applies) and is active now
-          const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName });
+          const j = w.join(peer, { playerId: gamePlayer ? visitorId : undefined, name: gamePlayer ? visitorName : "", spectate: spectating, visitorId, visitorName, ipTag });
           const me = { world: w, conn: j.conn, playerId: j.playerId, visitorId, visitorName, counts: j.counts, at: Date.now() };
           joined = me;
           playerStats.bump(visitorId, STAT_SESSIONS);
@@ -1285,6 +1317,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               log.forget(`pos:${j.conn}`);
               log.forget(`bad:${j.conn}`);
               log.forget(`held:${j.conn}`);
+              log.forget(`ctl_rate:${j.conn}`);
               const ms = Date.now() - me.at;
               playerStats.bump(visitorId, STAT_PLAY_MS, ms);
               if (j.counts.pos > 0) playerStats.max(visitorId, STAT_MAX_DEPTH, j.counts.maxDepth);
@@ -1343,6 +1376,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       // Everything but a snapshot upload is small; uploads have a per-world ceiling (a game snapshot is MBs).
       const frameCap = msg.t === "snapshot-upload" ? maxUploadFrameFor(w.cfg) : msg.t === "chunk-hashes" ? maxChunkHashesFrameFor(w.cfg) : MAX_FRAME_BYTES;
       if (buf.length > frameCap) return ws.close(1009, "frame too large");
+      if (msg.t === "hash" || msg.t === "ping") {
+        const now = performance.now();
+        if (now - controlStart >= 1000) {
+          controlStart = now;
+          controlInWindow = 0;
+        }
+        if (++controlInWindow > MAX_CONTROL_FRAMES_PER_SEC) {
+          log.limited(`ctl_rate:${joined.conn}`, 10_000, "input.rate_limited", { world: w.id, conn: joined.conn, who: w.whoOfConn(joined.conn), limit: MAX_CONTROL_FRAMES_PER_SEC, what: msg.t }, "warn");
+          return;
+        }
+      }
 
       switch (msg.t) {
         case "ping":
@@ -1392,6 +1436,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               // F6b: the lobby ready toggle, Survival rooms only. The player id is stamped from the connection, never the client's.
               joined.counts.ready();
             } else if (w.cfg.brushes === 1 && msg.kind === KIND_PAINT && msg.payload.length === PAINT_PAYLOAD_LEN) {
+              if (paintOverBudget(w, joined.conn, ipTag, msg.payload)) return;
               // Only materials the sim will paint become stat keys: any other byte is refused by the sim, and counting
               // it first would add up to 256 junk keys per player (hardening review server F1).
               if (isPaintable(msg.payload[0])) {
@@ -1406,6 +1451,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
           if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
+          if (paintOverBudget(w, joined.conn, ipTag, msg.payload)) return;
           if (isPaintable(msg.payload[0])) {
             joined.counts.paint(materialKey(msg.payload[0]));
             playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));

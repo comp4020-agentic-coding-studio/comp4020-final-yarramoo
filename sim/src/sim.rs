@@ -36,6 +36,8 @@ pub struct Sim {
     pub tick: u32,
     pub grid: Grid,
     queue: Vec<Input>,
+    /// Paint work left this tick (review H2): reset at the start of every `step`, so it is never state.
+    paint_budget: i64,
     /// Player entities, sorted by id (game worlds only; the sandbox has none). State: hashed and snapshotted.
     pub players: Vec<Player>,
     /// Pickups created by generation, in id order (game worlds only). State.
@@ -83,7 +85,7 @@ impl Sim {
         let (w, h) = cfg.dims();
         let bytes = cfg.encode();
         let mut grid = Grid::new(w, h);
-        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), enemies, round_over: 0, round_running: 0, boss_killed: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
+        let make = |grid: Grid, pickups: Vec<Pickup>, enemies: Vec<Enemy>, arena: Option<crate::gen::Arena>, base: Option<Base>| Sim { seed, cfg, tick: 0, grid, queue: Vec::new(), paint_budget: 0, players: Vec::new(), pickups, projectiles: Vec::new(), bags: Vec::new(), heals: Vec::new(), enemies, round_over: 0, round_running: 0, boss_killed: 0, round_result: 0, lobby_since: LOBBY_IDLE, majority_since: LOBBY_IDLE, enemy_work: 0, arena, events: Vec::new(), base };
         match cfg.terrain {
             TERRAIN_CAVES => {
                 if let Some(b) = base.filter(|b| b.seed == seed && b.cfg == bytes && b.mat.len() == w * h && b.aux.len() == w * h) {
@@ -209,6 +211,7 @@ impl Sim {
         // entity state here first, or a client that just restored and one that ran on would disagree on this tick.
         self.refresh_active();
         let inputs = core::mem::take(&mut self.queue);
+        self.paint_budget = MAX_PAINT_WORK_PER_TICK;
         for i in inputs {
             self.apply(i);
         }
@@ -532,7 +535,15 @@ impl Sim {
         let (dx, dy) = (x1 - x0, y1 - y0);
         let n = dx.abs().max(dy.abs());
         // Truncate from (x0, y0) along the same line: the interpolation still uses the full `n`, so direction is kept.
+        // Review H2: every stamp is charged its disc's bounding box against the tick's budget; once one does not fit,
+        // painting is over for this tick (the budget stays short, so later Paint inputs this tick draw nothing either).
+        let cost = i64::from(2 * r + 1) * i64::from(2 * r + 1);
         for k in 0..=paint_stamps(n) {
+            if self.paint_budget < cost {
+                self.paint_budget = 0;
+                return;
+            }
+            self.paint_budget -= cost;
             let (cx, cy) = if n == 0 { (x0, y0) } else { (x0 + dx * k / n, y0 + dy * k / n) };
             self.disc(mat, cx, cy, r, fill_empty);
         }

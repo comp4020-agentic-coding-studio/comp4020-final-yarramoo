@@ -24,7 +24,8 @@ describe("Survival claims from real sim clients", () => {
   it("round start, an enemy kill and a lost round resolve, and the ended room leaves the public list", async () => {
     const d = mkdtempSync(join(tmpdir(), "sand-f7-"));
     cleanups.push(() => rmSync(d, { recursive: true, force: true }));
-    const s: RunningServer = await startServer({ port: 0, dataDir: d, snapshotEveryTicks: 120, quiet: true });
+    // A fixed seed: the scripted kill below needs the same world every run (D-219; room seeds are random since D-201).
+    const s: RunningServer = await startServer({ port: 0, dataDir: d, snapshotEveryTicks: 120, quiet: true, roomSeed: 2n });
     cleanups.push(() => s.close());
     const res = await fetch(`http://127.0.0.1:${s.port}/api/rooms`, {
       method: "POST",
