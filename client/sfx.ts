@@ -22,6 +22,12 @@ let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let noiseBuf: AudioBuffer | null = null;
 let voices = 0;
+/** Dev instrumentation (read-only): requests per sound name, and the last and peak ambient water level. */
+const counts: Record<string, number> = {};
+let waterLast = 0;
+let waterPeak = 0;
+export const sfxCounts = () => ({ counts: { ...counts }, water: waterLast, waterPeak });
+
 let muted = store.get(MUTE_KEY) === "1";
 
 export const isMuted = () => muted;
@@ -107,6 +113,7 @@ function noise(o: Out, dur: number, gain: number, f0: number, f1: number, q = 1,
 
 /** Play one sound. `vol` 0..1 and `pan` -1..1 come from the camera distance; `mag` 0..1 scales explosions. */
 export function play(name: SfxName, vol: number, pan: number, mag = 0.5) {
+  counts[name] = (counts[name] ?? 0) + 1; // dev instrumentation: every request, before mute and context checks
   if (muted || !ctx || !master || ctx.state !== "running" || vol < 0.02 || voices >= MAX_VOICES) return;
   const c = ctx;
   const p = c.createStereoPanner();
@@ -151,6 +158,25 @@ export function play(name: SfxName, vol: number, pan: number, mag = 0.5) {
     case "crunch": noise(o, 0.12, 0.5, 1800, 400, 1.2, "lowpass"); noise(o, 0.2, 0.4, 900, 150, 0.9, "lowpass"); tone(o, "square", 130, 50, 0.18, 0.35); dur = 0.3; break;
     case "pickup": tone(o, "triangle", 660, 1320, 0.14, 0.35); dur = 0.2; break;
     case "heal": tone(o, "sine", 440, 440, 0.12, 0.3); tone(o, "sine", 660, 880, 0.22, 0.3, 0.09); dur = 0.35; break;
+    case "burn": noise(o, 0.3, 0.4, 2500, 1200, 0.8, "highpass"); for (let i = 0; i < 5; i++) noise(o, 0.03, 0.45, 3500, 2500, 1, "bandpass", i * 0.05 + Math.random() * 0.03); tone(o, "sawtooth", 140, 100, 0.2, 0.15); dur = 0.35; break;
+    case "corrode": noise(o, 0.35, 0.35, 7000, 4500, 1.5, "highpass"); for (let i = 0; i < 6; i++) tone(o, "sine", 1500 + Math.random() * 1500, 600, 0.04, 0.12, i * 0.05); dur = 0.4; break;
+    case "powderhit": noise(o, 0.2, 0.7, 2500, 300, 0.8, "lowpass"); tone(o, "sawtooth", 180, 60, 0.15, 0.4); noise(o, 0.06, 0.5, 5000, 3000, 1, "highpass"); dur = 0.25; break;
+    case "blasthit": tone(o, "sine", 110, 35, 0.45, 0.8); noise(o, 0.4, 0.6, 1400, 150, 0.7, "lowpass"); tone(o, "square", 200, 80, 0.1, 0.3); dur = 0.5; break;
+    case "bolthit": tone(o, "sawtooth", 600, 150, 0.14, 0.4); noise(o, 0.16, 0.5, 4000, 1200, 1, "highpass"); dur = 0.2; break;
+    case "hurt": tone(o, "triangle", 260, 130, 0.14, 0.45); noise(o, 0.08, 0.3, 1000, 400, 1); dur = 0.18; break;
+    case "slimehit": tone(o, "sine", 160, 70, 0.2, 0.5); noise(o, 0.12, 0.3, 600, 200, 1.5, "lowpass"); tone(o, "sine", 300, 120, 0.08, 0.2, 0.05); dur = 0.25; break;
+    case "imphit": tone(o, "square", 900, 500, 0.1, 0.25); tone(o, "sawtooth", 1300, 700, 0.12, 0.2, 0.05); noise(o, 0.08, 0.3, 3500, 1500, 1.5); dur = 0.2; break;
+    case "acidhit": noise(o, 0.2, 0.4, 5500, 2500, 1.5, "highpass"); tone(o, "sine", 220, 90, 0.15, 0.4); noise(o, 0.12, 0.3, 900, 300, 2, "bandpass", 0.04); dur = 0.25; break;
+    case "wormbite": noise(o, 0.1, 0.6, 1600, 500, 1.5, "bandpass"); tone(o, "square", 120, 60, 0.1, 0.35); noise(o, 0.1, 0.5, 2200, 800, 2, "bandpass", 0.09); tone(o, "square", 110, 55, 0.1, 0.3, 0.09); dur = 0.25; break;
+    case "magehit": tone(o, "sine", 700, 300, 0.3, 0.3); tone(o, "sine", 705, 305, 0.3, 0.25); tone(o, "triangle", 350, 150, 0.25, 0.3); dur = 0.35; break;
+    case "wisphit": noise(o, 0.25, 0.35, 5000, 1500, 1, "highpass"); tone(o, "sawtooth", 300, 200, 0.2, 0.25); tone(o, "sine", 90, 60, 0.2, 0.3); dur = 0.3; break;
+    case "frosthit": tone(o, "sine", 2400, 1800, 0.2, 0.25); tone(o, "sine", 3100, 2200, 0.16, 0.2, 0.03); noise(o, 0.1, 0.35, 6500, 4500, 2, "highpass"); dur = 0.25; break;
+    case "colossushit": tone(o, "sine", 65, 28, 0.5, 0.9); noise(o, 0.35, 0.7, 500, 90, 0.8, "lowpass"); noise(o, 0.1, 0.5, 1500, 600, 1.2, "bandpass"); dur = 0.55; break;
+    case "acidflask": noise(o, 0.1, 0.6, 5000, 3000, 2, "highpass"); tone(o, "sine", 700, 1100, 0.1, 0.2, 0.04); noise(o, 0.45, 0.35, 7000, 4000, 1.5, "highpass", 0.1); for (let i = 0; i < 4; i++) tone(o, "sine", 1800 + i * 300, 700, 0.04, 0.1, 0.12 + i * 0.06); dur = 0.6; break;
+    case "lavaflask": noise(o, 0.1, 0.6, 5000, 3000, 2, "highpass"); tone(o, "sine", 600, 900, 0.1, 0.2, 0.04); tone(o, "sine", 70, 45, 0.5, 0.5, 0.08); for (let i = 0; i < 4; i++) tone(o, "sine", 120 + i * 30, 70, 0.1, 0.3, 0.12 + i * 0.08); noise(o, 0.5, 0.25, 350, 120, 1, "lowpass", 0.1); dur = 0.65; break;
+    case "freeze": tone(o, "sine", 1200, 3200, 0.5, 0.25); tone(o, "sine", 1800, 4200, 0.45, 0.18, 0.05); tone(o, "triangle", 2400, 5000, 0.35, 0.12, 0.1); noise(o, 0.5, 0.2, 5000, 8000, 3, "bandpass"); dur = 0.6; break;
+    case "quake": tone(o, "sine", 48, 30, 1, 0.8); tone(o, "sine", 62, 34, 0.9, 0.5, 0.05); noise(o, 1, 0.5, 260, 60, 0.7, "lowpass"); noise(o, 0.2, 0.4, 700, 200, 1, "lowpass", 0.35); noise(o, 0.2, 0.4, 600, 150, 1, "lowpass", 0.65); dur = 1.1; break;
+    case "mudslide": tone(o, "sine", 180, 70, 0.18, 0.5); tone(o, "sine", 120, 220, 0.15, 0.4, 0.15); tone(o, "sine", 250, 80, 0.2, 0.4, 0.3); noise(o, 0.5, 0.35, 500, 150, 2, "lowpass"); dur = 0.55; break;
     case "bag": tone(o, "triangle", 520, 520, 0.09, 0.35); tone(o, "triangle", 780, 780, 0.09, 0.35, 0.07); tone(o, "triangle", 1040, 1040, 0.16, 0.35, 0.14); dur = 0.35; break;
   }
   voices++;
