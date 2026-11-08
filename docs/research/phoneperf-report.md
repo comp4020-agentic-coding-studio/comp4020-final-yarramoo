@@ -72,7 +72,8 @@ Callback cost after: 0.6-1.8 ms p95-ish everywhere. Not measured: a real phone a
   (`server/main.ts` `seedForRoom`), so the scripted kill plays a different world each run. **A pre-existing
   intermittent for Track A**: pin the room seed in the test, or find the seed that fails. Rerun green, 474/474
   (`/tmp/phoneperf-g1b-net.log`), and committed on that exit code.
-- Batch 2 gate: see the commit.
+- Batch 2 gate: green, 479/479 (`/tmp/phoneperf-g2-net.log`), committed on that exit code (55efa8b).
+- `APP_URL=http://localhost:8082 pnpm check` against this branch's own server: green, 9/9 (`/tmp/phoneperf-check.log`).
 
 ## Screenshots looked at
 
@@ -96,7 +97,7 @@ Callback cost after: 0.6-1.8 ms p95-ish everywhere. Not measured: a real phone a
 
 ## Spend
 
-B0 $281.63. No workers. See the hand-back for the final figure.
+B0 $281.63; $299.89 after the last gate (track total about $18.5 with this write-up). No workers ($0).
 
 ## Drafts
 
