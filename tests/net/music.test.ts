@@ -10,7 +10,8 @@ describe("tables", () => {
     for (const k of moods) {
       const m = MOODS[k];
       expect(m.bpm).toBeGreaterThan(30);
-      for (const c of m.chords) for (let off = 0; off < 14; off++) {
+      // A high-register mood (root 60+) reaches fewer degrees up: its pad, melody and pluck stay within about two octaves.
+      for (const c of m.chords) for (let off = 0; off < (m.root >= 60 ? 9 : 14); off++) {
         const n = degreeToMidi(m, c + off + 5);
         expect(n).toBeGreaterThanOrEqual(24);
         expect(n).toBeLessThanOrEqual(108);
@@ -72,7 +73,7 @@ describe("stepMood", () => {
     s = run(s, base, 100 + DEPTH_HOLD_MS);
     expect(s.mood).toBe("surface");
   });
-  it("round stings are immediate and final; sandbox stays on surface", () => {
+  it("round stings are immediate and final; sandbox stays on its own mood", () => {
     let s = run(initialMoodState(), { ...base, round: "win" }, 0);
     expect(s.mood).toBe("victory");
     s = run(s, { ...base, y: DEEP_TOP + 50 }, 99999);
@@ -81,7 +82,7 @@ describe("stepMood", () => {
     let sb = initialMoodState();
     sb = run(sb, { ...base, sandbox: true, y: DEEP_TOP + 50 }, 0);
     sb = run(sb, { ...base, sandbox: true, y: DEEP_TOP + 50 }, 99999);
-    expect(sb.mood).toBe("surface");
+    expect(sb.mood).toBe("sandbox");
   });
 });
 
@@ -114,7 +115,7 @@ describe("fight mood", () => {
     expect(perc.map((n) => n.t)).toEqual([0, 1, 2, 3]);
   });
   it("sandbox ignores combat", () => {
-    expect(run(initialMoodState(), { ...base, sandbox: true, combatAt: 0 }, 0).mood).toBe("surface");
+    expect(run(initialMoodState(), { ...base, sandbox: true, combatAt: 0 }, 0).mood).toBe("sandbox");
   });
 });
 
@@ -128,5 +129,25 @@ describe("moodToSwitch (hardening review client F1)", () => {
     expect(moodToSwitch("victory", "deep", null)).toBe("victory");
     expect(moodToSwitch("deep", "surface", null)).toBe("deep");
     expect(moodToSwitch("deep", "deep", null)).toBeNull();
+  });
+});
+
+describe("sandbox mood (cute tunes)", () => {
+  it("the sandbox picks the sandbox mood at once, at any depth", () => {
+    for (const y of [100, SHALLOW_TOP + 10, DEEP_TOP + 50]) expect(stepMood(initialMoodState(), { ...base, sandbox: true, y }, 0).mood).toBe("sandbox");
+  });
+  it("its bars stay within the voice cap, in a bright register, and in the scale", () => {
+    const m = MOODS.sandbox;
+    for (let bar = 0; bar < 16; bar++) {
+      const notes = planBar("sandbox", bar, makeRng(bar + 1));
+      expect(maxOverlap(notes)).toBeLessThanOrEqual(MAX_MUSIC_VOICES);
+      for (const n of notes) {
+        expect(n.midi).toBeGreaterThanOrEqual(36);
+        expect(n.midi).toBeLessThanOrEqual(96);
+        expect(m.scale).toContain(((n.midi - m.root) % 12 + 12) % 12);
+        expect(n.voice).not.toBe("drone");
+        expect(n.voice).not.toBe("perc");
+      }
+    }
   });
 });
