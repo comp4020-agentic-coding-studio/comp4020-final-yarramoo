@@ -162,6 +162,30 @@ describe("owned sandbox", () => {
     b.close();
   });
 
+  it("its warm verify lane is released when it unloads, and a reload opens a fresh one whose verify is warm and accepted (D-214)", async () => {
+    const dir = tmp();
+    const s = await boot(dir, { roomUnloadMs: 200, snapshotEveryTicks: 120 });
+    const me = await register(s.port, "Warm");
+    const room = (await api(s.port, "POST", "/api/sandbox", me.token)).body;
+    const a = await connect(s.port, hex, { world: room.id, token: me.token });
+    await waitFor(() => s.verifier!.laneIds().includes(room.id), 3000, "a lane at the first join");
+    await waitFor(() => s.worlds.get(room.id)!.stats.snapshotsAccepted >= 1, 20000, "a verified snapshot before the unload");
+    a.close();
+    await waitFor(() => !s.worlds.has(room.id), 3000, "unloaded");
+    expect(s.verifier!.laneIds()).not.toContain(room.id); // the unload gave the lane's world of memory back
+    const cold = s.verifier!.coldRestores;
+    const b = await connect(s.port, hex, { world: room.id, token: me.token });
+    await waitFor(() => s.worlds.get(room.id)?.playerCount === 1, 5000, "reloaded");
+    expect(s.verifier!.laneIds()).toContain(room.id); // the reloaded room has a lane again, generated from its stored seed
+    const w = s.worlds.get(room.id)!;
+    await waitFor(() => w.stats.snapshotsAccepted >= 1, 20000, "a verified snapshot after the reload");
+    expect(w.stats.snapshotsRejected).toBe(0);
+    expect(s.verifier!.coldRestores).toBe(cold); // the reloaded lane's verify found the room's world built
+    b.close();
+    await waitFor(() => !s.worlds.has(room.id), 3000, "unloaded again");
+    expect(s.verifier!.laneIds()).toEqual([]);
+  });
+
   it("an owner who never joined a game world is not evicted, and nobody else is pinned (review N1)", async () => {
     let t = 1_000_000;
     const dir = tmp();

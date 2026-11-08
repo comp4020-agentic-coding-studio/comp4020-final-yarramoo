@@ -275,7 +275,9 @@ export class SnapshotVerifier {
   ) {
     this.bytes = new Uint8Array(readFileSync(wasmPath));
     this.timeoutMs = opts.timeoutMs ?? VERIFY_TIMEOUT_MS;
-    this.warmTimeoutMs = opts.warmTimeoutMs ?? LANE_WARM_TIMEOUT_MS;
+    // An overridden job timeout scales the warm-up bound with it (the default ratio, 12x), so a test that shortens the
+    // job timeout to catch a hung worker is not left waiting the production 120 s on a warm-up that never answers.
+    this.warmTimeoutMs = opts.warmTimeoutMs ?? (this.timeoutMs * LANE_WARM_TIMEOUT_MS) / VERIFY_TIMEOUT_MS;
     this.workerUrl = opts.workerUrl ?? new URL("./verify-worker.ts", import.meta.url);
     this.budget = opts.warmBudgetBytes ?? VERIFY_WARM_BUDGET_BYTES;
     this.memoryBytes = opts.memoryBytes;

@@ -268,35 +268,48 @@ describe("snapshots in the game world", () => {
     expect(MAX_UPLOAD_FRAME_GAME_ok()).toBe(true);
   });
 
-  it("verifies a game snapshot in a worker: the tick clock does not stall, and a main-thread restore would", async () => {
-    const s = await boot(tmp(), 120);
-    // Observe every closed tick's time on the server's own clock.
-    const closes: number[] = [];
-    s.game.onTickClosed = () => closes.push(performance.now());
-    const me = await register(s.port, "Snap");
-    const a = await connect(s.port, hex, { world: GAME, token: me.token });
-    const stepper = setInterval(() => a.ls.run(100000), 4);
-    cleanups.push(() => clearInterval(stepper));
-    a.move(1000, 240);
-    await waitFor(() => s.game.stats.snapshotsAccepted >= 1, 30000, "a verified game snapshot");
-    clearInterval(stepper);
-    expect(s.game.stats.snapshotsRejected).toBe(0);
-    expect(s.game.stats.lastVerifyMs).toBeGreaterThan(100); // a real world was regenerated, off-thread
-    // The worst gap between consecutive closed ticks while the clock ran (includes the verification window).
-    let worst = 0;
-    for (let i = 1; i < closes.length; i++) worst = Math.max(worst, closes[i] - closes[i - 1]);
-    console.log(`[game] verify took ${s.game.stats.lastVerifyMs.toFixed(0)} ms; worst gap between closed ticks ${worst.toFixed(1)} ms over ${closes.length} ticks`);
-    expect(worst).toBeLessThan(120);
-    // Control: the same restore on this thread blocks it for hundreds of ms, so the measurement can see a stall.
-    const sim = loadSim(wasmBytes);
-    const snap = a.ls.sim.snapshot();
-    const t0 = performance.now();
-    sim.restore(snap);
-    const blocked = performance.now() - t0;
-    console.log(`[game] control: restoring on the main thread blocks it for ${blocked.toFixed(0)} ms`);
-    expect(blocked).toBeGreaterThan(worst);
-    a.close();
-  });
+  // Both verify paths regenerate a game world off the tick thread. On the overflow worker (no lane: start-up, a room past
+  // the lane budget) the verify itself regenerates. On a room's warm lane (D-214) the generation runs at the first join
+  // instead, and the verify is warm; the recorded window starts before the join, so it covers that generation too.
+  for (const lanes of [false, true]) {
+    it(`verifies a game snapshot in a worker (${lanes ? "warm lane: generated at join" : "overflow: cold"}): the tick clock does not stall, and a main-thread restore would`, async () => {
+      const s = await startServer({ port: 0, dataDir: tmp(), snapshotEveryTicks: 120, quiet: true, verifyWarmBudgetBytes: lanes ? undefined : 0 });
+      cleanups.push(() => s.close());
+      // Observe every closed tick's time on the server's own clock.
+      const closes: number[] = [];
+      s.game.onTickClosed = () => closes.push(performance.now());
+      const me = await register(s.port, "Snap");
+      const a = await connect(s.port, hex, { world: GAME, token: me.token });
+      const stepper = setInterval(() => a.ls.run(100000), 4);
+      cleanups.push(() => clearInterval(stepper));
+      a.move(1000, 240);
+      await waitFor(() => s.game.stats.snapshotsAccepted >= 1, 30000, "a verified game snapshot");
+      clearInterval(stepper);
+      expect(s.game.stats.snapshotsRejected).toBe(0);
+      if (lanes) {
+        expect(s.verifier!.laneIds()).toEqual([GAME]); // the room's own lane generated its world at the join
+        expect(s.verifier!.coldRestores).toBe(0); // so the verify found it built
+      } else {
+        expect(s.verifier!.laneIds()).toEqual([]);
+        expect(s.verifier!.coldRestores).toBe(1);
+        expect(s.game.stats.lastVerifyMs).toBeGreaterThan(100); // a real world was regenerated, off-thread
+      }
+      // The worst gap between consecutive closed ticks while the clock ran (includes the generation and the verify).
+      let worst = 0;
+      for (let i = 1; i < closes.length; i++) worst = Math.max(worst, closes[i] - closes[i - 1]);
+      console.log(`[game] verify took ${s.game.stats.lastVerifyMs.toFixed(0)} ms; worst gap between closed ticks ${worst.toFixed(1)} ms over ${closes.length} ticks`);
+      expect(worst).toBeLessThan(120);
+      // Control: the same restore on this thread blocks it for hundreds of ms, so the measurement can see a stall.
+      const sim = loadSim(wasmBytes);
+      const snap = a.ls.sim.snapshot();
+      const t0 = performance.now();
+      sim.restore(snap);
+      const blocked = performance.now() - t0;
+      console.log(`[game] control: restoring on the main thread blocks it for ${blocked.toFixed(0)} ms`);
+      expect(blocked).toBeGreaterThan(worst);
+      a.close();
+    });
+  }
 
   it("D9: a client joining late gets the verified game snapshot with players in it, and agrees on the state hash", async () => {
     const s = await boot(tmp(), 120);
