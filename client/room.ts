@@ -14,6 +14,7 @@ import { Renderer, type Camera } from "./render.ts";
 import { isMuted, play, setMuted, unlock } from "./sfx.ts";
 import { initialMoodState, makeMusicButton, setMood, startMusicOnGesture, stepMood, type MoodState } from "./music.ts";
 import { bossName, formatAchievement } from "./toasts.ts";
+import { renderChatLine } from "./chat.ts";
 import { nextSlow, SLOW_IDLE, slowText, type SlowState } from "./slownet.ts";
 import { CLASSIC_SANDBOX, CAVES_PVP, SURVIVAL, decodeConfig, encodeConfig, type RoomConfig } from "../shared/room.ts";
 import { HINT_SEEN_PREFIX, NAME_KEY, TOKEN_KEY, store } from "./storage.ts";
@@ -699,6 +700,9 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         roundOutcome = m.win ? "win" : "lose";
         updateMood(camera.y, false);
         break;
+      case "chat":
+        addChat(m.name, m.text, m.history);
+        break;
       case "achievement": {
         const text = formatAchievement(m.id);
         if (text) addToast(text, true);
@@ -821,6 +825,25 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     while (toastsEl.children.length > TOAST_MAX) toastsEl.firstElementChild?.remove();
     setTimeout(() => el.classList.add("fade"), TOAST_MS - 600);
     setTimeout(() => el.remove(), TOAST_MS);
+  }
+  // Chat (networked rooms only): lines come back from the server, the sender's own included, so nothing is echoed locally.
+  let myName = "";
+  const chatEl = document.createElement("div");
+  chatEl.id = "chat";
+  const chatLog = document.createElement("div");
+  chatLog.id = "chat-log";
+  chatLog.setAttribute("aria-live", "polite");
+  chatEl.append(chatLog);
+  if (localKind === null) stage.append(chatEl);
+  const CHAT_MAX = 8;
+  function addChat(name: string, text: string, history: boolean) {
+    const el = renderChatLine(document, name, text, myName);
+    if (history) el.classList.add("hist");
+    chatLog.append(el);
+    while (chatLog.children.length > CHAT_MAX) chatLog.firstElementChild?.remove();
+    const ms = history ? 6000 : 12000;
+    setTimeout(() => el.classList.add("fade"), ms - 600);
+    setTimeout(() => el.remove(), ms);
   }
   /** Shorter tile labels so twelve fit in one row; the full name is the tile's tooltip. */
   const SHORT_NAMES: Record<string, string> = { "Acid Flask": "Acid", "Oil Flask": "Oil", "Lava Flask": "Lava", "Black Hole": "Hole", "Mudslide": "Mud" };
@@ -1356,6 +1379,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
   }
 
   function start(token: string, name: string) {
+    myName = name;
     if (target.late && !spectate) {
       // F7: the round is under way or over. Offer Spectate / another room BEFORE joining: a join would stamp a dead player record.
       updateLobby(null, true);
