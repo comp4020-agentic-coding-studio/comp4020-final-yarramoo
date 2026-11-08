@@ -9,7 +9,10 @@ export const MUTE_KEY = "sand.muted";
 export type SfxName =
   | "push" | "blast" | "water" | "rose" | "fire" | "bomb" | "dig" | "flask" | "wall" | "hole"
   | "reject" | "impact" | "explode" | "knock" | "death" | "respawn" | "pickup" | "bag" | "heal" | "squelch" | "splat"
-  | "crackle" | "screech" | "hiss" | "rumble" | "crunch" | "roar" | "bossdeath" | "descend" | "sizzle";
+  | "crackle" | "screech" | "hiss" | "rumble" | "crunch" | "roar" | "bossdeath" | "descend" | "sizzle"
+  | "burn" | "corrode" | "powderhit" | "blasthit" | "bolthit" | "hurt"
+  | "slimehit" | "imphit" | "acidhit" | "wormbite" | "magehit" | "wisphit" | "frosthit" | "colossushit"
+  | "acidflask" | "lavaflask" | "freeze" | "quake" | "mudslide";
 
 /** At most this many voices sound at once; extra ones are dropped (16 explosions in a frame must not clip). */
 const MAX_VOICES = 10;
