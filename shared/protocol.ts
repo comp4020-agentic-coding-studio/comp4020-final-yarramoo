@@ -117,8 +117,11 @@ export const chunkCountFor = (cfg: RoomConfig): number => {
   const g = chunkGridFor(cfg);
   return g.cw * g.ch;
 };
+/** Uncompressed snapshot ceiling for a world of `w x h` cells (a client knows its sim's size once `init` has run). */
+export const maxSnapshotRawForDims = (w: number, h: number): number =>
+  Math.ceil(((w / CHUNK_CELLS) * (h / CHUNK_CELLS) * SNAPSHOT_CHUNK_BYTES + SNAPSHOT_OVERHEAD) / MIB) * MIB;
 /** Uncompressed snapshot ceiling for a room. */
-export const maxSnapshotRawFor = (cfg: RoomConfig): number => Math.ceil((chunkCountFor(cfg) * SNAPSHOT_CHUNK_BYTES + SNAPSHOT_OVERHEAD) / MIB) * MIB;
+export const maxSnapshotRawFor = (cfg: RoomConfig): number => maxSnapshotRawForDims(...SIZE_DIMS[cfg.size]);
 /** Compressed SNAPSHOT_UPLOAD frame ceiling: a worst-case all-live world compresses at least 2:1 (see MAX_UPLOAD_FRAME_GAME). */
 export const maxUploadFrameFor = (cfg: RoomConfig): number => Math.max(1, Math.ceil(maxSnapshotRawFor(cfg) / 2 / MIB)) * MIB;
 /** The socket's one payload cap has to admit the largest upload of any world (ws checks it before the tag byte). */

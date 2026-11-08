@@ -252,6 +252,25 @@ pub extern "C" fn ran_chunks() -> u32 {
     with(|s| s.grid.ran_chunks).unwrap_or(0)
 }
 
+/// Snapshot layout facts for TypeScript readers (review M4): the server's `activePlayersIn` reads the player section
+/// of a stored snapshot without running the sim, and takes these from the wasm rather than holding copies. A snapshot
+/// is `HEADER` bytes, then the entity section's byte length u32, then the entity bytes, which start with the player
+/// count u32 and `PLAYER_BYTES` per player (`id u32, active u8, ...`). Constants, integers only (invariant 2).
+#[no_mangle]
+pub extern "C" fn snapshot_format_version() -> u32 {
+    u32::from(snapshot::FORMAT_VERSION)
+}
+
+#[no_mangle]
+pub extern "C" fn snapshot_header_bytes() -> u32 {
+    snapshot::HEADER as u32
+}
+
+#[no_mangle]
+pub extern "C" fn player_record_bytes() -> u32 {
+    entities::PLAYER_BYTES as u32
+}
+
 /// HUD view of one player's spells, written to `out_ptr` (`PLAYER_VIEW_BYTES` bytes: charges u16[6],
 /// ticks of cooldown left u16[6]). Returns 1 if the player exists, else 0. Render and UI only.
 #[no_mangle]

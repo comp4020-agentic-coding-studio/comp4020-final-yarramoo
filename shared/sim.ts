@@ -23,6 +23,9 @@ export interface SimExports {
   events(outPtr: number, max: number): number;
   entities(outPtr: number, max: number): number;
   player_view(id: number, outPtr: number): number;
+  snapshot_format_version(): number;
+  snapshot_header_bytes(): number;
+  player_record_bytes(): number;
 }
 
 /** Event kinds from `events()` (plan 6.11). Render and UI only: nothing read here may become an input (invariant 9). */
@@ -74,6 +77,11 @@ export interface SimEvent {
 
 /** Enemy kinds the sim has (NUM_ENEMY_KINDS in sim/src/tuning.rs; pinned by tests/net/claims-events.test.ts). */
 export const NUM_ENEMY_KINDS = 8;
+/**
+ * Max hp of each enemy kind, for health bars and the hover label (render-only). The one TypeScript copy of
+ * `ENEMY_STATS[k].hp` in sim/src/tuning.rs (and `BOSS_HP`, `COLOSSUS_HP`), pinned by tests/net/spells-table.test.ts.
+ */
+export const ENEMY_MAX_HP: readonly number[] = [20, 30, 60, 90, 800, 40, 30, 600];
 export const ENT_PLAYER = 1;
 export const ENT_PICKUP = 2;
 /** A bolt in flight: `id` is the owner, `sub` the spell, `a` the cast_seq, x and y in 1/16 cell. */
@@ -269,6 +277,25 @@ export function loadSim(bytes: Uint8Array, imports: WebAssembly.Imports = {}): S
     },
     setSleepEnabled: (on) => x.set_sleep_enabled(on ? 1 : 0),
   };
+}
+
+/**
+ * Where a snapshot's player records sit, read from the sim build itself (review M4) so the server, which reads the
+ * active players of a stored snapshot without running the sim, holds no copy of the layout. A snapshot is
+ * `headerBytes`, the entity section's byte length (u32), then the entity bytes: the player count (u32), then
+ * `playerRecordBytes` per player, each starting `id u32, active u8`.
+ */
+export interface SnapshotLayout {
+  formatVersion: number;
+  headerBytes: number;
+  playerRecordBytes: number;
+}
+
+/** The layout facts of a sim build. Instantiates the module once (no imports, about 1 MB of memory); throws for a build without the exports. */
+export function snapshotLayout(bytes: Uint8Array): SnapshotLayout {
+  const x = new WebAssembly.Instance(new WebAssembly.Module(bytes as BufferSource), {}).exports as unknown as Partial<SimExports>;
+  if (!x.snapshot_format_version || !x.snapshot_header_bytes || !x.player_record_bytes) throw new Error("sim.wasm has no snapshot layout exports");
+  return { formatVersion: x.snapshot_format_version(), headerBytes: x.snapshot_header_bytes(), playerRecordBytes: x.player_record_bytes() };
 }
 
 /** Hex sha256 of the wasm bytes (WebCrypto: Node and browsers). */
