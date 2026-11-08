@@ -111,6 +111,60 @@ function noise(o: Out, dur: number, gain: number, f0: number, f1: number, q = 1,
   src.stop(t + dur + 0.02);
 }
 
+// Ambient water: ONE looping noise voice (not counted in MAX_VOICES), created on demand and stopped after a few s of silence.
+let wSrc: AudioBufferSourceNode | null = null;
+let wGain: GainNode | null = null;
+let wPan: StereoPannerNode | null = null;
+let wFilter: BiquadFilterNode | null = null;
+let wLfo: OscillatorNode | null = null;
+let wStopTimer: ReturnType<typeof setTimeout> | null = null;
+const WATER_MAX_GAIN = 0.6;
+
+function stopWater() {
+  wStopTimer = null;
+  try { wSrc?.stop(); wLfo?.stop(); } catch { /* already stopped */ }
+  wSrc?.disconnect(); wLfo?.disconnect(); wFilter?.disconnect(); wGain?.disconnect(); wPan?.disconnect();
+  wSrc = wGain = wPan = wFilter = wLfo = null;
+}
+
+/** Ease the ambient water voice to `level` 0..1, panned. Does nothing before the first gesture. */
+export function setWater(level: number, pan: number) {
+  waterLast = level;
+  if (level > waterPeak) waterPeak = level;
+  if (!ctx || !master || !noiseBuf) return;
+  if (level <= 0) {
+    if (wGain && ctx) {
+      wGain.gain.setTargetAtTime(0, ctx.currentTime, 0.4);
+      if (!wStopTimer) wStopTimer = setTimeout(stopWater, 4000);
+    }
+    return;
+  }
+  if (wStopTimer) { clearTimeout(wStopTimer); wStopTimer = null; }
+  if (!wSrc) {
+    wSrc = ctx.createBufferSource();
+    wSrc.buffer = noiseBuf;
+    wSrc.loop = true;
+    wFilter = ctx.createBiquadFilter();
+    wFilter.type = "bandpass";
+    wFilter.frequency.value = 900;
+    wFilter.Q.value = 0.6;
+    wLfo = ctx.createOscillator();
+    wLfo.frequency.value = 0.35;
+    const lg = ctx.createGain();
+    lg.gain.value = 250; // slow wobble of the cutoff, +-250 Hz
+    wLfo.connect(lg).connect(wFilter.frequency);
+    wGain = ctx.createGain();
+    wGain.gain.value = 0;
+    wPan = ctx.createStereoPanner();
+    wSrc.connect(wFilter).connect(wGain).connect(wPan).connect(master);
+    wSrc.start(0, Math.random() * 0.5);
+    wLfo.start();
+  }
+  const t = ctx.currentTime;
+  wGain!.gain.setTargetAtTime(level * WATER_MAX_GAIN, t, 0.15);
+  wPan!.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), t, 0.15);
+}
+
 /** Play one sound. `vol` 0..1 and `pan` -1..1 come from the camera distance; `mag` 0..1 scales explosions. */
 export function play(name: SfxName, vol: number, pan: number, mag = 0.5) {
   counts[name] = (counts[name] ?? 0) + 1; // dev instrumentation: every request, before mute and context checks
