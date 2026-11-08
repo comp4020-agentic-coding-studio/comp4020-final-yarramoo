@@ -768,3 +768,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   filling the budget alone if rooms matter more; a sliding-window input limiter (the fixed 1 s window drops a burst a
   loaded server reads late: `achievements-live.test.ts` "waterworks at exactly 100" fails that way under load, on
   `multa` too). **Source:** `docs/research/warm-verify-report.md`, 8 Nov.
+- **Chat follow-ups** (D-229): a refusal frame so the sender sees "slow down" or "too long" instead of a silent drop;
+  phone input (a chat button opening the same input); mute a player (a client-side ignore list by name); a sound on a
+  mention; a per-IP cap on top of the per-player one and a sliding window (review L3, L4); allow U+200D between two
+  emoji so ZWJ emoji pass. **Source:** `docs/research/chat-report.md`, 8 Nov.
