@@ -63,9 +63,13 @@ import { groundLine } from "./background.ts";
 import { Ambient } from "./ambient.ts";
 import { hitboxTouchesLava, shouldSizzle } from "./hazard.ts";
 import { MATERIAL_CLASS } from "../shared/names.ts";
+import { shouldDraw } from "./phone.ts";
 
 let STEP_MS = 1000 / 60;
 let paused = false;
+/** Menu backdrop only (`pace`): minimum ms between draws; 0 every frame, -1 none (client/phone.ts). */
+let drawMs = 0;
+let lastDraw = -Infinity;
 /** While replaying, draw the world at most this often so the visitor sees it evolve without the draw eating replay time. */
 const FF_DRAW_INTERVAL_MS = 250;
 let lastFfDraw = -Infinity;
@@ -1104,7 +1108,8 @@ function frame(now: number) {
     }
     ranChunks = localSim.ranChunks();
     const rects = localSim.width() > 512 ? gameFrame(localSim, dt, now, stepDt) : [];
-    if (renderer) {
+    if (renderer && drawMs >= 0 && shouldDraw(now, lastDraw, drawMs)) {
+      lastDraw = now;
       renderer.draw(localSim.matView(), localSim.auxView(), now / 1000, shakenCam(now), rects);
     } else if (sendFrames) {
       const m = localSim.matView().slice();
@@ -1271,6 +1276,7 @@ ctx.onmessage = (e: MessageEvent<ToWorker>) => {
     case "pace":
       paused = m.paused;
       STEP_MS = m.stepMs;
+      drawMs = m.drawMs ?? 0;
       break;
     case "pointer":
       onPointer(m);
