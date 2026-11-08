@@ -74,24 +74,37 @@ documentation more centralised. The main outputs are `ARCHITECTURE.md` and
 
 ## Harness Interventions
 
-`CLAUDE.md` was useful in two broad scenarios - informing the model of game invariants and good development practice, 
-such as git hygiene and agent dispatch principles around budgeting and model selection. It was also where I 
-instructed the harness to continually interact with running documents in the project like `FUTURE.md` and `engineering-decisions.md`. 
+`CLAUDE.md` was useful in two broad ways. First, it told the model the game's invariants (integers only, no host
+imports, no stateful randomness, [`bc033ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/bc033ad))
+and good development practice: git hygiene, and dispatch rules for budgets and model selection
+([`ae2778a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ae2778a),
+[`e7284ea`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/e7284ea)). It was also
+where I told the harness to keep the running documents up to date: `FUTURE.md` for ideas
+([`ea38d62`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/ea38d62)) and
+`docs/engineering-decisions.md` for the big decisions
+([`8f4c105`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/8f4c105)).
 
-It additionally gave me a way of enforcing that mistakes weren't repeated. 
+Second, it was how I made sure a mistake wasn't repeated: each rule added after an incident names it, so the reason
+travels with the rule.
+- **`&&` is the gate.** A merge went in on a red test run because the commit was chained after the test with `;`
+  ([`d24bf69`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d24bf69)). Commits now
+  hang off the test's exit code
+  ([`b862348`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/b862348)).
 - **Cold reviews as a standing rule.** A reviewer with no context found a snapshot buffer overrun that every test had
   passed over ([`86cf96c`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/86cf96c)).
-- **Every `rm` names a literal path.** I caught an agent running `rm -rf $D/*` with `$D` read from a file; had the file been empty, that is `rm -rf /*`. That seemed dumb to me, so every `rm` now names an explicit path ([`aedb377`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/aedb377)).
+- **Every `rm` names a literal path.** I caught an agent running `rm -rf $D/*` with `$D` read from a file; had the
+  file been empty, that is `rm -rf /*`. That seemed dumb to me, so every `rm` now names an explicit path
+  ([`aedb377`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/aedb377)).
 
-Skills came later when the project grew to a size that testing became a proper chore. The `run-tests` skill holds
-"the gate", the tests that check simulation correctness and cross-browser agreement, plus the rules for running it
-(one heavy job at a time). The `dev-server` skill restarts my local server after rebuilds,
-since it refuses tabs with a stale build
+Skills came later, when the project grew to a size that testing became a proper chore: on 4 November eleven agents
+ran at once and every gate timed out. The `run-tests` skill holds "the gate", the tests that check simulation
+correctness and cross-browser agreement, plus the rules for running it (one heavy job at a time). The `dev-server`
+skill restarts my local server after rebuilds, since it refuses tabs with a stale build
 ([`f3d4034`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/f3d4034)). When the
 full gate grew to 20 minutes, a planner script started picking only the steps a change can affect
 ([`2fe4c58`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/2fe4c58)).
 
 A `dev-tools` skill was added to document in-game debug hooks, so agents could stage and screenshot scenes
 ([`c44eb37`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/c44eb37)).
-At first agents were just making these tools but I was worried they would lose track of these tools and
-continue making their own. `docs/skills.md` shows where each skill was used. 
+At first agents just built these tools as they needed them, and I worried later agents would lose track of them and
+build their own. `docs/skills.md` shows where each skill was used. 
