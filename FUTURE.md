@@ -756,3 +756,6 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   improvement 9); M4, export binary layout facts from the wasm instead of copying them by hand in TypeScript (brief in
   `docs/research/review-fixes-report.md`); L2-L8 from the review; count dropped HASH/PING frames on the dashboard.
   **Source:** `docs/research/review-fixes-report.md`, 8 Nov.
+- **Owned world follow-ups** (D-225): "Open my world" straight from the title screen; renaming it; an optional reset
+  to empty; the dead-link page still titles itself "Game world" for any unknown code (pre-existing). **Source:**
+  `docs/research/owned-sandbox-report.md`, 8 Nov.

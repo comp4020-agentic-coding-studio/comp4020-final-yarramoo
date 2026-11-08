@@ -1706,3 +1706,20 @@ players set the truth, everyone else is checked against it. The same review foun
 
 **Evidence.** D-221 to D-224; `docs/research/code-review-2026-11-08.md`, `review-fixes-report.md`,
 `review-review-fixes.md`; `tests/net/hash-votes.test.ts`, `sim/tests/hash_cache.rs`, `sim/tests/paint_bound.rs`.
+
+## 47. A world that persists because someone owns it
+
+**What.** The marking criteria ask for state that persists. Simulta's game modes deliberately don't: a Survival or
+Deathmatch room belongs to nobody and is deleted two minutes after it empties (D-188). On 8 Nov the user asked for the
+opposite on purpose: a sandbox world that belongs to one player, keeps everything painted in it, can be shared by link,
+and lasts until its owner deletes it (D-225). An Opus lead built it for $24 of a $40 cap.
+
+**The challenge.** Persistence was mostly already there (every world's snapshots and tick log live in SQLite and reload
+after a restart, D-004); what was missing was a reason for a room *not* to be deleted, and a person entitled to delete
+it. Ownership is one column (`owner_player_id`, one per player by a unique index); the sweep, the public list and
+eviction each skip owned rooms, and the delete route is the only path that removes one, behind the owner's token. The
+cold review found that the first way of keeping owners from eviction (stamping a join time) hid a foreign-key crash and
+let a script pin registrations without limit; the fix skips owners outright and caps owned worlds at 200.
+
+**Evidence.** D-225; `docs/research/owned-sandbox-report.md`, `review-owned-sandbox.md`;
+`tests/net/owned-sandbox.test.ts` (8 tests, red without the server change; restart-a-day-later keeps the state hash).
