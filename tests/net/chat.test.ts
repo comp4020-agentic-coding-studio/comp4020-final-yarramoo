@@ -83,6 +83,21 @@ describe("chat relay", () => {
     b.close();
   });
 
+  it("refuses invisible lines: format characters (U+2060, U+FEFF, U+061C) and blank-looking fillers (review-chat L1)", async () => {
+    const s = await boot();
+    const a = await connect(s.port, hex, { world: GAME, token: (await register(s.port, "Ana")).token });
+    const b = await connect(s.port, hex, { world: GAME, token: (await register(s.port, "Bo")).token });
+    // A leading U+FEFF never reaches the server: TextDecoder drops a BOM, so "\ufeffhi" arrives as plain "hi". Mid-line it is refused.
+    for (const bad of ["a\u2060b", "h\ufeffi", "x\u061cy", "\u3164\u3164", "\u2800", " \u3164 \u115f\uffa0 "]) a.chat(bad);
+    await sleep(10_500); // past the 5-per-10 s window, so on a regression the invisible lines show up in the diff, not as a timeout
+    a.chat("visible");
+    await waitFor(() => b.chats.some((c) => c.text === "visible"), 3000, "the visible line");
+    await sleep(200);
+    expect(b.chats.map((c) => c.text)).toEqual(["visible"]);
+    a.close();
+    b.close();
+  });
+
   it("rate-limits per player, and a reconnect does not refill the budget", async () => {
     const s = await boot();
     const ana = await register(s.port, "Ana");

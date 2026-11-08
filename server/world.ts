@@ -14,6 +14,7 @@ import {
   encodePlayerName,
   encodeChatLine,
   chatHasControl,
+  chatIsBlank,
   MAX_CHAT_CHARS,
   MAX_SNAPSHOT_RAW_GAME,
   encodeRequestSnapshot,
@@ -786,7 +787,7 @@ export class World {
     if (!m.visitorId || !m.visitorName) return refuse("anonymous");
     if (chatHasControl(raw)) return refuse("control");
     const text = raw.trim();
-    if (!text) return refuse("empty");
+    if (chatIsBlank(text)) return refuse("empty");
     if (Array.from(text).length > MAX_CHAT_CHARS) return refuse("long");
     const t = this.now();
     let win = this.chatWindows.get(m.visitorId);

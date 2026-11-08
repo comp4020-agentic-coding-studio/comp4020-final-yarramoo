@@ -386,10 +386,19 @@ export function encodeAchievement(id: string, tick: number): Uint8Array {
   return b;
 }
 
-/** True when `text` holds a character a chat line refuses: the same class cleanName strips (controls, bidi overrides, zero-widths). */
+/**
+ * True when `text` holds a character a chat line refuses: controls, line separators and every Unicode format
+ * character (\p{Cf}: bidi overrides, zero-widths, U+2060, U+FEFF, U+061C...). This also refuses emoji that need a
+ * zero-width joiner or tag characters (family emoji, subdivision flags): accepted, an invisible-text channel is worse.
+ */
 export function chatHasControl(text: string): boolean {
   // eslint-disable-next-line no-control-regex
-  return /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(text);
+  return /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/u.test(text);
+}
+
+/** True when `text` has nothing a reader would see: only whitespace and blank-looking fillers (Hangul fillers, braille blank). */
+export function chatIsBlank(text: string): boolean {
+  return text.replace(/[\s\u115f\u1160\u3164\uffa0\u2800]/gu, "") === "";
 }
 
 /** The client's chat frame. Throws on text the server would refuse to carry (empty, or over MAX_CHAT_BYTES). */
