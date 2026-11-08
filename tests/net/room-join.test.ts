@@ -155,7 +155,7 @@ describe("the two fixed worlds are unaffected (brief verify: must keep passing u
     const rejected = new Promise<string>((resolve, reject) => {
       ws.on("open", () => {
         const frame = encodeHello(unhex(hex), 0);
-        frame[1] = 8; // an old client's protocol version, one less than PROTOCOL_VERSION
+        frame[1] = 9; // an old client's protocol version, one less than PROTOCOL_VERSION
         ws.send(frame);
       });
       ws.on("error", reject);
@@ -165,7 +165,7 @@ describe("the two fixed worlds are unaffected (brief verify: must keep passing u
         else reject(new Error("expected a reject"));
       });
     });
-    expect(PROTOCOL_VERSION).toBe(9);
+    expect(PROTOCOL_VERSION).toBe(10);
     await expect(rejected).resolves.toBe("protocol version mismatch: new version, reload");
     ws.close();
   });

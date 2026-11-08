@@ -143,7 +143,7 @@ describe("protocol codec", () => {
   });
 
   it("round-trips CLAIM at protocol v6 and refuses any other length", () => {
-    expect(PROTOCOL_VERSION).toBe(9);
+    expect(PROTOCOL_VERSION).toBe(10);
     expect(C_CLAIM).toBe(6);
     const f = encodeClaim(123456, 7, 9, 4, 1);
     expect(f.length).toBe(15);
@@ -180,7 +180,7 @@ describe("protocol codec", () => {
   });
 
   it("round-trips REQUEST_CHUNK_HASHES and CHUNK_HASHES at protocol v8", () => {
-    expect(PROTOCOL_VERSION).toBe(9);
+    expect(PROTOCOL_VERSION).toBe(10);
     expect(C_CHUNK_HASHES).toBe(8);
     expect(S_REQUEST_CHUNK_HASHES).toBe(0x8a);
     const rq = encodeRequestChunkHashes(0x01020304);

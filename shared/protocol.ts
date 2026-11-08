@@ -12,7 +12,11 @@ const GAME_CFG_BYTES = configForKind(1);
  * joining client inits its sim from the same bytes every member of the room shares, not a kind number that
  * only meant something for the two fixed worlds. HELLO is unchanged: its `worldId` field now names a room id.
  */
-export const PROTOCOL_VERSION = 9;
+/**
+ * v10 (Track E): C_CHAT and S_CHAT. A v9 client's decodeServer returns null on S_CHAT and closes its socket, so an
+ * old tab would be closed by every chat line; the bump refuses it once, up front, with "new version, reload".
+ */
+export const PROTOCOL_VERSION = 10;
 export const TICK_HZ = 60;
 
 // Client -> server tags
