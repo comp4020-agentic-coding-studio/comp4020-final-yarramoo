@@ -71,7 +71,7 @@ checked {'links': 350, 'drows': 398, 'entries': 78, 'commits': 31, 'paths': 111}
 | after the guide's first draft and both diagrams | $350.34 | $8.55 |
 | after W2, Sonnet cold check (29 tool calls, 107 k tokens) | $353.75 | $11.96 (worker about $1.5 by tokens) |
 | at this report | $355.83 | $14.04 |
-| final (before the commit) | $ | $-341.79 |
+| final (at hand-back) | $356.54 | $14.75 |
 
 Two of four permitted workers, one at a time, neither dispatched further. The proxy reports the whole account's spend
 (other leads ran on this machine during the run), so per-worker figures are estimates from token counts.
