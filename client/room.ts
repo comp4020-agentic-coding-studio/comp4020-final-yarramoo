@@ -668,6 +668,8 @@ export async function startRoom(target: RoomTarget): Promise<void> {
         worldW = m.width;
         worldH = m.height;
         worldKind = m.kind;
+        // The sandbox gets no "players" messages (no avatars), which is where the mood is otherwise chosen: set it here.
+        if (m.kind === 0) updateMood(0, false);
         // Start the game-world camera on the spawn point: the centre of the surface.
         if (m.kind !== 0) {
           camera.x = worldW / 2 - view().w / 2;
