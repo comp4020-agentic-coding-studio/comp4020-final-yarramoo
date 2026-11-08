@@ -161,6 +161,8 @@ No high or medium findings; every claimed fix held in code. Checked each against
 
 ## D-row drafts
 
+*Session model, at merge: recorded as **D-221 to D-224** in `docs/DECISIONS.md` (D-218 to D-220 were already taken).*
+
 | D-218 | 2026-11-08 | **Hash votes are per player, not per socket** (independent review H1): avatar worlds count one vote per registered player, the sandbox one per IP tag; spectators and anonymous members are compared against the majority but never define it, and only voters are asked for snapshots. Hash ticks older than 30 checkpoints are ignored and the majority is kept for that window; HASH/PING frames are capped at 20/s per connection (M1). | review-fixes |
 | D-219 | 2026-11-08 | **A per-tick paint budget in the sim** (review H2): `MAX_PAINT_WORK_PER_TICK` = two worst-case strokes of disc bounding box, charged per stamp in input order inside `step`, not state; plus a per-IP-tag paint token bucket on the server (`server/paintrate.ts`). Normal painting is unchanged; a flood is cut identically on every client. | review-fixes |
 | D-220 | 2026-11-08 | **maxPlayers enforced at HELLO; catch-up slack over the send cap** (review M3, M2 measured): a full room refuses new players ("room is full; spectate or try another room"), reloads exempt; a joiner's catch-up burst may exceed the 8 MiB queue cap by its own size (64 MiB at most) until the queue drains. Also S1: ice touches its own cell, with a cached-hash invariant test. | review-fixes |

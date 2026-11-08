@@ -752,3 +752,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
 - **Phones and tests** (D-218, D-219): a floating thumb-stick (brief in `docs/research/phoneperf-report.md`); a
   real-device frame-time measurement; **a `startServer` option to fix room seeds in tests** so
   `claims-survival.test.ts` stops playing a random world each run (D-201 made it intermittent). **Source:** track C, 8 Nov.
+- **Review follow-ups** (D-221 to D-224): stream the catch-up over timer passes instead of the slack (review
+  improvement 9); M4, export binary layout facts from the wasm instead of copying them by hand in TypeScript (brief in
+  `docs/research/review-fixes-report.md`); L2-L8 from the review; count dropped HASH/PING frames on the dashboard.
+  **Source:** `docs/research/review-fixes-report.md`, 8 Nov.

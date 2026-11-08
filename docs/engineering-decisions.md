@@ -1688,3 +1688,21 @@ integration (D-217), which that slice's worker and its cold review both missed: 
 
 **Evidence.** D-216, D-217; `docs/research/content-report.md`, `review-content.md`; `sim/tests/structures.rs`;
 commits `b8217d9`, `d385ea7`, `73e4550`, `c34acbf`.
+
+## 46. An outside reader's review, and who gets to decide the truth
+
+**What.** On 8 Nov the user asked for an independent Opus review that read **the code only**: no README, no plans, no
+decision log. It found 2 high, 7 medium and 12 low issues (`docs/research/code-review-2026-11-08.md`); a second Opus
+lead fixed the six that mattered with tests shown red first, a full gate and its own cold review (D-221 to D-224).
+
+**The challenge.** The worst finding was in the trust model this project is built on. Lockstep clients report state
+hashes, the server takes the majority as the truth, and a client that disagrees is resynced. Claims (deaths, kills,
+round ends) had been counted once per registered visitor since D-120, but hashes were counted once per **socket**:
+three spectator tabs could outvote the players, get every honest player resynced until kicked, and become the source
+of the stored snapshot that every later joiner restores. Nothing in the project's own docs framed it that way, which
+is probably why a reader who never saw them found it. The fix makes the rule explicit in one place (`World.voterKey`):
+players set the truth, everyone else is checked against it. The same review found a one-line sleep-cache bug
+(`update_ice`) that the project's own invariant tests had missed for two days; its invariant test now covers the class.
+
+**Evidence.** D-221 to D-224; `docs/research/code-review-2026-11-08.md`, `review-fixes-report.md`,
+`review-review-fixes.md`; `tests/net/hash-votes.test.ts`, `sim/tests/hash_cache.rs`, `sim/tests/paint_bound.rs`.
