@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="760" viewBox="0 0 1700 760" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a33"/></marker>
+  </defs>
+  <rect width="1700" height="760" fill="#f7f5f0"/>
+  <text x="40" y="56" font-size="32" font-weight="bold" fill="#1d1d1d">How a change landed: the agent harness as a pipeline</text>
+  <text x="40" y="88" font-size="17" fill="#555">Each stage exists because a cheaper one let a real bug through. The artifact that holds each stage is named under it.</text>
+
+  <!-- lane labels -->
+  <text x="40" y="140" font-size="15" font-weight="bold" fill="#4b3fa8">SESSION MODEL / OPUS LEAD</text>
+  <text x="40" y="380" font-size="15" font-weight="bold" fill="#1d6b4f">SONNET / HAIKU WORKER</text>
+  <text x="620" y="580" font-size="15" font-weight="bold" fill="#8a4a12">INDEPENDENT CHECKS</text>
+  <line x1="40" y1="350" x2="1660" y2="350" stroke="#ddd"/>
+  <line x1="40" y1="550" x2="1660" y2="550" stroke="#ddd"/>
+
+  <!-- 1 brief -->
+  <rect x="40" y="155" width="230" height="160" rx="10" fill="#efedfb" stroke="#4b3fa8" stroke-width="2"/>
+  <text x="56" y="183" font-size="18" font-weight="bold">1. Brief with a cap</text>
+  <text x="56" y="207" font-size="13.5">$ cap and B0 from /api/me,</text>
+  <text x="56" y="225" font-size="13.5">worker count, model, files it</text>
+  <text x="56" y="243" font-size="13.5">may touch, commit checklist,</text>
+  <text x="56" y="261" font-size="13.5">"Architectural decisions</text>
+  <text x="56" y="279" font-size="13.5">for review"</text>
+  <text x="56" y="303" font-size="12.5" fill="#4b3fa8">docs/briefs/*.md (63)</text>
+
+  <!-- 2 worker -->
+  <rect x="300" y="380" width="250" height="150" rx="10" fill="#e3f3ec" stroke="#1d6b4f" stroke-width="2"/>
+  <text x="316" y="408" font-size="18" font-weight="bold">2. Worker implements</text>
+  <text x="316" y="432" font-size="13.5">in its own worktree; writes</text>
+  <text x="316" y="450" font-size="13.5">its report to a file as it goes;</text>
+  <text x="316" y="468" font-size="13.5">one worker at a time</text>
+  <text x="316" y="492" font-size="12.5" fill="#1d6b4f">docs/research/*-report.md</text>
+  <text x="316" y="510" font-size="12.5" fill="#1d6b4f">CLAUDE.md "Triage ... delegate down"</text>
+
+  <!-- 3 red first -->
+  <rect x="580" y="380" width="250" height="150" rx="10" fill="#e3f3ec" stroke="#1d6b4f" stroke-width="2"/>
+  <text x="596" y="408" font-size="18" font-weight="bold">3. Test shown red first</text>
+  <text x="596" y="432" font-size="13.5">against the real failure, then</text>
+  <text x="596" y="450" font-size="13.5">green with the fix; the red</text>
+  <text x="596" y="468" font-size="13.5">message goes in the report</text>
+  <text x="596" y="492" font-size="12.5" fill="#1d6b4f">run-tests skill; entries 33, 39, 40</text>
+
+  <!-- 4 gate -->
+  <rect x="860" y="155" width="250" height="160" rx="10" fill="#efedfb" stroke="#4b3fa8" stroke-width="2"/>
+  <text x="876" y="183" font-size="18" font-weight="bold">4. Gate, re-run by lead</text>
+  <text x="876" y="207" font-size="13.5">tier from scripts/gate-plan.ts;</text>
+  <text x="876" y="225" font-size="13.5">cargo &amp;&amp; clippy &amp;&amp; tsc &amp;&amp;</text>
+  <text x="876" y="243" font-size="13.5">determinism &amp;&amp; net &amp;&amp; commit</text>
+  <text x="876" y="261" font-size="13.5">one heavy job on the machine</text>
+  <text x="876" y="285" font-size="12.5" fill="#4b3fa8">.claude/skills/run-tests, D-220</text>
+  <text x="876" y="303" font-size="12.5" fill="#4b3fa8">d24bf69 (committed on red)</text>
+
+  <!-- 5 cold review -->
+  <rect x="860" y="580" width="250" height="150" rx="10" fill="#fbeedd" stroke="#b5651d" stroke-width="2"/>
+  <text x="876" y="608" font-size="18" font-weight="bold">5. Cold review</text>
+  <text x="876" y="632" font-size="13.5">read-only Sonnet reads the diff</text>
+  <text x="876" y="650" font-size="13.5">with no context; lead checks</text>
+  <text x="876" y="668" font-size="13.5">each finding in the code</text>
+  <text x="876" y="692" font-size="12.5" fill="#8a4a12">docs/research/review-*.md (38)</text>
+  <text x="876" y="710" font-size="12.5" fill="#8a4a12">entries 20, 33, 42, 46</text>
+
+  <!-- 6 look -->
+  <rect x="1140" y="580" width="250" height="150" rx="10" fill="#fbeedd" stroke="#b5651d" stroke-width="2"/>
+  <text x="1156" y="608" font-size="18" font-weight="bold">6. Open it and look</text>
+  <text x="1156" y="632" font-size="13.5">two browsers on the lead's own</text>
+  <text x="1156" y="650" font-size="13.5">port and data dir; screenshots</text>
+  <text x="1156" y="668" font-size="13.5">committed; measure before</text>
+  <text x="1156" y="686" font-size="13.5">calling something broken</text>
+  <text x="1156" y="710" font-size="12.5" fill="#8a4a12">dev-server, dev-tools skills; entry 29</text>
+
+  <!-- 7 merge -->
+  <rect x="1420" y="155" width="240" height="160" rx="10" fill="#efedfb" stroke="#4b3fa8" stroke-width="2"/>
+  <text x="1436" y="183" font-size="18" font-weight="bold">7. Merge and record</text>
+  <text x="1436" y="207" font-size="13.5">D-row for every decision;</text>
+  <text x="1436" y="225" font-size="13.5">an engineering entry for the</text>
+  <text x="1436" y="243" font-size="13.5">big ones; ideas to FUTURE.md;</text>
+  <text x="1436" y="261" font-size="13.5">spend in the lead's report</text>
+  <text x="1436" y="285" font-size="12.5" fill="#4b3fa8">docs/DECISIONS.md (D-001..224)</text>
+  <text x="1436" y="303" font-size="12.5" fill="#4b3fa8">docs/engineering-decisions.md</text>
+
+  <!-- flow arrows -->
+  <path d="M270,235 C290,235 300,300 330,378" fill="none" stroke="#333" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="550" y1="455" x2="578" y2="455" stroke="#333" stroke-width="2.5" marker-end="url(#a)"/>
+  <path d="M830,430 C850,430 860,360 900,318" fill="none" stroke="#333" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="985" y1="315" x2="985" y2="577" stroke="#333" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="1110" y1="655" x2="1138" y2="655" stroke="#333" stroke-width="2.5" marker-end="url(#a)"/>
+  <path d="M1390,620 C1480,600 1540,420 1540,318" fill="none" stroke="#333" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- feedback arrows -->
+  <path d="M860,260 C700,260 520,300 470,378" fill="none" stroke="#a33" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#r)"/>
+  <text x="520" y="252" font-size="13" fill="#a33">red step or finding: back to the same worker</text>
+  <path d="M1140,598 C1040,560 760,560 715,534" fill="none" stroke="#a33" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#r)"/>
+  <text x="1150" y="572" font-size="13" fill="#a33">bug seen in the browser: a red test, then the fix</text>
+
+  <!-- budget bar -->
+  <rect x="40" y="590" width="560" height="140" rx="10" fill="#fff" stroke="#bbb"/>
+  <text x="56" y="617" font-size="17" font-weight="bold">Budget control, throughout the run</text>
+  <text x="56" y="641" font-size="13.5">Read week spend (/api/me) at the start (B0), after every worker</text>
+  <text x="56" y="660" font-size="13.5">and every ~20 tool calls. Stop dispatching at B0 + ~80% of the cap;</text>
+  <text x="56" y="679" font-size="13.5">hand back by B0 + cap. What did not fit is cut, listed, briefed.</text>
+  <text x="56" y="705" font-size="12.5" fill="#555">e.g. biomes: B0 $30.46, stopped at B0 + $40.65 of $50 (D-199,</text>
+  <text x="56" y="721" font-size="12.5" fill="#555">docs/research/biomes-report.md)</text>
+</svg>
