@@ -53,6 +53,7 @@ import {
   isBossKind,
 } from "../shared/stats.ts";
 import { isPaintable } from "../shared/names.ts";
+import { PaintRate, paintCost } from "./paintrate.ts";
 import { Achievements } from "./achievements.ts";
 import { ACHIEVEMENTS } from "../shared/achievements.ts";
 import { SnapshotVerifier } from "./verify.ts";
@@ -232,6 +233,8 @@ export interface ServerOptions {
   /** Where game.db lives. Default: DATA_DIR, else ./.data. Pass null for a memory-only world (no persistence). */
   dataDir?: string | null;
   snapshotEveryTicks?: number;
+  /** Override PAINT_CELLS_PER_SEC, the per-address paint budget (tests). */
+  paintCellsPerSec?: number;
   /** Override World's log-length warning and cap (tests). */
   maxLogTicks?: number;
   warnLogTicks?: number;
@@ -608,6 +611,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const allowedOrigins = new Set(opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []));
   const maxPerIp = opts.maxConnsPerIp ?? MAX_CONNS_PER_IP;
   const connsByIp = new Map<string, number>();
+  /** Review H2: paint work per IP tag, across every connection and room. */
+  const paintRate = new PaintRate(opts.paintCellsPerSec);
 
   /** Admin dashboard rows: bounded fields only (the chunk list is already capped at 64 when it is recorded). */
   function incidentRows(limit: number): IncidentRow[] {
@@ -1157,6 +1162,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     log.limited(`held:${conn}`, 10_000, "input.rejected", { world: w.id, conn, who: w.whoOfConn(conn), reason: w.held ? "world_held" : "tick_full" }, "warn");
   }
 
+  /** Review H2: one address past its paint budget. The input is dropped before it is stamped, so no client pays for it. */
+  function paintOverBudget(w: World, conn: number, ipTag: string, payload: Uint8Array): boolean {
+    if (paintRate.take(ipTag, paintCost(payload), performance.now())) return false;
+    stats.droppedRate++;
+    live.get(liveKey(w.id, conn))?.counts.reject();
+    log.limited(`paint_rate:${ipTag}`, 10_000, "input.rate_limited", { world: w.id, conn, who: w.whoOfConn(conn), ip_tag: ipTag, what: "paint_work" }, "warn");
+    return true;
+  }
+
   function badInput(w: World, conn: number, reason: string, kind: number): void {
     stats.rejected++;
     live.get(liveKey(w.id, conn))?.counts.reject();
@@ -1392,6 +1406,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
               // F6b: the lobby ready toggle, Survival rooms only. The player id is stamped from the connection, never the client's.
               joined.counts.ready();
             } else if (w.cfg.brushes === 1 && msg.kind === KIND_PAINT && msg.payload.length === PAINT_PAYLOAD_LEN) {
+              if (paintOverBudget(w, joined.conn, ipTag, msg.payload)) return;
               // Only materials the sim will paint become stat keys: any other byte is refused by the sim, and counting
               // it first would add up to 256 junk keys per player (hardening review server F1).
               if (isPaintable(msg.payload[0])) {
@@ -1406,6 +1421,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           }
           // Sandbox: Paint only. Join/Leave are stamped by the server; Pos/Cast have no meaning here.
           if (msg.kind !== KIND_PAINT || msg.payload.length !== PAINT_PAYLOAD_LEN) return void badInput(w, joined.conn, "bad_kind_or_length", msg.kind);
+          if (paintOverBudget(w, joined.conn, ipTag, msg.payload)) return;
           if (isPaintable(msg.payload[0])) {
             joined.counts.paint(materialKey(msg.payload[0]));
             playerStats.bump(joined.visitorId, paintStat(msg.payload[0]));

@@ -398,6 +398,15 @@ pub const ROUND_TAIL_BYTES: usize = 12;
 /// where the stroke began, and the following segments (which start at their own anchors) carry on.
 pub const MAX_PAINT_STROKE: i32 = 128;
 
+/// Review H2 (8 Nov): the most paint work one tick may do across ALL its Paint inputs, in cells of disc bounding box
+/// (each stamp charges `(2r + 1)^2`, what `disc` scans). `MAX_PAINT_STROKE` bounds one input, but the server admits 40
+/// inputs a second per socket and 12 sockets per address, so a flood could still cost every client about 200 M cell
+/// writes a second. Two worst-case strokes (129 stamps of radius 32: 2 x 545,025) fit, so any one legal input is
+/// always painted whole and normal painting (one stroke per player per 33 ms, mostly radius 4) never comes near.
+/// Applied in input order inside `step`: the first stamp that does not fit ends painting for the tick, on every
+/// client alike. The budget restarts each tick; it is not state.
+pub const MAX_PAINT_WORK_PER_TICK: i64 = 2 * (MAX_PAINT_STROKE as i64 + 1) * (2 * crate::sim::MAX_PAINT_RADIUS as i64 + 1) * (2 * crate::sim::MAX_PAINT_RADIUS as i64 + 1);
+
 // ---- lava wisp and frost sprite (X2, docs/research/x-enemies-report.md) --------------------------------
 
 pub const ENEMY_WISPS_L: i32 = 6;
