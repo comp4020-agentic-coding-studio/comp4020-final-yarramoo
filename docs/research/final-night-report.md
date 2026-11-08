@@ -5,7 +5,34 @@ starting work at $455).
 
 ## Morning summary
 
-(Filled in at the end.)
+- **Both screenshot bugs fixed, red first, full gate green, on `main` and live.**
+  - **Lava (D-233, `cba41a1`).** Lava moved only on even ticks, and even ticks always scan left to right, so it drained
+    left far more easily than right. It now moves on ticks 0-1 of every 4. Test: left wall 46 rows vs right wall 1
+    before, both within 2 after. Pins re-recorded on purpose (golden, and perf_equiv's five lava scenarios); no format
+    bump. Snow was measured and is symmetric, so it was left alone.
+  - **Background (D-234, `118d5b4`).** The shaft rim was the highest ground within 64 columns, so the cave wall ended
+    in a step in the sky (183 of 190 closed spans across 31 worlds). The rim is now where the opening is still at most
+    40 wide, and the wall closes flush. 0 steps, every shaft still closed. Before and after:
+    [`bg-before.png`](shots/final-night/bg-before.png), [`bg-after.png`](shots/final-night/bg-after.png).
+- **M4 went in (D-235, `4ecc4cf`).** I reviewed the diff and re-gated it, since `multa` had moved under it: full tier,
+  det 53/53, net 573/573.
+- **Docs.** PROCESS has the admin dashboard pointer (1095 words), ARCHITECTURE is refreshed, DECISIONS has
+  D-233 to D-235, and FUTURE has 3 entries.
+- **PR #1 `multa` -> `main`.** CI green (Docker build and boot, spec, evidence, secret scans), merged as `26e9dd9`,
+  and the deploy run passed.
+- **Live site** (`docs/research/shots/final-night/live-*.png`):
+  - `/`, `/readme/` (the new headings), `/sandbox` and `/dashboard` all return 200.
+  - In a browser: the menu loads, a new private Survival room joins and starts (60 tps, 46 hash passes, 0 fails),
+    sandbox lava paints, and the admin dashboard loads with `?token=`.
+- **Preflight.** Ready to submit: the tree is clean and pushed, the repo is public, `check:evidence` passes, main CI is
+  green, Fly reports the machine started, and `verify-deploy` resolves the page and its assets.
+  - WARN: the comp4020 plugin is 0.14.23 and 0.14.30 is available (`claude plugin update comp4020@comp4020`).
+  - Manual: the spec's two marking viewports were not checked here (only 1280 x 800).
+- **Left for you.**
+  - The user's :8080 server was restarted on the new build (PID 67331); reload your tab.
+  - I left a private test room (`/r/FLEMJ6`, player `Nightcheck`) and a small lava blob in the live sandbox.
+  - `main` is final unless you want more.
+- **Spend.** The week read $415.64 at the start and $434.18 at the end: about $18.5 of the $35 cap.
 
 ## Brief
 
