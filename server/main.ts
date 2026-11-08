@@ -9,6 +9,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { WebSocketServer, type WebSocket } from "ws";
+import { pickMemorySource, type MemoryReaders } from "./memory.ts";
 import { KIND_CAST, KIND_PAINT, KIND_POS, KIND_READY } from "../shared/inputs.ts";
 import { CAST_PAYLOAD_LEN, INPUT_RATE_LIMIT, POS_PAYLOAD_LEN, READY_PAYLOAD_LEN } from "../shared/avatar.ts";
 import {
@@ -96,12 +97,15 @@ export const MAX_LOADED_ROOMS = 16;
 export const L_ROOM_SLOT_WEIGHT = 2;
 /** At most this many L rooms loaded at once, regardless of total slot budget. */
 export const MAX_LOADED_L_ROOMS = 4;
-/** Cgroup memory budget (capacity note's "budget 200 MB cgroup"): a lazy room load is refused above this, so a
- * burst of room creation cannot push the process into the kernel's OOM killer before the member caps would bite. */
-export const ROOM_LOAD_MEMORY_CAP_BYTES = 200 * 1024 * 1024;
-/** No warm verify lane opens if it would take cgroup memory past this (D-228): 40 MB under the room-load gate, so warm
- *  lanes give way to new rooms. A room without a lane still verifies, cold, as before. */
-export const VERIFY_LANE_MEMORY_CAP_BYTES = 160 * 1024 * 1024;
+/** A lazy room load is refused unless at least this much memory is free (D-236; `server/memory.ts` says which figure).
+ *  Headroom, not usage: on Fly the limit is the whole VM (`MemTotal` 210 MB, not the 256 MB in fly.toml), about 109 MB
+ *  is free at idle, and the kernel killed the process after about 90 MB more (3 Survival M rooms, 3 lanes, 12 bots,
+ *  9 Nov). From idle this admits two M rooms and refuses the third. In Docker (cgroup v2, 256 MB) it refuses at 176 MB,
+ *  below the old 200 MB cap: memory keeps growing after a room loads, and the gate reads it only at the load. */
+export const ROOM_LOAD_MEMORY_RESERVE_BYTES = 80 * 1024 * 1024;
+/** No warm verify lane opens unless this much stays free after its estimate (D-228, D-236): an M lane (~33 MB) needs
+ *  about 89 MB free, so on Fly only the first room gets one and the second verifies cold, as every room did before D-228. */
+export const VERIFY_LANE_MEMORY_RESERVE_BYTES = 56 * 1024 * 1024;
 /** How long a room (not the two fixed worlds) stays loaded after its last member leaves before it unloads. One
  * uniform value for every mode in this slice — the mode-specific archive/delete timing (plan: Creative's 1h/7d,
  * Deathmatch/Survival delete-on-empty) is a deferred follow-up, not built here. */
@@ -291,8 +295,8 @@ export interface ServerOptions {
   roomSweepMs?: number;
   /** N1: wall clock (ms) for room lifecycle times; tests inject one. Default Date.now. */
   now?: () => number;
-  /** Override ROOM_LOAD_MEMORY_CAP_BYTES (tests: force the memory-cap-refused path without a real cgroup). */
-  roomLoadMemoryCapBytes?: number;
+  /** The memory sources the gates try, in order (tests: stand in a machine's figures). Default `memoryReaders()`. */
+  memoryReaders?: MemoryReaders;
   /** Override MAX_MEMBERS_SOFT/MAX_MEMBERS_HARD (tests: exercise the member cap without 32 real connections). */
   maxMembersSoft?: number;
   maxMembersHard?: number;
@@ -314,6 +318,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   const log = new EventLog({ quiet: opts.quiet });
   const dataDir = opts.dataDir === undefined ? (process.env.DATA_DIR ?? join(ROOT, ".data")) : opts.dataDir;
   const db = dataDir === null ? null : new GameDb(dataDir);
+  // One memory figure for both gates, chosen once (D-236): the cgroup v2 file alone was absent on Fly, so both were off.
+  const memory = pickMemorySource(opts.memoryReaders);
+  const freeMb = memory.freeBytes();
+  log.event("memory.source", {
+    source: memory.source,
+    limit_mb: memory.limitBytes === undefined ? null : Math.round(memory.limitBytes / 1048576),
+    free_mb: freeMb === undefined ? null : Math.round(freeMb / 1048576),
+    room_reserve_mb: ROOM_LOAD_MEMORY_RESERVE_BYTES / 1048576,
+    lane_reserve_mb: VERIFY_LANE_MEMORY_RESERVE_BYTES / 1048576,
+  });
   // A warm verify lane per occupied room (D-228), within its own budget and below the room-load gate, so lanes alone
   // cannot push the server to the 200 MB at which it stops loading rooms.
   const verifier = db
@@ -322,8 +336,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         warmTimeoutMs: opts.verifyWarmTimeoutMs,
         workerUrl: opts.verifierWorkerUrl,
         warmBudgetBytes: opts.verifyWarmBudgetBytes,
-        memoryBytes: () => cgroupMemoryBytes(),
-        memoryCapBytes: VERIFY_LANE_MEMORY_CAP_BYTES,
+        memoryFreeBytes: () => memory.freeBytes(),
+        memoryReserveBytes: VERIFY_LANE_MEMORY_RESERVE_BYTES,
         log,
       })
     : undefined;
@@ -569,9 +583,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       log.limited("cap:loaded_rooms", 10_000, "register.refused", { reason: "cap", scope: "loaded_rooms", slots, lRooms, world: id }, "warn");
       return "cap";
     }
-    const mem = cgroupMemoryBytes();
-    if (mem !== undefined && mem >= (opts.roomLoadMemoryCapBytes ?? ROOM_LOAD_MEMORY_CAP_BYTES)) {
-      log.limited("cap:memory", 10_000, "register.refused", { reason: "cap", scope: "memory", cgroup_mb: Math.round(mem / 1048576), world: id }, "warn");
+    const free = memory.freeBytes();
+    if (free !== undefined && free < ROOM_LOAD_MEMORY_RESERVE_BYTES) {
+      log.limited("cap:memory", 10_000, "register.refused", { reason: "cap", scope: "memory", source: memory.source, free_mb: Math.round(free / 1048576), world: id }, "warn");
       return "cap";
     }
     const p = (async () => {
@@ -591,16 +605,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
   }
 
-  /** cgroup memory in bytes (the capacity note: RSS overstates by about 50 MB; the OOM killer uses this figure).
-   * Linux-only (`/sys/fs/cgroup/memory.current`, cgroup v2); undefined off Linux or without cgroups (dev, tests),
-   * in which case the memory admission check is skipped rather than refusing every join. */
-  function cgroupMemoryBytes(): number | undefined {
-    try {
-      return Number(readFileSync("/sys/fs/cgroup/memory.current", "utf8").trim());
-    } catch {
-      return undefined;
-    }
-  }
   // Delivery goes through `live` (declared below; only called from message handlers, after it exists).
   const achievements = new Achievements(db, playerStats, log, (visitorId, id, tick) => {
     const frame = encodeAchievement(id, tick);

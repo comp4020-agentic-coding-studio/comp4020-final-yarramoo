@@ -85,10 +85,10 @@ describe("warm verify lanes (D-228)", () => {
     expect(v.warm(B)).toBe(true); // the budget came back
   });
 
-  it("no lane opens past the memory cap", () => {
-    const v = verifier({ memoryBytes: () => 140 * 1048576, memoryCapBytes: 160 * 1048576 });
-    expect(v.warm(room(103, 3n, { ...SURVIVAL, size: 1 }))).toBe(false); // an M lane (~32 MB) would pass 160 MB
-    expect(v.warm(A)).toBe(true); // an S lane (~19 MB) fits
+  it("no lane opens that would leave less than the memory reserve free", () => {
+    const v = verifier({ memoryFreeBytes: () => 80 * 1048576, memoryReserveBytes: 56 * 1048576 });
+    expect(v.warm(room(103, 3n, { ...SURVIVAL, size: 1 }))).toBe(false); // an M lane (~33 MB) would leave ~47 MB
+    expect(v.warm(A)).toBe(true); // an S lane (~19 MB) leaves ~61 MB
   });
 
   it("a verify that hangs in one room's lane times out alone: another room's lane stays warm, and the hung room is barred until released", async () => {

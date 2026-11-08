@@ -1762,3 +1762,13 @@ runs on burst credit (D-213: 24-32 members for 30-65 minutes on a full balance).
 
 **Evidence.** D-213, D-228; `docs/research/warm-verify-report.md`, `review-warm-verify.md`,
 `capacity-2026-11-08-warm-notes.md`; `tests/net/warm-verify.test.ts`; commits `68fb313`, `3c5cecd`, merge `ba65844`.
+
+**Later (9 Nov): the memory gates were never on in production.** Both the lane cap and the room-load gate read cgroup
+v2's `memory.current`, a file Docker provides and every capacity run above measured. The Fly machine is a Firecracker
+VM with cgroup v1 and an unlimited root cgroup, so the file was absent, the reader returned "unknown" and both gates
+skipped their check. A live load test of three Survival M rooms with four bots each opened three lanes and was
+OOM-killed 39 s later. The test suite had injected a memory figure into the verifier and never asked where the real one
+came from. The fix (D-236) picks a source that has a real limit, falling back to `/proc/meminfo` on the VM, logs the
+choice at start, and gates on free memory rather than usage. The VM has 210 MB, not 256, so the reserves now allow
+two M rooms and one warm lane there. This is the same lesson as the capacity notes' own caveat: a measurement in Docker
+is a measurement of Docker.

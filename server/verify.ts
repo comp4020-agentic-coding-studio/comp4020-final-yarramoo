@@ -255,8 +255,8 @@ export class SnapshotVerifier {
   readonly warmTimeoutMs: number;
   private closed = false;
   private readonly budget: number;
-  private readonly memoryBytes?: () => number | undefined;
-  private readonly memoryCapBytes: number;
+  private readonly memoryFreeBytes?: () => number | undefined;
+  private readonly memoryReserveBytes: number;
   private readonly log?: EventLog;
   /** Warm lanes by world id. */
   private readonly lanes = new Map<number, Lane>();
@@ -287,10 +287,10 @@ export class SnapshotVerifier {
       workerUrl?: URL;
       /** Total estimated bytes of warm lanes (default `VERIFY_WARM_BUDGET_BYTES`); 0 disables lanes. */
       warmBudgetBytes?: number;
-      /** Current memory (main.ts: the cgroup's `memory.current`); undefined skips the check. */
-      memoryBytes?: () => number | undefined;
-      /** No lane opens if it would take `memoryBytes()` past this (main.ts: the room-load gate's cap). */
-      memoryCapBytes?: number;
+      /** Memory left before the kernel's limit (main.ts: `server/memory.ts`'s probe); undefined skips the check. */
+      memoryFreeBytes?: () => number | undefined;
+      /** No lane opens unless this much would stay free after its estimate (main.ts: VERIFY_LANE_MEMORY_RESERVE_BYTES). */
+      memoryReserveBytes?: number;
       /** Override `LANE_LINGER_MS` (tests: 0 releases at the last leave). */
       lingerMs?: number;
       /** Override `LANE_BAR_MS` (tests). */
@@ -307,8 +307,8 @@ export class SnapshotVerifier {
     this.warmTimeoutMs = opts.warmTimeoutMs ?? (this.timeoutMs * LANE_WARM_TIMEOUT_MS) / VERIFY_TIMEOUT_MS;
     this.workerUrl = opts.workerUrl ?? new URL("./verify-worker.ts", import.meta.url);
     this.budget = opts.warmBudgetBytes ?? VERIFY_WARM_BUDGET_BYTES;
-    this.memoryBytes = opts.memoryBytes;
-    this.memoryCapBytes = opts.memoryCapBytes ?? Infinity;
+    this.memoryFreeBytes = opts.memoryFreeBytes;
+    this.memoryReserveBytes = opts.memoryReserveBytes ?? 0;
     this.log = opts.log;
     this.lingerMs = opts.lingerMs ?? LANE_LINGER_MS;
     this.barMs = opts.barMs ?? LANE_BAR_MS;
@@ -353,14 +353,14 @@ export class SnapshotVerifier {
     }
     const need = laneBytes(room.size);
     const inUse = this.laneBytesInUse();
-    const mem = this.memoryBytes?.();
-    if (inUse + need > this.budget || (mem !== undefined && mem + need > this.memoryCapBytes)) {
+    const free = this.memoryFreeBytes?.();
+    if (inUse + need > this.budget || (free !== undefined && free - need < this.memoryReserveBytes)) {
       this.log?.limited("verify:lane_refused", 10_000, "verify.lane_refused", {
         world: room.id,
         need_mb: Math.round(need / 1048576),
         in_use_mb: Math.round(inUse / 1048576),
         budget_mb: Math.round(this.budget / 1048576),
-        cgroup_mb: mem === undefined ? null : Math.round(mem / 1048576),
+        free_mb: free === undefined ? null : Math.round(free / 1048576),
       });
       return false;
     }
