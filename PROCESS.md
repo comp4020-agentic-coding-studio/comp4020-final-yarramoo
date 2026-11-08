@@ -17,9 +17,7 @@ skills, which mattered more as testing became a long and arduous task.
 
 I generated the initial plan over a back-and-forth chat with the Claude chatbot using 
 my personal subscription. I asked it to research specifically issues encountered in 
-making particle simulation games multiplayer. This is where I added in details about 
-the assignment machine (256mb single-cpu), and asked Claude to design an architecture 
-that would suit. 
+making particle simulation games multiplayer.
 
 In this conversation I first started asking for architecture diagrams, 
 which I continued to do over the course of development. After asking for the design to 
@@ -27,32 +25,25 @@ be written as a prompt, I gave it to the harness which landed it in `docs/plan.m
 the harness had access to the comp4020 course page and made some changes based on 
 assignment spec. 
 
-The plan landed as
-[`7a99056`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/7a99056) and was
-conformed to the course setup the same day
-([`bc033ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/bc033ad)). The big
-choice was deterministic lockstep: every browser runs the same Rust simulation compiled to WebAssembly, and the server
-only orders inputs and checks hashes. The 256 MB single-CPU machine ruled out a server-side simulation, and floating
-point differing between engines ruled out JavaScript. The cost is that every
-client must agree bit for bit forever, so the first thing built was a determinism suite: the same inputs in Node,
-three browsers and native Rust
-([`d911c8f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/d911c8f)).
 
-That choice kept costing. The live site went down on 18 October because a long tick log overflowed the stack on
-boot ([`10247e2`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/10247e2)). A
-code-only review found hash votes counted per socket, not per player, so extra tabs could outvote the truth
-([`1298bd1`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/1298bd1)). The
-reasoning is in `ARCHITECTURE.md` and `docs/engineering-decisions.md`. The admin dashboard is
-`/dashboard?token=<ADMIN_TOKEN>`, with the token in `fly.toml`'s `[env]`: public by choice, as the app holds no
-private data (D-098).
 
-Some bugs could only be found interactively. While playtesting I noticed poured water standing in walls 64 cells
-apart that only slowly spilled over. Every test passed, because nothing tested what water looks like. I screenshotted
-it and asked Claude to read the screenshot from my desktop. From that it worked out that the walls sat on chunk
-edges: cells were updated chunk by chunk, so water at an edge got fewer moves per tick than water inside a chunk. The
-fix updates whole rows across chunks
-([`7bbf8ff`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/7bbf8ff)), with a
-regression test. No agent running on its own would have seen it. 
+**Determinism.** Lockstep only works if every browser computes the identical world, bit for bit, forever. Three
+choices carry that. The simulation is Rust compiled to wasm, and its build forbids floats, clocks, randomness and
+hash maps, so the rules are enforced rather than hoped for. All arithmetic is integer, with fixed-point maths where a
+float would be natural. Randomness is a counter-based function `rng(seed, tick, x, y, salt)` with no state to drift
+([`92ed2f0`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/92ed2f0)).
+
+**What runs where.** The browsers compute; the server only orders inputs, relays them, and checks that everyone
+agrees: hash votes every second, and snapshots it verifies in a worker but never steps
+([`43a1cab`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/43a1cab)). Events
+like deaths count only when a majority of players report them. The diagram is `docs/architecture/components.png`.
+
+**The test harness.** The gate is five steps chained on exit codes: native Rust tests, clippy, typecheck, the
+determinism suite and the network suite. The determinism suite runs the same inputs in Node, Chromium, Firefox,
+WebKit and native Rust
+([`3cff05c`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-yarramoo/commit/3cff05c)), plus a
+deliberately broken "canary" build that must fail, proving the harness can see nondeterminism at all. 
+
 
 ## Prompting
 
