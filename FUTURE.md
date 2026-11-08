@@ -772,3 +772,7 @@ coal blast damage, spell slots by pickup order) were offered for before the dead
   phone input (a chat button opening the same input); mute a player (a client-side ignore list by name); a sound on a
   mention; a per-IP cap on top of the per-player one and a sliding window (review L3, L4); allow U+200D between two
   emoji so ZWJ emoji pass. **Source:** `docs/research/chat-report.md`, 8 Nov.
+- **Sound follow-ups** (D-230): a sim `EV_HURT {victim, amount, cause}` event for an exact cause (and other players'
+  hurts); falling-rock damage with a `crush` sound, if rock should hurt at all; a pin test of the contact-knock
+  signature against `tuning.rs`; a volume slider (only mute today); tune the water voice and the 19 new recipes by
+  ear; quiet cues for chat lines and achievements. **Source:** `docs/research/sound-report.md`, 8 Nov.
