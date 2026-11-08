@@ -864,10 +864,14 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
+        e.preventDefault();
         const text = input.value.trim();
         if (text && Array.from(text).length <= MAX_CHAT_CHARS) send({ type: "chat", text });
         closeChat();
-      } else if (e.key === "Escape") closeChat();
+      } else if (e.key === "Escape") {
+        e.preventDefault(); // the menu router's Escape (Back) skips a handled key
+        closeChat();
+      }
     });
     input.addEventListener("blur", () => {
       input.value = "";

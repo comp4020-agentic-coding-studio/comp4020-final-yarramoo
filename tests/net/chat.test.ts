@@ -9,7 +9,7 @@ import { startServer, type RunningServer } from "../../server/main.ts";
 import { CHAT_HISTORY_MAX, CHAT_PER_WINDOW } from "../../server/world.ts";
 import { C_CHAT, MAX_CHAT_BYTES, MAX_CHAT_CHARS, S_CHAT, decodeClient, decodeServer, encodeChat, encodeChatLine } from "../../shared/protocol.ts";
 import { chatSegments, mentions, renderChatLine } from "../../client/chat.ts";
-import { buildHashHex, connect, register, sleep, waitFor } from "./helpers.ts";
+import { buildHashHex, connect, register, sleep, waitFor, type TestClient } from "./helpers.ts";
 
 let hex: string;
 beforeAll(async () => {
@@ -103,17 +103,20 @@ describe("chat relay", () => {
     b.close();
   });
 
-  it("a late joiner gets the recent history marked as history, capped", async () => {
+  it("a late joiner gets the recent history marked as history, capped (in the sandbox: registered painters chat too)", async () => {
     const s = await boot();
+    // The sandbox (world 0), not the game world: six in-process game sims are too slow for one test.
     const talkers = await Promise.all(["A1", "A2", "A3", "A4", "A5"].map((n) => register(s.port, n)));
-    const conns = await Promise.all(talkers.map((t) => connect(s.port, hex, { world: GAME, token: t.token })));
+    const conns: TestClient[] = [];
+    for (const t of talkers) conns.push(await connect(s.port, hex, { world: 0, token: t.token }));
     // 5 talkers x 5 lines = 25 lines, all inside each talker's rate budget.
     for (let i = 0; i < 5; i++) for (const [k, c] of conns.entries()) c.chat(`m${k}-${i}`);
     await waitFor(() => conns[0].chats.length === 25, 3000, "all lines");
-    const late = await connect(s.port, hex, { world: GAME, token: (await register(s.port, "Late")).token });
+    const late = await connect(s.port, hex, { world: 0, token: (await register(s.port, "Late")).token });
     await waitFor(() => late.chats.length === CHAT_HISTORY_MAX, 3000, "history");
     expect(late.chats.every((c) => c.history)).toBe(true);
     expect(late.chats.map((c) => c.text)).toEqual(conns[0].chats.slice(-CHAT_HISTORY_MAX).map((c) => c.text));
+    expect(late.chats[0].name).toBe("A1");
     for (const c of conns) c.close();
     late.close();
   });
