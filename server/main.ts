@@ -97,12 +97,20 @@ export const MAX_LOADED_ROOMS = 16;
 export const L_ROOM_SLOT_WEIGHT = 2;
 /** At most this many L rooms loaded at once, regardless of total slot budget. */
 export const MAX_LOADED_L_ROOMS = 4;
+/** D-237: at most this many Survival/Deathmatch rooms loaded at once (sandboxes, owned or not, and the two fixed worlds
+ *  are outside it). The course VM has ~110 MB free at idle; one Survival M room and its warm lane ran at RSS 136-142 MB
+ *  (live load test, 9 Nov) and three rooms with three lanes were OOM-killed, so two is the number it holds. */
+export const MAX_LOADED_GAME_ROOMS = 2;
+/** The modes the game-room cap and the short empty/never-joined timers apply to. */
+export const GAME_ROOM_MODES: readonly string[] = ["survival", "deathmatch"];
 /** A lazy room load is refused unless at least this much memory is free (D-236; `server/memory.ts` says which figure).
  *  Headroom, not usage: on Fly the limit is the whole VM (`MemTotal` 210 MB, not the 256 MB in fly.toml), about 109 MB
  *  is free at idle, and the kernel killed the process after about 90 MB more (3 Survival M rooms, 3 lanes, 12 bots,
  *  9 Nov). From idle this admits two M rooms and refuses the third. In Docker (cgroup v2, 256 MB) it refuses at 176 MB,
- *  below the old 200 MB cap: memory keeps growing after a room loads, and the gate reads it only at the load. */
-export const ROOM_LOAD_MEMORY_RESERVE_BYTES = 80 * 1024 * 1024;
+ *  below the old 200 MB cap: memory keeps growing after a room loads, and the gate reads it only at the load.
+ *  D-237: lowered from 80 MB, which admitted only one Survival room on the VM; MAX_LOADED_GAME_ROOMS is now the cap
+ *  and this is the backstop (it still refuses any room, owned sandboxes included, when free memory runs low). */
+export const ROOM_LOAD_MEMORY_RESERVE_BYTES = 48 * 1024 * 1024;
 /** No warm verify lane opens unless this much stays free after its estimate (D-228, D-236): an M lane (~33 MB) needs
  *  about 89 MB free, so on Fly only the first room gets one and the second verifies cold, as every room did before D-228. */
 export const VERIFY_LANE_MEMORY_RESERVE_BYTES = 56 * 1024 * 1024;
@@ -112,6 +120,12 @@ export const VERIFY_LANE_MEMORY_RESERVE_BYTES = 56 * 1024 * 1024;
 export const ROOM_UNLOAD_MS = 2 * 60_000;
 /** N1: a room nobody has ever joined is deleted this long after creation (a just-shared link survives until the friend arrives). */
 export const ROOM_NEVER_JOINED_MS = 10 * 60_000;
+/** D-237: a Survival/Deathmatch room is deleted this long after its last member leaves (a page reload rejoins well inside it). */
+export const GAME_ROOM_EMPTY_MS = 10_000;
+/** D-237: a Survival/Deathmatch room nobody has joined is deleted this long after creation (the sweep runs each minute,
+ *  so 60-120 s). Its creator enters straight away, or from the share screen after copying the link; an unjoined room
+ *  is not loaded, so it holds no game-room slot meanwhile, only a row. */
+export const GAME_ROOM_NEVER_JOINED_MS = 60_000;
 /** N1: how often the room sweep runs (touches occupied rooms, deletes abandoned ones). */
 export const ROOM_SWEEP_MS = 60_000;
 /** Rooms one IP may create in a sliding hour (security probe S2). */
@@ -291,6 +305,11 @@ export interface ServerOptions {
   roomUnloadMs?: number;
   /** N1: override ROOM_NEVER_JOINED_MS. */
   roomNeverJoinedMs?: number;
+  /** D-237: override GAME_ROOM_EMPTY_MS / GAME_ROOM_NEVER_JOINED_MS (Survival and Deathmatch rooms). */
+  gameRoomEmptyMs?: number;
+  gameRoomNeverJoinedMs?: number;
+  /** D-237: override MAX_LOADED_GAME_ROOMS. */
+  maxLoadedGameRooms?: number;
   /** N1: override ROOM_SWEEP_MS. */
   roomSweepMs?: number;
   /** N1: wall clock (ms) for room lifecycle times; tests inject one. Default Date.now. */
@@ -409,6 +428,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
    * and the set (`loadingRooms.set`) below run with no `await` between them, so a second HELLO's synchronous
    * lookup always sees the first's in-flight promise, never races past it. */
   const loadingRooms = new Map<number, Promise<World>>();
+  /** D-237: the subset of `loadingRooms` that are game rooms (counted against MAX_LOADED_GAME_ROOMS while they load). */
+  const loadingGameRooms = new Set<number>();
   /** Scheduled unload timers for empty rooms, keyed by room id (never the two fixed worlds, which don't unload). */
   const roomUnloadTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -425,7 +446,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     if (w.id === SANDBOX_ID || w.id === GAME_ID) return;
     if (w.closing || worlds.get(w.id) !== w) return; // already deleted or unloaded (an owner's delete closes its members)
     cancelUnload(w.id);
-    const ms = opts.roomUnloadMs ?? ROOM_UNLOAD_MS;
+    const ms = isGameRoom(w) ? (opts.gameRoomEmptyMs ?? GAME_ROOM_EMPTY_MS) : (opts.roomUnloadMs ?? ROOM_UNLOAD_MS);
     const t = setTimeout(() => {
       roomUnloadTimers.delete(w.id);
       if (w.playerCount > 0 || w.closing || worlds.get(w.id) !== w) return; // rejoined, or already replaced/unloaded
@@ -475,12 +496,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   }
 
   /** N1: refresh `last_active` of occupied rooms, then delete rooms past their grace period by stored time. Boot runs it too. */
-  function sweepRooms(): number[] {
+  function sweepRooms(atBoot = false): number[] {
     if (!rooms) return [];
     const t = wallNow();
     for (const w of worlds.values()) if (w.id !== SANDBOX_ID && w.id !== GAME_ID && w.playerCount > 0) rooms.touch(w.id, t);
     const gone: number[] = [];
-    for (const r of rooms.staleRooms(t, opts.roomUnloadMs ?? ROOM_UNLOAD_MS, opts.roomNeverJoinedMs ?? ROOM_NEVER_JOINED_MS)) {
+    const game = { modes: GAME_ROOM_MODES, unloadMs: opts.gameRoomEmptyMs ?? GAME_ROOM_EMPTY_MS, neverMs: opts.gameRoomNeverJoinedMs ?? GAME_ROOM_NEVER_JOINED_MS };
+    // D-237: the boot sweep judges game rooms by the longer sandbox periods. A deploy takes longer than 10 s, so the short
+    // timer at boot would delete every running round before its players could reconnect; the first periodic sweep
+    // (ROOM_SWEEP_MS later) applies it to any game room nobody came back to.
+    for (const r of rooms.staleRooms(t, opts.roomUnloadMs ?? ROOM_UNLOAD_MS, opts.roomNeverJoinedMs ?? ROOM_NEVER_JOINED_MS, atBoot ? undefined : game)) {
       if (deleteRoom(r.id, r.reason)) gone.push(r.id);
     }
     return gone;
@@ -541,6 +566,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     return { slots, lRooms };
   }
 
+  /** D-237: a Survival/Deathmatch room (avatars on, not a fixed world). Owned and plain sandboxes have avatars off. */
+  function isGameRoom(w: World): boolean {
+    return w.id !== SANDBOX_ID && w.id !== GAME_ID && w.kind === WORLD_GAME;
+  }
+  /** D-237: game rooms loaded, plus ones mid-load, so two HELLOs for two different rooms cannot both take the last slot. */
+  function gameRoomsLoaded(): number {
+    let n = loadingGameRooms.size;
+    for (const w of worlds.values()) if (isGameRoom(w) && !loadingGameRooms.has(w.id)) n++;
+    return n;
+  }
+  const maxGameRooms = (): number => opts.maxLoadedGameRooms ?? MAX_LOADED_GAME_ROOMS;
+
   /** `register.refused` with a "server busy" reason a lobby can show (plan's menu-facing language), logged. */
   function memberCapReason(): string | null {
     const total = totalMembers();
@@ -565,7 +602,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
    * with no room row, "cap" if loading it would exceed the loaded-room budget (checked before construction, so
    * a rejected join never pays the cost of loading).
    */
-  async function getOrLoadRoom(id: number): Promise<World | "unknown" | "cap"> {
+  async function getOrLoadRoom(id: number): Promise<World | "unknown" | "cap" | "game_cap"> {
     const existing = worlds.get(id);
     if (existing) return existing;
     const inFlight = loadingRooms.get(id);
@@ -583,6 +620,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       log.limited("cap:loaded_rooms", 10_000, "register.refused", { reason: "cap", scope: "loaded_rooms", slots, lRooms, world: id }, "warn");
       return "cap";
     }
+    const game = cfg.avatars === 1;
+    if (game && gameRoomsLoaded() >= maxGameRooms()) {
+      log.limited("cap:game_rooms", 10_000, "register.refused", { reason: "cap", scope: "game_rooms", live: gameRoomsLoaded(), world: id }, "warn");
+      return "game_cap";
+    }
     const free = memory.freeBytes();
     if (free !== undefined && free < ROOM_LOAD_MEMORY_RESERVE_BYTES) {
       log.limited("cap:memory", 10_000, "register.refused", { reason: "cap", scope: "memory", source: memory.source, free_mb: Math.round(free / 1048576), world: id }, "warn");
@@ -598,10 +640,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return w;
     })();
     loadingRooms.set(id, p);
+    if (game) loadingGameRooms.add(id);
     try {
       return await p;
     } finally {
       loadingRooms.delete(id);
+      loadingGameRooms.delete(id);
     }
   }
 
@@ -863,6 +907,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         res.writeHead(429, { "content-type": "application/json" }).end(JSON.stringify({ error: "rate_limited" }));
         return;
       }
+      // D-237: a game room that could not load now is refused here, so the menu says so instead of a dead room link.
+      if (typeof body.mode === "string" && GAME_ROOM_MODES.includes(body.mode) && gameRoomsLoaded() >= maxGameRooms()) {
+        log.limited("room_create:game_rooms", 10_000, "room.create_rejected", { reason: "rooms_full", ip_tag: ipTag }, "warn");
+        res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "rooms_full", live: gameRoomsLoaded(), max: maxGameRooms() }));
+        return;
+      }
       let configBytes: Uint8Array;
       try {
         configBytes = typeof body.config === "string" ? new Uint8Array(Buffer.from(body.config, /^[0-9a-fA-F]+$/.test(body.config) && body.config.length === 32 ? "hex" : "base64")) : new Uint8Array(0);
@@ -907,7 +957,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         players += n;
         if (n > 0) nrooms++;
       }
-      return { players, rooms: nrooms };
+      return { players, rooms: nrooms, gameRooms: { live: gameRoomsLoaded(), max: maxGameRooms() } };
     });
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(body);
   }
@@ -1379,6 +1429,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
           if (ws.readyState !== ws.OPEN || joined) return; // closed, or a stray second frame already failed us
           if (resolved === "unknown") return rej("unknown room", msg.worldId);
           if (resolved === "cap") return rej("server busy", msg.worldId);
+          if (resolved === "game_cap") return rej(`server busy: ${maxGameRooms()}/${maxGameRooms()} game rooms are live, try again soon`, msg.worldId);
           const w = resolved;
           if (w.closing) return rej("server is shutting down", msg.worldId);
           // A full log used to refuse joins, but then nobody could take the snapshot that shortens it (D-100).
@@ -1642,7 +1693,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
   }, TIMER_MS);
   // N1: the same sweep at boot (stored times only: a server that just booted has no members anywhere) and each minute.
-  sweepRooms();
+  sweepRooms(true);
   const roomSweepTimer = setInterval(() => sweepRooms(), opts.roomSweepMs ?? ROOM_SWEEP_MS);
   roomSweepTimer.unref();
   let closed: Promise<void> | null = null;

@@ -172,12 +172,29 @@ export class RoomsStore {
    * N1: real rooms (ids above the two reserved fixed-world rows) past their grace period by the STORED times: never
    * joined and created more than `neverMs` ago, or joined and `last_active` more than `unloadMs` ago.
    */
-  staleRooms(nowMs: number, unloadMs: number, neverMs: number): { id: number; mode: string; reason: "empty" | "never_joined" }[] {
+  staleRooms(
+    nowMs: number,
+    unloadMs: number,
+    neverMs: number,
+    /** D-237: shorter periods for these modes (Survival and Deathmatch). */
+    game?: { modes: readonly string[]; unloadMs: number; neverMs: number },
+  ): { id: number; mode: string; reason: "empty" | "never_joined" }[] {
     const rows = this.q(
-      `select id, mode, first_joined_at from rooms where id > 1 and owner_player_id is null and
+      `select id, mode, created_at, last_active, first_joined_at from rooms where id > 1 and owner_player_id is null and
          ((first_joined_at is null and created_at < ?) or (first_joined_at is not null and last_active < ?))`,
-    ).all(nowMs - neverMs, nowMs - unloadMs) as { id: number; mode: string; first_joined_at: number | null }[];
-    return rows.map((r) => ({ id: r.id, mode: r.mode, reason: r.first_joined_at === null ? "never_joined" : "empty" }));
+    ).all(nowMs - Math.min(neverMs, game?.neverMs ?? neverMs), nowMs - Math.min(unloadMs, game?.unloadMs ?? unloadMs)) as {
+      id: number;
+      mode: string;
+      created_at: number;
+      last_active: number;
+      first_joined_at: number | null;
+    }[];
+    return rows
+      .filter((r) => {
+        const g = game?.modes.includes(r.mode);
+        return r.first_joined_at === null ? r.created_at < nowMs - (g ? game!.neverMs : neverMs) : r.last_active < nowMs - (g ? game!.unloadMs : unloadMs);
+      })
+      .map((r) => ({ id: r.id, mode: r.mode, reason: r.first_joined_at === null ? "never_joined" : "empty" }));
   }
 
   /** N1: delete a room and everything keyed by it in one transaction. Player stats and achievements stay. */

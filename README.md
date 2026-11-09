@@ -60,8 +60,11 @@ playtested every major build myself, and agents played scripted rounds and took 
 
 Open [comp4020-final-yarramoo.fly.dev](https://comp4020-final-yarramoo.fly.dev/),
 choose a name, then **New game** or **Join game**, or **My world** for your own
-sandbox. Move with WASD or the arrow keys, aim and cast with the mouse, pick
-spells with the number keys, and press `/` to chat. Phones play with on-screen
-controls. To see persistence, open **My world**, paint, copy its link and come back to that link later, from any
-browser: the world stays until its owner deletes it. Your identity is a token in this browser, so another browser
-can paint there but not delete it. Architecture and decisions: [ARCHITECTURE.md](ARCHITECTURE.md).
+sandbox. WASD moves, the mouse casts, number keys pick spells, `/` chats;
+phones get on-screen controls. To see persistence, paint in **My world** and
+reopen its link: it stays until its maker deletes it.
+
+Course-machine limits: two Survival or Deathmatch rooms at once (the menu shows
+the count), each deleted 10 s after emptying; at most 200 owned worlds, which can
+also get "server busy" when memory is low.
+Architecture and decisions: [ARCHITECTURE.md](ARCHITECTURE.md).

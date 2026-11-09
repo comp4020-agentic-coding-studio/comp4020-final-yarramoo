@@ -1772,3 +1772,10 @@ came from. The fix (D-236) picks a source that has a real limit, falling back to
 choice at start, and gates on free memory rather than usage. The VM has 210 MB, not 256, so the reserves now allow
 two M rooms and one warm lane there. This is the same lesson as the capacity notes' own caveat: a measurement in Docker
 is a measurement of Docker.
+
+**Corrected the same morning (D-237): the reserves allowed one M room on the VM, not two.** A second live test
+(`docs/research/live-load-2026-11-09.json`) refused two of three Survival rooms "server busy": one room and its lane
+left less than the 80 MB reserve free. The user wanted two rooms and wanted the limit visible, so the count is now an
+explicit cap (two loaded Survival/Deathmatch rooms; sandboxes and the fixed worlds outside it), the reserve dropped to
+48 MB as a backstop, `/api/live` reports `gameRooms: { live, max }` and the menu shows it. A free-memory figure cannot
+be stated to a player as "n of 2"; a count can. Empty game rooms are now deleted after 10 s, since a slot is scarce.

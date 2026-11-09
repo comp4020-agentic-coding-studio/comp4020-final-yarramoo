@@ -9,13 +9,20 @@ export interface LiveDeath {
   at: number;
 }
 
+/** D-237: `gameRooms` is the Survival/Deathmatch rooms loaded now and the cap, so the menu can say when it is full. */
+export interface LiveCounts {
+  players: number;
+  rooms: number;
+  gameRooms: { live: number; max: number };
+}
+
 export const LIVE_MAX_DEATHS = 20;
 export const LIVE_CACHE_MS = 2000;
 
 export interface LiveFeed {
   recordDeath(d: LiveDeath): void;
   /** The response JSON; `count` runs only when the cache is stale (once per 2 s, or after a death). */
-  json(count: () => { players: number; rooms: number }): string;
+  json(count: () => LiveCounts): string;
 }
 
 export function createLiveFeed(opts: { now?: () => number } = {}): LiveFeed {
@@ -32,8 +39,8 @@ export function createLiveFeed(opts: { now?: () => number } = {}): LiveFeed {
     json(count) {
       const t = now();
       if (cached === null || t - cachedAt >= LIVE_CACHE_MS || t < cachedAt) {
-        const { players, rooms } = count();
-        cached = JSON.stringify({ players, rooms, deaths: ring });
+        const { players, rooms, gameRooms } = count();
+        cached = JSON.stringify({ players, rooms, gameRooms, deaths: ring });
         cachedAt = t;
       }
       return cached;

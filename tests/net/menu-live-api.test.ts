@@ -62,7 +62,7 @@ describe("GET /api/live", () => {
     const r = await fetch(`${env.base}/api/live`);
     expect(r.status).toBe(200);
     expect(r.headers.get("cache-control")).toBe("no-store");
-    expect(await r.json()).toMatchObject({ players: 1, rooms: 1, deaths: [] });
+    expect(await r.json()).toMatchObject({ players: 1, rooms: 1, gameRooms: { live: 2, max: 2 }, deaths: [] });
     expect((await fetch(`${env.base}/api/live`, { method: "POST" })).status).toBe(405);
   }, 30000);
 
@@ -90,7 +90,7 @@ describe("live feed (pure)", () => {
   it("keeps the newest 20, newest first", () => {
     const f = createLiveFeed({ now: () => 0 });
     for (let i = 0; i < 25; i++) f.recordDeath(death(i));
-    const out = JSON.parse(f.json(() => ({ players: 0, rooms: 0 }))) as Live;
+    const out = JSON.parse(f.json(() => ({ players: 0, rooms: 0, gameRooms: { live: 0, max: 2 } }))) as Live;
     expect(out.deaths).toHaveLength(20);
     expect(out.deaths[0].cause).toBe(24);
     expect(out.deaths[19].cause).toBe(5);
@@ -99,7 +99,7 @@ describe("live feed (pure)", () => {
     let t = 1000;
     let calls = 0;
     const f = createLiveFeed({ now: () => t });
-    const count = () => ({ players: ++calls, rooms: 0 });
+    const count = () => ({ players: ++calls, rooms: 0, gameRooms: { live: 0, max: 2 } });
     expect((JSON.parse(f.json(count)) as Live).players).toBe(1);
     t += 1999;
     expect((JSON.parse(f.json(count)) as Live).players).toBe(1);

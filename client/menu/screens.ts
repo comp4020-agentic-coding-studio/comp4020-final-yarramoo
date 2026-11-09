@@ -1,6 +1,6 @@
 // The menu screens. Each renderer fills `ctx.panel` and may return a cleanup (timers, pollers).
 import { CONFIG_BYTES, CONFIG_FIELDS, SIZE_DIMS, SURVIVAL, encodeConfig, type RoomConfig } from "../../shared/room.ts";
-import { fetchLive, deathLine, relTime, startPoll, type Live } from "./live.ts";
+import { fetchLive, deathLine, gameRoomsLine, relTime, startPoll, type Live } from "./live.ts";
 import type { Route } from "./router.ts";
 import { TOKEN_KEY, store } from "../storage.ts";
 
@@ -78,6 +78,8 @@ function titleScreen(ctx: Ctx): () => void {
   dot.setAttribute("aria-hidden", "true");
   const liveText = el("span");
   live.append(dot, liveText);
+  const capLine = el("p", "mn-live mn-cap");
+  capLine.hidden = true;
 
   const logWrap = el("div", "mn-deaths");
   logWrap.hidden = true;
@@ -86,7 +88,7 @@ function titleScreen(ctx: Ctx): () => void {
   log.setAttribute("aria-live", "polite");
   log.setAttribute("aria-label", "Recent deaths");
   logWrap.append(logHead, log);
-  panel.append(h1, tag, btns, live, logWrap);
+  panel.append(h1, tag, btns, live, capLine, logWrap);
 
   // Death log: keyed by the entry so only new ones slide in; times tick each second.
   const seen = new Set<string>();
@@ -104,9 +106,11 @@ function titleScreen(ctx: Ctx): () => void {
     last = j;
     if (!j) {
       live.hidden = true;
+      capLine.hidden = true;
       logWrap.hidden = true;
       return;
     }
+    paintCap(capLine, j);
     live.hidden = false;
     liveText.textContent = j.players > 0 ? `${plural(j.players, "player", "players")} live in ${plural(j.rooms, "room", "rooms")}` : "Nobody's playing right now. Start something.";
     dot.classList.toggle("off", j.players === 0);
@@ -176,11 +180,24 @@ function backRow(ctx: Ctx, ...extra: HTMLElement[]): HTMLElement {
   return row;
 }
 
-function typesScreen(ctx: Ctx): void {
+/** D-237: the game-room count under a menu screen; `full` class when no room is free. */
+function paintCap(line: HTMLElement, j: Live | null): boolean {
+  const g = gameRoomsLine(j);
+  line.hidden = !g;
+  if (!g) return false;
+  line.textContent = g.text;
+  line.classList.toggle("full", g.full);
+  return g.full;
+}
+
+function typesScreen(ctx: Ctx): () => void {
   const { panel } = ctx;
   panel.append(heading("New game", "Choose a type"));
   const touch = isTouch();
   const cards = el("div", "mn-cards");
+  const capLine = el("p", "mn-live mn-cap");
+  capLine.hidden = true;
+  const gameCards: HTMLButtonElement[] = [];
   for (const key of ["survival", "deathmatch"] as GameType[]) {
     const t = TYPES[key];
     const c = el("button", `mn-card ${t.cls}`);
@@ -193,6 +210,7 @@ function typesScreen(ctx: Ctx): void {
     body.append(badges);
     c.append(icon(t.icon), body);
     c.addEventListener("click", () => ctx.go({ kind: "settings", type: key }));
+    gameCards.push(c);
     cards.append(c);
   }
   const sb = el("button", "mn-card sand");
@@ -206,7 +224,12 @@ function typesScreen(ctx: Ctx): void {
     ctx.ensureName().then(() => (location.href = "/sandbox")).catch(() => {});
   });
   cards.append(sb);
-  panel.append(cards, backRow(ctx));
+  panel.append(capLine, cards, backRow(ctx));
+  // D-237: only two Survival/Deathmatch rooms run at once; when both are live their cards are disabled, the sandbox is not.
+  return startPoll(async () => {
+    const full = paintCap(capLine, await fetchLive());
+    for (const c of gameCards) c.disabled = full;
+  }, 5000);
 }
 
 /** A labelled group of buttons where exactly one is pressed (aria-pressed toggles, real buttons). */
@@ -367,7 +390,13 @@ function settingsScreen(type: GameType, ctx: Ctx): () => void {
       .then(async (r) => {
         if (!r.ok) {
           const j = await r.json().catch(() => ({ error: "failed" }));
-          throw new Error(j.error === "rate_limited" ? "Too many rooms today; try again tomorrow." : `Could not create the room (${j.error ?? r.status}).`);
+          throw new Error(
+            j.error === "rate_limited"
+              ? "Too many rooms today; try again tomorrow."
+              : j.error === "rooms_full"
+                ? `Game rooms: ${j.live ?? j.max}/${j.max} live. Full, try again soon.`
+                : `Could not create the room (${j.error ?? r.status}).`,
+          );
         }
         const j = (await r.json()) as { code: string };
         if (visibility === "unlisted") ctx.go({ kind: "share", code: j.code });
@@ -542,7 +571,9 @@ function joinScreen(ctx: Ctx): () => void {
   );
   const list = el("div", "mn-rooms");
   list.setAttribute("aria-live", "polite");
-  panel.append(filters, list);
+  const capLine = el("p", "mn-live mn-cap");
+  capLine.hidden = true;
+  panel.append(filters, capLine, list);
 
   function paint() {
     const rows = filter ? rooms.filter((r) => r.mode === filter) : rooms;
@@ -571,7 +602,8 @@ function joinScreen(ctx: Ctx): () => void {
   }
   paint();
   const stop = startPoll(async () => {
-    const r = await fetch("/api/rooms");
+    const [r, l] = await Promise.all([fetch("/api/rooms"), fetchLive()]);
+    paintCap(capLine, l);
     const j = (await r.json()) as { rooms: PublicRoom[] };
     rooms = j.rooms ?? [];
     paint();

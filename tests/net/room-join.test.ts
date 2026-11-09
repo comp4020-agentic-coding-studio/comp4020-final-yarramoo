@@ -269,7 +269,7 @@ describe("R2b fix: a cancelUnload before identity resolution can still reject mu
   // canceled that timer — the rejected join never calls w.join, so nothing ever re-arms it. This test fails on
   // the pre-fix code: the room is still loaded well past the (short, test-only) unload deadline.
   it("a bad-token HELLO to a room whose unload timer is armed does not cancel it; the room still unloads on schedule", async () => {
-    const s = await boot(tmp(), { roomUnloadMs: 200 });
+    const s = await boot(tmp(), { roomUnloadMs: 200, gameRoomEmptyMs: 200 }); // a game room's own timer since D-237
     const created = await createRoom(s.port, { mode: "deathmatch", cfg: { ...CAVES_PVP, size: 0 } });
     const who = await register(s.port, "GameJoiner");
     const a = await connect(s.port, hex, { world: created.id, token: who.token });
