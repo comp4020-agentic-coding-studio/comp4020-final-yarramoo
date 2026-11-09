@@ -1108,7 +1108,7 @@ export async function startRoom(target: RoomTarget): Promise<void> {
     const b64 = btoa(String.fromCharCode(...encodeConfig(SURVIVAL)));
     fetch("/api/rooms", { method: "POST", body: JSON.stringify({ name: "Survival", mode: "survival", config: b64, visibility: "public" }) })
       .then(async (r) => {
-        if (!r.ok) throw new Error(r.status === 429 ? "Too many rooms today." : "Could not create a room.");
+        if (!r.ok) throw new Error(r.status === 429 ? "Too many rooms today." : r.status === 503 ? "Both game rooms are live. Try again soon." : "Could not create a room.");
         location.href = `/r/${((await r.json()) as { code: string }).code}`;
       })
       .catch((e) => {

@@ -28,14 +28,9 @@ is a hard technical problem. So good here is definitely technical, but the game 
 Somewhat of a mix between enforced and judged is the 'correctness' of the particle simulation, 
 balanced with enjoying some of the mistakes that fall out. For example, liquids were not 
 correctly simulated for a long time due to nuances of chunk update ordering. This had to be corrected for 
-liquids to move in an intuitive way, not blocked by invisible walls. 
-
-To contrast, rain when added seemed to fall upwards. A missing '-' sign somewhere probably (the 
-agent can only see screenshots when testing so some of these movement errors are harder to catch).
-But it looked cool so I left it. Additionally, snow can sometimes leave ice, which is a solid particle the 
-player cannot walk through. Gravity on small solid chunks is a feature, but only when the player digs it 
-free. So these small ice particles float in the world and enemies were added that leave them behind like 
-a trail. These can quickly turn into a trap if the player is not careful, which is a fun twist! 
+liquids to move in an intuitive way, not blocked by invisible walls. However, rain was added upside-down, 
+and placing snow creates floating ice particles - which become a genuine barrier and potential trap 
+for the survival player. Both of these looked cool so they were left. 
 
 ## What I looked at
 
@@ -65,8 +60,11 @@ playtested every major build myself, and agents played scripted rounds and took 
 
 Open [comp4020-final-yarramoo.fly.dev](https://comp4020-final-yarramoo.fly.dev/),
 choose a name, then **New game** or **Join game**, or **My world** for your own
-sandbox. Move with WASD or the arrow keys, aim and cast with the mouse, pick
-spells with the number keys, and press `/` to chat. Phones play with on-screen
-controls. To see persistence, open **My world**, paint, copy its link and come back to that link later, from any
-browser: the world stays until its owner deletes it. Your identity is a token in this browser, so another browser
-can paint there but not delete it. Architecture and decisions: [ARCHITECTURE.md](ARCHITECTURE.md).
+sandbox. WASD moves, the mouse casts, number keys pick spells, `/` chats;
+phones get on-screen controls. To see persistence, paint in **My world** and
+reopen its link: it stays until its maker deletes it.
+
+Course-machine limits: two Survival or Deathmatch rooms at once (the menu shows
+the count), each deleted 10 s after emptying; at most 200 owned worlds, which can
+also get "server busy" when memory is low.
+Architecture and decisions: [ARCHITECTURE.md](ARCHITECTURE.md).

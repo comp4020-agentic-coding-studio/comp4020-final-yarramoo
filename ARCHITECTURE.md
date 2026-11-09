@@ -116,7 +116,7 @@ Lockstep has no authority that knows the right answer, so the server checks agre
 | Thing | Lives | Evidence |
 |---|---|---|
 | The two fixed worlds: the sandbox at `/sandbox` (world 0) and the game world (world 1) | Forever. A cold start (the machine stops when idle) restores the latest verified snapshot and replays `tick_log` after it. | D-004, D-041, D-064; `server/rooms.ts:185`; [entry 6](docs/engineering-decisions.md#6-persistence-on-a-machine-that-stops-when-idle) |
-| Unowned rooms at `/r/<code>` (Survival, Deathmatch, Sandbox) | Deleted 2 minutes after the last member leaves, or 10 minutes after creation if nobody joined. Survival and Deathmatch are deliberately ephemeral. | D-188, `server/main.ts:104-106`, `server/rooms.ts:171-201`; [entry 35](docs/engineering-decisions.md#35-rooms-that-die-when-empty-and-why-empty-now-is-the-wrong-test-at-boot) |
+| Unowned rooms at `/r/<code>` (Survival, Deathmatch, Sandbox) | Survival and Deathmatch: deleted 10 s after the last member leaves, or 60-120 s after creation if nobody joined (D-237). Sandbox rooms: 2 minutes, or 10 minutes if nobody joined. Survival and Deathmatch are deliberately ephemeral. | D-188, `server/main.ts:104-106`, `server/rooms.ts:171-201`; [entry 35](docs/engineering-decisions.md#35-rooms-that-die-when-empty-and-why-empty-now-is-the-wrong-test-at-boot) |
 | Players (name, `sha256(token)`), `player_stats`, `achievements` | Outlive every room and every world reset. | D-065, D-091, D-115; `server/db.ts` |
 | A player's own sandbox (one per player, shared by link; anyone with the link paints) | Until its owner deletes it (`DELETE /api/sandbox/:code`, owner's token only). The sweep and the public list skip owned rooms; an empty one unloads and reloads from its snapshot and log. At most 200 in total. | D-225; `server/rooms.ts:177`, `server/main.ts:113`, `server/main.ts:937`; [entry 47](docs/engineering-decisions.md#47-a-world-that-persists-because-someone-owns-it) |
 | Snapshot format | Version 19. Restore refuses any other version, so each generation change resets stored worlds; acceptable because the game is not yet declared live. | `sim/src/snapshot.rs:9-11`; D-194 |
@@ -218,7 +218,7 @@ taught something.
 
 | Decision | Why | Links |
 |---|---|---|
-| Admission caps: 32 soft / 48 hard members, 16 loaded rooms, a free-memory gate (80 MB free to load a room) | Measured over real rooms with bots in the real image; the memory gate was off on Fly until D-236 (below) | D-144, D-236; `server/main.ts`, `server/memory.ts` |
+| Admission caps: 32 soft / 48 hard members, 16 loaded rooms of which at most 2 Survival/Deathmatch (D-237, shown on the menu), a free-memory gate (48 MB free to load a room; 80 MB until D-237) | Measured over real rooms with bots in the real image; the memory gate was off on Fly until D-236 (below) | D-144, D-236; `server/main.ts`, `server/memory.ts` |
 | A verify worker per occupied cave room, prewarmed at the first join. At the sustained 6.25%-of-a-core quota 1 room now holds (was 0) and verify rejections fell from 8-25 per run to 0; two rooms still don't (CPU-bound) | The single verify worker kept one cached world, so every verify regenerated and took 10-17 s against a 10 s timeout. Dropped wasm instances are not reclaimed, so one worker per room, not instances in one worker | D-213, D-228; [entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient); [`capacity-2026-11-07.md`](docs/research/capacity-2026-11-07.md), [`warm-verify-report.md`](docs/research/warm-verify-report.md) |
 
 ## 5. Harness and skill-level interventions
@@ -357,9 +357,12 @@ project's own docs framed the votes that way, which is probably why a reader who
   v2's `memory.current`, which Docker provides but the Fly VM (cgroup v1, unlimited root cgroup) lacks, so on Fly both
   silently skipped their check. A live test on 9 Nov with 3 Survival rooms x 4 bots OOM-killed the machine. The gates
   now read the first source with a real limit (cgroup v2, cgroup v1, `/proc/meminfo`, process RSS), log it at start,
-  and refuse a room load with under 80 MB free and a warm lane that would leave under 56 MB. On the 210 MB VM that is
-  two M rooms with one warm lane; past that a join gets "server busy". The reserves come from one crash, not a measured
-  ramp on the VM ([entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient)).
+  and refuse a room load with under 80 MB free and a warm lane that would leave under 56 MB. **Corrected (D-237):** on
+  the VM the 80 MB reserve admitted only one Survival room (live test, 9 Nov), not two. An explicit cap of 2 loaded
+  Survival/Deathmatch rooms now decides, with the room reserve lowered to 48 MB as a backstop; the menu shows "Game
+  rooms: n/2 live", a third room's join gets "server busy" and creating one is refused while both run. The second room
+  may verify cold. The reserves come from one crash, not a measured ramp on the VM
+  ([entry 48](docs/engineering-decisions.md#48-warm-verifies-necessary-not-sufficient)).
 - **An intermittent Survival test under load (D-219), closed.** `claims-survival` passes quietly and fails only under a full
   gate's load. **Closed (D-231):** the flake was the test's own wall-clock pacing, now paced by the server's ticks.
 - **Duplicated salts (D-217), closed (D-232).** The eight cell-rule salts were renumbered 291-298; generation keeps

@@ -13,7 +13,17 @@ export interface LiveDeath {
 export interface Live {
   players: number;
   rooms: number;
+  /** D-237: Survival/Deathmatch rooms running now and the server's cap (absent from an older server). */
+  gameRooms?: { live: number; max: number };
   deaths: LiveDeath[];
+}
+
+/** "Game rooms: 1/2 live", or the full line when none is free; null when the server did not say. */
+export function gameRoomsLine(j: Live | null): { text: string; full: boolean } | null {
+  const g = j?.gameRooms;
+  if (!g || typeof g.live !== "number" || typeof g.max !== "number") return null;
+  const full = g.live >= g.max;
+  return { text: full ? `Game rooms: ${g.live}/${g.max} live. Full, try again soon.` : `Game rooms: ${g.live}/${g.max} live`, full };
 }
 
 /** "12s", "4m", "3h", "2d". Negative (clock skew) reads as "0s". */

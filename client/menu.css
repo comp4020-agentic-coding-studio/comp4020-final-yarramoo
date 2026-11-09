@@ -110,6 +110,7 @@
 .mn-live { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--mn-dim); }
 .mn-dot { flex: none; width: 10px; height: 10px; background: var(--mn-moss-hi); box-shadow: 0 0 0 2px var(--mn-ink); animation: mn-blink 1.4s steps(2, jump-none) infinite; }
 .mn-dot.off { background: var(--mn-edge); animation: none; }
+.mn-cap.full { color: var(--mn-lava-hi, #ff8a4c); }
 @keyframes mn-blink { 0% { opacity: 1; } 50% { opacity: 0.25; } 100% { opacity: 1; } }
 .mn-deaths { display: flex; flex-direction: column; gap: 6px; border-top: var(--mn-u) solid var(--mn-edge-lo); padding-top: 12px; }
 .mn-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -136,6 +137,7 @@
 .mn-card.moss { --c: var(--mn-moss-hi); --c-lo: var(--mn-moss); }
 .mn-card.lava { --c: var(--mn-lava-hi); --c-lo: var(--mn-lava); }
 .mn-card.sand { --c: var(--mn-sand); }
+.mn-card:disabled, .mn-card:disabled:hover { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.6); transform: none; }
 .mn-icon { flex: none; width: 88px; height: 88px; image-rendering: pixelated; background: var(--mn-ink); border: var(--mn-u) solid var(--mn-ink); }
 .mn-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .mn-card-title { font-size: 22px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--c); }

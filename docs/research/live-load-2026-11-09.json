@@ -1,0 +1,714 @@
+{
+ "host": "comp4020-final-yarramoo.fly.dev",
+ "rooms": [
+  2,
+  3,
+  4
+ ],
+ "bots": 12,
+ "holdS": 180,
+ "samples": [
+  {
+   "t": 10,
+   "open": 12,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 59,
+   "resyncs": 0,
+   "snaps": 0,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 0,
+     "snapRej": 0,
+     "verifyMs": 0,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 138,
+    "heapMb": 16,
+    "lagP99Ms": 20.17,
+    "uptimeS": 62,
+    "dbBytes": 1462272,
+    "walBytes": 683952
+   },
+   "botLagMaxMs": 2.9914979999994102
+  },
+  {
+   "t": 20,
+   "open": 12,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 99,
+   "resyncs": 0,
+   "snaps": 0,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 0,
+     "snapRej": 0,
+     "verifyMs": 0,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 138,
+    "heapMb": 16,
+    "lagP99Ms": 20.99,
+    "uptimeS": 72,
+    "dbBytes": 1462272,
+    "walBytes": 972352
+   },
+   "botLagMaxMs": 1.888198000000557
+  },
+  {
+   "t": 30,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 143,
+   "resyncs": 0,
+   "snaps": 1,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 1,
+     "snapRej": 0,
+     "verifyMs": 69,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 142,
+    "heapMb": 17,
+    "lagP99Ms": 21.02,
+    "uptimeS": 83,
+    "dbBytes": 1462272,
+    "walBytes": 1310192
+   },
+   "botLagMaxMs": 2.538959999998042
+  },
+  {
+   "t": 41,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 183,
+   "resyncs": 0,
+   "snaps": 1,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 59.9,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 1,
+     "snapRej": 0,
+     "verifyMs": 69,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 142,
+    "heapMb": 16,
+    "lagP99Ms": 21,
+    "uptimeS": 93,
+    "dbBytes": 1462272,
+    "walBytes": 1598592
+   },
+   "botLagMaxMs": 4.18747400000575
+  },
+  {
+   "t": 51,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 223,
+   "resyncs": 0,
+   "snaps": 1,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 59.9,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 1,
+     "snapRej": 0,
+     "verifyMs": 69,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 142,
+    "heapMb": 17,
+    "lagP99Ms": 20.99,
+    "uptimeS": 103,
+    "dbBytes": 1462272,
+    "walBytes": 1886992
+   },
+   "botLagMaxMs": 2.3412400000015623
+  },
+  {
+   "t": 61,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 263,
+   "resyncs": 0,
+   "snaps": 2,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 59.9,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 2,
+     "snapRej": 0,
+     "verifyMs": 15,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 142,
+    "heapMb": 16,
+    "lagP99Ms": 21,
+    "uptimeS": 113,
+    "dbBytes": 1462272,
+    "walBytes": 2228952
+   },
+   "botLagMaxMs": 2.015215999999782
+  },
+  {
+   "t": 71,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 303,
+   "resyncs": 0,
+   "snaps": 2,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 2,
+     "snapRej": 0,
+     "verifyMs": 15,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 142,
+    "heapMb": 16,
+    "lagP99Ms": 21.17,
+    "uptimeS": 123,
+    "dbBytes": 1462272,
+    "walBytes": 2525592
+   },
+   "botLagMaxMs": 2.1723410000122385
+  },
+  {
+   "t": 81,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 343,
+   "resyncs": 0,
+   "snaps": 2,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 2,
+     "snapRej": 0,
+     "verifyMs": 15,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 140,
+    "heapMb": 16,
+    "lagP99Ms": 20.97,
+    "uptimeS": 133,
+    "dbBytes": 1462272,
+    "walBytes": 2818112
+   },
+   "botLagMaxMs": 1.667224000004353
+  },
+  {
+   "t": 91,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 383,
+   "resyncs": 0,
+   "snaps": 3,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 3,
+     "snapRej": 0,
+     "verifyMs": 43,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 138,
+    "heapMb": 17,
+    "lagP99Ms": 21,
+    "uptimeS": 143,
+    "dbBytes": 1462272,
+    "walBytes": 3131232
+   },
+   "botLagMaxMs": 3.3504419999953825
+  },
+  {
+   "t": 101,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 423,
+   "resyncs": 0,
+   "snaps": 3,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 3,
+     "snapRej": 0,
+     "verifyMs": 43,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 139,
+    "heapMb": 16,
+    "lagP99Ms": 21.02,
+    "uptimeS": 154,
+    "dbBytes": 1462272,
+    "walBytes": 3419632
+   },
+   "botLagMaxMs": 3.617240000006859
+  },
+  {
+   "t": 112,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 467,
+   "resyncs": 0,
+   "snaps": 3,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 3,
+     "snapRej": 0,
+     "verifyMs": 43,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 139,
+    "heapMb": 17,
+    "lagP99Ms": 21,
+    "uptimeS": 164,
+    "dbBytes": 1462272,
+    "walBytes": 3708032
+   },
+   "botLagMaxMs": 3.1698019999894314
+  },
+  {
+   "t": 122,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 507,
+   "resyncs": 0,
+   "snaps": 4,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60.1,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 4,
+     "snapRej": 0,
+     "verifyMs": 11,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 139,
+    "heapMb": 17,
+    "lagP99Ms": 21,
+    "uptimeS": 174,
+    "dbBytes": 1462272,
+    "walBytes": 4025272
+   },
+   "botLagMaxMs": 4.1373969999986
+  },
+  {
+   "t": 132,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 547,
+   "resyncs": 0,
+   "snaps": 4,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 4,
+     "snapRej": 0,
+     "verifyMs": 11,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 136,
+    "heapMb": 17,
+    "lagP99Ms": 20.99,
+    "uptimeS": 184,
+    "dbBytes": 1462272,
+    "walBytes": 4136512
+   },
+   "botLagMaxMs": 3.2432900000130758
+  },
+  {
+   "t": 142,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 587,
+   "resyncs": 0,
+   "snaps": 4,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 59.9,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 4,
+     "snapRej": 0,
+     "verifyMs": 11,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 136,
+    "heapMb": 18,
+    "lagP99Ms": 20.99,
+    "uptimeS": 194,
+    "dbBytes": 1462272,
+    "walBytes": 4136512
+   },
+   "botLagMaxMs": 4.050287999998545
+  },
+  {
+   "t": 152,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 627,
+   "resyncs": 0,
+   "snaps": 5,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 5,
+     "snapRej": 0,
+     "verifyMs": 9,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 137,
+    "heapMb": 18,
+    "lagP99Ms": 20.99,
+    "uptimeS": 204,
+    "dbBytes": 1462272,
+    "walBytes": 4136512
+   },
+   "botLagMaxMs": 3.078538000001572
+  },
+  {
+   "t": 162,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 667,
+   "resyncs": 0,
+   "snaps": 5,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 59.9,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 5,
+     "snapRej": 0,
+     "verifyMs": 9,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 136,
+    "heapMb": 16,
+    "lagP99Ms": 21,
+    "uptimeS": 214,
+    "dbBytes": 1462272,
+    "walBytes": 4136512
+   },
+   "botLagMaxMs": 2.857220000005327
+  },
+  {
+   "t": 172,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 707,
+   "resyncs": 0,
+   "snaps": 5,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 5,
+     "snapRej": 0,
+     "verifyMs": 9,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 137,
+    "heapMb": 16,
+    "lagP99Ms": 21,
+    "uptimeS": 225,
+    "dbBytes": 1462272,
+    "walBytes": 4136512
+   },
+   "botLagMaxMs": 1.4851680000138003
+  },
+  {
+   "t": 183,
+   "open": 4,
+   "rejected": [
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy",
+    "server busy"
+   ],
+   "hashes": 749,
+   "resyncs": 0,
+   "snaps": 6,
+   "rooms": [
+    {
+     "world": 2,
+     "online": 4,
+     "tps": 60,
+     "hashFails": 0,
+     "resyncs": 0,
+     "snapOk": 6,
+     "snapRej": 0,
+     "verifyMs": 11,
+     "round": "running"
+    }
+   ],
+   "server": {
+    "rssMb": 137,
+    "heapMb": 16,
+    "lagP99Ms": 21.02,
+    "uptimeS": 235,
+    "dbBytes": 1462272,
+    "walBytes": 4136512
+   },
+   "botLagMaxMs": 2.2555559999891557
+  }
+ ]
+}

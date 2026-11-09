@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { startServer, ROOM_LOAD_MEMORY_RESERVE_BYTES, VERIFY_LANE_MEMORY_RESERVE_BYTES, type RunningServer } from "../../server/main.ts";
+import { startServer, MAX_LOADED_GAME_ROOMS, ROOM_LOAD_MEMORY_RESERVE_BYTES, VERIFY_LANE_MEMORY_RESERVE_BYTES, type RunningServer } from "../../server/main.ts";
 import { memoryReaders, pickMemorySource, type MemoryIo, type MemoryReaders } from "../../server/memory.ts";
 import { laneBytes } from "../../server/verify.ts";
 import { encodeConfig, SURVIVAL } from "../../shared/room.ts";
@@ -59,8 +59,12 @@ describe("which memory figure the gates read", () => {
 
   it("the reserves keep a fresh Fly VM to two M rooms and one warm lane, well short of the ~90 MB growth that was killed", () => {
     const idleFree = 111668 * 1024;
-    // A room loads only with ROOM reserve free; each M room plus its lane cost ~30-45 MB on the VM (the crash: 3 + 3 in ~90 MB).
-    expect(idleFree - ROOM_LOAD_MEMORY_RESERVE_BYTES).toBeLessThan(2 * 30 * MB);
+    // D-237: the count cap (two game rooms) stops the third; the room reserve is the backstop. It must still admit the
+    // second room after the first room and its lane (~45 MB on the VM, 9 Nov: the 80 MB reserve refused it), and must
+    // refuse any load before the ~90 MB of growth that was killed (3 rooms + 3 lanes).
+    expect(MAX_LOADED_GAME_ROOMS).toBe(2);
+    expect(idleFree - 45 * MB).toBeGreaterThan(ROOM_LOAD_MEMORY_RESERVE_BYTES);
+    expect(idleFree - ROOM_LOAD_MEMORY_RESERVE_BYTES).toBeLessThan(90 * MB);
     expect(idleFree - laneBytes(1) - VERIFY_LANE_MEMORY_RESERVE_BYTES).toBeGreaterThanOrEqual(0); // the first room's lane opens
     expect(idleFree - 15 * MB - laneBytes(1) - laneBytes(1) - VERIFY_LANE_MEMORY_RESERVE_BYTES).toBeLessThan(0); // the second's does not
   });
